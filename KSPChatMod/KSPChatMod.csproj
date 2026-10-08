@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Build: dotnet build -c Release   (needs only the .NET SDK; reference assemblies come from NuGet) -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>KSPChatBridge</AssemblyName>
+    <RootNamespace>KSPChatBridge</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <OutputType>Library</OutputType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.1.0</Version>
+    <!-- KSP folder: -p:KSPDir=... or a KSPDir environment variable; else the usual Steam locations -->
+    <KSPDir Condition="'$(KSPDir)' == '' And Exists('C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program')">C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program</KSPDir>
+    <KSPDir Condition="'$(KSPDir)' == '' And Exists('C:\Steam\steamapps\common\Kerbal Space Program')">C:\Steam\steamapps\common\Kerbal Space Program</KSPDir>
+    <KSPDir Condition="'$(KSPDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program</KSPDir>
+    <Managed>$(KSPDir)\KSP_x64_Data\Managed</Managed>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp"><HintPath>$(Managed)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(Managed)\Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(Managed)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(Managed)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(Managed)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(Managed)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Managed)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <!-- Copy the plugin into GameData after a Release build (not with -p:SkipInstall=true: tools/package_release.ps1) -->
+  <Target Name="InstallToKSP" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' And '$(SkipInstall)' != 'true'">
+    <Copy SourceFiles="$(OutputPath)KSPChatBridge.dll" DestinationFolder="$(KSPDir)\GameData\KSPChatBridge\Plugins" />
+  </Target>
+</Project>

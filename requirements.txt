@@ -1,0 +1,3 @@
+krpc==0.6.0
+protobuf
+mcp>=2.3
