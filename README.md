@@ -1,4 +1,9 @@
-# KSPChatBridge
+# AICS - KSP Chat Bridge
+
+*Repository, CKAN identifier and DLL name: KSPChatBridge.*
+
+**New here? Start with the [wiki](https://github.com/zernon916/KSPChatBridge/wiki)**: installation, a five-minute quick start,
+every command, the autopilots, the crew, and troubleshooting.
 
 Chat with your Kerbal Space Program vessel. A small Python bridge turns chat messages into
 kRPC + MechJeb actions; an in-game IMGUI window (KSPChatMod) and the ChatGPT desktop app (MCP)
