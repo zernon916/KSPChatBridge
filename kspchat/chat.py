@@ -1,6 +1,6 @@
 """Chat loop with tool calling against a selectable backend.
 
-Backends live in backends.py (local LM Studio, ollama, chatgpt, gemini, custom OpenAI-compatible; claude/grokbot stubs).
+Backends live in backends.py (local LM Studio, ollama, chatgpt, gemini, claude, grokbot, custom OpenAI-compatible).
 The backend is picked in the mod (AICS -> Settings dropdown, or /ai <name> in the chat) and sent with each message.
 Chat commands handled here (not sent to the model):
   /model            list models of the current backend

@@ -100,6 +100,15 @@ CLOUD_RETRY_MAX_WAIT = int(os.environ.get("CLOUD_RETRY_MAX_WAIT", "30"))  # s; h
 CUSTOM_AI_URL = os.environ.get("CUSTOM_AI_URL", "").rstrip("/")   # e.g. https://openrouter.ai/api/v1
 CUSTOM_AI_MODEL = os.environ.get("CUSTOM_AI_MODEL", "")           # key (optional): CUSTOM_AI_KEY
 
+# Claude via Anthropic's official OpenAI-SDK compatibility layer (platform.claude.com/docs/en/api/openai-sdk):
+# POST {CLAUDE_BASE_URL}/chat/completions with Bearer ANTHROPIC_API_KEY; tool_calls follow the OpenAI schema.
+CLAUDE_URL = os.environ.get("CLAUDE_BASE_URL", "https://api.anthropic.com/v1")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5")
+
+# xAI Grok: OpenAI-compatible POST /v1/chat/completions with Bearer XAI_API_KEY (docs.x.ai REST reference).
+XAI_URL = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
+XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4.7")
+
 MAX_TOOL_ROUNDS = 8          # tool-call iterations per user message
 HISTORY_MESSAGES = 20        # chat turns kept per session (user+assistant)
 LLM_CHAT_TIMEOUT_S = int(os.environ.get("LLM_CHAT_TIMEOUT_S", "60"))  # model HTTP timeout (/chat + flight-plan draft)

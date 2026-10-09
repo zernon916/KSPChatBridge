@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 KEYS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "CUSTOM_AI_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
-        "HF_TOKEN", "HUGGINGFACE_API_KEY")
+        "HF_TOKEN", "HUGGINGFACE_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GROK_API_KEY")
 sys.path.insert(0, str(ROOT))
 for k in KEYS:
     os.environ.pop(k, None)  # before import: .env must not leak a real key into this test
@@ -32,7 +32,7 @@ assert set(backends.LABELS) == set(backends.BACKENDS)
 # missing keys -> clean BackendError, no network
 for b, needle in [("gemini", "GEMINI_API_KEY"), ("chatgpt", "OPENAI_API_KEY"), ("custom", "CUSTOM_AI_URL"),
                   ("groq", "GROQ_API_KEY"), ("openrouter", "OPENROUTER_API_KEY"), ("huggingface", "HF_TOKEN"),
-                  ("claude", "soon"), ("grokbot", "soon")]:
+                  ("claude", "ANTHROPIC_API_KEY"), ("grokbot", "XAI_API_KEY")]:
     try:
         backends.resolve(b)
         raise AssertionError(b + " resolved without config")
@@ -42,6 +42,20 @@ assert backends.configured() == []
 s = chat.Session()
 r, tools = s.send("status?", "gemini")
 assert "GEMINI_API_KEY" in r and not tools and s.last_name == "Bridge", r
+
+# claude/grokbot are wired (P5-1), not stubs: OpenAI-compatible endpoints resolve with a key
+os.environ["ANTHROPIC_API_KEY"] = "ant-test"
+assert backends.resolve("claude") == (config.CLAUDE_URL, "ant-test", config.CLAUDE_MODEL)
+assert backends.resolve("Claude (soon)") == (config.CLAUDE_URL, "ant-test", config.CLAUDE_MODEL)  # alias kept
+os.environ.pop("ANTHROPIC_API_KEY")
+os.environ["XAI_API_KEY"] = "xai-test"
+assert backends.resolve("grokbot") == (config.XAI_URL, "xai-test", config.XAI_MODEL)
+assert backends.resolve("grok") == (config.XAI_URL, "xai-test", config.XAI_MODEL)  # alias kept
+os.environ["GROK_API_KEY"] = "grok-alt"
+os.environ.pop("XAI_API_KEY")
+assert backends.resolve("grokbot")[1] == "grok-alt"  # GROK_API_KEY accepted as an alternative
+os.environ.pop("GROK_API_KEY")
+assert backends.configured() == []
 
 # key set (GOOGLE_API_KEY fallback) -> OpenAI-compatible Gemini endpoint
 os.environ["GOOGLE_API_KEY"] = "test-key"

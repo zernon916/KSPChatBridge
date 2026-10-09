@@ -1009,9 +1009,7 @@ namespace KSPChatBridge
             {
                 for (int i = 0; i < labels.Length; i++)
                 {
-                    GUI.enabled = !ChatWindow.IsStub(i);
                     if (GUILayout.Button((i == cur ? "> " : "   ") + labels[i] + "   " + BackendHint(i), GUI.skin.label)) { ChatWindow.BackendIndex = i; backendDrop = false; }
-                    GUI.enabled = true;
                 }
             }
             string id = ChatWindow.BackendId(cur);
@@ -1115,8 +1113,6 @@ namespace KSPChatBridge
                         ? "LM Studio: set LMSTUDIO_URL / LMSTUDIO_MODEL in .env if not localhost:1234."
                         : "Ollama: set OLLAMA_URL / OLLAMA_MODEL in .env if not localhost:11434.", small);
                 }
-                else if (ChatWindow.IsStub(ChatWindow.BackendIndex))
-                    GUILayout.Label(backend + " is not wired yet — pick Groq, ChatGPT (API), Gemini, OpenRouter, HF, Custom, LM Studio, or Ollama.", warnStyle);
             }
         }
 
@@ -1132,6 +1128,7 @@ namespace KSPChatBridge
         static bool NeedsKey(string id)
         {
             return id == "gemini" || id == "groq" || id == "openrouter" || id == "huggingface" || id == "custom"
+                || id == "claude" || id == "grokbot"
                 || (id == "chatgpt" && ChatWindow.ChatGptMode == "api");
         }
 
@@ -1273,7 +1270,6 @@ namespace KSPChatBridge
         static string BackendHint(int i)
         {
             string id = ChatWindow.BackendId(i), ready = ChatWindow.BackendsReady;
-            if (ChatWindow.IsStub(i)) return "";
             if (id == "local" || id == "ollama") return "(local, no key)";
             if (id == "chatgpt") return ChatWindow.ChatGptMode == "api" ? (ready == null ? "(API)" : ("," + ready + ",").Contains(",chatgpt,") ? "(API, key set)" : "(API, no key!)") : "(desktop MCP, heavy token use)";
             string free = id == "gemini" || id == "groq" || id == "openrouter" ? "free tier, " : "";

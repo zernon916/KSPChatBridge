@@ -492,6 +492,18 @@ class Program
         Check(cfgDefaults["ai_enabled"] == "true" && cfgDefaults["autostart"] == "true", "defaults keep AI + autostart");
         Check(cfgDefaults.ContainsKey("bridge_dir") && cfgDefaults.ContainsKey("python"), "bridge fallback keys kept");
         Console.WriteLine("P5-1 config defaults: 3 behavior checks passed.");
+        // ---- P5-1: Claude + Grok are real providers, not stubs ----
+        SecretsStore.Set("ANTHROPIC_API_KEY", "ant-key-1234567890");
+        var claude = OpenAiBackend.Resolve("claude");
+        Check(claude.Ok && claude.Url == "https://api.anthropic.com/v1" && claude.Model.StartsWith("claude"), "claude resolves via anthropic openai-compat");
+        SecretsStore.Set("XAI_API_KEY", "xai-key-1234567890");
+        var grok = OpenAiBackend.Resolve("grokbot");
+        Check(grok.Ok && grok.Url == "https://api.x.ai/v1" && grok.Model.StartsWith("grok"), "grokbot resolves via xai openai-compat");
+        SecretsStore.Set("ANTHROPIC_API_KEY", "");
+        SecretsStore.Set("XAI_API_KEY", "");
+        Check(!OpenAiBackend.Resolve("claude").Ok && OpenAiBackend.Resolve("claude").Error.Contains("ANTHROPIC_API_KEY"), "claude missing-key error");
+        Check(!OpenAiBackend.Resolve("grokbot").Ok && OpenAiBackend.Resolve("grokbot").Error.Contains("XAI_API_KEY"), "grokbot missing-key error");
+        Console.WriteLine("P5-1 wired providers: 4 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

@@ -10,8 +10,8 @@
   huggingface Hugging Face Inference Providers router (HF_TOKEN) model = HF_MODEL  (small/no free credits)
   custom   any OpenAI-compatible HTTP API (CUSTOM_AI_URL [+ CUSTOM_AI_KEY] + CUSTOM_AI_MODEL): OpenRouter, Groq,
            Mistral, DeepSeek, Together, xAI, vLLM, Anthropic's OpenAI-compat endpoint, ...
-  claude   stub ("soon"; use custom with Anthropic's OpenAI-compat endpoint meanwhile)
-  grokbot  stub ("soon"; planned file-queue channel like ChatGPT MCP)
+  claude   Anthropic's official OpenAI-SDK compatibility layer (ANTHROPIC_API_KEY)
+  grokbot  xAI Grok, OpenAI-compatible chat completions (XAI_API_KEY)
 Keyed backends (KEYED) are skipped cleanly with a short "set X" message when their key/URL is missing.
 """
 import json
@@ -33,10 +33,8 @@ BACKENDS = ("local", "ollama", "chatgpt", "gemini", "groq", "openrouter", "huggi
 LABELS = {"local": "LM Studio", "ollama": "Ollama", "chatgpt": "ChatGPT", "gemini": "Gemini", "groq": "Groq",
           "openrouter": "OpenRouter", "huggingface": "Hugging Face",
           "custom": "Custom (OpenAI-compatible)", "claude": "Claude", "grokbot": "Grok Bot"}
-CLOUD = ("chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom")  # rate-limited HTTP APIs (429 backoff)
-STUBS = {"claude": "Claude is not wired up yet (soon). Meanwhile use Custom: CUSTOM_AI_URL=https://api.anthropic.com/v1, "
-                   "CUSTOM_AI_KEY=<Anthropic key>, CUSTOM_AI_MODEL=<claude model id>.",
-         "grokbot": "Grok Bot backend is not supported yet (soon). Pick LM Studio, Ollama, ChatGPT or Gemini."}
+CLOUD = ("chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom",
+         "claude", "grokbot")  # rate-limited HTTP APIs (429 backoff)
 
 
 def _env(*names):
@@ -55,12 +53,20 @@ KEYED = {
                    lambda i: i.endswith(":free") or i == "openrouter/free"),
     "huggingface": (lambda: config.HF_URL, ("HF_TOKEN", "HUGGINGFACE_API_KEY"), lambda: config.HF_MODEL, lambda i: True),
     "custom": (lambda: config.CUSTOM_AI_URL, ("CUSTOM_AI_KEY",), lambda: config.CUSTOM_AI_MODEL, lambda i: True),
+    # Anthropic OpenAI-SDK compatibility layer: POST /chat/completions with Bearer ANTHROPIC_API_KEY.
+    "claude": (lambda: config.CLAUDE_URL, ("ANTHROPIC_API_KEY",), lambda: config.CLAUDE_MODEL,
+               lambda i: i.startswith("claude")),
+    # xAI Grok: OpenAI-compatible /v1/chat/completions with Bearer XAI_API_KEY.
+    "grokbot": (lambda: config.XAI_URL, ("XAI_API_KEY", "GROK_API_KEY"), lambda: config.XAI_MODEL,
+                lambda i: i.startswith("grok")),
 }
 KEY_HELP = {  # where to get a key (free tiers as of 2026-10; limits change, see README)
     "gemini": "GEMINI_API_KEY (free key at aistudio.google.com)",
     "groq": "GROQ_API_KEY (free key at console.groq.com, no card)",
     "openrouter": "OPENROUTER_API_KEY (free key at openrouter.ai; ':free' models, 50 requests/day)",
     "huggingface": "HF_TOKEN (huggingface.co/settings/tokens, 'Inference Providers' permission; free credits are tiny)",
+    "claude": "ANTHROPIC_API_KEY (console.anthropic.com)",
+    "grokbot": "XAI_API_KEY (console.x.ai)",
 }
 
 
@@ -150,14 +156,12 @@ def list_models(backend):
             raise BackendError(_missing(backend))
         ids = [normalize_model(m["id"]) for m in _get(url() + "/models", key or None)["data"]]
         return sorted(i for i in ids if keep(i))
-    raise BackendError(STUBS.get(backend) or f"Unknown backend '{backend}'. Use one of {BACKENDS}.")
+    raise BackendError(f"Unknown backend '{backend}'. Use one of {BACKENDS}.")
 
 
 def resolve(backend, override=None):
     """Return (base_url, api_key, model) for a backend, loading/choosing a model as needed."""
     backend = normalize(backend)
-    if backend in STUBS:
-        raise BackendError(STUBS[backend])
     if backend in KEYED:
         url, _, model, _ = KEYED[backend]
         key = key_for(backend)

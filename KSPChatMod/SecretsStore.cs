@@ -45,6 +45,8 @@ namespace KSPChatBridge
             { "openrouter", "OPENROUTER_API_KEY" },
             { "huggingface", "HF_TOKEN" },
             { "custom", "CUSTOM_AI_KEY" },
+            { "claude", "ANTHROPIC_API_KEY" },
+            { "grokbot", "XAI_API_KEY" },
         };
 
         internal static string StatusText()
@@ -131,6 +133,7 @@ namespace KSPChatBridge
         {
             if (key == "GEMINI_API_KEY") yield return "GOOGLE_API_KEY";
             if (key == "HF_TOKEN") yield return "HUGGINGFACE_API_KEY";
+            if (key == "XAI_API_KEY") yield return "GROK_API_KEY";
         }
 
         static Dictionary<string, string> ReadAll()

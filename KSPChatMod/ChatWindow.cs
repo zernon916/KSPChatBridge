@@ -26,7 +26,7 @@ namespace KSPChatBridge
 
         // AI backend: picked in AICS -> Settings (dropdown) or "/ai <name>" in the chat; persisted (by id) in window.txt.
         // Type "/model" in chat to list that backend's models, "/model <name>" to switch model.
-        static readonly string[] ModelLabels = { "LM Studio", "Ollama", "ChatGPT", "Gemini", "Groq", "OpenRouter", "Hugging Face", "Custom (OpenAI-compatible)", "Claude (soon)", "Grok Bot (soon)" };
+        static readonly string[] ModelLabels = { "LM Studio", "Ollama", "ChatGPT", "Gemini", "Groq", "OpenRouter", "Hugging Face", "Custom (OpenAI-compatible)", "Claude", "Grok Bot" };
         static readonly string[] ModelIds = { "local", "ollama", "chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom", "claude", "grokbot" };
         static readonly string[] LegacyIds = { "local", "ollama", "chatgpt", "grokbot" };   // old window.txt stored an index
         internal static volatile string BackendsReady = null;  // GET /health "backends_ready" (keyed APIs configured), null = unknown
@@ -205,7 +205,7 @@ namespace KSPChatBridge
                 else { resizing = false; SaveSettings(); }
             }
             string title = "KSP Chat Bridge - " + ModelLabels[modelIdx] +
-                (lastModel.Length > 0 && !IsStub(modelIdx) ? " / " + lastModel : "") + "   (Alt+K; switch AI: AICS > Settings or /ai)";
+                (lastModel.Length > 0 ? " / " + lastModel : "") + "   (Alt+K; switch AI: AICS > Settings or /ai)";
             // GUI.Window (not GUILayout.Window): the rect only changes by dragging/resizing, never by content.
             winRect = GUI.Window(WindowId, winRect, DrawWindow, title);
             if (bringFront) { bringFront = false; GUI.BringWindowToFront(WindowId); GUI.FocusWindow(WindowId); }
@@ -456,8 +456,6 @@ namespace KSPChatBridge
         {
             if (!InModAiHost.UseInModChat()) return false;
             if (model == "chatgpt" && ChatGptMode != "api") return false;
-            int idx = Array.IndexOf(ModelIds, model);
-            if (idx >= 0 && IsStub(idx)) return false;
             return true;
         }
 
@@ -479,11 +477,10 @@ namespace KSPChatBridge
             if (a.Length > 0)
                 for (int i = 0; i < ModelIds.Length; i++)
                     if (ModelIds[i] == a || ModelLabels[i].ToLowerInvariant().StartsWith(a) || (a == "lmstudio" && i == 0) || (a == "openai" && i == 2) || (a == "google" && i == 3) || (a == "hf" && ModelIds[i] == "huggingface"))
-                    { BackendIndex = i; return "AI backend: " + ModelLabels[i] + "." + (IsStub(i) ? " (not available yet - replies will say so)" : ""); }
+                    { BackendIndex = i; return "AI backend: " + ModelLabels[i] + "."; }
             return "AI backend is " + ModelLabels[modelIdx] + ". Switch with /ai <" + string.Join("|", ModelIds) + "> or AICS > Settings.";
         }
 
-        internal static bool IsStub(int i) { return i >= 0 && i < ModelIds.Length && (ModelIds[i] == "claude" || ModelIds[i] == "grokbot"); }
         internal static string BackendId(int i) { return ModelIds[i]; }
 
         // ---- AICS Settings panel: backend dropdown + ChatGPT mode ----

@@ -26,8 +26,24 @@ namespace KSPChatBridge
             if (provider == "openai" || provider == "gpt") provider = "chatgpt";
             if (provider == "google") provider = "gemini";
             if (provider == "hf") provider = "huggingface";
-            if (provider == "claude" || provider == "grokbot")
-            { ep.Error = provider + " is not wired yet. Use Custom or another backend."; return ep; }
+            if (provider == "claude")
+            {
+                // Anthropic's OpenAI-SDK compatibility layer: POST /chat/completions with Bearer key.
+                ep.Url = TrimUrl(SecretsStore.Get("CLAUDE_BASE_URL")); if (ep.Url.Length == 0) ep.Url = "https://api.anthropic.com/v1";
+                ep.Key = SecretsStore.Get("ANTHROPIC_API_KEY");
+                ep.Model = First(SecretsStore.Get("CLAUDE_MODEL"), "claude-sonnet-5-5");
+                if (ep.Key.Length == 0) ep.Error = "Claude needs ANTHROPIC_API_KEY in AICS > Settings.";
+                return ep;
+            }
+            if (provider == "grokbot")
+            {
+                // xAI Grok: OpenAI-compatible /v1/chat/completions with Bearer key.
+                ep.Url = TrimUrl(SecretsStore.Get("XAI_BASE_URL")); if (ep.Url.Length == 0) ep.Url = "https://api.x.ai/v1";
+                ep.Key = First(SecretsStore.Get("XAI_API_KEY"), SecretsStore.Get("GROK_API_KEY"));
+                ep.Model = First(SecretsStore.Get("XAI_MODEL"), "grok-4.7");
+                if (ep.Key.Length == 0) ep.Error = "Grok Bot needs XAI_API_KEY in AICS > Settings.";
+                return ep;
+            }
             if (provider == "local")
             {
                 ep.Url = TrimUrl(SecretsStore.Get("LMSTUDIO_URL")); if (ep.Url.Length == 0) ep.Url = "http://localhost:1234/v1";
