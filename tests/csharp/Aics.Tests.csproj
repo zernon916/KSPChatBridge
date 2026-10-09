@@ -24,12 +24,6 @@
     <Compile Include="../../KSPChatMod/SecretsStore.cs"/>
     <Compile Include="../../KSPChatMod/OpenAiBackend.cs"/>
     <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
-  </ItemGroup>
-  <!-- Real framework assembly (reference assemblies cannot execute JavaScriptSerializer). -->
-  <ItemGroup>
-    <Reference Include="System.Web.Extensions">
-      <HintPath>$(windir)\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <Compile Include="../../KSPChatMod/MiniJson.cs"/>
   </ItemGroup>
 </Project>

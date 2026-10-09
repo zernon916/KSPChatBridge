@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Web.Script.Serialization;
 using UnityEngine;
 using Expansions.Serenity;
 
@@ -87,7 +86,6 @@ namespace KSPChatBridge
             internal void Restore(ModuleControlSurface s)
             { s.deployAngle = Angle; s.authorityLimiter = Authority; s.deploy = Deploy; s.deployInvert = Invert; s.partDeployInvert = PartInvert; s.ignorePitch = Pitch; s.ignoreRoll = Roll; s.ignoreYaw = Yaw; }
         }
-        static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength = 65536, RecursionLimit = 16 }; }
         static double Num(Dictionary<string, object> a, string key, double fallback)
         {
             if (!a.ContainsKey(key)) return fallback;
@@ -107,15 +105,15 @@ namespace KSPChatBridge
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
             try
             {
-                if (File.Exists(settingsPath)) settingsData = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(settingsPath));
+                if (File.Exists(settingsPath)) settingsData = MiniJson.Deserialize(File.ReadAllText(settingsPath));
                 string legacyPath = Path.Combine(BridgeLauncher.DataDirectory, "bridge_settings.json");
-                var legacy = Num(settingsData, "migration_version", 0) < 1 && File.Exists(legacyPath) ? Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(legacyPath)) : new Dictionary<string, object>();
+                var legacy = Num(settingsData, "migration_version", 0) < 1 && File.Exists(legacyPath) ? MiniJson.Deserialize(File.ReadAllText(legacyPath)) : new Dictionary<string, object>();
                 settingsData = NativeSettings.Migrate(settingsData, legacy);
                 AiSettings.MergeInto(settingsData);
                 if (!settingsData.ContainsKey("craft_notes_imported"))
                 {
                     string notesPath = Path.Combine(BridgeLauncher.DataDirectory, "craft_notes.json");
-                    if (!settingsData.ContainsKey("craft_notes") && File.Exists(notesPath)) settingsData["craft_notes"] = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(notesPath));
+                    if (!settingsData.ContainsKey("craft_notes") && File.Exists(notesPath)) settingsData["craft_notes"] = MiniJson.Deserialize(File.ReadAllText(notesPath));
                     settingsData["craft_notes_imported"] = true;
                 }
                 band = FlightPolicy.Clamp(Num(settingsData, "altitude_band_m", 150), 10, 500);
@@ -134,7 +132,7 @@ namespace KSPChatBridge
             foreach (var kv in auto) settingsData["auto_" + kv.Key] = kv.Value;
             Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
             string temporary = settingsPath + ".tmp";
-            File.WriteAllText(temporary, Json().Serialize(settingsData));
+            File.WriteAllText(temporary, MiniJson.Serialize(settingsData));
             if (File.Exists(settingsPath)) File.Replace(temporary, settingsPath, settingsPath + ".bak");
             else File.Move(temporary, settingsPath);
         }
@@ -549,7 +547,7 @@ namespace KSPChatBridge
             bool allowed = BridgeLauncher.NativeChat || (BridgeLauncher.NativeReady && !BridgeLauncher.AiEnabled);
             if (!allowed) return "Local mode is not ready.";
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";
-            try { instance.Bind(); return instance.Command(name, Json().Deserialize<Dictionary<string, object>>(argsJson ?? "{}")); }
+            try { instance.Bind(); return instance.Command(name, MiniJson.Deserialize(argsJson ?? "{}")); }
             catch (Exception ex) { return "Local command failed: " + ex.Message; }
         }
         void SyncTrim()
@@ -661,7 +659,7 @@ namespace KSPChatBridge
                     trim["collective"] = props.CollectiveValue;
                     trim["notes_saved"] = craftNotes.Load(vessel.vesselName).Count > 0;
                     foreach (var kv in auto) trim["auto_" + kv.Key] = kv.Value;
-                    return Json().Serialize(trim);
+                    return MiniJson.Serialize(trim);
                 case "set_trim":
                     string axis = Str(a, "axis", "pitch"); float value = (float)FlightPolicy.Clamp(Num(a, "value", 0), -1, 1);
                     if (axis.StartsWith("auto_") && auto.ContainsKey(axis.Substring(5))) { auto[axis.Substring(5)] = value >= .5; Save(); return "Auto-trim setting saved."; }

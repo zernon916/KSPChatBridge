@@ -1,8 +1,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Text;
-using System.Web.Script.Serialization;
 
 namespace KSPChatBridge
 {
@@ -10,7 +8,6 @@ namespace KSPChatBridge
     {
         const int MaxRounds = 8;
         readonly List<Dictionary<string, object>> messages = new List<Dictionary<string, object>>();
-        static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16 * 1024 * 1024 };
         static readonly string ToolsJson = @"[
 {""type"":""function"",""function"":{""name"":""get_status"",""description"":""Vessel status"",""parameters"":{""type"":""object"",""properties"":{}}}},
 {""type"":""function"",""function"":{""name"":""plane_hold"",""description"":""Engage aircraft holds"",""parameters"":{""type"":""object"",""properties"":{""engage"":{""type"":""boolean""},""altitude_m"":{""type"":""number""},""heading"":{""type"":""number""},""speed"":{""type"":""number""},""altitude_ref"":{""type"":""string""}}}}},
@@ -44,7 +41,7 @@ namespace KSPChatBridge
             if (!ep.Ok) return ep.Error;
             messages.Add(Msg("user", userText));
             if (messages.Count > 40) messages.RemoveRange(1, messages.Count - 39);
-            object tools = Json.DeserializeObject(ToolsJson);
+            object tools = MiniJson.DeserializeObject(ToolsJson);
             for (int round = 0; round < MaxRounds; round++)
             {
                 var body = new Dictionary<string, object> {
@@ -53,12 +50,12 @@ namespace KSPChatBridge
                 string raw;
                 try
                 {
-                    string payload = Json.Serialize(body);
+                    string payload = MiniJson.Serialize(body);
                     raw = complete != null ? complete(ep, payload) : OpenAiBackend.ChatCompletions(ep, payload);
                 }
                 catch (Exception ex) { return ex.Message; }
                 Dictionary<string, object> parsed;
-                try { parsed = Json.Deserialize<Dictionary<string, object>>(raw); }
+                try { parsed = MiniJson.Deserialize(raw); }
                 catch (Exception) { return "In-mod AI: bad JSON from provider."; }
                 object choicesObj;
                 if (!parsed.TryGetValue("choices", out choicesObj)) return "In-mod AI: empty response.";

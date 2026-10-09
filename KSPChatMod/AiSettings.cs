@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Web.Script.Serialization;
 
 namespace KSPChatBridge
 {
@@ -23,7 +22,7 @@ namespace KSPChatBridge
                     Save();
                     return;
                 }
-                var data = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(FilePath));
+                var data = MiniJson.Deserialize(File.ReadAllText(FilePath));
                 if (data == null) return;
                 Policy.Offload = ParseOffload(Str(data, "offload", "Hybrid"));
                 Policy.ContextTokens = (int)FlightPolicy.Clamp(Num(data, "context_tokens", 16384), 16384, 24576);
@@ -48,7 +47,7 @@ namespace KSPChatBridge
                 };
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
                 string tmp = FilePath + ".tmp";
-                File.WriteAllText(tmp, Json().Serialize(data));
+                File.WriteAllText(tmp, MiniJson.Serialize(data));
                 if (File.Exists(FilePath)) File.Replace(tmp, FilePath, FilePath + ".bak");
                 else File.Move(tmp, FilePath);
             }
@@ -83,7 +82,6 @@ namespace KSPChatBridge
             return AiOffloadMode.Hybrid;
         }
 
-        static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength = int.MaxValue }; }
         static string Str(Dictionary<string, object> a, string key, string fallback)
         { return a.ContainsKey(key) ? Convert.ToString(a[key], CultureInfo.InvariantCulture) : fallback; }
         static double Num(Dictionary<string, object> a, string key, double fallback)
