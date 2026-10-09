@@ -756,7 +756,7 @@ def _act(code, ev, v, s):
         return "throttle to idle - no power added while reversed"
     if code == "forward":
         _forward_later(v, ev.get("engines") or [], s.get("who") or "Pilot")
-        return "pilot is flipping the reversers back to forward - idle until then"
+        return "reversed engine shut down - pilot is flipping it back to forward"
     if code == "relight_off":  # an engine shut down in flight: fumble 3-5 s, then back on (once per shutdown)
         from . import engine_restart
         note = engine_restart.maybe_restart(v, s.get("who") or "Pilot")
@@ -833,15 +833,44 @@ def _own_reversal():
 
 
 FWD_FUMBLE_S = (2.0, 4.0)
-FWD_DONE = ["Found it! Forward thrust again.", "There - reversers stowed. We're going FORWARD.",
-            "Got it! Thrust is pointing the right way again."]
+FWD_DONE = ["Engines back on - forward thrust again.", "Engines back on. Reversers stowed, we're going FORWARD.",
+            "Got it! Engines back on, thrust pointing the right way."]
+
+
+def _set_active(v, idxs, on):
+    """Engine on/off for these 1-based engine indices only (the others keep running). Marked as our own change so
+    the config watcher doesn't report it as a shutdown / relight it a second time."""
+    n = 0
+    try:
+        engines = list(v.parts.engines)
+    except Exception:  # noqa: BLE001
+        return 0
+    own_change()
+    for i in idxs:
+        try:
+            engines[i - 1].active = on
+            n += 1
+        except Exception:  # noqa: BLE001
+            pass
+    return n
 
 
 def _forward_later(v, idxs, who, timer=None):
-    """Like a kerbal: fumble 2-4 s for the reverser switch, then flip it back to forward and say so."""
+    """Reversed in flight: shut down ONLY the reversed engines now, fumble 2-4 s, switch them to forward, turn them
+    back on, 'Engines back on'. A throttle command in between doesn't relight them early (engine_restart is held)."""
+    from . import engine_restart
+    with engine_restart._lock:
+        engine_restart._pending["on"] = True
+    _set_active(v, idxs, False)
+
     def run():
-        n = _forward(v, idxs)
-        _post(f"{who}: {random.choice(FWD_DONE)}" if n else f"{who}: I can't find the reverser switch!")
+        try:
+            n = _forward(v, idxs)
+            _set_active(v, idxs, True)
+        finally:
+            with engine_restart._lock:
+                engine_restart._pending["on"] = False
+        _post(f"{who}: {random.choice(FWD_DONE)}" if n else f"{who}: I can't find the reverser switch! Engines back on anyway.")
     t = (timer or threading.Timer)(random.uniform(*FWD_FUMBLE_S), run)
     t.daemon = True
     t.start()

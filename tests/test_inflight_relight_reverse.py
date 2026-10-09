@@ -73,3 +73,26 @@ def test_reverse_detected_in_flight_not_on_rollout(monkeypatch):
     w2.tick(dict(base, sit="landed"))
     out = w2.tick(dict(base, sit="landed", t=1.0))
     assert not any(e["kind"] == "reverse" and e["start"] for e in out)
+
+def test_reverse_recovery_only_that_engine_no_double_relight(monkeypatch):
+    said, made = [], []
+    monkeypatch.setattr(science, "post_event", said.append)
+    monkeypatch.setattr(emergency, "_forward", lambda v, idxs: len(idxs))
+    engines = [NS(active=True), NS(active=True)]
+    v = NS(parts=NS(engines=engines))
+
+    class T:
+        def __init__(self, d, fn):
+            self.d, self.fn, self.daemon = d, fn, False
+            made.append(self)
+
+        def start(self):
+            pass
+    engine_restart._pending["on"] = False
+    emergency._forward_later(v, [2], "Sidry", timer=T)
+    assert engines[0].active is True and engines[1].active is False        # only the reversed engine off
+    assert emergency._flags["own_t"] > 0                                    # own change: no 'engine shut down' alert
+    assert engine_restart.maybe_restart(v, "Sidry").startswith(" Engine restart already")   # throttle can't relight early
+    made[0].fn()
+    assert engines[1].active is True and not engine_restart._pending["on"]
+    assert said[-1].startswith("Sidry: Engines back on") or "Engines back on" in said[-1]

@@ -151,10 +151,11 @@ def test_reverse_actions_idle_and_forward(monkeypatch):
     timers = []
     monkeypatch.setattr(em.threading, "Timer", lambda d, fn: timers.append((d, fn)) or type("T", (), {"start": lambda s: None})())
     line = em.handle([ev], v, S(0), post=posted.append)[0]
-    assert line.startswith("Sidry: ") and "idle" in line and "flipping the reversers back" in line
+    assert line.startswith("Sidry: ") and "idle" in line and "flipping it back to forward" in line
     assert v.control.throttle == 0.0 and 2.0 <= timers[0][0] <= 4.0   # the kerbal fumbles 2-4 s first
+    assert v.parts.engines[0].active is False                         # only the reversed engine is shut down
     timers[0][1]()
-    assert v.parts.engines[0].mode == "Forward"
+    assert v.parts.engines[0].mode == "Forward" and v.parts.engines[0].active is True
     assert em.shape("throttle", 0.9) == 0.0 and em.reverse_active()   # autopilots can't add power
     em.handle([dict(ev, start=False, actions=[])], v, S(1), post=posted.append)
     assert em.shape("throttle", 0.9) == 0.9 and len(posted) == 2
