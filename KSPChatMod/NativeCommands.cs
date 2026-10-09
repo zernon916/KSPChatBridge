@@ -20,7 +20,9 @@ namespace KSPChatBridge
             "land", "fly_to", "fly_to_place", "touch_and_go", "go_around", "circle_here", "turn", "plane_pitch",
             "prop_control", "afterburner", "engine_mode", "flaps", "set_throttle", "set_engines", "cut_engines", "set_altitude",
             "level_off", "set_sas_mode", "abort_ag", "action_group", "fuel_check", "get_delta_v", "get_landing_eta", "how_far",
-            "landing_check", "crew_report", "flight_report", "damage_report"
+            "landing_check", "crew_report", "flight_report", "damage_report",
+            // P5-3 lifecycle + science (NativeLifecycle.cs)
+            "stage", "recover_vessel", "launch_craft", "deploy_parachutes", "eject_kerbal", "run_science", "reset_experiments", "set_science_watcher"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;

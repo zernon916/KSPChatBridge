@@ -424,9 +424,9 @@ Architecture not-dones:
 - [x] **DONE (tests; needs live check)** C# tests per family; update matrix; bridge fallback until P5-8
 
 ### P5-3 — Vessel lifecycle + science
-- [ ] `stage`, `recover_vessel`, `launch_*`, `deploy_parachutes`, `eject_kerbal`
-- [ ] `run_science` / `reset_experiments` / `set_science_watcher` (EC thresholds + safeguards from `kspchat/science.py`)
-- [ ] Rewire menu buttons off bridge HTTP onto native / InModAiHost; update matrix
+- [x] **DONE (tests; needs live check)** `stage`, `recover_vessel`, `launch_*`, `deploy_parachutes`, `eject_kerbal`
+- [x] **DONE (tests; needs live check)** `run_science` / `reset_experiments` / `set_science_watcher` (EC thresholds + safeguards from `kspchat/science.py`)
+- [x] **DONE (tests; needs live check)** Rewire menu buttons off bridge HTTP onto native / InModAiHost; update matrix
 
 ### P5-4 — Orbital / docking / MechJeb-optional
 - [ ] `mechjeb_ascent`, `circularize`, `transfer_to`, `deorbit_burn`, `warp_*`

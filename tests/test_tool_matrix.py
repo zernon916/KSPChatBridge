@@ -50,8 +50,8 @@ MATRIX = {
     "crew_report": NATIVE, "flight_report": NATIVE, "damage_report": NATIVE, "turn": NATIVE,
     "plane_pitch": NATIVE, "course_correction": "p5-4",
     # -- P5-3 vessel lifecycle + science --
-    "stage": "p5-3", "recover_vessel": "p5-3", "launch_craft": "p5-3", "deploy_parachutes": "p5-3",
-    "eject_kerbal": "p5-3", "run_science": "p5-3", "reset_experiments": "p5-3", "set_science_watcher": "p5-3",
+    "stage": NATIVE, "recover_vessel": NATIVE, "launch_craft": NATIVE, "deploy_parachutes": NATIVE,
+    "eject_kerbal": NATIVE, "run_science": NATIVE, "reset_experiments": NATIVE, "set_science_watcher": NATIVE,
     # -- P5-4 orbital / docking / MechJeb-optional --
     "mechjeb_ascent": "p5-4", "circularize": "p5-4", "transfer_to": "p5-4", "deorbit_burn": "p5-4",
     "warp_to_apoapsis": "p5-4", "warp_to_soi_change": "p5-4", "dock_with": "p5-4", "station_keep": "p5-4",

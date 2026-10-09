@@ -60,6 +60,7 @@ namespace KSPChatBridge
 
         string ResidualCommand(string name, Dictionary<string, object> a)
         {
+            string life = LifecycleCommand(name, a); if (life != null) return life;
             switch (name)
             {
                 case "land":

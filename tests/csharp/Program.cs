@@ -636,6 +636,21 @@ class Program
             && FlightResidualPolicy.PropSwitch("on") == true && FlightResidualPolicy.PropSwitch("") == null, "prop_control parsing");
         Check(NativeCommands.IsPorted("fly_to") && NativeCommands.IsPorted("cut_engines") && NativeCommands.IsPorted("damage_report") && !NativeCommands.IsPorted("land_at"), "P5-2 tools ported; land_at stays bridge until P5-4");
         Console.WriteLine("P5-2 flight residuals: 16 behavior checks passed.");
+        // ---- P5-3: lifecycle + science (policy; parity with kspchat/science.py) ----
+        Check(SciencePolicy.NormalizeMode("on") == "auto" && SciencePolicy.NormalizeMode("auto off") == "remind" && SciencePolicy.NormalizeMode("OFF") == "off" && SciencePolicy.NormalizeMode("loud") == null, "watcher mode aliases");
+        Check(SciencePolicy.RunBlocker(9.9) != null && SciencePolicy.RunBlocker(10) == null && SciencePolicy.EcPct(5, 0) == 0 && SciencePolicy.EcPct(25, 100) == 25, "EC run threshold 10%");
+        Check(!SciencePolicy.ShouldTransmit(true, 2, 24.9) && SciencePolicy.ShouldTransmit(true, 2, 25) && !SciencePolicy.ShouldTransmit(true, 0, 90) && !SciencePolicy.ShouldTransmit(false, 2, 90), "EC transmit threshold 25%");
+        Check(SciencePolicy.Eligible(false, false, true, false, false, false) && !SciencePolicy.Eligible(true, false, true, false, true, false) && !SciencePolicy.Eligible(false, true, true, false, true, false)
+            && !SciencePolicy.Eligible(false, false, false, false, true, false) && !SciencePolicy.Eligible(false, false, true, true, true, false) && !SciencePolicy.Eligible(false, false, true, false, false, true), "experiment eligibility safeguards");
+        Check(SciencePolicy.SituationChange("auto", null, null, "k", "v") == "first" && SciencePolicy.SituationChange("auto", "k1", "v", "k2", "v2") == "first"
+            && SciencePolicy.SituationChange("auto", "k1", "v", "k2", "v") == "act" && SciencePolicy.SituationChange("auto", "k", "v", "k", "v") == "ignore" && SciencePolicy.SituationChange("off", "k1", "v", "k2", "v") == "ignore", "situation change gate (first load quiet)");
+        Check(!SciencePolicy.ShouldPost("auto", 0, null, 3, 999) && SciencePolicy.ShouldPost("auto", 1, null, 0, 0) && !SciencePolicy.ShouldPost("remind", 0, null, 0, 999)
+            && SciencePolicy.ShouldPost("remind", 0, null, 2, 61) && !SciencePolicy.ShouldPost("remind", 0, null, 2, 10), "watcher post gating");
+        Check(SciencePolicy.ParachuteGate(false, "LANDED", -1) != null && SciencePolicy.ParachuteGate(false, "FLYING", 10) != null && SciencePolicy.ParachuteGate(false, "FLYING", -40) == null && SciencePolicy.ParachuteGate(true, "LANDED", 0) == null, "parachute gate");
+        Check(SciencePolicy.LaunchSite("SPH", "") == "Runway" && SciencePolicy.LaunchSite("vab", null) == "LaunchPad" && SciencePolicy.LaunchSite("VAB", "Desert_Launch_Site") == "Desert_Launch_Site" && SciencePolicy.EditorFolder("sph") == "SPH", "launch site defaults");
+        Check(SciencePolicy.SafeCraftName("Kerbal X") && !SciencePolicy.SafeCraftName("../x") && !SciencePolicy.SafeCraftName("a/b") && !SciencePolicy.SafeCraftName(" "), "craft name has no path");
+        Check(NativeCommands.IsPorted("stage") && NativeCommands.IsPorted("run_science") && NativeCommands.IsPorted("set_science_watcher") && NativeCommands.IsPorted("launch_craft"), "P5-3 tools ported");
+        Console.WriteLine("P5-3 lifecycle + science: 10 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

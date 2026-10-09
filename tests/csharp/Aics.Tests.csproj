@@ -31,5 +31,6 @@
     <Compile Include="../../KSPChatMod/DashboardRows.cs"/>
     <Compile Include="../../KSPChatMod/NativeIds.cs"/>
     <Compile Include="../../KSPChatMod/FlightResidualPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/SciencePolicy.cs"/>
   </ItemGroup>
 </Project>

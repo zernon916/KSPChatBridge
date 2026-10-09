@@ -406,7 +406,8 @@ namespace KSPChatBridge
         }
         internal static void ToolFromMenu(string name, string argsJson)
         {
-            if (!BridgeLauncher.AiEnabled) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
+            // P5-3: menu buttons for ported tools run in-mod whenever AI is off or in-mod chat/tools are on.
+            if (!BridgeLauncher.AiEnabled || (BridgeLauncher.NativeChat && NativeCommands.IsPorted(name))) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
             Interlocked.Increment(ref pending);
             Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "AICS " + name + ": " + reply);
         }
@@ -651,7 +652,7 @@ namespace KSPChatBridge
         }
 
         // Real eject: EVA a crew member (by name, else the first one in a command part) out of the active vessel.
-        static string Eject(string name)
+        internal static string Eject(string name)
         {
             try
             {

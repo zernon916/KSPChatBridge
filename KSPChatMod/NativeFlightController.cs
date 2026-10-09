@@ -263,6 +263,8 @@ namespace KSPChatBridge
             else if (park == "released") parkingReleased = true;
             wasAirborne = flying;
             prevBrakes = brakes;
+            try { ScienceTick(); }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local science watcher: " + ex.Message); }
         }
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
