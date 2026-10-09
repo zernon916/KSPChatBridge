@@ -37,11 +37,7 @@ namespace KSPChatBridge
         readonly RestartPolicy restart = new RestartPolicy();
         const int HealthFailLimit = 3;
         string launchDir, launchPython, launchExe;
-        readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "autostart", "true" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
-            { "native_chat", "false" }, { "bridge_dir", "" }, { "python", "python" },
-        };
+        readonly Dictionary<string, string> cfg = BridgeConfigDefaults.Create();
         internal static bool NativeChatEnabled { get; private set; }
         internal static bool NativeChat { get { return NativeChatEnabled; } }
         internal static string PluginDataDirectory

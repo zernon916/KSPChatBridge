@@ -486,6 +486,12 @@ class Program
         });
         Check(fakeCalls == 2 && toolLog == "get_status:{}" && answer == "Altitude 5 km.", "in-mod tool loop");
         Console.WriteLine("In-mod AI stack: 7 behavior checks passed.");
+        // ---- P5-1 foundation ----
+        var cfgDefaults = BridgeConfigDefaults.Create();
+        Check(cfgDefaults["native_chat"] == "true", "new installs default to native chat (no :8765 needed)");
+        Check(cfgDefaults["ai_enabled"] == "true" && cfgDefaults["autostart"] == "true", "defaults keep AI + autostart");
+        Check(cfgDefaults.ContainsKey("bridge_dir") && cfgDefaults.ContainsKey("python"), "bridge fallback keys kept");
+        Console.WriteLine("P5-1 config defaults: 3 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {
