@@ -1,5 +1,7 @@
 # AICS - KSP Chat Bridge
 
+![AICS - KSP Chat Bridge](docs/images/aics-header.jpg)
+
 *Repository, CKAN identifier and DLL name: KSPChatBridge.*
 
 **New here? Start with the [wiki](https://github.com/zernon916/KSPChatBridge/wiki)**: installation, a five-minute quick start,
