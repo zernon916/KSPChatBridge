@@ -576,6 +576,15 @@ class Program
         var guard = new ToolLoopGuard(3);
         Check(guard.TryStep() && guard.TryStep() && guard.TryStep() && !guard.TryStep() && guard.Used == 3, "tool loop budget bounded");
         Console.WriteLine("P5-1 orchestrator ownership: 10 behavior checks passed.");
+        // ---- P5-1: thin read-only ports (list_landing_spots / set_ai_name / remember_preference) ----
+        var listSettings = new Dictionary<string, object>();
+        var listSpots = new NativeSpots(listSettings);
+        listSpots.Save("Island 27", "Kerbin", "H", -1.5, -71.8, 90, 134.6);
+        string listRows = listSpots.List();
+        Check(listRows.StartsWith("Island 27\tKerbin\tH"), "list_landing_spots rows");
+        var emptySettings = new Dictionary<string, object>();
+        Check(new NativeSpots(emptySettings).List() == "", "empty spot list");
+        Console.WriteLine("P5-1 read-only ports: 2 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

@@ -95,5 +95,19 @@ namespace KSPChatBridge
                 if (point != null) yield return point;
             }
         }
+
+        /// <summary>list_landing_spots: name\tbody\tmode rows for every saved spot (read-only).</summary>
+        internal string List()
+        {
+            var rows = new System.Text.StringBuilder();
+            foreach (var pair in saved)
+            {
+                var row = pair.Value as Dictionary<string, object>;
+                if (row == null) continue;
+                rows.Append(pair.Key).Append('\t').Append(Text(row, "body", "Kerbin")).Append('\t')
+                    .Append(Text(row, "mode", "V")).Append('\n');
+            }
+            return rows.ToString();
+        }
     }
 }

@@ -603,11 +603,22 @@ namespace KSPChatBridge
                     note["rotor"] = new Dictionary<string, object> { { "collective", props.CollectiveValue }, { "yaw_torque_bias", rotorYawBias } };
                     craftNotes.Merge(vessel.vesselName, note); Save(); return "Local craft notes saved for " + vessel.vesselName + ".";
                 case "taxi/list":
+                case "list_taxi_points":
                     var points = new System.Text.StringBuilder();
                     var available = new List<TaxiMission.Point>(spots.Points(vessel.mainBody.bodyName));
                     if (vessel.mainBody.bodyName == "Kerbin") available.AddRange(TaxiMission.Builtin.Values);
                     foreach (var point in available) points.Append(point.Name).Append('\t').Append(point.Lat.ToString(CultureInfo.InvariantCulture)).Append('\t').Append(point.Lon.ToString(CultureInfo.InvariantCulture)).Append('\n');
                     return points.ToString();
+                case "list_landing_spots":
+                    string spotList = spots.List();
+                    return spotList.Length > 0 ? spotList : "No saved landing spots yet.";
+                case "set_ai_name":
+                    string newName = PlaystyleNotes.Collapse(Str(a, "name", ""));
+                    if (newName.Length == 0) return "Name can't be empty.";
+                    settingsData["ai_name"] = newName.Length > 24 ? newName.Substring(0, 24).TrimEnd(' ', '.', '!', '"', '\'') : newName;
+                    Save(); return "Got it - my name is now " + settingsData["ai_name"] + ".";
+                case "remember_preference":
+                    return PlaystyleNotes.Remember(Str(a, "note", ""));
                 case "save_landing_spot":
                     double spotLat = Num(a, "latitude", 999), spotLon = Num(a, "longitude", 999);
                     bool spotHere = spotLat == 999 || spotLon == 999;

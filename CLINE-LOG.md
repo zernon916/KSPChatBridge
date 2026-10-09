@@ -87,3 +87,25 @@ Ports of the bridge's crew-side behavior so in-mod chat has it without `:8765`. 
 **Still needs live check:** burst chat while a reply is generating (queued second message answers after, not refused); Clear cancels queued crew chatter.
 
 ---
+
+## P5-1 Part 5 — AicsMenu Queued()/Stub() stubs removed — DONE (tests; needs live check)
+
+- Deleted the dead `Stub()` helper + `Queued()` "is a stub for now" notice from `AicsMenu.cs` (verified zero call sites first).
+- Reworded "Best-face (side panels) is queued." → "not available yet."; removed the stale "W = working, P = partial, S = stub" legend (no tabs use the markers anymore).
+- Guarded by `test_tool_matrix.py::test_no_stub_strings_in_shipping_ui` — no "stub for now"/"is a stub"/"not wired yet" string may ship in any `KSPChatMod/*.cs` again.
+
+## P5-1 Part 6 — per-tool matrix for all 92 BY_NAME tools (replaces 5A prose) — DONE (tests; needs live check)
+
+**New:** `tests/test_tool_matrix.py` — the matrix IS the test:
+- `MATRIX`: all 92 `ksp_actions.BY_NAME` tools → `native` / `p5-2` / `p5-3` / `p5-4` / `drop` (drop reasons inline: `capture_plan` → P5-4 orbital helpers, `list_craft` → menu feature, `trim_panel_open`/`set_flight_plan` → in-mod UIs fill those directly, `captain_order`/`set_override`/`authorise_all` → speech parser / settings).
+- 4 checks: full BY_NAME coverage + plausible statuses; `native` rows must be in `NativeCommands.Ported`; `Ported` chat-tools must be reviewed in the matrix (HTTP routes like `taxi/list`/`flightplan/*` exempt); no stub strings in shipping UI.
+
+**Thin ports landed with it (P5-1 checklist: capture_plan, list_*, trim_panel_open, set_flight_plan — port or drop with explicit note):**
+- PORTED `list_taxi_points` (alias of `taxi/list`), `list_landing_spots` (`NativeSpots.List()` name/body/mode rows), `set_ai_name` (settings `ai_name`, 24-char clamp parity), `remember_preference` (`PlaystyleNotes.Remember`) — added to `NativeCommands.Ported` + `NativeFlightController.Command`.
+- DROPPED with explicit notes in the matrix: `capture_plan`, `list_craft`, `trim_panel_open`, `set_flight_plan`, `captain_order`, `set_override`, `authorise_all`.
+
+**Tests:** `tests/test_tool_matrix.py` 4 passed; C# "P5-1 read-only ports: 2 behavior checks passed" (spots list rows + empty list). Full results: **482 pytest passed** (478 prior + 4 matrix), C# suite green, Release build 0 errors.
+
+**Still needs live check:** `/ai` chat tool calls hitting the new list_landing_spots/set_ai_name/remember_preference paths with native_control busy flag active.
+
+---

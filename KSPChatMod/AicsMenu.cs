@@ -328,7 +328,7 @@ namespace KSPChatBridge
                 GUILayout.EndVertical();
             }
             GUILayout.EndHorizontal();
-            GUILayout.Label("W = working, P = partial, S = stub.  Right-click here or the tab to collapse; right-click-hold the tab and drag to move it; Alt+J.", small);
+            GUILayout.Label("Right-click here or the tab to collapse; right-click-hold the tab and drag to move it; Alt+J.", small);
         }
 
         void DrawPanelWindow(int i)
@@ -722,7 +722,7 @@ namespace KSPChatBridge
 
         void SunLock()
         {
-            GUILayout.Label("Space only: nose to the sun and hold (kRPC autopilot). Best-face (side panels) is queued.", small);
+            GUILayout.Label("Space only: nose to the sun and hold (kRPC autopilot). Best-face (side panels) not available yet.", small);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Sun Lock")) ChatWindow.ToolFromMenu("sun_lock", "{\"on\":true}");
             if (GUILayout.Button("Release")) ChatWindow.ToolFromMenu("sun_lock", "{\"on\":false}");
@@ -1287,16 +1287,6 @@ namespace KSPChatBridge
             GUILayout.Label(unit, small, GUILayout.Width(30));
             GUILayout.EndHorizontal();
         }
-
-        void Stub(string what, params string[] buttons)
-        {
-            GUILayout.Label(what, small);
-            GUILayout.BeginHorizontal();
-            foreach (string b in buttons) if (GUILayout.Button(b)) Queued(b);
-            GUILayout.EndHorizontal();
-        }
-
-        static void Queued(string what) { ChatWindow.Notice("AICS: '" + what + "' is a stub for now (queued in docs/AICS_MENU.md)."); }
 
         void LandingLine()
         {

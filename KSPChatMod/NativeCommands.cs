@@ -14,7 +14,8 @@ namespace KSPChatBridge
             "heli_control", "taxi_to", "taxi/list", "get_trim_state", "set_trim", "save_craft_notes",
             "save_landing_spot", "get_status", "autopilot_status", "set_gear", "set_brakes", "set_lights",
             "set_rcs", "set_sas", "auto_trim_now", "trim", "set_heading", "set_speed",
-            "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status"
+            "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status",
+            "list_landing_spots", "list_taxi_points", "set_ai_name", "remember_preference"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;
