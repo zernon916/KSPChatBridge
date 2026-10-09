@@ -7,6 +7,14 @@
 **New here? Start with the [wiki](https://github.com/zernon916/KSPChatBridge/wiki)**: installation, a five-minute quick start,
 every command, the autopilots, the crew, and troubleshooting.
 
+## Found a bug?
+
+Report it at **https://github.com/zernon916/KSPChatBridge/issues** and attach:
+
+- `KSP.log` (in the Kerbal Space Program folder)
+- the `GameData/KSPChatBridge/PluginData/logs` folder
+- which craft you were flying and what you did (the chat message / button, and what happened vs. what you expected)
+
 Chat with your Kerbal Space Program vessel. A small Python bridge turns chat messages into
 kRPC + MechJeb actions; an in-game IMGUI window (KSPChatMod) and the ChatGPT desktop app (MCP)
 both talk to the same tool set.
