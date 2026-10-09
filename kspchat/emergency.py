@@ -73,7 +73,7 @@ LINES = {
                  "MAYDAY! {what} went quiet! That's... that's bad!",
                  "{what} flameout! I did NOT sign up to fly a glider!"],
     "flameout_ok": ["{what} is back! Oh, thank the Kraken.", "{what} relit! Phew - nobody saw me panic, right?"],
-    "reverse": ["WHO TOUCHED THE REVERSERS?!", "Reverse thrust in FLIGHT?! Who did that?!",
+    "reverse": ["Why are we going BACKWARDS?!", "WHO TOUCHED THE REVERSERS?!", "Reverse thrust in FLIGHT?! Who did that?!",
                 "The engines are pushing BACKWARDS! Hands off the reversers!"],
     "reverse_ok": ["Forward thrust again. Nobody touch ANYTHING.", "Reversers stowed. My heart can't take this."],
     "parts": ["Something just fell off! {what} gone! Was that important?!", "MAYDAY! We lost {what}! That's NOT normal!",
@@ -439,10 +439,10 @@ class Detector:
         if spd_now is not None:
             self.spd_hist.append((t, float(spd_now)))
         old = [x for tt, x in self.spd_hist if t - tt >= 1.5]
-        decel = bool(old) and spd_now is not None and float(spd_now) < old[-1] - 1.0
-        rev = [i for i, e in enumerate(engines, 1) if e.get("active") and (e.get("rev_mode") or (
-            e.get("reversed") and float(e.get("thrust") or 0) > 0.1 * float(e.get("max_thrust") or 1e12) and decel))]
-        if flying and rev:
+        decel = bool(old) and spd_now is not None and float(spd_now) < old[-1] - 0.5
+        rev = [i for i, e in enumerate(engines, 1) if e.get("active") and (e.get("rev_mode") or e.get("rev_module") or (
+            e.get("reversed") and float(e.get("thrust") or 0) > 0.05 * float(e.get("max_thrust") or 1e12) and decel))]
+        if flying and rev and not _own_reversal():
             if "reverse" not in self.active:
                 what = ", ".join(f"Engine {i}" for i in rev) if multi else "the engine"
                 self._ev(out, "reverse", "reverse", True, what=what, short="REVERSE THRUST IN FLIGHT",
@@ -601,9 +601,10 @@ class Detector:
                 bad = degraded(self.ref_cfg, cfg)
                 if ch and in_flight:
                     axis = any(tag not in ("engine_off", "mode", "intake") for _, _, tag in ch)
+                    relight = ["relight_off"] if flying and any(tag == "engine_off" for _, _, tag in ch) else []
                     self._ev(out, "config", f"config:{t:.0f}", True, one_shot=True, changes=[c[1] for c in ch],
                              tag=ch[0][2], short="CONFIG: " + "; ".join(c[1] for c in ch)[:80],
-                             actions=(["safe", "probe"] if axis else ["level"]))
+                             actions=(["safe", "probe"] if axis else ["level"]) + relight)
                 if bad and "config_bad" not in self.active and in_flight:
                     self.active["config_bad"] = "config"
                 elif not bad and "config_bad" in self.active:
@@ -754,9 +755,12 @@ def _act(code, ev, v, s):
             pass
         return "throttle to idle - no power added while reversed"
     if code == "forward":
-        n = _forward(v, ev.get("engines") or [])
-        return f"switched {n} engine{'s' if n != 1 else ''} back to forward thrust" if n else \
-            "couldn't switch the reversers back - holding idle until thrust is forward again"
+        _forward_later(v, ev.get("engines") or [], s.get("who") or "Pilot")
+        return "pilot is flipping the reversers back to forward - idle until then"
+    if code == "relight_off":  # an engine shut down in flight: fumble 3-5 s, then back on (once per shutdown)
+        from . import engine_restart
+        note = engine_restart.maybe_restart(v, s.get("who") or "Pilot")
+        return "pilot is restarting the engine" if note else ""
     if code == "stall":
         if eng:
             return "autopilot: nose down, stall protection"
@@ -817,6 +821,38 @@ def _heli_act(code, ev):
         return ("autopilot: yaw on what's left (reaction wheels), landing" if eng
                 else "nothing engaged - hold the yaw and land!")
     return ""
+
+
+def _own_reversal():
+    """The autoland rollout reversed the engines itself (on the ground) - never an emergency."""
+    try:
+        from . import reversers
+        return bool(reversers.engaged())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+FWD_FUMBLE_S = (2.0, 4.0)
+FWD_DONE = ["Found it! Forward thrust again.", "There - reversers stowed. We're going FORWARD.",
+            "Got it! Thrust is pointing the right way again."]
+
+
+def _forward_later(v, idxs, who, timer=None):
+    """Like a kerbal: fumble 2-4 s for the reverser switch, then flip it back to forward and say so."""
+    def run():
+        n = _forward(v, idxs)
+        _post(f"{who}: {random.choice(FWD_DONE)}" if n else f"{who}: I can't find the reverser switch!")
+    t = (timer or threading.Timer)(random.uniform(*FWD_FUMBLE_S), run)
+    t.daemon = True
+    t.start()
+
+
+def _post(text):
+    try:
+        from . import science
+        science.post_event(text)
+    except Exception:  # noqa: BLE001
+        log.warning("%s", text)
 
 
 def _forward(v, idxs):
@@ -1175,6 +1211,12 @@ def _engine_sample(v):
                     if e.has_modes:
                         d["mode"] = str(e.mode)
                         d["rev_mode"] = d["reversed"] = "revers" in d["mode"].lower()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:  # reverser part module that only offers 'Forward Thrust' (or says reversed) = reversed now
+                    from . import reversers
+                    d["rev_module"] = reversers.module_reversed(e)
+                    d["reversed"] = d["reversed"] or d["rev_module"]
                 except Exception:  # noqa: BLE001
                     pass
                 if not d["reversed"]:

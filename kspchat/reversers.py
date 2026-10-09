@@ -60,6 +60,33 @@ def _module(e):
     return None
 
 
+_NO_MODULE = {}
+
+
+def module_reversed(e):
+    """True when the engine's reverser module shows it is reversed: it offers only a 'Forward Thrust' event (no
+    'Reverse Thrust'), or a reverser field reads deployed / reverse. Plain toggles (state unknown) -> False.
+    Parts without a reverser module are remembered (the emergency watcher samples every engine often)."""
+    key = getattr(e.part, "_object_id", None) or id(e.part)
+    if _NO_MODULE.get(key):
+        return False
+    r = _module(e)
+    if r is None:
+        _NO_MODULE[key] = True
+        return False
+    m, evs, _ = r
+    low = [x.lower() for x in evs]
+    if any("forward" in x for x in low) and not any("revers" in x and "forward" not in x and "toggle" not in x for x in low):
+        return True
+    try:
+        for k, val in dict(m.fields).items():
+            if "revers" in k.lower() and str(val).strip().lower() in ("deployed", "reverse", "reversed", "on", "true", "locked"):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def can_reverse(e):
     return bool(_rev_mode(e) and _fwd_mode(e)) or _module(e) is not None
 

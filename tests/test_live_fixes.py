@@ -105,5 +105,5 @@ def test_engine_shutdown_alert_unchanged():  # Luke shut it down himself: the ta
     base = {"vid": 1, "sit": "flying", "speed": 300.0, "throttle": 0.3, "crew": 1, "ctrl": True}
     d.tick(dict(base, t=0, cfg=cfg))
     evs = d.tick(dict(base, t=3, cfg={"engines": [("Whiplash", False, ""), ("Whiplash", True, "")], "surfaces": []}))
-    assert len(evs) == 1 and evs[0]["tag"] == "engine_off" and evs[0]["actions"] == ["level"]
+    assert len(evs) == 1 and evs[0]["tag"] == "engine_off" and evs[0]["actions"] == ["level", "relight_off"]
     assert emergency.compose(evs[0], "Sidry", []).startswith("Sidry: Who shut down an engine?!")
