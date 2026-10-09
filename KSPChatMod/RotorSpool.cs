@@ -44,15 +44,36 @@ namespace KSPChatBridge
 
     internal sealed class CollectiveController
     {
-        double integral = 4, output = 4;
+        double integral, output;
+        internal CollectiveController(double initial = 4) { integral = output = FlightPolicy.Clamp(initial, 0, 30); }
+        internal void Bias(double amount) { integral = FlightPolicy.Clamp(integral + amount, 2, 30); }
         internal double Step(double targetVs, double vs, double dt, bool ground)
         {
+            if (ground && targetVs < 0)
+            { integral = 0; output = Math.Max(0, output - 3 * dt); return output; }
             double error = targetVs - vs;
             integral += ground && targetVs > 0 && vs < .3 ? dt : .15 * error * dt;
             integral = FlightPolicy.Clamp(integral, 2, 30);
             double desired = FlightPolicy.Clamp(integral + .6 * error, 2, 30);
             output += FlightPolicy.Clamp(desired - output, -3 * dt, 3 * dt);
             return output;
+        }
+    }
+    internal sealed class RotorPark
+    {
+        readonly double started;
+        internal RotorPark(double now) { started = now; }
+        internal string Step(double now, bool grounded, System.Collections.Generic.IEnumerable<RotorSpool.Measurement> rotors)
+        {
+            if (!grounded) return "cancel";
+            if (now - started > 30) return "timeout";
+            int count = 0;
+            foreach (var rotor in rotors)
+            {
+                count++;
+                if (double.IsNaN(rotor.Rpm) || double.IsInfinity(rotor.Rpm) || rotor.Rpm >= 20 || rotor.Motor) return "wait";
+            }
+            return count > 0 ? "brake" : "wait";
         }
     }
 }
