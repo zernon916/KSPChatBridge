@@ -114,8 +114,10 @@ def rotor_status(v):
         except Exception:  # noqa: BLE001
             continue
         motor = next((str(val) for k, val in f.items() if k.lower().startswith("motor") and "motorized" not in k.lower()), "")
-        rpm = next((str(val) for k, val in f.items() if "current rpm" in k.lower()), "") or \
-            next((str(val) for k, val in f.items() if "rpm" in k.lower()), "")
+        live = _live_rotor(v, m)
+        rpm = "" if live.get("rpm") is None else f"{live['rpm']:g}"
+        if live.get("motor_on") is not None:
+            motor = "Engaged" if live["motor_on"] else "Disengaged"
         out.append((title, motor, rpm))
     return out
 
@@ -262,7 +264,7 @@ def find_field(fields, *needles, exclude=()):
 
 
 def num(val):
-    m = _NUM.search(str(val or ""))
+    m = _NUM.search(str(val) if val is not None else "")
     return float(m.group(0)) if m else None
 
 
@@ -626,17 +628,25 @@ def set_blades(v, pitch=None, deploy=None, flying=False, allow_reverse=False, gr
 
 
 def rotor_rpm(v):
-    """Actual rotor RPM (field 'Current RPM'), else the RPM limit, else RPM_MAX."""
-    for m in _rotor_mods(v)[:1]:
-        try:
-            f = fields(m)
-            for k in (find_field(f, "current", "rpm"), find_field(f, "rpm", "limit")):
-                x = num(f.get(k)) if k else None
-                if x is not None:
-                    return x
-        except Exception:  # noqa: BLE001
-            pass
-    return RPM_MAX
+    """Measured RPM only; unknown stays None so control cannot invent a speed."""
+    values = [c["rpm"] for c in rotor_checks(v) if c.get("rpm") is not None]
+    return min(values) if values else None
+
+
+def _live_rotor(v, m):
+    from . import telemetry
+    seen, row = telemetry.rotor(v, m.part)
+    if seen:
+        return row or {"rpm": None, "rpm_limit": None, "torque": None,
+                       "brake": None, "motor_on": None, "sample": None}
+    # Compatibility for old plugins: typed API, never the stale RPM field.
+    try:
+        api = m.part.robotic_rotor
+        return {"rpm": abs(float(api.current_rpm)), "rpm_limit": float(api.target_rpm),
+                "torque": float(api.torque_limit), "brake": float(api.brake_percentage),
+                "motor_on": bool(api.motor_engaged)}
+    except Exception:  # kRPC may be disconnected during scene changes
+        return {"rpm": None}
 
 
 def blade_radius(v):
@@ -730,6 +740,7 @@ def prop_status(v):
             out["rotors"].append({"title": m.part.title, "group": r["group"], "dir": r["dir"], "motor": mt,
                                   "motor_on": _motor_on(mt), "rpm": num(g("current", "rpm")),
                                   "rpm_limit": num(g("rpm", "limit")), "torque": num(g("torque", "limit"))})
+            out["rotors"][-1].update(_live_rotor(v, m))
         except Exception:  # noqa: BLE001
             pass
     pitch = {}
@@ -777,6 +788,7 @@ def rotor_checks(v):
                     "rpm": g("current", "rpm"), "rpm_limit": g("rpm", "limit"),
                     "has_brake": find_field(f, "brake", exclude=("auto",)) is not None,
                     "dir": spin_dir(f), "invert": invert_on(f)})
+        out[-1].update(_live_rotor(v, m))
     return out
 
 
@@ -1004,6 +1016,7 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
     last = {}
     prev_rpm = {}
     stable = {}
+    samples = {}
     while time.time() - t0 < wait_s:
         if stop_event is not None and stop_event.is_set():
             return False, "spool-up cancelled"
@@ -1024,6 +1037,13 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
             last[c["label"]] = (rpm, need, mot, br, tq)
             fields_ok = mot is not False and br <= 0.5 and tq >= 5.0
             i = c["i"]
+            if "sample" in c:
+                sample = c["sample"]
+                if sample is None or samples.get(i) == sample:
+                    ready.append(False)
+                    continue
+                samples[i] = sample
+            fields_ok = fields_ok and c.get("rpm") is not None
             prev = prev_rpm.get(i)
             climbing = prev is not None and rpm > prev + 0.5
             at_target = rpm >= need
@@ -1091,8 +1111,9 @@ class PropGovernor:
         did = None
         if now - self.t_pitch >= PITCH_EVERY_S and STATE["manual_pitch"] is None and not STATE["reverse"]:
             self.t_pitch = now
-            want = blade_pitch_for(spd, rotor_rpm(v), blade_radius(v))
-            if self.last_pitch is None or abs(want - self.last_pitch) >= 1.0:
+            rpm = rotor_rpm(v)
+            want = blade_pitch_for(spd, rpm, blade_radius(v)) if rpm is not None else None
+            if want is not None and (self.last_pitch is None or abs(want - self.last_pitch) >= 1.0):
                 self.last_pitch = want
                 did = set_blades(v, pitch=want, flying=flying)
         if flying and now - self.t_torque >= TORQUE_EVERY_S and not STATE["manual_torque"]:

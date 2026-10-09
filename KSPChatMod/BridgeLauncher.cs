@@ -26,6 +26,13 @@ namespace KSPChatBridge
         const string PlaceholderDir = @"C:\path\to\KSPChatBridge";
         static Process proc;
         static bool startedByUs;
+        static volatile bool quitting;
+        static readonly object Lifecycle = new object();
+        int starting;
+        float nextWatch;
+        float aliveSince;
+        readonly RestartPolicy restart = new RestartPolicy();
+        string launchDir, launchPython, launchExe;
         readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             { "autostart", "true" }, { "stop_on_quit", "true" },
@@ -37,9 +44,42 @@ namespace KSPChatBridge
             DontDestroyOnLoad(this);
             LoadCfg();
             if (!Bool("autostart")) { Debug.Log("[KSPChatBridge] bridge autostart off (bridge.cfg)"); return; }
-            string dir = cfg["bridge_dir"], py = cfg["python"];
-            string exe = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/Bridge/AICSBridge.exe");
-            ThreadPool.QueueUserWorkItem(_ => StartBridge(dir, py, exe));
+            launchDir = cfg["bridge_dir"]; launchPython = cfg["python"];
+            launchExe = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/Bridge/AICSBridge.exe");
+        }
+
+        void Update()
+        {
+            if (Time.realtimeSinceStartup < nextWatch || Volatile.Read(ref starting) != 0) return;
+            nextWatch = Time.realtimeSinceStartup + 2;
+            bool alive = false;
+            if (proc != null)
+            {
+                try
+                {
+                    alive = !proc.HasExited;
+                    if (alive)
+                    {
+                        if (aliveSince == 0) aliveSince = Time.realtimeSinceStartup;
+                        if (Time.realtimeSinceStartup - aliveSince >= 60) restart.Stable();
+                    }
+                    if (!alive)
+                    {
+                        aliveSince = 0;
+                        ChatWindow.Notice("[bridge] exited with code " + proc.ExitCode + "; retrying with backoff");
+                        proc.Dispose(); proc = null; startedByUs = false;
+                        restart.Failed(Time.realtimeSinceStartup);
+                    }
+                }
+                catch (Exception ex) { Debug.LogWarning("[bridge] process status: " + ex.Message); return; }
+            }
+            if (!restart.CanStart(Time.realtimeSinceStartup, Bool("autostart"), quitting, false, alive)) return;
+            if (Interlocked.CompareExchange(ref starting, 1, 0) != 0) return;
+            restart.Failed(Time.realtimeSinceStartup);
+            ThreadPool.QueueUserWorkItem(_ => {
+                try { if (!quitting) StartBridge(launchDir, launchPython, launchExe); }
+                finally { Interlocked.Exchange(ref starting, 0); }
+            });
         }
 
         static bool Healthy(int timeoutMs)
@@ -80,8 +120,12 @@ namespace KSPChatBridge
                     psi = new ProcessStartInfo(py, "run_bridge.py serve") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true };
                 }
                 psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-                proc = Process.Start(psi);
-                startedByUs = true;
+                lock (Lifecycle)
+                {
+                    if (quitting) return;
+                    proc = Process.Start(psi);
+                    startedByUs = true;
+                }
                 for (int i = 0; i < 40; i++)
                 {
                     Thread.Sleep(500);
@@ -105,6 +149,7 @@ namespace KSPChatBridge
 
         void OnApplicationQuit()
         {
+            lock (Lifecycle) quitting = true;
             if (!startedByUs || !Bool("stop_on_quit")) return;
             try
             {

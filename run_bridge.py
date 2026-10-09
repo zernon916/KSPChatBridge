@@ -33,6 +33,11 @@ def setup_logging(to_stderr=True):
     if to_stderr:
         handlers.append(logging.StreamHandler(sys.stderr))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", handlers=handlers)
+    def unhandled(kind, value, traceback):
+        logging.critical("unhandled bridge exception", exc_info=(kind, value, traceback))
+    sys.excepthook = unhandled
+    import threading
+    threading.excepthook = lambda args: unhandled(args.exc_type, args.exc_value, args.exc_traceback)
 
 
 def main():

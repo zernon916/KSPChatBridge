@@ -13,6 +13,13 @@
 param([string]$Version = "", [string]$Python = "", [switch]$SkipExe)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
+# Validate every recursive-cleanup target before any deletion.
+function Assert-BuildPath([string]$Path) {
+    $expected = [IO.Path]::GetFullPath((Join-Path $root 'dist')) + [IO.Path]::DirectorySeparatorChar
+    $resolved = [IO.Path]::GetFullPath($Path)
+    if (-not $resolved.StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe build path: $resolved" }
+    if ((Test-Path -LiteralPath $resolved) -and ((Get-Item -LiteralPath $resolved).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Build directory must not be a junction: $resolved" }
+}
 if (-not $Version) {
     $v = (Get-Content "$root\KSPChatMod\KSPChatBridge.version" -Raw | ConvertFrom-Json).VERSION
     $Version = "$($v.MAJOR).$($v.MINOR).$($v.PATCH)"
@@ -22,6 +29,7 @@ try { dotnet build -c Release -nologo -v q -p:SkipInstall=true -p:Version=$Versi
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 $pyi = Join-Path $root "dist\pyi"
+Assert-BuildPath $pyi
 if (-not $SkipExe) {
     if (-not $Python) {
         $venv = Join-Path $root "dist\.buildvenv"
@@ -40,6 +48,7 @@ if (-not $SkipExe) {
 }
 
 $stage = Join-Path $root "dist\stage"
+Assert-BuildPath $stage
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null

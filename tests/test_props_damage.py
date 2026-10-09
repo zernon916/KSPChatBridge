@@ -12,6 +12,8 @@ from kspchat import chat, emergency as em, ksp_actions, maxspeed, orders, plane,
 
 def prop_vessel(motor="Engaged", sit="landed", engines=()):
     rotor = NS(fields={"Motor": motor, "Current RPM": "460", "RPM Limit": "460"}, part=NS(title="EM-32 Rotor"))
+    from tests.rotor_fake import RotorApi
+    rotor.part.robotic_rotor = RotorApi(rotor.fields)
     blades = [NS(part=NS(title="Propeller Blade Type A")) for _ in range(4)]
     eng = [NS(propellant_names=p, part=NS(title="x")) for p in engines]
     return NS(name="Prop Plane", situation=f"VesselSituation.{sit}", mass=4000.0, available_thrust=0.0,

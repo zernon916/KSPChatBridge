@@ -88,6 +88,8 @@ class Part:
 class Mod:
     def __init__(self, part, fields):
         self.part, self._f, self.calls = part, dict(fields), []
+        from tests.rotor_fake import RotorApi
+        part.robotic_rotor = RotorApi(self._f)
         self.actions, self.events = [], []
 
     @property
@@ -409,7 +411,7 @@ def test_preflight_brake_torque_motor_lukes_fields(monkeypatch):
     side[1].set_field_bool = lambda k, val: (side[1].calls.append((k, val)), side[1]._f.__setitem__(k, "Engaged"))
     cs = {c["i"]: c for c in pr.rotor_checks(v)}
     assert cs[0]["brake"] == 100.0 and cs[0]["motor_on"] is True and cs[0]["has_brake"]   # 'Motor: Motorized' ignored
-    assert cs[1]["brake"] is None and not cs[1]["has_brake"]
+    assert cs[1]["brake"] == 0 and not cs[1]["has_brake"]  # API reports brake even if PAW field is absent
     line, probs = pr.preflight(v)
     assert ("Brake", 0.0) in main.calls and ("Torque Limit(%)", 100.0) in side[0].calls and ("Motor", True) in side[1].calls
     assert "center rotor (M-32S Rotor) Brake was 100 -> released (0)" in line

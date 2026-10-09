@@ -276,7 +276,10 @@ def sample(v, sc=None):
            "coll": STATUS.get("coll") if active() else None}
     for i in info["lift"] + info["tail"]:
         try:
-            f = pr.fields(lay["rotors"][i]["mod"])
+            live = pr._live_rotor(v, lay["rotors"][i]["mod"])
+            f = {"Current RPM": live.get("rpm"), "RPM Limit": live.get("rpm_limit"),
+                 "Motor": None if live.get("motor_on") is None else ("Engaged" if live["motor_on"] else "Disengaged"),
+                 "Brake": live.get("brake"), "Torque Limit": live.get("torque")}
         except Exception:  # noqa: BLE001
             continue
         k = pr.find_field(f, "current", "rpm")

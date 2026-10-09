@@ -76,7 +76,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def log_message(self, fmt, *args):
-        if not any(p in (fmt % args) for p in ("/events", "/landing", "/status", "/systems")):  # polled every few seconds
+        if not any(p in (fmt % args) for p in ("/events", "/landing", "/status", "/systems", "/telemetry")):  # polled every few seconds
             log.info("http %s", fmt % args)
 
     def _body(self):
@@ -162,6 +162,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         b = self._body()
+        if self.path in ("/telemetry/rotors", "/telemetry"):
+            from . import telemetry
+            try:
+                if "application/json" not in (self.headers.get("Content-Type") or ""):
+                    return self._send(415, {"error": "JSON required"})
+                telemetry.accept(b)
+                return self._send(200, {"ok": True})
+            except ValueError as ex:
+                return self._send(400, {"error": str(ex)})
+        if not isinstance(b, dict):
+            return self._send(400, {"error": "JSON object required"})
         sid = str(b.get("session") or "default")
         if self.path.startswith("/shutdown"):
             self._send(200, {"ok": True})

@@ -23,6 +23,8 @@ class Part:
 class Mod:
     def __init__(self, part, fields, actions=(), events=()):
         self.part, self._f, self.actions, self.events = part, dict(fields), list(actions), list(events)
+        from tests.rotor_fake import RotorApi
+        part.robotic_rotor = RotorApi(self._f)
         self._object_id = part._object_id + 1000
         self.calls = []
 
@@ -229,5 +231,5 @@ def test_props_dashboard_per_group():
     v, *_ = twin()
     st = pr.prop_status(v)
     assert set(st["groups"]) == {"left", "right"} and st["groups"]["left"]["pitch"] == 12.0
-    g = {"rpm": 440.0, "rpm_limit": 460.0, "motor_on": True, "brake": None, "torque": 100.0}
+    g = {"rpm": 440.0, "rpm_limit": 460.0, "motor_on": True, "brake": 0.0, "torque": 100.0}
     assert pr.group_sample(v) == {"left": g, "right": g}

@@ -316,6 +316,8 @@ namespace KSPChatBridge
         {
             float w = sysRect.width - 16;
             DrawMaster(w, true);
+            foreach (var rotor in RotorTelemetry.Rows)
+                GUILayout.Label(rotor.Title + ": " + (float.IsNaN(rotor.Rpm) ? "unknown" : rotor.Rpm.ToString("F0")) + " RPM", valStyle);
             if (!systemsOk) GUILayout.Label("Bridge not responding on 127.0.0.1:8765 (run_bridge.py serve).", valStyle, GUILayout.Width(w));
             sysScroll = GUILayout.BeginScrollView(sysScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
             foreach (string[] r in sysRows)
