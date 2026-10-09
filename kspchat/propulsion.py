@@ -925,6 +925,58 @@ def preflight(v, rotors=None, torque=TORQUE_MAX):
     return line, probs
 
 
+SPOOL_STEPS = (20.0, 40.0, 60.0, 80.0, 100.0)  # gradual Torque Limit(%) so BG rotors actually spin up
+SPOOL_STEP_S = 1.0
+SPOOL_WAIT_S = 45.0
+SPOOL_FRAC = 0.9  # every rotor must reach this fraction of its RPM Limit before collective
+
+
+def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT_S, stop_event=None, sleep=None):
+    """Pre-takeoff spool for EVERY selected rotor (code path, not the model): Brake 0, Motor Engaged, RPM Limit set,
+    Torque Limit stepped up to 100%, then wait until each rotor is at >= frac of its RPM Limit.
+    -> (ok, report). Field names are discovered via find_field on each part module (never hard-coded GUI strings)."""
+    sleep = sleep or time.sleep
+    idxs = set(rotors) if rotors is not None else None
+    pre, probs = preflight(v, rotors=idxs)
+    rpm_t = float(rpm_target if rpm_target is not None else RPM_MAX)
+    set_brake(v, 0.0, rotors=idxs)
+    set_rotor(v, rpm=rpm_t, motor=True, rotors=idxs, flying=False)
+    set_rotor(v, torque=0.0, rotors=idxs, flying=False)  # start from idle torque, then ramp
+    for tq in SPOOL_STEPS:
+        if stop_event is not None and stop_event.is_set():
+            return False, "spool-up cancelled"
+        set_rotor(v, torque=tq, rotors=idxs, flying=False)
+        sleep(SPOOL_STEP_S)
+    t0 = time.time()
+    last = {}
+    while time.time() - t0 < wait_s:
+        if stop_event is not None and stop_event.is_set():
+            return False, "spool-up cancelled"
+        # keep motor engaged / brake off every poll (saboteurs / sticky fields)
+        set_brake(v, 0.0, rotors=idxs)
+        set_rotor(v, rpm=rpm_t, torque=TORQUE_MAX, motor=True, rotors=idxs, flying=False)
+        checks = [c for c in rotor_checks(v) if idxs is None or c["i"] in idxs]
+        if not checks:
+            return False, "spool-up: no rotors found"
+        ready = []
+        for c in checks:
+            lim = float(c["rpm_limit"] or rpm_t)
+            need = frac * lim
+            rpm = float(c["rpm"] or 0.0)
+            last[c["label"]] = (rpm, need, c.get("motor_on"), c.get("brake"), c.get("torque"))
+            ready.append(rpm >= need and c.get("motor_on") is not False and not (c.get("brake") or 0) > 0)
+        if all(ready):
+            detail = ", ".join(f"{lab} {rpm:.0f}/{need:.0f}" for lab, (rpm, need, *_) in last.items())
+            _log.info("props: spool-up OK in %.1f s (%s)", time.time() - t0, detail)
+            return True, f"spool-up OK ({len(checks)} rotor{'s' if len(checks) != 1 else ''} >= {100 * frac:.0f}% RPM): {detail}"
+        sleep(0.5)
+    detail = "; ".join(
+        f"{lab}: {rpm:.0f} RPM (need {need:.0f}), Motor {'ON' if mot else 'OFF'}, Brake {br}, Torque {tq}"
+        for lab, (rpm, need, mot, br, tq) in last.items())
+    _log.warning("props: spool-up FAILED after %.0f s - %s", wait_s, detail)
+    return False, f"spool-up failed after {wait_s:.0f} s - {detail}"
+
+
 def set_brake(v, value, rotors=None):
     """Rotor 'Brake' (0 = released) on the given rotor indices (all if None). -> count set."""
     n = 0

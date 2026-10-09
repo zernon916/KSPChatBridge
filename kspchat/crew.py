@@ -167,7 +167,7 @@ FACTS = {
     "blackout": "the pilot just blacked out from the G-force", "reverse": "the engines went into reverse thrust in flight",
     "config": "someone changed the controls mid-flight ({what})", "upside_down": "the craft is upside down in flight",
     "upside_down_ground": "the craft landed upside down", "prop_out": "the {what} stopped turning",
-    "heli_rpm": "the main rotor is losing RPM ({what})", "heli_tail": "the helicopter is spinning out of control",
+    "heli_rpm": "{what} is losing RPM", "heli_tail": "the helicopter is spinning out of control",
     "heli_vrs": "the helicopter is sinking in its own downwash", "rotor_brake": "someone put the rotor brake on in flight ({what})",
     "rotor_torque": "the rotor torque dropped to zero ({what})",
 }

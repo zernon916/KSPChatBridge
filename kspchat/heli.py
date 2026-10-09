@@ -11,8 +11,9 @@ Control (one thread, kRPC, DT s):
     Motor engaged. The vertical-speed target follows the AGL (radar altitude) target, or the landing schedule.
   * compound: forward speed = side-prop collective (blade pitch from a PI on forward speed, over the inflow angle),
     yaw = differential side-prop pitch (left more = nose right), pitch attitude kept ~level; lateral = roll tilt.
-    Others: translation = attitude tilt (pitch / roll, capped TILT_MAX), yaw = tail rotor pitch, coaxial differential
-    torque, or reaction wheels via the kRPC AutoPilot heading.
+    Others: translation = attitude tilt (pitch / roll, capped TILT_MAX), yaw = tail rotor pitch, coaxial / multirotor
+    differential torque (counter-rotating pairs), or reaction wheels via the kRPC AutoPilot heading.
+    Multirotor (>=3 vertical lift rotors): every motor is spool_up'd before collective; land disengages motors.
   * the kRPC AutoPilot (surface frame) holds pitch / heading / roll targets.
 Emergencies come from emergency.py (DET.active): main rotor RPM loss (autorotation; impossible when the rotor's 'On
 Power Loss' is 'Locked' -> glide on the side props and wings / controlled descent), spin / tail loss, vortex ring
@@ -47,8 +48,9 @@ TAIL_YAW_DEG, COAX_YAW_TQ = 8.0, 10.0
 GLIDE_SPD, GLIDE_VS, GLIDE_PITCH = 30.0, -3.0, 3.0
 FLARE_AGL, FLARE_PITCH, CUSHION_AGL = 12.0, 10.0, 6.0
 GOTO_ARRIVE = 30.0
-SPINUP_S, SPINUP_RPM = 12.0, 60.0   # on the ground: the main rotor must reach this before the collective comes up
+SPINUP_S, SPINUP_RPM = 12.0, 60.0   # legacy absolute floor; spool_up waits for SPOOL_FRAC of each rotor's RPM Limit
 PARK_RPM, PARK_WAIT_S = 20.0, 30.0  # optional rotor brake after landing (setting 'rotor_brake_park', default off)
+MULTI_MIN = 3                       # >= this many vertical lift rotors = multirotor / quadcopter
 DT = 0.2
 NOSE_FOLLOW = 15.0          # m/s: above this the nose follows the track (unless 'face N' pinned it)
 SIDESTEP_M, BACKUP_M = 5.0, 10.0
@@ -109,17 +111,20 @@ def classify(rotors, wings):
             (", counter-rotating" if counter else "")
     else:
         kind = "single rotor" + (" + tail rotor" if tail else " (no tail rotor)")
+    multi = (not compound) and len(lift) >= MULTI_MIN
     if compound:
         yaw = "side props (differential pitch)"
     elif tail:
         yaw = "tail rotor"
+    elif multi and counter:
+        yaw = "differential torque (counter-rotating pairs)"
     elif len(lift) >= 2 and coax and counter:
         yaw = "coaxial differential torque"
     else:
         yaw = "reaction wheels / SAS"
     return {"heli": heli, "lift": lift, "tail": tail, "left": left, "right": right, "compound": compound,
-            "coaxial": coax, "counter": counter, "locked": locked, "kind": kind, "yaw": yaw, "wings": bool(wings),
-            "mains": mains, "bare": bare}
+            "coaxial": coax, "counter": counter, "locked": locked, "multirotor": multi, "kind": kind, "yaw": yaw,
+            "wings": bool(wings), "mains": mains, "bare": bare}
 
 
 def roles_text(info, rots):
@@ -130,14 +135,71 @@ def roles_text(info, rots):
         return (d.get("title") or f"rotor {i + 1}") + (f" ({', '.join(bits)})" if bits else "")
     mains = info.get("mains") or [[i] for i in info["lift"]]
     parts = []
-    for k, c in enumerate(mains):
-        label = "main rotor" if len(mains) == 1 else f"lift rotor {k + 1}"
-        parts.append(f"{label} = {name(c[0])}" if len(c) == 1 else
-                     f"{label} = coaxial stack of {len(c)} (" + " + ".join(name(i) for i in c) + ", driven together)")
-    parts += [f"left prop = {name(i)}" for i in info["left"]] + [f"right prop = {name(i)}" for i in info["right"]]
-    parts += [f"tail rotor = {name(i)}" for i in info["tail"]]
+    if info.get("multirotor"):
+        for k, c in enumerate(mains):
+            side = "L" if (rots[c[0]].get("lat") or 0.0) < 0 else ("R" if (rots[c[0]].get("lat") or 0.0) > 0 else "C")
+            parts.append(f"{side}{k + 1} = {name(c[0])}" if len(c) == 1 else
+                         f"{side}{k + 1} = stack (" + " + ".join(name(i) for i in c) + ")")
+    else:
+        for k, c in enumerate(mains):
+            label = "main rotor" if len(mains) == 1 else f"lift rotor {k + 1}"
+            parts.append(f"{label} = {name(c[0])}" if len(c) == 1 else
+                         f"{label} = coaxial stack of {len(c)} (" + " + ".join(name(i) for i in c) + ", driven together)")
+        parts += [f"left prop = {name(i)}" for i in info["left"]] + [f"right prop = {name(i)}" for i in info["right"]]
+        parts += [f"tail rotor = {name(i)}" for i in info["tail"]]
     parts += [f"no blades (ignored) = {name(i)}" for i in info.get("bare") or ()]
     return "; ".join(parts) or "no rotors"
+
+
+def motor_label(info, i, title, group="center"):
+    """Emergency / dashboard name for one rotor (L1 (title), ... on multirotors)."""
+    if not info.get("multirotor") or i not in info.get("lift", ()):
+        return f"{group} rotor ({title})"
+    mains = info.get("mains") or [[j] for j in info["lift"]]
+    k = next(n for n, c in enumerate(mains) if i in c)
+    side = {"left": "L", "right": "R", "center": "C"}.get(group or "center", "C")
+    return f"{side}{k + 1} ({title})"
+
+
+def _spin_axis(part, srf, rf, sc):
+    """(up_cos_signed, ax_in_vessel_frame): the part-local axis most aligned with world-up.
+    BG rotor hubs don't always face along their spin axis, so we try local ±X/±Y/±Z via transform_direction."""
+    best_abs, best_up, best_ax = -1.0, 0.0, (0.0, 0.0, -1.0)
+    try:
+        pref = part.reference_frame
+    except Exception:  # noqa: BLE001
+        pref = None
+    locals_ = ((0.0, 0.0, -1.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0),
+               (1.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
+    if sc is not None and pref is not None:
+        for loc in locals_:
+            try:
+                w = sc.transform_direction(loc, pref, srf)
+                a = sc.transform_direction(loc, pref, rf)
+                up = float(w[0])
+                if abs(up) > best_abs:
+                    best_abs, best_up, best_ax = abs(up), up, tuple(float(x) for x in a)
+            except Exception:  # noqa: BLE001
+                pass
+    if best_abs < 0.0:
+        try:
+            d_srf, d_rf = part.direction(srf), part.direction(rf)
+            return float(d_srf[0]), tuple(float(x) for x in d_rf)
+        except Exception:  # noqa: BLE001
+            return 0.0, (0.0, 0.0, -1.0)
+    return best_up, best_ax
+
+
+def _space_center(v=None):
+    """Best-effort SpaceCenter for transform_direction (None offline / no conn)."""
+    try:
+        from . import ksp_actions
+        c = ksp_actions.conn()
+        if c is not None:
+            return c.space_center
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def scan(v):
@@ -152,14 +214,14 @@ def scan(v):
     try:
         lay = pr.layout(v)
         srf, rf = v.surface_reference_frame, v.reference_frame
+        sc = _space_center(v)
         for r in lay["rotors"]:
             m = r["mod"]
             d = {"up": 0.0, "ax": (0.0, 0.0, 0.0), "h": (0.0, 0.0), "lat": (r["pos"] or (0.0,))[0], "dir": r["dir"],
                  "power_loss": "", "title": "", "blades": r.get("blades")}
             try:
                 d["title"] = m.part.title
-                d["up"] = float(m.part.direction(srf)[0])
-                d["ax"] = tuple(float(x) for x in m.part.direction(rf))
+                d["up"], d["ax"] = _spin_axis(m.part, srf, rf, sc)
                 p = m.part.position(srf)
                 d["h"] = (float(p[1]), float(p[2]))
                 f = pr.fields(m)
@@ -202,7 +264,8 @@ def sample(v, sc=None):
     info = scan(v)
     lay = pr.layout(v)
     out = {"rpm": None, "rpm_limit": None, "motor_on": None, "locked": info["locked"], "compound": info["compound"],
-           "kind": info["kind"], "tail_rpm": None, "tail_n": len(info["tail"]), "agl": None, "hdg": None,
+           "multirotor": info["multirotor"], "lift": info["lift"], "mains": info["mains"], "kind": info["kind"],
+           "tail_rpm": None, "tail_n": len(info["tail"]), "agl": None, "hdg": None,
            "coll": STATUS.get("coll") if active() else None}
     for i in info["lift"] + info["tail"]:
         try:
@@ -573,13 +636,11 @@ def _fly(conn):
     if probs:
         _post(f"Heli {pre}")
     pr.remember_sense(v)  # baseline spin direction / invert before we lift
-    log.info("heli: lift %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=lift))
-    # blades out at zero collective until the main rotor is actually spinning (altitude = collective, not throttle)
-    log.info("heli: lift %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=lift))
+    # blades out at zero collective until EVERY lift rotor is spinning (altitude = collective, not throttle)
+    log.info("heli: lift blades %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=lift))
     others = side_l | side_r | tail
     if others:
-        log.info("heli: side/tail %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=others))
-        log.info("heli: side/tail %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=others))
+        log.info("heli: side/tail blades %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=others))
     tail_base = None
     if tail:
         try:
@@ -598,20 +659,21 @@ def _fly(conn):
         ap.reference_frame = srf
         krpcx.autopilot(ap, True)  # kRPC 0.6: no engage() - the `engaged` property
     sit = str(v.situation).split(".")[-1]
-    if sit in ("landed", "pre_launch", "splashed"):  # verify the main rotor actually spins up before lifting
-        t0, rpm = time.time(), 0.0
-        while time.time() - t0 < SPINUP_S and not _stop.is_set():
-            rpm = min((c["rpm"] or 0.0) for c in pr.rotor_checks(v) if c["i"] in lift)
-            if rpm >= SPINUP_RPM:
-                break
-            time.sleep(0.5)
-        log.info("heli: spin-up check: main rotor %.0f RPM after %.1f s", rpm, time.time() - t0)
-        if rpm < SPINUP_RPM:
-            bad = "; ".join(f"{c['label']}: Brake {c['brake']}, Torque Limit {c['torque']}, Motor "
-                            f"{'Engaged' if c['motor_on'] else 'NOT engaged' if c['motor_on'] is False else '?'}"
-                            for c in pr.rotor_checks(v) if c["i"] in lift)
-            return (f"Heli takeoff aborted: the main rotor didn't spin up ({rpm:.0f} RPM after {SPINUP_S:.0f} s). "
-                    f"Check it: {bad}.")
+    if sit in ("landed", "pre_launch", "splashed"):
+        # gradual torque ramp on EVERY lift rotor; wait until each is >= SPOOL_FRAC of its RPM Limit
+        ok, report = pr.spool_up(v, rotors=lift, stop_event=_stop)
+        log.info("heli: spool-up lift: %s", report)
+        if not ok:
+            return f"Heli takeoff aborted: {report}"
+        if others:
+            ok2, report2 = pr.spool_up(v, rotors=others, stop_event=_stop)
+            log.info("heli: spool-up side/tail: %s", report2)
+            if not ok2:
+                return f"Heli takeoff aborted (side/tail): {report2}"
+    else:
+        log.info("heli: lift %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=lift))
+        if others:
+            log.info("heli: side/tail %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=others))
     pi = VsPI(0.0 if sit in ("landed", "pre_launch", "splashed") else COLL_START)
     yaw, ysign, side = YawCtl(), YawSign(), SidePI()
     radius = pr.blade_radius(v)
@@ -660,7 +722,11 @@ def _fly(conn):
                 _write(v, cache, "coll", pi.out, lambda x: pr.set_blades(v, pitch=x, rotors=lift), 0.25)
                 if now - landed_t > 3.0 and pi.out <= 0.0:
                     park = _park(v, lift)
-                    return park + f"Helicopter landed (touchdown {STATUS.get('vs_td', vs):+.1f} m/s); collective down, rotors still turning."
+                    td = STATUS.get("vs_td", vs)
+                    if info.get("multirotor"):
+                        pr.set_rotor(v, torque=0.0, motor=False, rotors=lift)
+                        return park + (f"Multirotor landed (touchdown {td:+.1f} m/s); collective down, motors disengaged.")
+                    return park + (f"Helicopter landed (touchdown {td:+.1f} m/s); collective down, rotors still turning.")
                 continue
             landed_t = None
             if p["mode"] == "land" and agl < 1.5:
@@ -690,7 +756,8 @@ def _fly(conn):
             elif tail:
                 tp = tail_base + TAIL_YAW_DEG * ysign.sign * u
                 _write(v, cache, "tail", tp, lambda x: pr.set_blades(v, pitch=x, allow_reverse=True, rotors=tail), 0.5)
-            elif info["coaxial"] and info["counter"] and len(lift) >= 2:
+            elif info["counter"] and len(lift) >= 2 and (info.get("multirotor") or info["coaxial"]):
+                # counter-rotating pairs: more torque on one spin sense yaws the craft
                 lay = pr.layout(v)["rotors"]
                 for i in lift:
                     dq = COAX_YAW_TQ * ysign.sign * u * (lay[i]["dir"] or 1)

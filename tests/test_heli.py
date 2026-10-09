@@ -22,6 +22,7 @@ def test_classify_layouts():
     c = heli.classify(luke(), wings=True)
     assert c["heli"] and c["compound"] and c["locked"] and c["lift"] == [0] and c["left"] == [1] and c["right"] == [2]
     assert c["yaw"] == "side props (differential pitch)" and c["kind"] == "compound (main rotor + side props)"
+    assert not c.get("multirotor")
     st = heli.classify([rot(0.99, (0, 0, -1), 0.0), rot(0.05, (1, 0, 0), 0.0)], wings=False)
     assert st["heli"] and st["tail"] == [1] and st["yaw"] == "tail rotor" and st["kind"] == "single rotor + tail rotor"
     cx = heli.classify([rot(1.0, (0, 0, -1), 0.0, h=(0, 0), d=1), rot(1.0, (0, 0, -1), 0.0, h=(0.1, 0), d=-1)], False)
@@ -35,6 +36,24 @@ def test_classify_layouts():
     rots = [dict(r, title=t) for r, t in zip(luke(), ("M-32S Rotor", "EM-16 L", "EM-16 R"))]
     assert heli.roles_text(c, rots) == ("main rotor = M-32S Rotor (Clockwise, Locked); left prop = EM-16 L (Clockwise); "
                                         "right prop = EM-16 R (Counterclockwise)")
+
+
+def test_classify_multirotor_quad_counter_yaw():
+    """Four vertical lift rotors, alternating spin = multirotor with differential-torque yaw."""
+    quad = [
+        rot(1.0, (0, 0, -1), -1.5, h=(1.5, 1.5), d=1),
+        rot(1.0, (0, 0, -1), 1.5, h=(1.5, -1.5), d=-1),
+        rot(1.0, (0, 0, -1), -1.5, h=(-1.5, 1.5), d=-1),
+        rot(1.0, (0, 0, -1), 1.5, h=(-1.5, -1.5), d=1),
+    ]
+    info = heli.classify(quad, wings=False)
+    assert info["heli"] and info["multirotor"] and info["counter"] and not info["compound"]
+    assert info["kind"] == "multirotor (4), counter-rotating"
+    assert info["yaw"] == "differential torque (counter-rotating pairs)"
+    assert info["lift"] == [0, 1, 2, 3]
+    named = [dict(r, title=f"EM-{i}") for i, r in enumerate(quad)]
+    roles = heli.roles_text(info, named)
+    assert "L1 =" in roles and "R2 =" in roles and "main rotor" not in roles
 
 
 class Part:
@@ -223,6 +242,26 @@ def H(**kw):
     return h
 
 
+def test_motor_label_multirotor():
+    lift = [0, 1, 2, 3]
+    info = {"multirotor": True, "lift": lift, "mains": [[i] for i in lift]}
+    assert heli.motor_label(info, 0, "EM-16", "left") == "L1 (EM-16)"
+    assert heli.motor_label(info, 2, "EM-16", "center") == "C3 (EM-16)"
+    assert heli.motor_label({"multirotor": False, "lift": [0]}, 0, "M-32S", "center") == "center rotor (M-32S)"
+
+
+def test_detector_heli_rpm_multirotor_labels(monkeypatch):
+    monkeypatch.setattr(em, "_engaged", lambda: False)
+    d = em.Detector()
+    h = H(multirotor=True, kind="multirotor (4)", compound=False, locked=False)
+    low = H(multirotor=True, kind="multirotor (4)", compound=False, locked=False, rpm=50.0, brake=100.0)
+    for t in (0, 1, 2):
+        d.tick(S(t, h if t < 2 else low))
+    evs = d.tick(S(4, low))
+    assert evs[0]["what"] == "lift rotors (Brake 100)" and evs[0]["short"].startswith("LIFT ROTORS RPM LOW")
+    em.handle(evs, None, S(4, h, who="Sidry"), post=lambda x: None)
+
+
 def test_detector_heli_rpm_locked_glide_and_chat(monkeypatch):
     monkeypatch.setattr(em, "_engaged", lambda: False)
     d = em.Detector()
@@ -360,6 +399,29 @@ def test_preflight_brake_torque_motor_lukes_fields(monkeypatch):
     line, probs = pr.preflight(v)
     assert probs == [] and line == "Pre-flight: 3 rotors Brake 0, torque set, Motor Engaged - OK"
     assert pr.set_brake(v, 100.0, rotors={0}) == 1 and main._f["Brake"] == "100"
+
+
+def test_rotor_sense_fumble_before_fix(monkeypatch):
+    made, timers = [], []
+    monkeypatch.setattr(pr, "fix_rotor_sense", lambda v, bad: made.append(bad) or "fixed")
+
+    class T:
+        def __init__(self, d, fn):
+            self.d, self.fn, self.daemon = d, fn, False
+            timers.append(self)
+
+        def start(self):
+            pass
+
+    em._rotor_sense_later("V", [{"i": 0, "kind": "dir"}], "Sidry", timer=T)
+    assert made == [] and 2.0 <= timers[0].d <= 4.0
+    timers[0].fn()
+    assert made == [[{"i": 0, "kind": "dir"}]]
+    calls = []
+    monkeypatch.setattr(em, "_rotor_sense_later", lambda v, bad, who: calls.append(bad))
+    ev = {"kind": "rotor_sense", "bad": [{"i": 0, "kind": "dir"}], "actions": ["rotor_sense:0"]}
+    assert "fumbling" in em._act("rotor_sense:0", ev, "V", {"sit": "flying", "who": "Sidry"})
+    assert calls
 
 
 def test_rotor_brake_in_flight_is_tamper(monkeypatch):

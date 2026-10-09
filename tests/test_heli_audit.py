@@ -53,6 +53,53 @@ def test_preflight_then_zero_collective_before_spinup(monkeypatch):
     pr.set_blades(v, pitch=0.0, deploy=True, rotors={0})
     assert ("Deploy Angle", 0.0) in blades[0].calls
     assert heli.SPINUP_RPM > 0 and heli.SPINUP_S > 0
+    assert "spool_up" in (ROOT / "kspchat" / "heli.py").read_text(encoding="utf-8")
+
+
+def test_spool_up_ramps_every_rotor(monkeypatch):
+    """Ground spool: torque steps 20→100 on every selected rotor; waits for >=90% RPM Limit."""
+    reset_caches()
+    monkeypatch.setattr(ksp_actions, "_has_wings", lambda v: True)
+    v, main, side, blades = luke_vessel()
+    main._f["Current RPM"] = "0"
+    for s in side:
+        s._f["Current RPM"] = "0"
+    sleeps = []
+
+    def fake_sleep(dt):
+        sleeps.append(dt)
+        # after the torque ramp, pretend every rotor reached RPM Limit
+        if len(sleeps) >= len(pr.SPOOL_STEPS):
+            main._f["Current RPM"] = "460"
+            for s in side:
+                s._f["Current RPM"] = "460"
+
+    ok, report = pr.spool_up(v, rotors={0, 1, 2}, sleep=fake_sleep)
+    assert ok and "spool-up OK" in report and "3 rotor" in report
+    tq_calls = [c[1] for c in main.calls if c[0] == "Torque Limit(%)"]
+    assert tq_calls[:6] == [0.0, *pr.SPOOL_STEPS]  # idle torque, then 20→100 ramp
+    assert all(any(c[0] == "Torque Limit(%)" and c[1] == 100.0 for c in s.calls) for s in side)
+
+
+def test_spin_axis_picks_local_axis_closest_to_world_up():
+    """EM-style hubs whose part.direction is sideways still count as lift if a local axis points up."""
+    class P:
+        reference_frame = "part"
+
+        def direction(self, rf):
+            return (0.0, 1.0, 0.0) if rf == "srf" else (0.0, 1.0, 0.0)  # sideways by default
+
+    class SC:
+        def transform_direction(self, loc, src, dst):
+            # local +Z maps to world up in surface frame
+            if loc == (0.0, 0.0, -1.0) and dst == "srf":
+                return (0.95, 0.0, 0.1)
+            if loc == (0.0, 0.0, -1.0) and dst == "rf":
+                return (0.0, 0.0, -1.0)
+            return (0.1, 0.9, 0.0)
+
+    up, ax = heli._spin_axis(P(), "srf", "rf", SC())
+    assert up >= heli.LIFT_UP and abs(ax[2] + 1.0) < 1e-9
 
 
 def test_forward_speed_is_nose_pitch_not_throttle():
@@ -115,14 +162,18 @@ def test_wrong_way_rotor_detected_and_fixed(monkeypatch):
     assert evs and evs[0]["kind"] == "rotor_sense" and "rotor_sense:0" in evs[0]["actions"][0]
 
     monkeypatch.setattr(em, "_engaged", lambda: True)
+    made = []
+    real_fix = pr.fix_rotor_sense
+    monkeypatch.setattr(pr, "fix_rotor_sense", lambda v, b: made.append(b) or "stopped, corrected (1), spinning back up")
     lines = em.handle(evs, v, S(1, H(), who="Sidry"), post=lambda x: None)
     assert "WRONG way" in lines[0] or "reversed" in lines[0].lower() or "spinning" in lines[0].lower()
+    assert made == [] and "fumbling" in lines[0]
 
     # direct fix restores Clockwise (stop -> correct -> spin up)
     pr.STATE["layout"].clear()
     main._f["Rotation Direction"] = "Counterclockwise"
     main.calls.clear()
-    report = pr.fix_rotor_sense(v, bad)
+    report = real_fix(v, bad)
     assert "spinning back up" in report
     assert main._f["Rotation Direction"] == "Clockwise"
     assert any(c[0] in ("Rotation Direction", "Brake", "Torque Limit(%)") for c in main.calls)

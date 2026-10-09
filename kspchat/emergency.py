@@ -120,9 +120,9 @@ LINES = {
                            "Uh... the ground is on the wrong side. Is that a landing? That counts as a landing.",
                            "Everything's upside down! Can someone come flip us? Asking for a friend."],
     "upside_down_ground_ok": ["Right way up again. Let's pretend that never happened."],
-    "heli_rpm": ["MAYDAY! Rotor RPM is dropping! We're coming down!", "MAYDAY MAYDAY! The main rotor's dying!",
+    "heli_rpm": ["MAYDAY! Rotor RPM is dropping! We're coming down!", "MAYDAY MAYDAY! {what} RPM is dying!",
                  "The big fan is slowing down! That's the one that keeps us UP!"],
-    "heli_rpm_ok": ["Main rotor is back up to speed. Breathing again.", "Rotor RPM good. I'm never complaining about noise again."],
+    "heli_rpm_ok": ["{what} is back up to speed. Breathing again.", "Rotor RPM good. I'm never complaining about noise again."],
     "heli_tail": ["MAYDAY! We're SPINNING! I can't stop the yaw!", "Everything is going round and round! MAYDAY!"],
     "heli_tail_ok": ["Spinning stopped. The horizon is staying put.", "Yaw's back under control. Dizzy, but alive."],
     "heli_vrs": ["We're sinking in our own downwash! Vortex ring! Need forward speed!",
@@ -593,7 +593,7 @@ class Detector:
             self._heli(out, s, hs, t, flying)
 
         # --- rotor Brake / Torque Limit tamper in flight (Luke: Brake must be 0, torque > 0 for a rotor to spin)
-        for c in s.get("rotors") or []:
+        for c in _multirotor_rotor_labels(hs, s.get("rotors") or []):
             kb, kt = f"rotor_brake:{c['i']}", f"rotor_torque:{c['i']}"
             braked = (c.get("brake") or 0) > 0
             if flying and braked and kb not in self.active:
@@ -613,7 +613,7 @@ class Detector:
             try:
                 from . import propulsion
                 ref = propulsion.STATE.get("sense")
-                bad = propulsion.sense_bad(ref, s.get("rotors") or [])
+                bad = propulsion.sense_bad(ref, _multirotor_rotor_labels(hs, s.get("rotors") or []))
             except Exception:  # noqa: BLE001
                 bad = []
             seen_sense = set()
@@ -623,8 +623,16 @@ class Detector:
                 if ks not in self.active:
                     why = {"dir": "direction reversed", "invert": "invert flipped",
                            "blade": "blade deploy invert flipped"}.get(b["kind"], "wrong way")
-                    self._ev(out, "rotor_sense", ks, True, what=b["label"], short=f"ROTOR WRONG WAY: {b['label']} ({why})"[:60],
+                    label = b["label"]
+                    if hs and hs.get("multirotor") and b.get("i") is not None:
+                        from . import heli
+                        c = next((x for x in (s.get("rotors") or []) if x["i"] == b["i"]), None)
+                        if c:
+                            info = {"multirotor": True, "lift": hs.get("lift") or [], "mains": hs.get("mains")}
+                            label = heli.motor_label(info, c["i"], c["title"], c.get("group") or "center")
+                    self._ev(out, "rotor_sense", ks, True, what=label, short=f"ROTOR WRONG WAY: {label} ({why})"[:60],
                              actions=[f"rotor_sense:{b.get('i', -1)}"], bad=[b])
+                    self.active[ks] = label
             for ks in [k for k in list(self.active) if k.startswith("rotor_sense:") and k not in seen_sense]:
                 self._ev(out, "rotor_sense", ks, False, quiet=not flying, what=self.active.get(ks) or "")
 
@@ -715,14 +723,15 @@ class Detector:
                 if "heli_rpm" not in self.active and t - st["low"] >= HELI_RPM_S:
                     locked = bool(h.get("locked"))
                     cause = _rotor_cause(h)
-                    self._ev(out, "heli_rpm", "heli_rpm", True, what="main rotor" + (f" ({cause})" if cause else ""),
-                             short="MAIN ROTOR RPM LOW" + (f" - {cause.upper()}" if cause else ""),
+                    what, short = _lift_rpm_labels(h, cause)
+                    self._ev(out, "heli_rpm", "heli_rpm", True, what=what, short=short,
                              actions=["heli_glide"] if locked or h.get("compound") else ["autorotate"],
-                             locked=locked, compound=bool(h.get("compound")))
+                             locked=locked, compound=bool(h.get("compound")), multirotor=bool(h.get("multirotor")))
             else:
                 st["low"] = None
                 if "heli_rpm" in self.active and (rpm >= HELI_RPM_OK * ref or not flying):
-                    self._ev(out, "heli_rpm", "heli_rpm", False, quiet=not flying, what="main rotor")
+                    self._ev(out, "heli_rpm", "heli_rpm", False, quiet=not flying,
+                             what="lift rotors" if h.get("multirotor") else "main rotor")
         # spin (heading rate) or a lost tail rotor
         hdg = h.get("hdg")
         rate = None
@@ -763,6 +772,29 @@ def _rotor_cause(d):
     return ""
 
 
+def _lift_rpm_labels(h, cause=""):
+    """Chat / alert names for main-rotor RPM loss (multirotor vs single)."""
+    what = ("lift rotors" if h.get("multirotor") else "main rotor") + (f" ({cause})" if cause else "")
+    short = ("LIFT ROTORS RPM LOW" if h.get("multirotor") else "MAIN ROTOR RPM LOW") + \
+        (f" - {cause.upper()}" if cause else "")
+    return what, short
+
+
+def _multirotor_rotor_labels(hs, rotors):
+    """Per-motor labels on multirotors (L1 (...), ...) for brake / torque / sense alerts."""
+    if not hs or not hs.get("multirotor") or not rotors:
+        return rotors
+    from . import heli
+    info = {"multirotor": True, "lift": hs.get("lift") or [], "mains": hs.get("mains")}
+    out = []
+    for c in rotors:
+        c = dict(c)
+        if c["i"] in info["lift"]:
+            c["label"] = heli.motor_label(info, c["i"], c["title"], c.get("group") or "center")
+        out.append(c)
+    return out
+
+
 DET = Detector()
 
 
@@ -800,6 +832,10 @@ def _act(code, ev, v, s):
             if not bad and i >= 0:
                 ref = propulsion.STATE.get("sense")
                 bad = [b for b in propulsion.sense_bad(ref, propulsion.rotor_checks(v)) if b.get("i") == i]
+            flying = s.get("sit") == "flying" and not s.get("rollout")
+            if flying:
+                _rotor_sense_later(v, bad, s.get("who") or "Pilot")
+                return "pilot is fumbling for the direction switch"
             return propulsion.fix_rotor_sense(v, bad)
         tq = propulsion.flight_floor("torque", 100.0 * float(s.get("throttle") or 0.0))
         if s.get("heli"):
@@ -896,8 +932,11 @@ def _heli_act(code, ev):
     from . import heli
     eng = heli.active()
     if code == "heli_glide":
-        note = ("the main rotor is set to 'On Power Loss: Locked' - no autorotation possible; " if ev.get("locked")
-                else "")
+        if ev.get("locked"):
+            note = ("the lift rotors are Locked on power loss - no autorotation possible; " if ev.get("multirotor")
+                    else "the main rotor is set to 'On Power Loss: Locked' - no autorotation possible; ")
+        else:
+            note = ""
         if ev.get("compound"):
             return note + ("autopilot: gliding on the side props and wings, controlled descent to a run-on landing"
                            if eng else "nothing engaged - side props full, nose level, glide her down on the wings!")
@@ -1107,6 +1146,19 @@ def _set_active(v, idxs, on):
         except Exception:  # noqa: BLE001
             pass
     return n
+
+
+def _rotor_sense_later(v, bad, who, timer=None):
+    """Wrong-way rotor in flight: call-out already happened; fumble 2-4 s, then stop / flip / spin up."""
+    from . import propulsion
+
+    def run():
+        rep = propulsion.fix_rotor_sense(v, bad)
+        _post(f"{who}: {rep}")
+
+    t = (timer or threading.Timer)(random.uniform(*FWD_FUMBLE_S), run)
+    t.daemon = True
+    t.start()
 
 
 def _forward_later(v, idxs, who, timer=None):
@@ -1848,7 +1900,8 @@ def heli_detail(h, s):
     """Dashboard 'Mode' row for a helicopter: HELI, kind, rotor RPM, collective, vertical speed."""
     bits = [f"HELI ({h.get('kind') or '?'})"]
     if h.get("rpm") is not None:
-        bits.append(f"rotor {h['rpm']:.0f} RPM" + (f"/{h['rpm_limit']:.0f}" if h.get("rpm_limit") is not None else ""))
+        rlabel = "lift rotors" if h.get("multirotor") else "rotor"
+        bits.append(f"{rlabel} {h['rpm']:.0f} RPM" + (f"/{h['rpm_limit']:.0f}" if h.get("rpm_limit") is not None else ""))
     if h.get("coll") is not None:
         bits.append(f"collective {h['coll']:.1f} deg")
     bits.append(f"V/S {float(s.get('vs') or 0.0):+.1f} m/s")
