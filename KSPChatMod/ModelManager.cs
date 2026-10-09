@@ -11,7 +11,13 @@ namespace KSPChatBridge
         internal const string DefaultFile = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
         // Bartowski repack; filename matches DefaultFile (see also Qwen/Qwen2.5-3B-Instruct-GGUF on HuggingFace).
         internal const string DefaultDownloadUrl =
-            "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf";
+            "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/" + DefaultRevision + "/Qwen2.5-3B-Instruct-Q4_K_M.gguf";
+        // P5-1.11: pinned revision + LFS SHA-256 + size (HF API, Oct 9 2026). Model license: Qwen Research License
+        // (qwen-research; see the HF model card) - downloaded by the user on demand, never bundled.
+        internal const string DefaultRevision = "f302c64a2269a69fb27b2f9473b362f5bb8e78d8";
+        internal const string DefaultSha256 = "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94";
+        internal const long DefaultSizeBytes = 1929903264L;
+        internal const string DefaultLicense = "Qwen Research License (qwen-research)";
         internal const long DefaultMinBytes = 1500000000L;
         internal string Phase { get; private set; } = "idle";
         internal double Progress { get; private set; }
@@ -34,7 +40,7 @@ namespace KSPChatBridge
                     if (instance == null)
                     {
                         string root = NativeLibraryLayout.ModelsRoot(BridgeLauncher.PluginDataDirectory);
-                        instance = new ModelManager(root, null, DefaultMinBytes);
+                        instance = new ModelManager(root, DefaultSha256, DefaultMinBytes);
                     }
                     return instance;
                 }

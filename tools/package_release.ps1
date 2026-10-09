@@ -84,6 +84,15 @@ try {
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $_.FullName, $rel, [System.IO.Compression.CompressionLevel]::Optimal)
     }
 } finally { $z.Dispose() }
+# P5-1.11: detectors always re-run on the finished zip (not just the stage dir); fail and delete the zip on any hit.
+$zr = [System.IO.Compression.ZipFile]::OpenRead($zip)
+try { $entries = @($zr.Entries | ForEach-Object { $_.FullName }) } finally { $zr.Dispose() }
+$badZip = @($entries | Where-Object {
+    $n = $_.ToLowerInvariant()
+    ($n.EndsWith('.dll') -and $n -ne 'gamedata/kspchatbridge/plugins/kspchatbridge.dll') -or $n.EndsWith('.gguf') -or $n.EndsWith('.pyd') -or
+    $n.EndsWith('.so') -or $n.EndsWith('.dylib') -or $n.Contains('/pluginData/models/'.ToLowerInvariant()) -or $n.Contains('/plugindata/native/') -or $n.EndsWith('.env')
+})
+if ($badZip.Count -gt 0) { Remove-Item $zip -Force; throw "Package detector failed on zip: $($badZip -join ', ')" }
 $sums = @("$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  KSPChatBridge-$Version.zip")
 if (-not $SkipExe) { $sums += "$((Get-FileHash "$mod\Bridge\AICSBridge.exe" -Algorithm SHA256).Hash.ToLower())  GameData/KSPChatBridge/Bridge/AICSBridge.exe" }
 Set-Content (Join-Path $root "dist\SHA256SUMS-$Version.txt") $sums -Encoding ascii

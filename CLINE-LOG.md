@@ -182,3 +182,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** `NativeIds` (Vessel = GUID D form, Part = invariant flightID, tolerant compare); used by NativeFlightController (lease/status), NativePropulsion, RotorTelemetry. kRPC RpcId kept only as a bridge-side extra in the telemetry payload.
 **Tests run:** C# "P5-1 native ids: 3 behavior checks passed"; pytest 482; Release 0 errors.
 **Still needs live check:** lease/status and rotor rows still match the active vessel.
+
+## P5-1 Part 11 - packaging detectors + model SHA pin - DONE (tests; needs live check)
+**Changed:** `package_release.ps1` re-scans the finished zip (non-approved .dll, .gguf, .pyd/.so/.dylib, PluginData/models, PluginData/native, .env) and deletes it on a hit; stage detectors stay unconditional. `ModelManager` default URL pinned to HF revision f302c64a, SHA-256 9c9f56a3...3f94, 1,929,903,264 bytes; license noted (Qwen Research License). Instance now verifies the SHA. (Part 10 capture_plan/list_*/trim_panel_open/set_flight_plan was decided by Cline in the matrix; box ticked.)
+**Tests run:** new tests/test_packaging.py (2); pytest 484; C# suite green; Release 0 errors; `package_release.ps1 -SkipExe` produced dist/KSPChatBridge-0.1.1.zip cleanly.
+**Still needs live check:** real model download verifies against the pinned SHA.

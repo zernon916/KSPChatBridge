@@ -413,7 +413,7 @@ Architecture not-dones:
 - [x] **DONE (tests; needs live check)** Dashboard honesty: no stale bridge AP/phase rows looking live; Systems/Rotors/Trim fully local
 - [x] **DONE (tests; needs live check)** Dual ID cleanup: one vessel/part identity story for native tools
 - [ ] `capture_plan`, `list_*`, `trim_panel_open`, `set_flight_plan` — port or drop with explicit note
-- [ ] Packaging detectors always run in `package_release.ps1`; pin model SHA when available
+- [x] **DONE (tests; needs live check)** Packaging detectors always run in `package_release.ps1`; pin model SHA when available
 
 ### P5-2 — Flight residual ports
 - [ ] Aliases: `land` / `land_at` / `land_at_ksc`
