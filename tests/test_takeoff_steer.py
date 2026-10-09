@@ -16,6 +16,14 @@ def test_ground_steer_small_damped_capped():
     assert w_fast_turn > 0
 
 
+def test_rudder_small_and_centered_at_rotation():
+    w, r = tko.ground_steer(25.0, 0.0, 10.0)
+    assert abs(r) <= 0.5 * tko.GS_CAP_SLOW + 1e-9 and r > 0      # yaw right for a right error, small
+    assert tko.takeoff_rudder(r, True, 30.0, 50.0) == r
+    assert tko.takeoff_rudder(r, True, 50.0, 50.0) == 0.0        # at Vr: rudder centered
+    assert tko.takeoff_rudder(r, False, 60.0, 50.0) == 0.0       # airborne: centered
+
+
 def test_ground_runaway():
     assert tko.ground_runaway(5.0, 3.0, 40.0) == ""
     assert "off the runway heading" in tko.ground_runaway(35.0, 3.0, 40.0)

@@ -337,8 +337,8 @@ def _hold(conn):
                     log.warning("hold: %s", msg)
                     return msg
             else:
-                wheel, rud = 0.0, _clamp(0.04 * herr - 0.03 * yaw_rate, -0.3, 0.3)
-            out("yaw", rud, dt)
+                wheel, rud = 0.0, 0.0
+            out("yaw", tko.takeoff_rudder(rud, on_ground, spd, vr), dt)  # centered from rotation on
             try:
                 ctl.wheel_steering = wheel
             except Exception:  # noqa: BLE001

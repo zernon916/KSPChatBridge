@@ -333,7 +333,8 @@ def vessel_ceiling(v, body=None):
 
 # ---- ground roll steering (runway heading only; small, damped, capped) ----
 GS_KP, GS_KD = 0.04, 0.03     # per deg of heading error / per deg/s of yaw rate (damping)
-GS_CAP_SLOW, GS_CAP_FAST = 0.30, 0.12   # max wheel steering / rudder: walking pace vs >= 40 m/s
+GS_CAP_SLOW, GS_CAP_FAST = 0.30, 0.12   # max wheel steering: walking pace vs >= 40 m/s
+GS_RUDDER = 0.5              # rudder = this x the wheel command (max 0.15 slow, 0.06 fast)
 RUNAWAY_HDG = 30.0            # deg off the runway heading on the ground -> stop (no circles in the grass)
 RUNAWAY_XT = 45.0             # m off the centerline (KSC runway is ~70 m wide) -> off the runway: stop
 CLIMBOUT_AGL = 150.0          # m radar: below this (or not climbing) after liftoff = keep runway heading, wings level
@@ -347,7 +348,13 @@ def ground_steer(herr, yaw_rate, spd):
     u = GS_KP * sched * herr - GS_KD * yaw_rate
     cap = GS_CAP_SLOW + (GS_CAP_FAST - GS_CAP_SLOW) * min(1.0, max(0.0, spd / 40.0))
     u = max(-cap, min(cap, u))
-    return -u, u
+    return -u, GS_RUDDER * u   # rudder only a fraction of the (already capped) wheel command
+
+
+def takeoff_rudder(rud, on_ground, spd, vr):
+    """Rudder during takeoff: the small ground value on the roll, centered (0) from rotation speed and in the air
+    (no yawing toward anything while rotating / climbing out; wings level holds the runway heading)."""
+    return rud if on_ground and spd < vr else 0.0
 
 
 def ground_runaway(rwy_herr, xt_m, spd):
