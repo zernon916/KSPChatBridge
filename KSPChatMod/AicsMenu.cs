@@ -101,13 +101,13 @@ namespace KSPChatBridge
             });
         }
 
-        static bool DepsOk { get { return missingMods == "" && bridgeOk; } }
+        static bool DepsOk { get { return missingMods == "" && (!BridgeLauncher.AiEnabled || bridgeOk); } }
 
         void DepsWarning()
         {
             if (!string.IsNullOrEmpty(missingMods))
                 GUILayout.Label("⚠ AICS needs " + missingMods + " installed in GameData (CKAN). Autopilot modules are disabled.", warnStyle);
-            if (bridgeChecked && !bridgeOk)
+            if (BridgeLauncher.AiEnabled && bridgeChecked && !bridgeOk)
                 GUILayout.Label("⚠ Bridge not responding on 127.0.0.1:8765 - start run_bridge.py serve (it auto-starts with KSP unless autostart=false in PluginData/bridge.cfg).", warnStyle);
         }
 
@@ -214,7 +214,7 @@ namespace KSPChatBridge
             {
                 warned = true;  // once per session, in chat
                 if (missingMods != "") ChatWindow.Notice("AICS: missing required mods: " + missingMods + ". Install them (CKAN) - autopilot modules are disabled until then.");
-                if (!bridgeOk) ChatWindow.Notice("AICS: the Python bridge isn't responding on 127.0.0.1:8765 (run_bridge.py serve). Autopilot modules are disabled until it is up.");
+                if (BridgeLauncher.AiEnabled && !bridgeOk) ChatWindow.Notice("AICS: the Python bridge isn't responding on 127.0.0.1:8765 (run_bridge.py serve). Autopilot modules are disabled until it is up.");
             }
             if (Time.realtimeSinceStartup < nextSample) return;
             nextSample = Time.realtimeSinceStartup + 1f;
@@ -255,7 +255,7 @@ namespace KSPChatBridge
                     Save();
                 }
             }
-            bool depsBad = missingMods != null && (missingMods != "" || (bridgeChecked && !bridgeOk));
+            bool depsBad = missingMods != null && (missingMods != "" || (BridgeLauncher.AiEnabled && bridgeChecked && !bridgeOk));
             GUI.Box(tab, (Expanded ? "▼ AICS" : "▲ AICS") + (depsBad ? " ⚠ " : " ") + (Expanded ? "▼" : "▲"), depsBad ? tabWarn : tabStyle);
             if (Expanded)
             {

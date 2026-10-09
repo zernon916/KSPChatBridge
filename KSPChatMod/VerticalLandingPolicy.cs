@@ -59,7 +59,7 @@ namespace KSPChatBridge
                 thrustFaults++;
                 Phase = "insufficient thrust";
                 if (thrustFaults >= 4) { Phase = "abort"; return Throttle = 0; }
-                return Throttle = FlightPolicy.Throttle(Throttle, 1, true, now, ref lastStep);
+                return Throttle;
             }
             thrustFaults = 0;
             Phase = height < 40 ? "final" : "descent";

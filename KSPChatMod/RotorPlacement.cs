@@ -3,6 +3,17 @@ namespace KSPChatBridge
 {
     internal static class RotorPlacement
     {
+        // Placement labels use vessel ReferenceTransform axes mapped to (right, forward, up):
+        //   forward = Dot(·, frame.up)   — vessel nose / control forward (NativePropulsion, NativeFlightController)
+        //   up      = Dot(·, -frame.forward) — vessel up (matches vessel.upAxis when wings-level)
+        internal static string LabelFromVesselFrame(double posRight, double posForward, double posUp,
+            double axisRight, double axisForward, double axisUp, int liftCount)
+        {
+            return Label(posRight, posForward, axisRight, axisForward, axisUp, liftCount);
+        }
+
+        internal static bool IsLiftRotorAxis(double axisUpComponent) { return Math.Abs(axisUpComponent) >= .7; }
+
         // Coordinates in the selected control frame: right, forward, up.
         internal static string Label(double right, double forward, double axisRight, double axisForward, double axisUp, int liftCount)
         {

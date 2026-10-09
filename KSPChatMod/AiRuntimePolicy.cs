@@ -22,8 +22,14 @@ namespace KSPChatBridge
             }
             if (requestedOffload == AiOffloadMode.Hybrid || requestedOffload == AiOffloadMode.Gpu)
             {
+                if (freeGpuBytes == 0)
+                {
+                    Offload = AiOffloadMode.Cpu;
+                    GpuLayers = 0;
+                    return "GPU memory unknown; fell back to CPU-only (Hybrid/GPU not applied).";
+                }
                 // Budget ~1 GB VRAM for weights/KV; if free memory is lower, reduce layers and report it.
-                if (freeGpuBytes > 0 && freeGpuBytes < 1200L * 1024 * 1024)
+                if (freeGpuBytes < 1200L * 1024 * 1024)
                 {
                     Offload = AiOffloadMode.Cpu;
                     GpuLayers = 0;

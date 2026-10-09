@@ -31,9 +31,11 @@ namespace KSPChatBridge
         static BridgeLauncher instance;
         internal static volatile bool AiEnabled = true, NativeReady, Switching;
         int starting;
+        int healthFailStreak;
         float nextWatch;
         float aliveSince;
         readonly RestartPolicy restart = new RestartPolicy();
+        const int HealthFailLimit = 3;
         string launchDir, launchPython, launchExe;
         readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -57,7 +59,7 @@ namespace KSPChatBridge
             DontDestroyOnLoad(this);
             LoadCfg();
             AiEnabled = Bool("ai_enabled");
-            if (!AiEnabled) ThreadPool.QueueUserWorkItem(_ => { NativeReady = !Healthy(1500); });
+            if (!AiEnabled) NativeReady = true;
             if (!Bool("autostart")) { Debug.Log("[KSPChatBridge] bridge autostart off (bridge.cfg)"); return; }
             launchDir = cfg["bridge_dir"]; launchPython = cfg["python"];
             launchExe = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/Bridge/AICSBridge.exe");
@@ -77,12 +79,28 @@ namespace KSPChatBridge
                     if (alive)
                     {
                         if (aliveSince == 0) aliveSince = Time.realtimeSinceStartup;
-                        if (Time.realtimeSinceStartup - aliveSince >= 60) restart.Stable();
+                        if (startedByUs)
+                        {
+                            if (Healthy(1000)) healthFailStreak = 0;
+                            else if (++healthFailStreak >= HealthFailLimit)
+                            {
+                                ChatWindow.Notice("[bridge] process alive but not responding; restarting with backoff");
+                                TerminateOwnedProcess();
+                                alive = false;
+                                healthFailStreak = 0;
+                                restart.Failed(Time.realtimeSinceStartup);
+                            }
+                        }
+                        else healthFailStreak = 0;
+                        if (alive && Time.realtimeSinceStartup - aliveSince >= 60) restart.Stable();
                     }
-                    if (!alive)
+                    if (!alive && proc != null)
                     {
                         aliveSince = 0;
-                        ChatWindow.Notice("[bridge] exited with code " + proc.ExitCode + "; retrying with backoff");
+                        healthFailStreak = 0;
+                        int code = 0;
+                        try { code = proc.ExitCode; } catch (Exception) { }
+                        ChatWindow.Notice("[bridge] exited with code " + code + "; retrying with backoff");
                         proc.Dispose(); proc = null; startedByUs = false;
                         restart.Failed(Time.realtimeSinceStartup);
                     }
@@ -155,11 +173,27 @@ namespace KSPChatBridge
                     }
                 }
                 ChatWindow.Notice("[bridge] started but not answering on " + BridgeUrl + " yet");
+                TerminateOwnedProcess();
+                if (instance != null) instance.restart.Failed(Time.realtimeSinceStartup);
             }
             catch (Exception ex)
             {
                 startedByUs = false;
                 ChatWindow.Notice("[bridge] auto-start failed: " + ex.Message + " (is '" + py + "' on PATH? set python= in PluginData/bridge.cfg)");
+            }
+        }
+
+        static void TerminateOwnedProcess()
+        {
+            lock (Lifecycle)
+            {
+                if (!startedByUs || proc == null) return;
+                try { if (!proc.HasExited) proc.Kill(); }
+                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] bridge kill: " + ex.Message); }
+                try { proc.Dispose(); }
+                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] bridge dispose: " + ex.Message); }
+                proc = null;
+                startedByUs = false;
             }
         }
 

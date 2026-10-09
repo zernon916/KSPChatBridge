@@ -22,6 +22,66 @@ def reset():
         _retired.clear()
 
 
+def _rpc_id(obj):
+    return str(getattr(obj, "_object_id", "") or "")
+
+
+def _game_id(obj, *attrs):
+    for name in attrs:
+        value = getattr(obj, name, None)
+        if value is not None:
+            text = str(value)
+            if text and text != "0":
+                return text
+    return ""
+
+
+def _vessel_game_id(vessel):
+    return _game_id(vessel, "id", "vessel_id")
+
+
+def _part_game_id(part):
+    return _game_id(part, "flight_id", "flightID", "id")
+
+
+def _vessel_matches(vessel, snap):
+    rpc = _rpc_id(vessel)
+    snap_rpc = str(snap.get("rpc_vessel_id") or "")
+    snap_vid = str(snap.get("vessel_id") or "")
+    if snap_rpc and rpc and rpc != "0" and rpc == snap_rpc:
+        return True
+    game = _vessel_game_id(vessel)
+    if snap_vid and game and game == snap_vid:
+        return True
+    return False
+
+
+def _part_matches(part, row):
+    rpc = _rpc_id(part)
+    snap_rpc = str(row.get("rpc_part_id") or "")
+    snap_pid = str(row.get("part_id") or "")
+    if snap_rpc and rpc and rpc != "0" and rpc == snap_rpc:
+        return True
+    game = _part_game_id(part)
+    if snap_pid and game and game == snap_pid:
+        return True
+    if snap_pid and not snap_rpc and rpc and rpc != "0" and rpc == snap_pid:
+        return True
+    return False
+
+
+def _stale():
+    return time.monotonic() - _received > MAX_AGE
+
+
+def producer_active(vessel):
+    """Fresh snapshot for this vessel (telemetry producer seen recently)."""
+    with _lock:
+        if _snapshot is None or _stale():
+            return False
+        return _vessel_matches(vessel, _snapshot)
+
+
 def accept(data):
     global _snapshot, _received
     if not isinstance(data, dict) or data.get("version") != 1:
@@ -69,27 +129,25 @@ def accept(data):
 
 
 def rotor(vessel, part):
-    """(producer_seen, fresh matching row). Once seen, stale never falls back."""
+    """(producer_seen, fresh matching row). Stale snapshots never fall back to kRPC fields."""
     with _lock:
         if _snapshot is None:
             return False, None
-        if time.monotonic() - _received > MAX_AGE:
+        if _stale():
             return True, None
-        vid = str(getattr(vessel, "_object_id", ""))
-        pid = str(getattr(part, "_object_id", ""))
-        if not vid or vid == "0" or vid != _snapshot.get("rpc_vessel_id"):
-            return True, None
+        if not _vessel_matches(vessel, _snapshot):
+            return False, None
         for row in _snapshot["rotors"]:
-            if pid and pid != "0" and row.get("rpc_part_id") == pid:
+            if _part_matches(part, row):
                 return True, dict(row, sample=(_snapshot["session"], _snapshot["sequence"]))
+        if _snapshot["rotors"]:
+            return False, None
         return True, None
 
 
 def state(vessel):
     """Fresh local measurements, or None when unavailable (never another vessel)."""
     with _lock:
-        if (_snapshot is None or time.monotonic() - _received > MAX_AGE
-                or not str(getattr(vessel, "_object_id", ""))
-                or str(getattr(vessel, "_object_id", "")) != _snapshot.get("rpc_vessel_id")):
+        if _snapshot is None or _stale() or not _vessel_matches(vessel, _snapshot):
             return None
         return copy.deepcopy(_snapshot.get("state"))

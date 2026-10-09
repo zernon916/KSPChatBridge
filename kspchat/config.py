@@ -44,6 +44,26 @@ SETTINGS_FILE = ROOT / "bridge_settings.json"   # shared runtime settings (scien
 CRAFT_NOTES_FILE = ROOT / "craft_notes.json"    # per-craft trim / cruise notes (craft_notes.py)
 CHAT_QUEUE_FILE = ROOT / "chatgpt_chat.json"     # in-game <-> ChatGPT desktop (MCP) message queue (mcp_chat.py)
 
+# In-mod autopilot writes native_control.json under GameData/KSPChatBridge/PluginData (see NativeCommands.cs).
+# Frozen bridge: ROOT is that folder. Source dev: set KSPCHAT_PLUGIN_DATA to the same PluginData path.
+def native_control_json_paths():
+    paths = []
+    seen = set()
+    for candidate in (ROOT / "native_control.json",):
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            paths.append(candidate)
+    plugin_data = os.environ.get("KSPCHAT_PLUGIN_DATA", "").strip()
+    if plugin_data:
+        extra = Path(plugin_data) / "native_control.json"
+        key = str(extra)
+        if key not in seen:
+            seen.add(key)
+            paths.append(extra)
+    return paths
+
+
 HTTP_HOST = os.environ.get("KSPCHAT_HOST", "127.0.0.1")
 HTTP_PORT = int(os.environ.get("KSPCHAT_PORT", "8765"))
 

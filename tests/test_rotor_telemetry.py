@@ -30,10 +30,31 @@ def test_legacy_typed_api_overrides_stale_field():
 
 def test_stale_wrong_vessel_and_missing_rotor_never_fall_back(monkeypatch):
     t.accept(snapshot())
-    assert t.rotor(NS(_object_id=11), NS(_object_id=20)) == (True, None)
-    assert t.rotor(NS(_object_id=10), NS(_object_id=21)) == (True, None)
+    assert t.rotor(NS(_object_id=11), NS(_object_id=20)) == (False, None)
+    assert t.rotor(NS(_object_id=10), NS(_object_id=21)) == (False, None)
     monkeypatch.setattr(t.time, "monotonic", lambda: t._received + 3)
     assert p._live_rotor(NS(_object_id=10), NS(part=NS(_object_id=20)))["rpm"] is None
+
+
+def test_empty_rpc_ids_match_part_and_vessel_game_ids():
+    s = snapshot()
+    s["rpc_vessel_id"] = ""
+    s["rotors"][0]["rpc_part_id"] = ""
+    s["state"] = dict(resources={"ElectricCharge": 0.5})
+    t.accept(s)
+    v = NS(id="vessel-guid")
+    part = NS(flight_id="42")
+    seen, row = t.rotor(v, part)
+    assert seen and row["rpm"] == 380
+    assert t.state(v)["resources"]["ElectricCharge"] == 0.5
+    assert t.state(NS(_object_id=11)) is None
+
+
+def test_seen_but_no_row_falls_back_to_typed_api():
+    t.accept(snapshot())
+    api = NS(current_rpm=220, target_rpm=400, torque_limit=100, brake_percentage=0, motor_engaged=True)
+    m = NS(part=NS(_object_id=99, robotic_rotor=api), fields={"Current RPM": "0"})
+    assert p._live_rotor(NS(_object_id=10), m)["rpm"] == 220
 
 
 def test_zero_is_real_and_repeated_sample_has_same_identity():

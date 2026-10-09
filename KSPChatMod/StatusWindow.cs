@@ -41,8 +41,9 @@ namespace KSPChatBridge
         static volatile string[] master = { "", "0", "" };   // level, seq, text
         static volatile bool bridgeLights = true;
         static volatile bool statusOk, systemsOk;
-        static int polling, sysPolling;
+        static int polling, lightsPolling;
         static int ackSeq;
+        static float nextLightsPoll;
 
         static readonly Dictionary<string, string> Labels = new Dictionary<string, string> {
             { "autopilot", "Autopilot" }, { "phase", "Phase" }, { "alt", "Altitude" }, { "speed", "Speed" },
@@ -100,6 +101,12 @@ namespace KSPChatBridge
                 systemsOk = LocalVesselState.Available;
             }
             else if (master[0] != "") master = new[] { "", "0", "" };
+            if (BridgeLauncher.AiEnabled && maydayLights && Time.realtimeSinceStartup >= nextLightsPoll)
+            {
+                nextLightsPoll = Time.realtimeSinceStartup + 2f;
+                PollBridgeMaydayLights();
+            }
+            else if (!BridgeLauncher.AiEnabled) bridgeLights = true;
         }
 
         // ---------------------------------------------------------------- polling (worker threads)
@@ -144,33 +151,24 @@ namespace KSPChatBridge
             });
         }
 
-        static void PollSystems()
+        /// <summary>Bridge mayday_lights veto only; vessel systems stay on LocalVesselState.</summary>
+        static void PollBridgeMaydayLights()
         {
-            if (Interlocked.CompareExchange(ref sysPolling, 1, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref lightsPolling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
-                    var r = new List<string[]>();
-                    string[] m = { "", "0", "" };
                     bool lights = true;
                     foreach (string raw in HttpGet("systems?format=text").Split('\n'))
                     {
                         string[] f = raw.TrimEnd('\r').Split('\t');
-                        if (f[0] == "master" && f.Length >= 4) m = new[] { f[1], f[2], f[3] };
-                        else if (f[0] == "sys" && f.Length >= 4) r.Add(new[] { f[1], f[2], f[3] });
-                        else if (f[0] == "lights" && f.Length >= 2) lights = f[1].Trim() != "0";
+                        if (f[0] == "lights" && f.Length >= 2) lights = f[1].Trim() != "0";
                     }
-                    sysRows = r;
-                    master = m;
                     bridgeLights = lights;
-                    systemsOk = true;
                 }
-                catch (Exception)
-                {
-                    systemsOk = false;   // keep the last master state: a busy bridge must not silence an alert
-                }
-                finally { Interlocked.Exchange(ref sysPolling, 0); }
+                catch (Exception) { /* keep last bridgeLights; local MAYDAY blink still honors maydayLights toggle */ }
+                finally { Interlocked.Exchange(ref lightsPolling, 0); }
             });
         }
 
@@ -315,16 +313,19 @@ namespace KSPChatBridge
             statusScroll = GUILayout.BeginScrollView(statusScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
             foreach (string[] kv in LocalVesselState.Flight)
                 GUILayout.Label(kv[0] + ": " + kv[1], valStyle);
-            if (statusOk)
-            foreach (string[] kv in rows)
+            if (statusOk && rows.Count > 0)
             {
-                if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
-                string label;
-                if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
-                GUILayout.BeginHorizontal();
-                GUILayout.Label(label, keyStyle, GUILayout.Width(100));
-                GUILayout.Label(kv[1], valStyle, GUILayout.Width(w - 130));
-                GUILayout.EndHorizontal();
+                GUILayout.Label(BridgeLauncher.AiEnabled ? "Autopilot (bridge)" : "Autopilot (local)", keyStyle, GUILayout.Width(w));
+                foreach (string[] kv in rows)
+                {
+                    if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
+                    string label;
+                    if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label((BridgeLauncher.AiEnabled ? "AP: " : "") + label, keyStyle, GUILayout.Width(100));
+                    GUILayout.Label(kv[1], valStyle, GUILayout.Width(w - 130));
+                    GUILayout.EndHorizontal();
+                }
             }
             GUILayout.EndScrollView();
             GUILayout.Space(14);

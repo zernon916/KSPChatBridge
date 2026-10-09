@@ -2832,22 +2832,31 @@ def _defer_until_climbout(name, args, timeout=240.0):
 
 NATIVE_HANDOFF = False
 
-# Tools that must not bypass an active in-mod controller (mirrors NativeCommands.Ported steer set).
-NATIVE_EXCLUSIVE = STEER_TOOLS | {
-    "land_here", "plane_hold", "takeoff", "heli_control", "taxi_to", "abort", "stop_current",
-    "flightplan/fly", "flightplan/stop", "flightplan/resume",
+# Query / settings only — anything else is blocked while native_control.json reports busy+native.
+NATIVE_READ_ONLY = {
+    "get_status", "autopilot_status", "damage_report", "fuel_check", "flight_report", "crew_report",
+    "get_landing_eta", "get_delta_v", "get_trim_state", "landing_check", "how_far", "time_to_target",
+    "flightplan/check", "flightplan/status",
+    "remember_preference", "save_craft_notes", "set_ai_name", "set_science_watcher", "trim_panel_open",
+    "authorise_all",
 }
+
+
+def _native_read_only(name):
+    return name.startswith("list_") or name in NATIVE_READ_ONLY
 
 
 def _native_controller_busy():
     """True when the C# autopilot owns the vessel (PluginData/native_control.json)."""
     import json
-    path = config.ROOT / "native_control.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return bool(data.get("busy")) and data.get("owner") == "native"
-    except Exception:  # noqa: BLE001
-        return False
+    for path in config.native_control_json_paths():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if bool(data.get("busy")) and data.get("owner") == "native":
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
 
 
 def call_tool(name, args=None):
@@ -2866,7 +2875,7 @@ def call_tool(name, args=None):
         with _lock:
             if NATIVE_HANDOFF:
                 return "Bridge is handing control to the in-mod autopilot; retry after the mode switch."
-            if name in NATIVE_EXCLUSIVE and _native_controller_busy():
+            if _native_controller_busy() and not _native_read_only(name):
                 return "In-mod autopilot owns this vessel; bridge steer tools are blocked until it releases control."
             res = f(**(args or {}))
         res = res if isinstance(res, str) else json.dumps(res)

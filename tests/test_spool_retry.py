@@ -1,7 +1,7 @@
 """Blocker 4: second spool after fake 'already spooled' still runs spool_up."""
 from types import SimpleNamespace as NS
 
-from kspchat import heli, ksp_actions, propulsion as pr
+from kspchat import heli, ksp_actions, propulsion as pr, telemetry as tel
 
 
 def test_spool_rejects_disappearing_rotor(monkeypatch):
@@ -37,3 +37,22 @@ def test_second_ground_hover_spools_after_fake_spooled(monkeypatch):
     assert reset
     assert len(spool_calls) == 1
     assert set(spool_calls[0]) == {0, 1, 2, 3}
+
+
+def test_spool_unknown_rpm_not_treated_as_zero(monkeypatch):
+    monkeypatch.setattr("kspchat.power_mgmt.rotor_spool_block", lambda v: None)
+    monkeypatch.setattr(pr, "preflight", lambda *a, **k: ("", []))
+    monkeypatch.setattr(pr, "set_brake", lambda *a, **k: None)
+    monkeypatch.setattr(pr, "set_rotor", lambda *a, **k: None)
+    row = dict(i=0, label="Main", rpm=None, rpm_limit=400, brake=0, torque=100,
+               motor_on=True, sample=("game", 1))
+    monkeypatch.setattr(pr, "rotor_checks", lambda v: [row])
+    tel.accept(dict(version=1, session="game", sequence=1, vessel_id="v", rpc_vessel_id="1", rotors=[]))
+    clock = [0.0]
+    monkeypatch.setattr(pr.time, "time", lambda: clock[0])
+    def sleep(dt):
+        clock[0] += dt
+    ok, report = pr.spool_up(NS(_object_id=1), wait_s=30, sleep=sleep)
+    assert not ok
+    assert "0 RPM" not in report
+    assert "telemetry RPM missing" in report

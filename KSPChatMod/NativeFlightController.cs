@@ -102,7 +102,8 @@ namespace KSPChatBridge
         void Awake()
         {
             instance = this;
-            NativeCommands.StatusPathProvider = () => Path.Combine(BridgeLauncher.DataDirectory, "native_control.json");
+            NativeCommands.StatusPathProvider = () => Path.Combine(KSPUtil.ApplicationRootPath,
+                "GameData/KSPChatBridge/PluginData/native_control.json");
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
             try
             {
@@ -636,6 +637,12 @@ namespace KSPChatBridge
                 case "stop_current": if (plan != null) plan.Pause(); Stop(); return "Local controller stopped; throttle preserved.";
                 case "flightplan/check": ParsePlan(Str(a, "plan", "")); return "Local plan valid.";
                 case "flightplan/stop": if (plan != null) plan.Pause(); return "Plan paused; active controller continues.";
+                case "flightplan/resume":
+                    if (plan == null) return "No local plan to resume.";
+                    if (!plan.Paused) return "Plan is not paused.";
+                    plan.Start(); planLastTime = Planetarium.GetUniversalTime();
+                    return "Local plan " + plan.Status;
+                case "flightplan/status": return PlanStatus;
                 case "flightplan/fly":
                     string text = Str(a, "plan", "");
                     if (plan == null || plan.Text != text || !plan.Paused) plan = ParsePlan(text);

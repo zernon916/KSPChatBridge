@@ -233,3 +233,150 @@ Artifacts:
 - DLL: `KSPChatMod/bin/Release/KSPChatBridge.dll`
 Keep the legacy bridge fallback available.
 
+## PRE-LIVE REVIEW LOG (Oct 9) — Phases 1–5
+
+Reviewer: Cursor agents + human verification of MUST-FIX items. Scope: code and CURSOR_TODO claims before Luke’s live check. **No fixes applied in this pass** (log only). Severity: MUST-FIX / HIGH / NIT / OVERCLAIM / ABNORMALITY.
+
+### Method
+- Parallel agents reviewed Phase 1 (RPM/recovery), Phase 2 (dashboards/telemetry), Phase 3 (AI-off/autopilot), Phase 4–5 (AI stubs + parity).
+- Independently confirmed: rotor Label argument mix-up, telemetry ID matching, `set_speed` ownership bypass, `flightplan/resume`/`status` Ported-without-handler, `PollSystems` dead, `NativeReady` Awake gate.
+
+---
+
+### Phase 1 — Real rotor RPM + bridge recovery
+
+| Sev | Finding | Evidence |
+|-----|---------|----------|
+| MUST-FIX | Bridge matches rotors only by `rpc_part_id` / kRPC `_object_id`. If RpcId is empty, snapshots arrive but `rotor()` returns seen+no row → unknown RPM; typed API fallback never runs once “seen”. | `kspchat/telemetry.py` `rotor`/`state`; `RotorTelemetry.cs` sends `part_id` + optional `rpc_part_id` |
+| MUST-FIX | `_live_rotor`: any accepted snapshot sets `seen=True` and blocks `part.robotic_rotor` fallback — broken telemetry worse than none. | `kspchat/propulsion.py` `_live_rotor` |
+| MUST-FIX | Spool coerces unknown RPM with `float(c["rpm"] or 0.0)` — fabricates zero; contradicts “missing ≠ zero”. | `propulsion.py` spool_up |
+| MUST-FIX | No bounded telemetry-loss abort during spool (Phase 1 plan required it). | spool wait loop only |
+| MUST-FIX | Bridge recovery watches `Process.HasExited` only; hung-but-alive process not restarted. After ~20s health fail, process may be left zombie so restart never fires. | `BridgeLauncher.cs` |
+| HIGH | Telemetry push skipped when AI off — native/AI-off never feeds Python (OK if AI-off doesn’t use bridge; bad if bridge left running). | `RotorTelemetry.cs` `if (!AiEnabled) return` |
+| HIGH | Vessel switch clears propulsion/heli caches but not `telemetry.reset()`. | `emergency.py` |
+| NIT | `transformRateOfMotion` assumed to be RPM units; no captured IL note in-repo. | `RotorMeasurements.cs` |
+| NIT | RestartPolicy unit-tested; launcher process/HTTP integration not. Double `Failed()` backoff possible. | `RestartPolicy.cs` / `BridgeLauncher.cs` |
+| OVERCLAIM | Phase 1 “CODE/TESTS/PACKAGE COMPLETE” without live check; original PAW-vs-bridge RPM bug may still hit via ID mismatch. | CURSOR_TODO Phase 1 status |
+| ABNORMALITY | TODO still cites phase1 zip naming; `package_release.ps1` versions generically; test counts in Phase 1 progress line are stale vs current suite. | docs drift |
+
+**What looks solid:** C# physics sampler via `transformRateOfMotion`; duplicate-sample spool guard; core telemetry contract tests for stale field vs authoritative RPM when IDs match.
+
+---
+
+### Phase 2 — In-mod dashboards + batched telemetry
+
+| Sev | Finding | Evidence |
+|-----|---------|----------|
+| MUST-FIX | **Rotor placement labels wrong in flight.** Frame stores Position/Axis as `(right, up, −forward)` but `RotorPlacement.Label(right, forward, axisRight, axisForward, axisUp)` is called with `(x, y, ax, ay, az)` — **up passed as forward, −forward as axisUp**. Lift count uses `Abs(Axis.z)≥.7` (forward), not up. Unit tests call Label with correct semantics; live wiring does not — tests would not catch this. | `RotorTelemetry.cs` ~72–79; `RotorPlacement.cs` signature |
+| MUST-FIX | `PollSystems()` never called; MAYDAY `mayday_lights` veto from bridge never applied to in-game Systems blink. | `StatusWindow.cs` |
+| MUST-FIX | Empty `rpc_vessel_id` ⇒ Python `state()`/`rotor()` ignore batch (ties to Phase 1 ID issue). | `telemetry.py` |
+| HIGH | AICS menu panels gated on `bridgeOk`; when AI off, health not polled → many panels stay disabled even though native tools exist. | `AicsMenu.cs` DepsOk / PollBridge |
+| HIGH | Status window mixes local physics rows with unlabeled bridge `/status` controller memory (heading/phase/autopilot) — can look “live” when stale. | `StatusWindow.cs` DrawStatus; `status.py` |
+| NIT | Dead `PollSystems`; Trim header still says POST for physical sliders; dual Overview+Rotors duplicate; Python motor_label vocabulary ≠ C# LF/MR codes. | various |
+| NIT | Emergency watcher still kRPC-heavy each tick; batch only covers resources/temp/rotors partially. | `emergency.py` `_sample` |
+
+**What looks solid:** Local Systems/Rotors sampling path when AI off for physical rows; placement API tests (API only); telemetry age/stale session tests when IDs match.
+
+---
+
+### Phase 3 — AI-off + C# autopilot (includes this session’s work)
+
+| Sev | Finding | Evidence / owner |
+|-----|---------|------------------|
+| MUST-FIX | **Ownership hole:** `NATIVE_EXCLUSIVE` only checked inside `call_tool`. `set_speed` / `set_altitude` / `set_throttle` call `plane_hold`/`heli_control`/kRPC **directly** and bypass the busy check. HANDOFF “exclusive ownership” overstated. | `ksp_actions.py` (~1558+); **introduced/left open in Phase 3 ownership work (Cursor)** |
+| MUST-FIX | `flightplan/resume` and `flightplan/status` in `NativeCommands.Ported` but **no Command cases** → “Not yet ported”. ChatOrchestrator/IsPorted lie. | `NativeCommands.cs`; `NativeFlightController.cs` — **Cursor Phase 3** |
+| MUST-FIX | AI-off Awake: `NativeReady = !Healthy(1500)` — if bridge still answering, **all local Execute blocked** until settings toggle. Toggle path sets `NativeReady=!enabled` inconsistently. | `BridgeLauncher.cs` — prior Phase 3 foundation |
+| HIGH | `native_control.json` path: mod uses `BridgeLauncher.DataDirectory` (can be `bridge_dir`); frozen bridge uses PluginData — path mismatch ⇒ busy flag invisible. | `BridgeLauncher.cs` / `config.py` — **Cursor Phase 3** |
+| HIGH | Powered descent: `Acceleration` catch passes accel=0 → policy ramps toward **full throttle** for several faults before abort — unsafe on low clearance. | `NativeVerticalLanding.Fly` + `VerticalLandingPolicy` — **Cursor** |
+| HIGH | `Classify` thresholds ≠ Python `heli.classify` (horiz band 0.4–0.8, left/right 0.25 vs GROUP_X 0.5). Soft-lift/edge layouts can disagree. | `HelicopterPolicy.cs` vs `heli.py` — **Cursor** |
+| HIGH | ControlLease is C#-local only; never synced to Python; `VesselChanged` unused in production. | `FlightPolicy.cs` |
+| HIGH | Powered descent requires already-ignited engines; no auto-ignite; no chutes/orbital — OK if documented, but not parity with bridge `land_here`. | `NativeVerticalLanding` / Command |
+| NIT | TouchdownGate uses realtime in heli vs UT in vertical landing (warp inconsistency). Silent catch on WriteStatus disk failure. Manual override ignores throttle. | various |
+| OVERCLAIM | “Phase 3 integration policies: 12 checks” are pure-policy/lease/plan units — not `NativeFlightController` / adapter / JSON I/O. | `Program.cs` — **Cursor** |
+| OVERCLAIM | Outcome text still says full holds/takeoff/landing/… with no bridge — true only for ported subset; orbital/docking/science remain bridge. | CURSOR_TODO Phase 3 Outcome |
+
+**What looks solid:** VerticalLandingPolicy feasibility/ramp/touchdown unit tests; plan rejects orbital/fly-to/TG; taxi route validation attempt; AI-off menu powered descent entry; lease exclusivity in unit tests; 474 pytest including one busy-file steer test.
+
+**Abnormality:** Same C# `Main` prints Phase 3 then Phase 4 checks — easy to mistake “green suite” for Phase 3 completion.
+
+---
+
+### Phase 4 — In-mod AI foundations
+
+| Sev | Finding | Evidence |
+|-----|---------|----------|
+| MUST-FIX | `AiRuntimePolicy.Apply`: when `freeGpuBytes==0` (unknown), Hybrid still sets `GpuLayers=20` with **no warning** — silent offload claim. | `AiRuntimePolicy.cs` — **Cursor** |
+| HIGH | Phase 4 types compile into DLL but are **unreferenced** by ChatWindow/settings (dead until wired). | no call sites |
+| HIGH | `NativeAiLoader` has **zero tests**; not in packaging path; “LoadLibrary-by-.bin proven” is overclaim. | `NativeAiLoader.cs` / csproj |
+| HIGH | `ModelManager` is finalize/checksum only — **no download**, no pinned production SHA in repo. | `ModelManager.cs` |
+| HIGH | `package_release.ps1` has stray-DLL check but does **not** call `ForbiddenDlls` / `ModelBundled` (tested only in C# harness). | `package_release.ps1` — **Cursor overclaim in HANDOFF** |
+| OVERCLAIM | HANDOFF “Finished Phase 4 offline foundations” ≠ product-ready AI; 4A live KSP gate not run. | HANDOFF |
+| NIT | ChatOrchestrator MaxToolLoops is one-batch cap, not multi-turn agent loop; cancel set never pruned. | `ChatOrchestrator.cs` |
+
+**What looks solid:** ForbiddenDlls/model-bundle unit tests; AI-off blocks finalize; checksum failure path; user-before-crew dequeue; no silent local→cloud fallback helper.
+
+---
+
+### Phase 5 — Parity audit + bridge removal
+
+| Sev | Finding | Evidence |
+|-----|---------|----------|
+| MUST-FIX | 5A lists `flightplan/resume` as native (even “thin”) but handler missing — audit inaccurate. | CURSOR_TODO 5A + NativeCommands |
+| HIGH | Audit is category prose, not per-tool replacement/test/live matrix required by Phase 5 plan 5A. | CURSOR_TODO |
+| HIGH | MCP still needs bridge stdio — correctly blocked, but blocks any “all AICS in mod” claim. | plan 5C |
+| OK | Bridge **not** removed; zip still ships `AICSBridge.exe`; 92 BY_NAME count verified. | package + Python |
+| NIT | Ported includes 6 HTTP-style routes not in BY_NAME; methodology blur in “92 tools” header. | NativeCommands vs BY_NAME |
+| NIT | HANDOFF package still named phase3 after Phase 4/5 commits — naming drift. | dist zip name |
+
+---
+
+### Cross-cutting abnormalities
+
+1. **Test theater:** Placement Label unit tests pass while live `RotorTelemetry` wiring is wrong — false confidence for Phase 2 Rotors tab and speech labels.
+2. **Dual control pipelines:** Native uses `flightID`; bridge uses kRPC object id + optional RpcId — two worlds, easy desync.
+3. **Documentation ahead of code:** Phase Outcome/HANDOFF language often reads like finished product; status lines correctly say “needs live check” but “COMPLETE/ADVANCED/Finished” nearby invites over-trust.
+4. **Own-work debt (Cursor session):** ownership bypass via `set_speed`/`set_altitude`/`set_throttle`; Ported resume/status; Classify threshold drift; vertical landing max-throttle-on-sensor-fault; overclaimed packaging detectors and exclusive ownership.
+
+---
+
+### Recommended fix order before live check
+
+1. Fix `RotorTelemetry` → `RotorPlacement.Label` argument order + liftCount axis (Phase 2).
+2. Match telemetry by `part_id`/`vessel_id` when rpc ids empty; allow API fallback when row missing (Phase 1).
+3. Gate **all** steer/throttle entry points (or whole `call_tool` when busy); align `native_control.json` path (Phase 3).
+4. Remove or implement `flightplan/resume`/`status`; fix `NativeReady` on AI-off Awake (Phase 3/5).
+5. Soften powered-descent thrust-fault response (hold throttle / abort without ramp-to-1) (Phase 3).
+6. Wire `ForbiddenDlls`/`ModelBundled` into `package_release.ps1`; fix Hybrid unknown-VRAM silence (Phase 4).
+7. Then live check with clear “known remaining holes” list.
+
+### Review verdict (pre-fix)
+**Do not treat Phases 1–5 as live-ready.** Automated suites are green for what they cover, but several MUST-FIX items can reproduce the original “0 RPM / wrong labels / dual autopilot” class of failures in flight. Bridge fallback should stay until ownership + telemetry ID + rotor labels are fixed and re-tested.
+
+---
+
+### FIXES APPLIED (Oct 9, post-review) — before live check
+
+Parallel agents + follow-up. Tests after fixes: **478 pytest passed**; C# suite green (incl. Phase 4 path/VRAM checks); Release build OK. Nothing pushed.
+
+| Item | Resolution |
+|------|------------|
+| Telemetry ID match | `telemetry.rotor`/`state` match `vessel_id`/`part_id` when RPC ids empty; wrong-vessel/part → API fallback; vessel switch calls `telemetry.reset()` |
+| `_live_rotor` / spool | API fallback when unmatched; unknown RPM stays None (not `0`); 8s telemetry-loss abort; spool sample gate only when telemetry `sample` present (API path must not send `sample: null`) |
+| Rotor Label “bug” | **False positive** (KSP `frame.up` = vessel forward). Documented + `LabelFromVesselFrame` / `IsLiftRotorAxis` + tests |
+| MAYDAY lights / PollSystems | Replaced dead poll with `PollBridgeMaydayLights` (AI on only); AI-off defaults lights on |
+| Status AP labeling | Autopilot section header + `AP:` prefix on bridge/controller rows |
+| AICS menu AI-off | `DepsOk` allows local panels when `!AiEnabled` without `bridgeOk` |
+| Ownership bypass | `call_tool` blocks all non–read-only tools when native busy (incl. `set_speed`/`set_throttle`) |
+| `native_control.json` path | Mod always writes GameData PluginData path; Python scans `ROOT` + `KSPCHAT_PLUGIN_DATA` |
+| NativeReady Awake | AI-off sets `NativeReady=true` immediately (no `/health` gate) |
+| flightplan resume/status | Implemented in `NativeFlightController.Command` |
+| Powered descent thrust fault | Hold throttle; abort to 0 after 4 faults (no ramp-to-1) |
+| Classify thresholds | `SideUp=0.4`, `GroupX=0.5` aligned with `heli.py` |
+| Hung bridge | 3 failed health checks → kill owned process + backoff restart; timeout start also terminates |
+| Hybrid unknown VRAM | Falls back to CPU with explicit status string |
+| Packaging | `package_release.ps1` rejects `.gguf` / bundled model paths; ForbiddenDlls-style check retained |
+| NativeAiLoader tests | `TryValidatePath` covered in C# suite |
+| Test isolation | `conftest` autouse calls `telemetry.reset()` |
+
+**Still needs Luke live check** (not automated): Systems RPM vs PAW, kill bridge recovery, AI-off flight, powered descent, ownership file with real GameData install. Bridge fallback retained. Phase 4 still has no in-KSP llama load/generate experiment.
+

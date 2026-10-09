@@ -40,7 +40,10 @@ class Program
         Check(RotorPlacement.Status(380, 400, true, 0, true) == "ok", "normal RPM");
         Check(RotorPlacement.Status(0, 400, true, 0, true) == "fail", "RPM lost");
         Check(RotorPlacement.Status(double.NaN, 400, true, 0, true) == "caution", "RPM unknown");
-        Console.WriteLine("Placement and rotor status: 12 behavior checks passed.");
+        Check(RotorPlacement.LabelFromVesselFrame(0, 0, 0, 0, 0, 1, 1) == "MR - Main Rotor", "frame map main");
+        Check(RotorPlacement.LabelFromVesselFrame(-1, 1, 0, 0, 0, 1, 4) == "LF - Left Front", "frame map quad LF");
+        Check(RotorPlacement.IsLiftRotorAxis(1) && !RotorPlacement.IsLiftRotorAxis(.5), "lift axis threshold");
+        Console.WriteLine("Placement and rotor status: 15 behavior checks passed.");
         var lease = new ControlLease();
         Check(lease.Acquire("v1", "hold"), "acquire hold");
         Check(!lease.Acquire("v1", "land"), "exclusive ownership");
@@ -373,7 +376,12 @@ class Program
         Check(VerticalLandingPolicy.ClearanceFloor(100, 40) == 60, "terrain peak reduces clearance");
         Check(VerticalLandingPolicy.ClearanceFloor(100, double.NaN) == 100, "unknown terrain keeps clearance");
         var aborting = new VerticalLandingPolicy(.5, 1.5, 0);
-        for (int i = 0; i < 5; i++) aborting.Step(i * 3, 200, -2, 1, 9.81, 1, false);
+        for (int i = 0; i < 3; i++)
+        {
+            Check(aborting.Step(i * 3, 200, -2, 1, 9.81, 1, false) == .5 && aborting.Phase == "insufficient thrust",
+                "insufficient thrust holds throttle");
+        }
+        for (int i = 3; i < 5; i++) aborting.Step(i * 3, 200, -2, 1, 9.81, 1, false);
         Check(aborting.Phase == "abort" && aborting.Throttle == 0, "persistent thrust loss aborts descent");
         var single = HelicopterPolicy.Classify(new[] {
             new RotorDescriptor { Up = 1, Dir = 1, Blades = 4 },
@@ -427,7 +435,17 @@ class Program
         Check(bad.FinalizeFromPartial(true).Contains("Checksum"), "checksum failure");
         var runtime = new AiRuntimePolicy();
         Check(runtime.Apply(AiOffloadMode.Gpu, 20000, false, 0).Contains("CPU") && runtime.Offload == AiOffloadMode.Cpu, "GPU fallback");
+        runtime = new AiRuntimePolicy();
+        string unknownVram = runtime.Apply(AiOffloadMode.Hybrid, 16384, true, 0);
+        Check(unknownVram != null && unknownVram.Contains("unknown") && runtime.Offload == AiOffloadMode.Cpu && runtime.GpuLayers == 0, "unknown VRAM hybrid fallback");
+        runtime = new AiRuntimePolicy();
+        Check(runtime.Apply(AiOffloadMode.Gpu, 20000, true, 0).Contains("unknown") && runtime.GpuLayers == 0, "unknown VRAM gpu fallback");
+        runtime = new AiRuntimePolicy();
         Check(runtime.Apply(AiOffloadMode.Hybrid, 16384, true, 2L * 1024 * 1024 * 1024) == null && runtime.GpuLayers > 0, "hybrid budget accepted");
+        string pathErr;
+        Check(!NativeAiLoader.TryValidatePath(@"C:\KSP\GameData\KSPChatBridge\Bridge\llama.dll", out pathErr) && pathErr.Contains(".bin"), "reject non-bin native");
+        Check(!NativeAiLoader.TryValidatePath(@"C:\KSP\GameData\KSPChatBridge\Plugins\evil.bin", out pathErr) && pathErr.Contains("PluginData"), "reject GameData outside PluginData");
+        Check(NativeAiLoader.TryValidatePath(@"C:\KSP\GameData\KSPChatBridge\PluginData\native\llama.bin", out pathErr) && pathErr == null, "allow PluginData native bin");
         Check(AiRuntimePolicy.ProviderId("Groq") == "groq", "provider normalize");
         var chat = new ChatOrchestrator();
         chat.Enqueue(new ChatRequest { Id = "c1", Text = "crew", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddMinutes(1) });
@@ -439,7 +457,7 @@ class Program
         Check(tools.ToolCalls.Count == 1 && tools.Error.Contains("native command"), "tool boundary rejects unported");
         Check(!ChatOrchestrator.AllowCloudFallback("local", false), "no silent cloud fallback after local");
         Check(ChatOrchestrator.AllowCloudFallback("groq", true), "explicit cloud allowed");
-        Console.WriteLine("Phase 4 AI policy foundations: 14 behavior checks passed.");
+        Console.WriteLine("Phase 4 AI policy foundations: 20 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

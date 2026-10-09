@@ -57,6 +57,22 @@ Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\READ
 if (-not $SkipExe) { New-Item -ItemType Directory -Force "$mod\Bridge" | Out-Null; Copy-Item "$pyi\dist\AICSBridge.exe" "$mod\Bridge\" }
 $stray = Get-ChildItem $stage -Recurse -File -Include *.dll, *.pyd | Where-Object { $_.FullName -ne "$mod\Plugins\KSPChatBridge.dll" }
 if ($stray) { throw "KSP would try to load these as plugins: $($stray.FullName -join ', ')" }
+$relPaths = @(Get-ChildItem $stage -Recurse -File | ForEach-Object {
+    $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
+})
+$gguf = @($relPaths | Where-Object { $_ -match '\.gguf$' })
+if ($gguf.Count -gt 0) { throw "Release must not bundle model weights (.gguf): $($gguf -join ', ')" }
+$forbidden = @($relPaths | Where-Object {
+    $_ -match '\.dll$' -and -not (
+        $_ -match '/Plugins/' -and [IO.Path]::GetFileName($_) -ieq 'KSPChatBridge.dll'
+    )
+})
+if ($forbidden.Count -gt 0) { throw "Disallowed DLLs in package: $($forbidden -join ', ')" }
+$bundledModels = @($relPaths | Where-Object {
+    $n = $_.ToLowerInvariant()
+    $n.Contains('/models/') -and ($n.EndsWith('.gguf') -or $n.EndsWith('.bin'))
+})
+if ($bundledModels.Count -gt 0) { throw "Release must not bundle models under PluginData/models: $($bundledModels -join ', ')" }
 $zip = Join-Path $root "dist\KSPChatBridge-$Version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 # entries with forward slashes (Windows PowerShell's Compress-Archive writes backslashes, which breaks CKAN / unzip)

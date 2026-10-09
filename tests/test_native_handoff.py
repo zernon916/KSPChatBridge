@@ -46,3 +46,19 @@ def test_native_control_file_blocks_steer_tools(tmp_path, monkeypatch):
     assert calls == []
     (tmp_path / "native_control.json").write_text('{"busy":false,"owner":null}', encoding="utf-8")
     assert ka.call_tool("plane_hold", {"engage": True}) == "should not run" and calls == [1]
+
+
+def test_native_control_blocks_throttle_bypass(tmp_path, monkeypatch):
+    from kspchat import config
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    (tmp_path / "native_control.json").write_text(
+        '{"busy":true,"mode":"hold","owner":"native","vessel":"abc"}', encoding="utf-8"
+    )
+    calls = []
+    monkeypatch.setitem(ka.BY_NAME, "set_throttle", lambda **a: calls.append(a) or "ok")
+    monkeypatch.setitem(ka.BY_NAME, "set_speed", lambda **a: calls.append(a) or "ok")
+    assert "owns this vessel" in ka.call_tool("set_throttle", {"value": 0.5})
+    assert "owns this vessel" in ka.call_tool("set_speed", {"speed": 100})
+    assert calls == []
+    monkeypatch.setitem(ka.BY_NAME, "fuel_check", lambda: "fuel ok")
+    assert ka.call_tool("fuel_check") == "fuel ok"

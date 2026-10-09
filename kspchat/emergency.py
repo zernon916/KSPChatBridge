@@ -1814,7 +1814,8 @@ def _clear_vessel_bridge_context(vid, vessel=""):
     except Exception:  # noqa: BLE001
         log.exception("clear chat sessions on vessel switch")
     try:
-        from . import flightplan, heli, ksp_actions, propulsion, speedcap
+        from . import flightplan, heli, ksp_actions, propulsion, speedcap, telemetry
+        telemetry.reset()
         flightplan.clear_vessel_context()
         heli.clear_vessel_cache()
         propulsion.clear_vessel_cache()

@@ -633,20 +633,41 @@ def rotor_rpm(v):
     return min(values) if values else None
 
 
-def _live_rotor(v, m):
-    from . import telemetry
-    seen, row = telemetry.rotor(v, m.part)
-    if seen:
-        return row or {"rpm": None, "rpm_limit": None, "torque": None,
-                       "brake": None, "motor_on": None, "sample": None}
-    # Compatibility for old plugins: typed API, never the stale RPM field.
+def _empty_rotor_live(sample=None):
+    return {"rpm": None, "rpm_limit": None, "torque": None,
+            "brake": None, "motor_on": None, "sample": sample}
+
+
+def _rotor_from_api(m):
+    # No "sample" key: API path must not trip spool's distinct-telemetry-sample gate.
     try:
         api = m.part.robotic_rotor
         return {"rpm": abs(float(api.current_rpm)), "rpm_limit": float(api.target_rpm),
                 "torque": float(api.torque_limit), "brake": float(api.brake_percentage),
                 "motor_on": bool(api.motor_engaged)}
     except Exception:  # kRPC may be disconnected during scene changes
-        return {"rpm": None}
+        return None
+
+
+def _live_rotor(v, m):
+    from . import telemetry
+    seen, row = telemetry.rotor(v, m.part)
+    if seen and row is None:
+        return _empty_rotor_live()
+    if row is not None:
+        live = {"rpm": row.get("rpm"), "rpm_limit": row.get("rpm_limit"), "torque": row.get("torque"),
+                "brake": row.get("brake"), "motor_on": row.get("motor_on")}
+        if row.get("sample") is not None:
+            live["sample"] = row["sample"]
+        if live["rpm"] is not None:
+            return live
+        api = _rotor_from_api(m)
+        if api:
+            live.update({k: v for k, v in api.items() if live.get(k) is None})
+            return live
+        return live
+    api = _rotor_from_api(m)
+    return api if api else {"rpm": None}
 
 
 def blade_radius(v):
@@ -986,6 +1007,7 @@ SPOOL_STEPS = (20.0, 40.0, 60.0, 80.0, 100.0)  # gradual Torque Limit(%) so BG r
 SPOOL_STEP_S = 1.0
 SPOOL_WAIT_S = 45.0
 SPOOL_FRAC = 0.9  # every rotor must reach this fraction of its RPM Limit before collective
+SPOOL_TELEMETRY_LOSS_S = 8.0
 
 
 def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT_S, stop_event=None, sleep=None):
@@ -1018,6 +1040,11 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
     prev_rpm = {}
     stable = {}
     samples = {}
+    unknown_since = {}
+    try:
+        from . import telemetry
+    except Exception:  # noqa: BLE001
+        telemetry = None
     while time.time() - t0 < wait_s:
         if stop_event is not None and stop_event.is_set():
             return False, "spool-up cancelled"
@@ -1029,33 +1056,47 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
             return False, "spool-up: no rotors found"
         if {c["i"] for c in checks} != required:
             return False, "spool-up: rotor disappeared or layout changed"
+        producer = telemetry.producer_active(v) if telemetry else False
+        now = time.time()
         ready = []
         for c in checks:
             lim = float(c["rpm_limit"] or rpm_t)
             need = frac * lim
-            rpm = float(c["rpm"] or 0.0)
+            raw_rpm = c.get("rpm")
+            rpm = float(raw_rpm) if raw_rpm is not None else None
             br = float(c.get("brake") or 0.0)
             tq = float(c.get("torque") or 0.0)
             mot = c.get("motor_on")
             last[c["label"]] = (rpm, need, mot, br, tq)
             fields_ok = mot is not False and br <= 0.5 and tq >= 5.0
             i = c["i"]
-            if "sample" in c:
+            if raw_rpm is None and producer:
+                unknown_since.setdefault(i, now)
+            else:
+                unknown_since.pop(i, None)
+            if c.get("sample") is not None:
                 sample = c["sample"]
-                if sample is None or samples.get(i) == sample:
+                if samples.get(i) == sample:
                     ready.append(False)
                     continue
                 samples[i] = sample
-            fields_ok = fields_ok and c.get("rpm") is not None
+            fields_ok = fields_ok and raw_rpm is not None
             prev = prev_rpm.get(i)
-            climbing = prev is not None and rpm > prev + 0.5
-            at_target = rpm >= need
+            climbing = prev is not None and rpm is not None and rpm > prev + 0.5
+            at_target = rpm is not None and rpm >= need
             if at_target and fields_ok:
                 stable[i] = stable.get(i, 0) + 1
             else:
                 stable[i] = 0
-            prev_rpm[i] = rpm
+            if rpm is not None:
+                prev_rpm[i] = rpm
             ready.append(fields_ok and at_target and (climbing or stable.get(i, 0) >= 2))
+        if unknown_since and now - min(unknown_since.values()) >= SPOOL_TELEMETRY_LOSS_S:
+            labels = ", ".join(c["label"] for c in checks if c["i"] in unknown_since)
+            msg = (f"spool-up: telemetry RPM missing for {SPOOL_TELEMETRY_LOSS_S:.0f} s "
+                   f"while plugin feed active ({labels})")
+            _log.warning("props: %s", msg)
+            return False, msg
         if all(ready):
             detail = ", ".join(f"{lab} {rpm:.0f}/{need:.0f}" for lab, (rpm, need, *_) in last.items())
             _log.info("props: spool-up OK in %.1f s (%s)", time.time() - t0, detail)
@@ -1067,7 +1108,8 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
             return True, f"spool-up OK ({len(checks)} rotor{'s' if len(checks) != 1 else ''} >= {100 * frac:.0f}% RPM): {detail}"
         sleep(0.5)
     detail = "; ".join(
-        f"{lab}: {rpm:.0f} RPM (need {need:.0f}), Motor {'ON' if mot else 'OFF'}, Brake {br}, Torque {tq}"
+        f"{lab}: {'?' if rpm is None else f'{rpm:.0f}'} RPM (need {need:.0f}), "
+        f"Motor {'ON' if mot else 'OFF'}, Brake {br}, Torque {tq}"
         for lab, (rpm, need, mot, br, tq) in last.items())
     _log.warning("props: spool-up FAILED after %.0f s - %s", wait_s, detail)
     return False, f"spool-up failed after {wait_s:.0f} s - {detail}"

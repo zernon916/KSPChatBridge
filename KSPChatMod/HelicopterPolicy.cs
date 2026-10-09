@@ -44,6 +44,8 @@ namespace KSPChatBridge
     {
         const double CoaxSep = 1;
         const int MultiMin = 3;
+        const double SideUp = .4;
+        const double GroupX = .5;
         internal static string RotorRole(double up, double forward, double right, double side)
         {
             if (Math.Abs(up) >= .8) return "lift";
@@ -64,7 +66,7 @@ namespace KSPChatBridge
             {
                 if (known && rotors[i].Blades == 0) { bare.Add(i); continue; }
                 if (Math.Abs(rotors[i].Up) >= .8) lift.Add(i);
-                else horiz.Add(i);
+                else if (Math.Abs(rotors[i].Up) < SideUp) horiz.Add(i);
             }
             var tail = new System.Collections.Generic.List<int>();
             var left = new System.Collections.Generic.List<int>();
@@ -74,8 +76,8 @@ namespace KSPChatBridge
                 if (Math.Abs(rotors[i].Right) > .7) tail.Add(i);
                 else if (Math.Abs(rotors[i].Forward) > .7)
                 {
-                    if (rotors[i].Side <= -.25) left.Add(i);
-                    else if (rotors[i].Side >= .25) right.Add(i);
+                    if (rotors[i].Side <= -GroupX) left.Add(i);
+                    else if (rotors[i].Side >= GroupX) right.Add(i);
                 }
             }
             var bladed = new System.Collections.Generic.List<int>();

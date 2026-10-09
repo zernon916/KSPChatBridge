@@ -14,14 +14,20 @@ namespace KSPChatBridge
 
         internal const string CandidateWrapper = "LLamaSharp 0.19.0 (Unity-known) or pinned native interop; net472/C# 7.3";
         internal const string TargetModel = ModelManager.DefaultFile;
-        internal static IntPtr TryLoad(string absoluteBinPath, out string error)
+        internal static bool TryValidatePath(string absoluteBinPath, out string error)
         {
             error = null;
             if (string.IsNullOrEmpty(absoluteBinPath) || !absoluteBinPath.EndsWith(NativeLibraryLayout.BinExtension, StringComparison.OrdinalIgnoreCase))
-            { error = "Native library must be an absolute PluginData/native/*.bin path."; return IntPtr.Zero; }
+            { error = "Native library must be an absolute PluginData/native/*.bin path."; return false; }
             if (absoluteBinPath.IndexOf("GameData", StringComparison.OrdinalIgnoreCase) >= 0
                 && absoluteBinPath.IndexOf("PluginData", StringComparison.OrdinalIgnoreCase) < 0)
-            { error = "Refusing to LoadLibrary a path under GameData outside PluginData."; return IntPtr.Zero; }
+            { error = "Refusing to LoadLibrary a path under GameData outside PluginData."; return false; }
+            return true;
+        }
+        internal static IntPtr TryLoad(string absoluteBinPath, out string error)
+        {
+            error = null;
+            if (!TryValidatePath(absoluteBinPath, out error)) return IntPtr.Zero;
             IntPtr handle = LoadLibrary(absoluteBinPath);
             if (handle == IntPtr.Zero) error = "LoadLibrary failed (native runtime not installed yet): " + Marshal.GetLastWin32Error();
             return handle;

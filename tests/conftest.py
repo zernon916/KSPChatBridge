@@ -51,7 +51,8 @@ def _fresh_pilot_cache(monkeypatch):
     protect.reset()
     emergency.AUTO = False
     emergency.reset()
-    from kspchat import reversers
+    from kspchat import telemetry, reversers
+    telemetry.reset()
     reversers._ENGAGED.clear()
     yield
 
