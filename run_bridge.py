@@ -5,18 +5,30 @@
   python run_bridge.py chat "msg" [--model local|ollama|chatgpt|gemini|custom]   # one-shot test
   python run_bridge.py repl [--model local]  # terminal chat
   python run_bridge.py tools                 # print the OpenAI tool schema
+Release build: AICSBridge.exe takes the same commands (no argument = serve). Port: KSPCHAT_PORT (default 8765).
 """
 import argparse
 import json
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 
 from kspchat import config
 
+__version__ = "0.1.1"
+
+
+def _no_console_streams():
+    """Windowed exe (AICSBridge.exe) started without a console: sys.stdout/stderr are None, so print() and the
+    stderr log handler would fail. Send them to devnull; logs/bridge.log still gets everything."""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
 
 def setup_logging(to_stderr=True):
-    config.LOG_DIR.mkdir(exist_ok=True)
+    config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     handlers = [RotatingFileHandler(config.LOG_DIR / "bridge.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")]
     if to_stderr:
         handlers.append(logging.StreamHandler(sys.stderr))
@@ -24,10 +36,11 @@ def setup_logging(to_stderr=True):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="KSPChatBridge")
+    ap = argparse.ArgumentParser(description="KSPChatBridge %s (data: %s)" % (__version__, config.ROOT))
     ap.add_argument("cmd", nargs="?", default="serve", choices=["serve", "mcp", "chat", "repl", "tools"])
     ap.add_argument("message", nargs="?")
     ap.add_argument("--model", default="local")
+    _no_console_streams()
     a = ap.parse_args()
     if a.cmd == "mcp":
         from kspchat import mcp_server

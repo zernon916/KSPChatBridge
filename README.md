@@ -28,33 +28,59 @@ both talk to the same tool set.
 - **kRPC 0.6.x** (required; enable the server's auto-start). The bridge talks to KSP only through kRPC.
 - **MechJeb2 + kRPC.MechJeb** (recommended): rocket ascent / landing / docking tools use them; planes, helicopters,
   props, crew chatter and the systems dashboard work without (the AICS menu shows `no MJ`).
-- Python 3.12 with `pip install --user -r requirements.txt` (krpc 0.6.0, protobuf, mcp>=2.3).
+- Nothing else for players: the release zip ships the bridge as `AICSBridge.exe` (no Python needed).
+  From source only: Python 3.12 with `pip install --user -r requirements.txt` (krpc 0.6.0, protobuf, mcp>=2.3).
 - LM Studio with `qwen/qwen3.5-9b` (or set `LMSTUDIO_MODEL`). The bridge auto-loads it with a 16k context
   via `lms` if nothing is loaded (needs ~7 GB VRAM next to KSP).
 
 ## Install
-The mod is two parts: the in-game plugin (GameData) and the Python bridge (this repo). CKAN / the release zip install
-only the plugin; the bridge always comes from this repository.
+The mod is two parts: the in-game plugin and the bridge (the program that talks to the AI and to kRPC). Since 0.1.1
+the release zip / CKAN install **both**: the bridge is bundled as `GameData/KSPChatBridge/Bridge/AICSBridge.exe`, so
+players don't need Python or this repository.
 
-1. **Plugin via CKAN** (once listed): search for *KSP Chat Bridge* (`KSPChatBridge`); CKAN pulls in kRPC and offers
+1. **Via CKAN** (once listed): search for *KSP Chat Bridge* (`KSPChatBridge`); CKAN pulls in kRPC and offers
    MechJeb2 / kRPC.MechJeb. **Manual**: unzip `KSPChatBridge-<version>.zip` from the GitHub releases into the KSP folder
-   so you get `GameData/KSPChatBridge/Plugins/KSPChatBridge.dll`. Install kRPC (and optionally MechJeb2 +
-   kRPC.MechJeb) yourself.
-2. **Bridge**: clone or download this repo, install Python 3.12 and run `pip install --user -r requirements.txt`.
-3. Start KSP once, then set `bridge_dir` (and `python` if it isn't on PATH) in
-   `GameData/KSPChatBridge/PluginData/bridge.cfg` so the plugin can auto-start the bridge.
-4. Pick an AI backend (LM Studio locally, or a free cloud key in `.env`, see *Backends and models*).
+   so you get `GameData/KSPChatBridge/Plugins/KSPChatBridge.dll` and `GameData/KSPChatBridge/Bridge/AICSBridge.exe`.
+   Install kRPC (and optionally MechJeb2 + kRPC.MechJeb) yourself.
+2. Start KSP and load a save: the plugin starts `AICSBridge.exe` hidden and stops it when KSP quits. Nothing to configure.
+3. Pick an AI backend (LM Studio locally, or a free cloud key, see *Backends and models*).
 
-Release packaging (maintainers): `powershell -File tools\package_release.ps1` builds the plugin without touching the
-live GameData and writes `dist/KSPChatBridge-<version>.zip`; the CKAN metadata draft is `ckan/KSPChatBridge.netkan`.
+The exe keeps its data (`.env` with API keys, `bridge_settings.json`, `playstyle_notes.md`, `kerbal_personalities.json`,
+`logs/`) in `GameData/KSPChatBridge/PluginData/`, which updates and CKAN leave alone. `AICSBridge.exe --help` lists the
+commands (`serve` is the default, `mcp` runs the MCP server); `KSPCHAT_PORT` changes the port (default 8765).
+Some antivirus tools flag PyInstaller-built exes by heuristics; if yours does, see below or run from source.
+
+### From source (developers)
+1. Clone this repo, install Python 3.12 and run `pip install --user -r requirements.txt`.
+2. Start KSP once, then set `bridge_dir` (and `python` if it isn't on PATH) in
+   `GameData/KSPChatBridge/PluginData/bridge.cfg`. With a valid `bridge_dir` the plugin runs
+   `python run_bridge.py serve` there instead of the bundled exe, and data stays in the repo folder (as before 0.1.1).
+
+### Transparency / build it yourself
+The source is public in this repository, and `AICSBridge.exe` is built from it (`run_bridge.py` + `kspchat/`) with
+PyInstaller (one-folder, windowed, no extra code). `powershell -ExecutionPolicy Bypass -File tools\package_release.ps1`
+rebuilds everything: it creates a venv (`dist\.buildvenv`) with `requirements.txt` + `pyinstaller==6.22.3`, builds the
+plugin (without touching your GameData) and the exe, and writes `dist/KSPChatBridge-<version>.zip` plus
+`dist/SHA256SUMS-<version>.txt`. The PyInstaller command it runs (from the repo root):
+
+```
+python -m PyInstaller --noconfirm --clean --onedir --windowed --name AICSBridge --icon assets\AICSBridge.ico ^
+  --add-data "playstyle_notes.example.md;." --collect-submodules kspchat run_bridge.py
+```
+
+Each GitHub release lists the SHA-256 of the zip and of `AICSBridge.exe`. PyInstaller builds are not bit-for-bit
+reproducible, so your own build will have a different hash; compare the source instead, or simply run from source.
+The CKAN metadata draft is `ckan/KSPChatBridge.netkan`.
 
 ## Run
 1. Start KSP and load a save (kRPC auto-starts). The mod **auto-starts the bridge** (hidden window) if
    `GET /health` doesn't answer, and stops it again when KSP quits (only if it started it). Settings in
    `GameData\KSPChatBridge\PluginData\bridge.cfg` (created on first run): `autostart = true`,
-   `stop_on_quit = true`, `bridge_dir = C:\path\to\KSPChatBridge` (set it to where you cloned this repo), `python = python`.
+   `stop_on_quit = true`, `bridge_dir =` (empty: use the bundled `Bridge\AICSBridge.exe`; or the folder of a source
+   checkout), `python = python` (source only).
    Failures show up as `[bridge] ...` lines in the chat window.
-2. Manual alternative: double-click `start_bridge.cmd` (or `python run_bridge.py serve`).
+2. Manual alternative: run `GameData\KSPChatBridge\Bridge\AICSBridge.exe` (no window; it stops on `POST /shutdown`),
+   or from source double-click `start_bridge.cmd` (or `python run_bridge.py serve`).
 3. In game press **Alt+K** or click the speech-bubble button on the stock toolbar, type, press Enter. Pick
    the AI in **AICS -> Settings -> AI backend** (dropdown; right-click the toolbar button or Alt+J opens AICS)
    or type `/ai gemini` (`/ai` alone lists them). The choice is saved. Keyboard controls are locked while the
@@ -83,7 +109,7 @@ Terminal testing: `python run_bridge.py chat "what is my ship status"` or `pytho
 Keyed backends without a key just answer "set X" in the chat (nothing breaks).
 **Enter keys in game:** AICS -> Settings -> pick the backend -> paste the key in the **API key** field (password-style,
 `Paste` button or Ctrl+V) -> **Save** (or Enter). Custom also has **Base URL** and **Model** fields. The bridge
-(`POST /api_key`, localhost only, JSON only) writes it to the git-ignored repo **`.env`** and applies it in-process:
+(`POST /api_key`, localhost only, JSON only) writes it to the git-ignored repo **`.env`** (release exe: `GameData/KSPChatBridge/PluginData/.env`) and applies it in-process:
 no bridge restart. Status shows `configured (••••last4)` / `missing`; the save reply says whether the API accepted the
 key. **Clear key** (click twice) removes it. Keys are never logged or shown in full (`GET /api_keys` = masked status).
 By hand still works: `.env` in the repo root (`GEMINI_API_KEY=...`, one per line; real env vars win at bridge start),
@@ -219,7 +245,8 @@ command = 'C:\path\to\Python312\python.exe'
 args = ['C:\path\to\KSPChatBridge\run_bridge.py', 'mcp']
 cwd = 'C:\path\to\KSPChatBridge'
 ```
-(Use the output of `where python` for `command` if Python lives elsewhere.) Test without the app:
+(Use the output of `where python` for `command` if Python lives elsewhere.) Without Python (release zip):
+`command = 'C:\path\to\KSP\GameData\KSPChatBridge\Bridge\AICSBridge.exe'`, `args = ['mcp']`, no `cwd`. Test without the app:
 `python tests\test_mcp.py`.
 
 ## In-game chat with the ChatGPT desktop app (no API key; opt-in, heavy token use)

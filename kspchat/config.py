@@ -1,8 +1,25 @@
 """Central settings. Override with environment variables."""
 import os
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# Source run: everything lives in the repo folder. Frozen run (PyInstaller AICSBridge.exe): bundled read-only files
+# come from sys._MEIPASS; user data (.env, settings, notes, logs) goes to a writable folder: GameData/KSPChatBridge/
+# PluginData/ when the exe sits in GameData/KSPChatBridge/Bridge/, else next to the exe. KSPCHAT_DATA_DIR overrides.
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    _exe_dir = Path(sys.executable).resolve().parent
+    RES_DIR = Path(getattr(sys, "_MEIPASS", _exe_dir))
+    _data = _exe_dir.parent / "PluginData" if _exe_dir.name.lower() == "bridge" else _exe_dir
+else:
+    RES_DIR = Path(__file__).resolve().parent.parent
+    _data = RES_DIR
+ROOT = Path(os.environ.get("KSPCHAT_DATA_DIR") or _data)   # writable data dir
+try:
+    ROOT.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
+ENV_FILE = ROOT / ".env"
 
 
 def _load_dotenv(path):
@@ -20,8 +37,8 @@ def _load_dotenv(path):
         pass
 
 
-_load_dotenv(ROOT / ".env")
-LOG_DIR = ROOT / "logs"
+_load_dotenv(ENV_FILE)
+LOG_DIR = ROOT / "logs"  # bridge.log + sessions-*.jsonl
 NOTES_FILE = ROOT / "playstyle_notes.md"
 SETTINGS_FILE = ROOT / "bridge_settings.json"   # shared runtime settings (science watcher mode)
 CHAT_QUEUE_FILE = ROOT / "chatgpt_chat.json"     # in-game <-> ChatGPT desktop (MCP) message queue (mcp_chat.py)

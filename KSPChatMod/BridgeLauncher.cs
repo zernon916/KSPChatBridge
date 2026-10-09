@@ -1,9 +1,11 @@
-// Auto-starts the Python bridge (run_bridge.py serve) when KSP starts, and stops it when KSP quits.
+// Auto-starts the bridge when KSP starts, and stops it when KSP quits.
+//   Release zip: GameData/KSPChatBridge/Bridge/AICSBridge.exe (no Python needed) - used when bridge_dir is unset.
+//   From source: python run_bridge.py serve in bridge_dir.
 // Settings: GameData/KSPChatBridge/PluginData/bridge.cfg (created with defaults on first run):
 //   autostart = true            start the bridge if GET /health doesn't answer
 //   stop_on_quit = true         POST /shutdown on quit (only if this mod started it)
-//   bridge_dir = C:\path\to\KSPChatBridge   folder of this repo (run_bridge.py) - set it once
-//   python = python             python.exe to use (window is hidden)
+//   bridge_dir =                empty / C:\path\to\KSPChatBridge = use Bridge/AICSBridge.exe; else the repo folder
+//   python = python             python.exe for a source bridge_dir (window is hidden)
 // Failures are reported in the chat window, never thrown.
 using System;
 using System.Collections.Generic;
@@ -21,12 +23,13 @@ namespace KSPChatBridge
     public class BridgeLauncher : MonoBehaviour
     {
         const string BridgeUrl = "http://127.0.0.1:8765/";
+        const string PlaceholderDir = @"C:\path\to\KSPChatBridge";
         static Process proc;
         static bool startedByUs;
         readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             { "autostart", "true" }, { "stop_on_quit", "true" },
-            { "bridge_dir", @"C:\path\to\KSPChatBridge" }, { "python", "python" },
+            { "bridge_dir", "" }, { "python", "python" },
         };
 
         void Awake()
@@ -35,7 +38,8 @@ namespace KSPChatBridge
             LoadCfg();
             if (!Bool("autostart")) { Debug.Log("[KSPChatBridge] bridge autostart off (bridge.cfg)"); return; }
             string dir = cfg["bridge_dir"], py = cfg["python"];
-            ThreadPool.QueueUserWorkItem(_ => StartBridge(dir, py));
+            string exe = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/Bridge/AICSBridge.exe");
+            ThreadPool.QueueUserWorkItem(_ => StartBridge(dir, py, exe));
         }
 
         static bool Healthy(int timeoutMs)
@@ -49,20 +53,32 @@ namespace KSPChatBridge
             catch (Exception) { return false; }
         }
 
-        static void StartBridge(string dir, string py)
+        static void StartBridge(string dir, string py, string exe)
         {
             try
             {
                 if (Healthy(1500)) { Debug.Log("[KSPChatBridge] bridge already running"); return; }
-                if (!File.Exists(Path.Combine(dir, "run_bridge.py")))
+                dir = (dir ?? "").Trim().Trim('"');
+                bool dirUnset = dir.Length == 0 || string.Equals(dir.TrimEnd('\\', '/'), PlaceholderDir, StringComparison.OrdinalIgnoreCase);
+                bool haveSource = !dirUnset && File.Exists(Path.Combine(dir, "run_bridge.py"));
+                bool useExe = File.Exists(exe) && !haveSource;   // source users keep python + bridge_dir
+                if (!useExe && !haveSource)
                 {
-                    ChatWindow.Notice("[bridge] auto-start failed: run_bridge.py not found in '" + dir + "' (fix bridge_dir in PluginData/bridge.cfg)");
+                    ChatWindow.Notice(dirUnset
+                        ? "[bridge] auto-start failed: Bridge/AICSBridge.exe is missing (reinstall the mod, or set bridge_dir in PluginData/bridge.cfg)"
+                        : "[bridge] auto-start failed: run_bridge.py not found in '" + dir + "' (fix bridge_dir in PluginData/bridge.cfg)");
                     return;
                 }
-                var psi = new ProcessStartInfo(py, "run_bridge.py serve")
+                ProcessStartInfo psi;
+                if (useExe)
                 {
-                    WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true,
-                };
+                    dir = Path.GetDirectoryName(exe); py = exe;
+                    psi = new ProcessStartInfo(exe, "serve") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true };
+                }
+                else
+                {
+                    psi = new ProcessStartInfo(py, "run_bridge.py serve") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true };
+                }
                 psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
                 proc = Process.Start(psi);
                 startedByUs = true;
@@ -72,7 +88,8 @@ namespace KSPChatBridge
                     if (Healthy(1000)) { ChatWindow.Notice("[bridge] started automatically (" + dir + ")"); return; }
                     if (proc.HasExited)
                     {
-                        ChatWindow.Notice("[bridge] auto-start failed: '" + py + " run_bridge.py serve' exited with code " + proc.ExitCode + " (see logs/ in the bridge folder)");
+                        ChatWindow.Notice("[bridge] auto-start failed: '" + (useExe ? "AICSBridge.exe serve" : py + " run_bridge.py serve") + "' exited with code " + proc.ExitCode
+                            + (useExe ? " (see PluginData/logs/bridge.log)" : " (see logs/ in the bridge folder)"));
                         startedByUs = false;
                         return;
                     }
@@ -124,7 +141,7 @@ namespace KSPChatBridge
                 else
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(file));
-                    var sb = new StringBuilder("# KSPChatBridge: auto-start the Python bridge with KSP\n");
+                    var sb = new StringBuilder("# KSPChatBridge: auto-start the bridge with KSP. bridge_dir empty = use Bridge/AICSBridge.exe;\n# set it to a source checkout (run_bridge.py) to run python instead.\n");
                     foreach (var kv in cfg) sb.Append(kv.Key).Append(" = ").Append(kv.Value).Append('\n');
                     File.WriteAllText(file, sb.ToString());
                 }

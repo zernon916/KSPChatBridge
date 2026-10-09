@@ -12,7 +12,7 @@ HEADER = "# Luke's KSP playstyle notes\n# One '- ' bullet per preference. Inject
 
 def load_notes():
     if not config.NOTES_FILE.exists():
-        example = config.ROOT / "playstyle_notes.example.md"
+        example = config.RES_DIR / "playstyle_notes.example.md"
         if not example.exists():
             return []
         config.NOTES_FILE.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")

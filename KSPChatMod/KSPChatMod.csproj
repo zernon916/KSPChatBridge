@@ -8,7 +8,7 @@
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <!-- KSP folder: -p:KSPDir=... or a KSPDir environment variable; else the usual Steam locations -->
     <KSPDir Condition="'$(KSPDir)' == '' And Exists('C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program')">C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program</KSPDir>
     <KSPDir Condition="'$(KSPDir)' == '' And Exists('C:\Steam\steamapps\common\Kerbal Space Program')">C:\Steam\steamapps\common\Kerbal Space Program</KSPDir>
