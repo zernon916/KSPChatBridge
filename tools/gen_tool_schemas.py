@@ -6,6 +6,12 @@ sys.path.insert(0, ROOT)
 OUT = os.path.join(ROOT, "KSPChatMod", "NativeToolSchemas.cs")
 TYPES = {float: "number", int: "integer", bool: "boolean", str: "string"}
 
+# Native-only tools (no bridge twin): name -> (description, {param: type}, [required])
+NATIVE_ONLY = {
+    "hold_pattern": ("Circle a place (saved spot name, or here) at a set altitude until told otherwise.",
+                     {"name": "string", "altitude_m": "number", "radius_m": "number", "direction": "string"}, []),
+}
+
 
 def ported():
     src = open(os.path.join(ROOT, "KSPChatMod", "NativeCommands.cs"), encoding="utf-8").read()
@@ -26,6 +32,13 @@ def schemas():
     from kspchat import ksp_actions as k
     out, missing = [], []
     for name in ported():
+        if name in NATIVE_ONLY:
+            desc, ps, req = NATIVE_ONLY[name]
+            params = {"type": "object", "properties": {p: {"type": t} for p, t in ps.items()}}
+            if req:
+                params["required"] = req
+            out.append({"type": "function", "function": {"name": name, "description": desc, "parameters": params}})
+            continue
         fn = k.BY_NAME.get(name)
         if fn is None:
             missing.append(name)

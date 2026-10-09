@@ -734,6 +734,20 @@ class Program
             Check(calls == 2 && ran == null && sent2.Contains("change_apoapsis"), "2-step: find_tool adds the real schema for the next round");
         }
         Console.WriteLine("Tool trimming: 11 behavior checks passed.");
+        // ---- POST-TESTING: hold_pattern ----
+        {
+            Check(FlightExtrasPolicy.MaxBank(150) == 20 && FlightExtrasPolicy.MaxBank(250) == 10, "Luke's bank rule: 20 slow / 10 fast");
+            double r150 = FlightExtrasPolicy.MinRadius(150), r250 = FlightExtrasPolicy.MinRadius(250);
+            Check(r150 > 7000 && r150 < 9000 && r250 > r150 * 3, "pattern radius respects the bank cap (" + r150.ToString("0") + " m @150)");
+            Check(Math.Abs(FlightExtrasPolicy.PatternHeading(90, 3000, 3000, true) - 0) < 1e-6, "on the circle, right-hand: fly the tangent (center on right)");
+            Check(Math.Abs(FlightExtrasPolicy.PatternHeading(90, 3000, 3000, false) - 180) < 1e-6, "left-hand tangent");
+            double outR = FlightExtrasPolicy.PatternHeading(90, 9000, 3000, true);
+            Check(Math.Abs(outR - 45) < 1e-6, "far outside -> turns 45 deg toward the center");
+            double inR = FlightExtrasPolicy.PatternHeading(90, 0, 3000, true);
+            Check(Math.Abs(inR - 315) < 1e-6, "inside -> turns away (45 deg)");
+            Check(NativeCommands.IsPorted("hold_pattern") && ToolRouter.Schemas.ContainsKey("hold_pattern") && ToolRouter.Fits("hold_pattern", "plane"), "hold_pattern registered + schema");
+        }
+        Console.WriteLine("hold_pattern: 7 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

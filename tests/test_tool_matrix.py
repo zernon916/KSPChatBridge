@@ -87,7 +87,10 @@ def test_native_rows_are_really_ported():
 
 def test_ported_set_is_fully_reviewed():
     # HTTP-route style entries (taxi/list, flightplan/*) are not chat tools; the matrix covers BY_NAME only.
-    unreviewed = sorted(t for t in _ported() if "/" not in t and t not in MATRIX)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gts", ROOT / "tools" / "gen_tool_schemas.py")
+    gts = importlib.util.module_from_spec(spec); spec.loader.exec_module(gts)
+    unreviewed = sorted(t for t in _ported() if "/" not in t and t not in MATRIX and t not in gts.NATIVE_ONLY)
     assert not unreviewed, "NativeCommands.Ported entries missing from matrix: %s" % unreviewed
 
 

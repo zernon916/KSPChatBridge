@@ -232,6 +232,7 @@ namespace KSPChatBridge
                 catch (Exception ex) { Stop(); ChatWindow.Notice("Rotor spool stopped: " + ex.Message); }
             }
             ResidualTick();
+            ExtrasTick();
             if (mode == "hold" && auto["master"] && !trimSuspended && Time.realtimeSinceStartup >= nextTrim)
             {
                 nextTrim = Time.realtimeSinceStartup + 8;
@@ -571,7 +572,7 @@ namespace KSPChatBridge
             bool allowed = OwnsControls;
             if (!allowed) return "Local mode is not ready.";
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";
-            try { instance.Bind(); return instance.Command(name, MiniJson.Deserialize(argsJson ?? "{}")); }
+            try { instance.Bind(); instance.ExtrasCancel(name); return instance.Command(name, MiniJson.Deserialize(argsJson ?? "{}")); }
             catch (Exception ex) { return "Local command failed: " + ex.Message; }
         }
         void SyncTrim()
@@ -611,6 +612,7 @@ namespace KSPChatBridge
         string Command(string name, Dictionary<string, object> a)
         {
             if (!NativeCommands.IsPorted(name)) return "Local command not yet ported: " + name;
+            string extra = ExtrasCommand(name, a); if (extra != null) return extra;
             switch (name)
             {
                 case "save_craft_notes":

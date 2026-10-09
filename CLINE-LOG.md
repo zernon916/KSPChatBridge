@@ -247,3 +247,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** provider 'cline': https://api.cline.bot/api/v1 (CLINE_BASE_URL override), CLINE_API_KEY (Settings key list, masked), CLINE_MODEL, default minimax/minimax-m2.5 (Cline's free model). Shown in the model list and Settings help. Chat and crew requests now send stream:false, because Cline streams by default.
 **Tests run:** C# resolve/no-key/override/stream checks; pytest 494; Release 0 errors.
 **Still needs live check:** a real Cline key and tool calls through their gateway.
+
+## hold_pattern - DONE (tests; needs live check)
+**Changed:** hold_pattern(name|here, altitude_m, radius_m, direction): plane_hold at altitude, then every 1 s steers the tangent of a circle around the spot with up to 45 deg radial correction. The radius is never tighter than Luke's bank limit allows (20 deg slow / 10 deg above 200 m/s, +30%). Ends when chat/menu takes navigation (turn, fly_to, land, takeoff, stop...). Native-only schema via gen_tool_schemas NATIVE_ONLY.
+**Tests run:** C# 'hold_pattern: 7'; pytest 494; Release 0 errors.
+**Still needs live check:** circle tracking and wind-free drift.
