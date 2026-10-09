@@ -41,7 +41,7 @@ MATRIX = {
     "trim_panel_open": DROP,       # opens an in-mod window; menus open it directly now
     "set_flight_plan": DROP,       # plan editor is filled by the in-mod Flight Plan UI / flightplan/check
     # -- P5-2 flight residuals --
-    "land": NATIVE, "land_at": "p5-4", "land_at_ksc": "p5-4", "fly_to": NATIVE, "fly_to_place": NATIVE,
+    "land": NATIVE, "land_at": NATIVE, "land_at_ksc": NATIVE, "fly_to": NATIVE, "fly_to_place": NATIVE,
     "touch_and_go": NATIVE, "go_around": NATIVE, "circle_here": NATIVE, "prop_control": NATIVE,
     "afterburner": NATIVE, "engine_mode": NATIVE, "flaps": NATIVE, "set_throttle": NATIVE,
     "set_engines": NATIVE, "cut_engines": NATIVE, "set_altitude": NATIVE, "level_off": NATIVE,
@@ -53,11 +53,11 @@ MATRIX = {
     "stage": NATIVE, "recover_vessel": NATIVE, "launch_craft": NATIVE, "deploy_parachutes": NATIVE,
     "eject_kerbal": NATIVE, "run_science": NATIVE, "reset_experiments": NATIVE, "set_science_watcher": NATIVE,
     # -- P5-4 orbital / docking / MechJeb-optional --
-    "mechjeb_ascent": "p5-4", "circularize": "p5-4", "transfer_to": "p5-4", "deorbit_burn": "p5-4",
-    "warp_to_apoapsis": "p5-4", "warp_to_soi_change": "p5-4", "dock_with": "p5-4", "station_keep": "p5-4",
-    "change_apoapsis": "p5-4", "change_periapsis": "p5-4", "change_inclination": "p5-4",
-    "apsis_longitude": "p5-4", "sun_lock": "p5-4", "antenna_lock": "p5-4", "sync_orbit_altitude": "p5-4",
-    "match_target_plane": "p5-4", "launch_to_target_plane": "p5-4", "time_to_target": "p5-4",
+    "mechjeb_ascent": NATIVE, "circularize": NATIVE, "transfer_to": "p5-4", "deorbit_burn": NATIVE,
+    "warp_to_apoapsis": NATIVE, "warp_to_soi_change": NATIVE, "dock_with": NATIVE, "station_keep": "p5-4",
+    "change_apoapsis": NATIVE, "change_periapsis": NATIVE, "change_inclination": NATIVE,
+    "apsis_longitude": "p5-4", "sun_lock": NATIVE, "antenna_lock": NATIVE, "sync_orbit_altitude": NATIVE,
+    "match_target_plane": "p5-4", "launch_to_target_plane": "p5-4", "time_to_target": NATIVE,
     # -- personality / settings / misc: stay bridge-or-native thin (P5-1 decisions) --
     "set_ai_name": "native", "remember_preference": "native", "captain_order": DROP,  # orders.parse handles speech
     "set_override": DROP, "authorise_all": DROP,   # security toggles become in-mod settings, no chat tool

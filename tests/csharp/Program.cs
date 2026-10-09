@@ -454,7 +454,7 @@ class Program
         Check(chat.DequeueNext(DateTime.UtcNow).Id == "u1", "user chat priority");
         chat.Cancel("c1");
         Check(chat.DequeueNext(DateTime.UtcNow) == null, "cancelled crew dropped");
-        var tools = chat.RunTools("t1", new[] { "plane_hold", "mechjeb_ascent" }, name => "ok", true);
+        var tools = chat.RunTools("t1", new[] { "plane_hold", "transfer_to" }, name => "ok", true);
         Check(tools.ToolCalls.Count == 1 && tools.Error.Contains("native command"), "tool boundary rejects unported");
         Check(!ChatOrchestrator.AllowCloudFallback("local", false), "no silent cloud fallback after local");
         Check(ChatOrchestrator.AllowCloudFallback("groq", true), "explicit cloud allowed");
@@ -634,7 +634,7 @@ class Program
             && FlightResidualPolicy.LandingCheck(true, false, 150, -20, 100).Contains("too fast") && FlightResidualPolicy.LandingCheck(true, false, 150, -20, 100).Contains("speed"), "landing check gates");
         Check(double.IsNaN(FlightResidualPolicy.PropField("", 0, 460)) && FlightResidualPolicy.PropField("600", 0, 460) == 460 && FlightResidualPolicy.PropField("50%", 0, 100) == 50
             && FlightResidualPolicy.PropSwitch("on") == true && FlightResidualPolicy.PropSwitch("") == null, "prop_control parsing");
-        Check(NativeCommands.IsPorted("fly_to") && NativeCommands.IsPorted("cut_engines") && NativeCommands.IsPorted("damage_report") && !NativeCommands.IsPorted("land_at"), "P5-2 tools ported; land_at stays bridge until P5-4");
+        Check(NativeCommands.IsPorted("fly_to") && NativeCommands.IsPorted("cut_engines") && NativeCommands.IsPorted("damage_report") && NativeCommands.IsPorted("land"), "P5-2 tools ported");
         Console.WriteLine("P5-2 flight residuals: 16 behavior checks passed.");
         // ---- P5-3: lifecycle + science (policy; parity with kspchat/science.py) ----
         Check(SciencePolicy.NormalizeMode("on") == "auto" && SciencePolicy.NormalizeMode("auto off") == "remind" && SciencePolicy.NormalizeMode("OFF") == "off" && SciencePolicy.NormalizeMode("loud") == null, "watcher mode aliases");
@@ -651,6 +651,25 @@ class Program
         Check(SciencePolicy.SafeCraftName("Kerbal X") && !SciencePolicy.SafeCraftName("../x") && !SciencePolicy.SafeCraftName("a/b") && !SciencePolicy.SafeCraftName(" "), "craft name has no path");
         Check(NativeCommands.IsPorted("stage") && NativeCommands.IsPorted("run_science") && NativeCommands.IsPorted("set_science_watcher") && NativeCommands.IsPorted("launch_craft"), "P5-3 tools ported");
         Console.WriteLine("P5-3 lifecycle + science: 10 behavior checks passed.");
+        // ---- P5-4: orbital math (Kerbin mu 3.5316e12, R 600 km) ----
+        double kmu = 3.5316e12, kr = 600000;
+        Check(Math.Abs(OrbitMath.VisViva(kmu, 700000, 700000) - Math.Sqrt(kmu / 700000)) < 1e-6 && double.IsNaN(OrbitMath.VisViva(kmu, 0, 1)), "vis-viva");
+        double aSub = (kr + 80000 + kr - 100000) / 2;   // apo 80 km, peri -100 km
+        double circ = OrbitMath.CircularizeDv(kmu, kr + 80000, aSub);
+        Check(circ > 150 && circ < 220 && Math.Abs(OrbitMath.CircularizeDv(kmu, kr + 80000, kr + 80000)) < 1e-6, "circularize dv at apoapsis");
+        double hoh = OrbitMath.ApsisChangeDv(kmu, kr + 80000, kr + 80000, kr + 2863330);
+        Check(hoh > 600 && hoh < 800 && OrbitMath.ApsisChangeDv(kmu, kr + 80000, kr + 80000, kr + 30000) < 0, "apsis change dv sign/size (raise ~ +680, deorbit < 0)");
+        double nrm, prg; OrbitMath.InclinationDv(2279, 10, true, out nrm, out prg);
+        Check(Math.Abs(nrm - 2279 * Math.Sin(10 * Math.PI / 180)) < 1e-6 && prg < 0, "inclination dv at AN");
+        OrbitMath.InclinationDv(2279, 10, false, out nrm, out prg);
+        Check(nrm < 0, "inclination dv flips at DN");
+        Check(Math.Abs(OrbitMath.SyncAltitude(kmu, 21549.425, kr) / 1000 - 2863.33) < 1, "Kerbin synchronous altitude ~2863 km");
+        Check(OrbitMath.UseApoapsis(100, 900, 70000) && !OrbitMath.UseApoapsis(900, 100, 70000) && OrbitMath.UseApoapsis(900, 100, -5000), "circularize burn point");
+        Check(OrbitMath.WarpUt(1000, 1100, 30) == 1070 && OrbitMath.WarpUt(1000, 1010, 30) == 1000, "warp lead never in the past");
+        Check(OrbitMath.ApsisGate("Apoapsis", 50, 70000, true, 0) != null && OrbitMath.ApsisGate("Periapsis", 90, 80000, false, 0) != null && OrbitMath.ApsisGate("Apoapsis", 100, 70000, true, 0) == null
+            && OrbitMath.ApsisGate("Periapsis", -1, 1, false, 0) != null, "apsis request gates");
+        Check(NativeCommands.IsPorted("circularize") && NativeCommands.IsPorted("mechjeb_ascent") && NativeCommands.IsPorted("sun_lock") && !NativeCommands.IsPorted("transfer_to"), "P5-4 ported set (transfer_to still bridge)");
+        Console.WriteLine("P5-4 orbital math: 10 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

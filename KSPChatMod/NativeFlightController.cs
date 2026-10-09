@@ -263,6 +263,8 @@ namespace KSPChatBridge
             else if (park == "released") parkingReleased = true;
             wasAirborne = flying;
             prevBrakes = brakes;
+            try { AttitudeLockTick(); }
+            catch (Exception ex) { attitudeLock = null; Debug.LogWarning("[KSPChatBridge] Attitude lock: " + ex.Message); }
             try { ScienceTick(); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local science watcher: " + ex.Message); }
         }

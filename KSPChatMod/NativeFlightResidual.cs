@@ -61,6 +61,7 @@ namespace KSPChatBridge
         string ResidualCommand(string name, Dictionary<string, object> a)
         {
             string life = LifecycleCommand(name, a); if (life != null) return life;
+            string orbital = OrbitalCommand(name, a); if (orbital != null) return orbital;
             switch (name)
             {
                 case "land":
@@ -75,11 +76,6 @@ namespace KSPChatBridge
                     if (route == "plane") return Command("land_plane", Args());
                     return Command("land_here", Args());
                 }
-                case "land_at_ksc":
-                    if (IsPlane()) return Command("land_plane", Args("name", "KSC Runway"));
-                    return "Targeted rocket landing at KSC needs MechJeb's landing autopilot (P5-4); use land for a powered descent here.";
-                case "land_at":
-                    return "Targeted landing at coordinates needs MechJeb's landing autopilot (P5-4); save a landing spot and use land_at_spot, or land here.";
                 case "fly_to": case "fly_to_place":
                 {
                     if (vessel.LandedOrSplashed) return "Take off first, then fly_to.";

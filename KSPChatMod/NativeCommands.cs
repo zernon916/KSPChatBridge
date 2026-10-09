@@ -22,7 +22,11 @@ namespace KSPChatBridge
             "level_off", "set_sas_mode", "abort_ag", "action_group", "fuel_check", "get_delta_v", "get_landing_eta", "how_far",
             "landing_check", "crew_report", "flight_report", "damage_report",
             // P5-3 lifecycle + science (NativeLifecycle.cs)
-            "stage", "recover_vessel", "launch_craft", "deploy_parachutes", "eject_kerbal", "run_science", "reset_experiments", "set_science_watcher"
+            "stage", "recover_vessel", "launch_craft", "deploy_parachutes", "eject_kerbal", "run_science", "reset_experiments", "set_science_watcher",
+            // P5-4 orbital / docking, MechJeb optional (NativeOrbital.cs)
+            "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis",
+            "change_periapsis", "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with",
+            "land_at", "land_at_ksc"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;
