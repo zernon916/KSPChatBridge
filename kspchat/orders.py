@@ -51,6 +51,25 @@ _TRIM_RE = re.compile(r"^\s*trim\s*(?:nose\s*)?(up|down)(?:\s*(\d+(?:\.\d+)?))?\
 _TRIM0_RE = re.compile(r"^\s*(?:trim\s*(?:reset|zero|0|off|neutral)|reset\s*trim)" + _END, re.I)
 _LAND_RE = re.compile(r"^\s*land(?:\s+(?:the\s+)?(?:plane|aircraft|craft|ship))?"
                       r"(?:\s+(?:at|on)\s+(?:the\s+)?(ksc|base|home|runway|island(?:\s+airfield)?))?" + _END, re.I)
+_LAND_RWY_RE = re.compile(r"^\s*land\s+(?:at|on)\s+(?:the\s+)?(?:runway\s*|rwy\s*)?(0?9|27)"
+                          r"(?:\s+(?:at\s+)?(?:the\s+)?ksc)?" + _END, re.I)
+_STOP_CUR_RE = re.compile(r"^\s*(?:please\s+)?(?:stop|cancel|abort|end|scrap|drop)\s+(?:the\s+|that\s+|this\s+|my\s+|our\s+)?"
+                          r"(?:current(?:\s+(?:flight\s*plan|plan|autopilot|task|order|maneuver|manoeuvre))?|flight\s*plan|plan"
+                          r"|what\s+(?:you'?re|we'?re)\s+doing)\b(.*)$", re.I)
+
+
+def split_stop(text):
+    """'stop current plan' -> (True, ''); 'stop current, and land at 27' -> (True, 'land at 27'); else (False, text).
+    Run before the model so even small models can't skip the cancel."""
+    m = _STOP_CUR_RE.match(text or "")
+    if not m:
+        return False, text
+    rest = re.sub(r"^(?:\s|[,;:.!]|and\b|then\b)+", "", m.group(1), flags=re.I).strip()
+    if rest and not re.match(r"^[,;:.!]|\s*(?:and|then)\b", m.group(1), re.I):
+        return False, text   # 'stop current plan X' without a separator: not ours
+    return True, rest.rstrip(" .!")
+
+
 _GOAROUND_RE = re.compile(r"^\s*go[\s-]*around" + _END, re.I)
 _TNG_RE = re.compile(r"^\s*(?:do\s*a\s*)?touch[\s-]*(?:and|n|&)[\s-]*go" + _END, re.I)
 _PROP_PITCH_RE = re.compile(r"^\s*(?:props?|propellers?|blades?)\s*pitch\s*(?:to\s*)?(auto|-?\d+(?:\.\d+)?)\s*"
@@ -315,6 +334,9 @@ def parse(text):
         return "prop_control", pc
     if _DAMAGE_RE.match(t):
         return "damage_report", {}
+    m = _LAND_RWY_RE.match(t)
+    if m:
+        return "land_plane", {"runway": "27" if m.group(1) == "27" else "09"}
     m = _LAND_RE.match(t)
     if m:
         return "land", {"where": (m.group(1) or "").lower()}

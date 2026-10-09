@@ -320,6 +320,18 @@ class Session:
                 return reply, tlog
             if speedcap.pending(self.sid).get("origin") == "chat":
                 speedcap.drop(self.sid)  # Luke moved on: a later unrelated "yes" must not grant it
+        stopped, rest = orders.split_stop(text)
+        if stopped:  # 'stop current [plan]' (+ ', and land at 27'): cancel deterministically, then the rest
+            with speedcap.use_session(self.sid):
+                sres = ksp_actions.call_tool("stop_current", {})
+            log_stop = [{"tool": "stop_current", "args": {}, "result": sres[:500]}]
+            if rest:
+                reply, tools = self.send(rest, backend)
+                return sres + " " + reply, log_stop + tools
+            self.last_name = ksp_actions.pilot_name() or "Bridge"
+            self.history += [{"role": "user", "content": text}, {"role": "assistant", "content": sres}]
+            self.history = self.history[-config.HISTORY_MESSAGES:]
+            return sres, log_stop
         talked = self.talk_to_kerbal(text, backend)
         if talked is not None:
             if talked[0] == "order":

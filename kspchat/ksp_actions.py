@@ -1063,8 +1063,8 @@ def dock_with(name: str = "target") -> str:
             f"{p['size']} port. MechJeb flies it; I'll post the result in chat.")
 
 
-def abort() -> str:
-    """Safe abort: throttle to 0, disengage MechJeb autopilots, SAS on. Does NOT fire the abort action group."""
+def _stop_controllers():
+    """Stop every bridge controller (flight plan, landers, plane/heli/taxi/docking, holds) and other processes' ones."""
     try:
         from . import flightplan
         flightplan.stop()  # a running Flight Plan must not start its next step after an abort
@@ -1081,13 +1081,9 @@ def abort() -> str:
     taxi.stop()
     docking.stop()
     guard.request_stop()  # also stops controllers running in other processes (harness, MCP)
-    v = _vessel()
-    try:
-        flying_plane = str(v.situation).split(".")[-1] == "flying" and bool(v.parts.wheels) and _has_wings(v)
-    except Exception:
-        flying_plane = False
-    if not flying_plane:  # a plane in flight keeps its throttle (never chop it in the air - Luke)
-        v.control.throttle = 0.0
+
+
+def _mj_autopilots_off():
     try:
         mj = conn().mech_jeb
         if mj.api_ready:
@@ -1102,6 +1098,39 @@ def abort() -> str:
                 mj.landing_autopilot.stop_landing()
     except Exception:
         pass
+
+
+def stop_current() -> str:
+    """'stop current (plan)': cancel the running flight plan and every autopilot (plane / heli / lander / taxi /
+    docking, holds, MechJeb) but leave the throttle where it is (never 0 in flight) and fire nothing. SAS on.
+    The harder version is abort."""
+    _stop_controllers()
+    v = _vessel()
+    _mj_autopilots_off()
+    try:
+        v.control.sas = True
+    except Exception:  # noqa: BLE001
+        pass
+    from . import heli
+    t0 = time.time()  # let the controller threads finish so a follow-up order ('..., and land at 27') can start
+    while time.time() - t0 < 6:
+        if not any(m.active() for m in (plane, hold, heli, taxi, lander) if hasattr(m, "active")) and not guard.busy():
+            break
+        time.sleep(0.2)
+    return "Current plan cancelled: autopilots off, throttle unchanged."
+
+
+def abort() -> str:
+    """Safe abort: throttle to 0, disengage MechJeb autopilots, SAS on. Does NOT fire the abort action group."""
+    _stop_controllers()
+    v = _vessel()
+    try:
+        flying_plane = str(v.situation).split(".")[-1] == "flying" and bool(v.parts.wheels) and _has_wings(v)
+    except Exception:
+        flying_plane = False
+    if not flying_plane:  # a plane in flight keeps its throttle (never chop it in the air - Luke)
+        v.control.throttle = 0.0
+    _mj_autopilots_off()
     v.control.sas = True
     return "Aborted: throttle 0, MechJeb autopilots off, SAS on."
 
@@ -2564,7 +2593,7 @@ TOOLS = [heli_control, get_status, stage, set_throttle, set_gear, set_brakes, ej
          change_apoapsis, change_periapsis, change_inclination, station_keep, capture_plan, taxi_to]
 # AICS-menu-only tools (POST /tool, Flight Plan steps): kept out of the model's tool list so small local models
 # aren't swamped by schemas
-MENU_ONLY = [set_speed, set_altitude, turn, set_heading, fly_to_place, circle_here, flight_report, fuel_check, how_far,
+MENU_ONLY = [stop_current, set_speed, set_altitude, turn, set_heading, fly_to_place, circle_here, flight_report, fuel_check, how_far,
              time_to_target, level_off, set_rcs, set_lights, action_group, set_engines, cut_engines, engine_mode,
              afterburner, flaps, trim, land, go_around, touch_and_go, abort_ag, crew_report, set_override,
              authorise_all, match_target_plane, apsis_longitude, launch_to_target_plane, sync_orbit_altitude, landing_check,
