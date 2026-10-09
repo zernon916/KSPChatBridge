@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using KSPChatBridge;
 
 class Program
@@ -504,6 +505,58 @@ class Program
         Check(!OpenAiBackend.Resolve("claude").Ok && OpenAiBackend.Resolve("claude").Error.Contains("ANTHROPIC_API_KEY"), "claude missing-key error");
         Check(!OpenAiBackend.Resolve("grokbot").Ok && OpenAiBackend.Resolve("grokbot").Error.Contains("XAI_API_KEY"), "grokbot missing-key error");
         Console.WriteLine("P5-1 wired providers: 4 behavior checks passed.");
+        // ---- P5-1: crew / personality / memory / talk essentials ----
+        var crewDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-crew-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(crewDir);
+        PlaystyleNotes.PathProvider = () => System.IO.Path.Combine(crewDir, "playstyle_notes.md");
+        KerbalPersonality.PathProvider = () => System.IO.Path.Combine(crewDir, "kerbal_personalities.json");
+        Check(PlaystyleNotes.Remember("always keep crossfeed on").StartsWith("Remembered"), "notes remember");
+        Check(PlaystyleNotes.Remember("always keep crossfeed on").StartsWith("Updated existing"), "near-dupe refreshes");
+        Check(PlaystyleNotes.Load().Count == 1 && PlaystyleNotes.NotesBlock().Contains("crossfeed"), "notes persist + block");
+        var stats = new Dictionary<string, object> { { "courage", 0.1 }, { "stupidity", 0.9 }, { "badass", false }, { "veteran", false } };
+        var p1 = KerbalPersonality.Generate("Bob Kerman", stats);
+        var p2 = KerbalPersonality.Generate("Bob Kerman", stats);
+        Check(KerbalPersonality.Strings(p1, "temper")[0] == KerbalPersonality.Strings(p2, "temper")[0], "personality deterministic per name");
+        Check(KerbalPersonality.Strings(p1, "temper").Contains("nervous") && KerbalPersonality.Strings(p1, "temper").Contains("scatterbrained"),
+            "courage/stupidity shape temper");
+        var val = KerbalPersonality.Generate("Val Kerman", new Dictionary<string, object> { { "badass", true } });
+        Check(KerbalPersonality.Strings(val, "temper").Contains("unflappable"), "badass is unflappable");
+        KerbalPersonality.Ensure("Bob Kerman", () => stats);
+        Check(KerbalPersonality.Ensure("Bob Kerman", null) != null && KerbalPersonality.LoadAll().ContainsKey("Bob Kerman"), "personality persisted once");
+        string who = KerbalPersonality.Describe("Bob Kerman", "scientist");
+        Check(who.StartsWith("a ") && who.Contains("scientist") && who.Contains("who ") && who.Contains(" and hates "), "describe format");
+        IntercomTalk.Reset();
+        // mirror tests/test_talk.py fixtures: Sidry is the pilot (the chat's own voice) and IS aboard
+        var crewList = new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>("Sidry Kerman", "Pilot"),
+            new KeyValuePair<string, string>("Bob Kerman", "Scientist"),
+            new KeyValuePair<string, string>("Bill Kerman", "Engineer"),
+        };
+        var known = new List<string> { "Jebediah Kerman", "Valentina Kerman", "Bob Kerman" };
+        var hit = IntercomTalk.Route("Hey Bob, are you having a good time?", crewList, "Sidry", known);
+        Check(hit != null && hit.Item1 == "kerbal" && hit.Item2.Key == "Bob Kerman" && hit.Item3 == "are you having a good time?", "route hey");
+        Check(IntercomTalk.Route("Bob: how's the view?", crewList, "Sidry", known).Item1 == "kerbal", "route lead");
+        Check(IntercomTalk.Route("@Bob what's up", crewList, "Sidry", known).Item1 == "kerbal", "route at");
+        Check(IntercomTalk.Route("How are you doing, Bill?", crewList, "Sidry", known).Item3 == "How are you doing?", "route tail");
+        Check(IntercomTalk.Route("Hey Sidry, how are you?", crewList, "Sidry", known) == null, "pilot is the chat's voice");
+        var absent = IntercomTalk.Route("Hey Jeb, you there?", crewList, "Sidry", known);
+        Check(absent != null && absent.Item1 == "absent" && absent.Item2.Key == "Jebediah", "short-name match goes absent");
+        Check(IntercomTalk.Route("@Gerdy hello", crewList, "Sidry", known).Item1 == "absent", "explicit at unknown is absent");
+        Check(IntercomTalk.Route("Bob, land the plane", crewList, "Sidry", known).Item1 == "order", "order goes to pilot");
+        Check(IntercomTalk.Route("/status", crewList, "Sidry", known) == null, "slash commands not routed");
+        Check(IntercomTalk.Clean("{\"tool\": \"abort\"}") == null && IntercomTalk.Clean("I've deployed the chutes.") == null,
+            "clean drops toolish and action claims");
+        Check(IntercomTalk.Clean("<think>hmm</think>[INTERCOM] Bob (Sci): Having a blast, Captain!") == "Having a blast, Captain!",
+            "clean strips think blocks and tags");
+        string canned = IntercomTalk.Reply(new KeyValuePair<string, string>("Bob Kerman", "scientist"), "hi", "",
+            prompt => { Thread.Sleep(3000); return "late"; }, null, 200);
+        Check(canned == "[INTERCOM] Bob (Sci): " + IntercomTalk.Canned["scientist"][0], "busy AI -> canned line (timeout)");
+        Check(IntercomTalk.Memory("Bob Kerman").Count == 1, "reply remembered");
+        string okReply = IntercomTalk.Reply(new KeyValuePair<string, string>("Bill Kerman", "engineer"), "hi", "flying",
+            prompt => prompt.Contains("Luke says: hi") ? "All good, Captain!" : "wrong", null, 2000);
+        Check(okReply == "[COMMS] Bill (Eng): All good, Captain!", "engineer reply on COMMS");
+        Console.WriteLine("P5-1 crew/personality/memory/talk: 22 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

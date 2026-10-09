@@ -29,7 +29,10 @@ namespace KSPChatBridge
         internal InModChatSession(Func<OpenAiBackend.Endpoint, string, string> completionsOverride)
         {
             complete = completionsOverride;
-            messages.Add(Msg("system", "You are AICS flying Kerbal Space Program. Use tools for game actions. Be concise."));
+            string system = "You are AICS flying Kerbal Space Program. Use tools for game actions. Be concise.";
+            string notes = PlaystyleNotes.NotesBlock();
+            if (notes.Length > 0) system += "\n" + notes;
+            messages.Add(Msg("system", system));
         }
         static Dictionary<string, object> Msg(string role, string content)
         {

@@ -46,3 +46,25 @@ Baseline before P5-1: 478 pytest passed, C# suite green, `KSPChatBridge-0.1.1-pr
 **Still needs live check:** Claude/Grok chat round trip in KSP with a real key (tool_calls path incl. `strict` ignored by Claude compat layer — noted limitation), key boxes save/mask, `/ai claude` + `/ai grok` switching.
 
 ---
+
+## P5-1 Part 3 — crew / personality / memory / talk essentials ported to C# — DONE (tests; needs live check)
+
+Ports of the bridge's crew-side behavior so in-mod chat has it without `:8765`. Unity-free + injectable paths = fully covered by the C# suite.
+
+**New files (`KSPChatMod/`):**
+- `KerbalPersonality.cs`:
+  - `PlaystyleNotes` (memory.py): load/remember with near-dupe refresh (Levenshtein-based similarity > 0.85), 100-note cap with "dropped N oldest", `NotesBlock()` for system prompts — persists `playstyle_notes.md` in PluginData.
+  - `KerbalPersonality` (personality.py): deterministic per-name temperament (2 max) + 2 likes + 1 dislike, `Ensure` persists once to `kerbal_personalities.json` (shared file with bridge), `Describe` → "a nervous scientist who loves … and hates …". NOTE: C# RNG is seeded xorshift over the same crc32(name) as Python's MT — deterministic per language, not bit-identical across languages; the shared JSON keeps one source of truth after first generation.
+- `IntercomTalk.cs` (talk.py + crew.py fmt/norm_trait/who essentials): `Route` (addressing forms @Bob / Hey Bob / Bob: / ", Bill?" tail; pilot-is-the-voice skip; absent kerbals; orders → pilot), `Clean` (think-block strip, toolish/action-claim rejection, word/char caps), `Reply` with **8 s deadline → canned line on timeout** (busy AI never blocks), per-kerbal 4-exchange memory, `Fmt` ([INTERCOM] Bob (Sci): …, engineers on [COMMS]), `Prompt` (personality + facts + memory).
+
+**Wiring:** `InModChatSession` system prompt now appends `PlaystyleNotes.NotesBlock()` (parity with bridge chat).
+
+**Tests:** C# suite "P5-1 crew/personality/memory/talk: 22 behavior checks passed" — mirrors `tests/test_talk.py` fixtures (Sidry pilot, Bob/Bill crew, Jebediah/Valentina roster) for route parity; timeout→canned verified with a slow generator; persistence round-trips through temp PluginData.
+
+**Gotcha found while testing:** Python's think-block strip uses `` HTML-ish tags (not markdown ``` fences) — byte-verified against `talk.py:139` after a test failure; C# regex `(?s)<think.*?</think>` now matches exactly.
+
+**Results:** 478 pytest passed, C# suite green, Release build 0 errors.
+
+**Still needs live check:** intercom reply from KSP chat ("Hey Bob, …") with a real model; personality file shared correctly between mod and running bridge (same PluginData dir).
+
+---
