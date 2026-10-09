@@ -532,7 +532,13 @@ def clear_vessel_cache():
     _INFO.clear()
     if active():
         stop()
+    STATE.pop("spooled", None)
     STATE.update(mode="off", alt=None, heading=None, track=None, face=None, speed=None, hold=None, goto=None, t=0.0)
+    try:
+        from . import propulsion
+        propulsion.reset_spool_state()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def stop():
@@ -788,7 +794,10 @@ def _fly(conn):
                 # counter-rotating pairs: more torque on one spin sense yaws the craft
                 lay = pr.layout(v)["rotors"]
                 for i in lift:
-                    dq = COAX_YAW_TQ * ysign.sign * u * (lay[i]["dir"] or 1)
+                    if i >= len(lay):
+                        log.warning("heli: lift index %s out of range (layout has %s rotors)", i, len(lay))
+                        continue
+                    dq = COAX_YAW_TQ * ysign.sign * u * (lay[i].get("dir") or 1)
                     _write(v, cache, f"tq{i}", 90.0 + dq, lambda x, i=i: pr.set_rotor(v, torque=x, rotors={i}), 2.0)
             if p["hdg_t"] is not None and STATE.get("face") is None:
                 STATE["heading"] = p["hdg_t"]  # a nose that followed the track stays there when we slow down

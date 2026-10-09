@@ -24,7 +24,7 @@ import math
 import threading
 import time
 
-from . import config, emergency, guard, settings, speedcap, spots
+from . import alt_hold, config, emergency, guard, settings, speedcap, spots
 from . import takeoff as tko
 from .plane import (_clamp, _wrap, _runway_line, _line_track, ROLL_SIGN, PITCH_SIGN, PITCH_RATE, BANK_SLEW,
                     HDG_K, MAX_TURN, TURN_KD, DEFAULT_STALL, V_HARD, _craft_keys, _takeoff_governor,
@@ -229,6 +229,7 @@ def _hold(conn):
     v = sc.active_vessel
     try:
         from . import craft_notes, trim_auto
+        trim_auto.capture_surface_snapshot(v)
         craft_notes.apply_on_engage(v)
         trim_auto.reset_vessel_context()
     except Exception:  # noqa: BLE001
@@ -299,6 +300,11 @@ def _hold(conn):
             return ("Not lined up on a known runway (heading %.0f) - I won't take off from here (cliffs!). Line up on "
                     "a runway first, or take off by hand and then engage the holds." % s_hdg())
         STATUS.update(phase="takeoff", runway_heading=round(line[2], 1), climbout_hdg=line[2])
+        try:
+            from . import parking
+            parking.release("takeoff roll")
+        except Exception:  # noqa: BLE001
+            pass
         ctl.brakes = False
         ctl.gear = True
         from . import propulsion
@@ -508,18 +514,28 @@ def _hold(conn):
         elif tgt.get("vertical_speed") is None:
             alt_des = hold_alt0  # nothing set: hold the altitude we engaged at
         vs_t = tgt.get("vertical_speed")
-        if alt_des is not None:
+        alt_band = False
+        if alt_des is not None and vs_t is None:
+            up = CLIMB_VS_DEFAULT
+            dn = 15.0
+            vs_des, alt_band = alt_hold.vertical_speed_target(
+                alt, alt_des, up, dn, ALT_VS_K, kin, STATUS.setdefault("alt_hold", {}))
+        elif alt_des is not None:
             up = abs(float(vs_t)) if vs_t is not None and float(vs_t) > 0 else CLIMB_VS_DEFAULT
             dn = abs(float(vs_t)) if vs_t is not None and float(vs_t) < 0 else 15.0
-            # V/S from altitude error (not a hard altitude PID on the elevator) — softened by mass
-            vs_des = _clamp(ALT_VS_K * kin * (alt_des - alt), -dn, up)
-        else:
+            vs_des, alt_band = alt_hold.vertical_speed_target(
+                alt, alt_des, up, dn, ALT_VS_K, kin, STATUS.setdefault("alt_hold", {}))
+        elif vs_t is not None:
             vs_des = float(vs_t)
+        else:
+            vs_des = 0.0
         terrain_hold = False
         if alt < floor_msl:  # terrain floor (look-ahead): climb, whatever the targets say
             vs_des = max(vs_des, _clamp(0.1 * (floor_msl - alt), 3.0, 30.0))
             terrain_hold = True
-        climbing = vs_des > 3.0 and (alt_des is None or alt_des - alt > 150.0 or terrain_hold)
+            alt_band = False
+        climbing = (not alt_band and vs_des > 3.0
+                    and (alt_des is None or abs(alt_des - alt) > alt_hold.band_m() or terrain_hold))
 
         # ---------------- commanded pitch attitude (plane_pitch: "pitch up 10" / "nose down 5")
         p_cmd, full_pwr = None, False
@@ -645,7 +661,7 @@ def _hold(conn):
                      cmd["throttle"], floor_msl)
         try:
             from . import trim_auto
-            trim_msg = trim_auto.maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pcmd, now)
+            trim_msg = trim_auto.maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pcmd, pitch, now)
             if trim_msg:
                 _note(trim_msg)
         except Exception:  # noqa: BLE001

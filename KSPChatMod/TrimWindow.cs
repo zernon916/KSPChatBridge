@@ -1,6 +1,7 @@
 // AICS Trim panel: pitch / roll / yaw trim (+ collective on rotorcraft), live via POST /tool on the Python bridge.
-// Expected JSON from get_trim_state (Python may implement later; C# targets this contract):
-//   {"pitch":-1..1,"roll":-1..1,"yaw":-1..1,"collective"?:deg,"heli":bool,"craft":"name","notes_saved":bool}
+// Expected JSON from get_trim_state:
+//   {"pitch":-1..1,"roll":-1..1,"yaw":-1..1,"collective"?:deg,"heli":bool,"craft":"name","notes_saved":bool,
+//    "auto_master":bool,"auto_pitch":bool,"auto_roll":bool,"auto_yaw":bool,"auto_rotor":bool}
 // set_trim args: {"axis":"pitch"|"roll"|"yaw"|"collective","value":-1..1 or degrees for collective}
 // auto_trim_now / save_craft_notes -> plain-text report; reset -> tool "trim" {"direction":"reset","percent":0}
 using System;
@@ -19,7 +20,7 @@ namespace KSPChatBridge
     {
         const string BridgeUrl = "http://127.0.0.1:8765/";
         const int WindowId = 0x4B434235;
-        const float MinW = 280, MinH = 220, Nudge = 0.05f, CollMax = 12f;
+        const float MinW = 280, MinH = 300, Nudge = 0.05f, CollMax = 12f, PollInterval = 2.5f;
 
         internal static bool TrimVisible;
         static Rect trimRect = new Rect(140, 360, 320, 300);
@@ -28,11 +29,14 @@ namespace KSPChatBridge
 
         static volatile string stateJson = "";
         static volatile bool stateOk;
+        static bool everStateOk;
+        static float lastGoodState;
         static int polling;
         static float nextPoll;
 
         static float pitch, roll, yaw, collective = 4f;
         static bool heli, notesSaved;
+        static bool autoMaster = true, autoPitch = true, autoRoll = true, autoYaw = true, autoRotor = true;
         static string craftName = "";
         static bool dragPitch, dragRoll, dragYaw, dragColl;
         GUIStyle valStyle, keyStyle, small;
@@ -68,7 +72,7 @@ namespace KSPChatBridge
             if (!TrimVisible) return;
             if (Time.realtimeSinceStartup >= nextPoll)
             {
-                nextPoll = Time.realtimeSinceStartup + 1f;
+                nextPoll = Time.realtimeSinceStartup + PollInterval;
                 PollState();
             }
         }
@@ -83,12 +87,16 @@ namespace KSPChatBridge
                     string body = PostTool("get_trim_state", "{}");
                     stateJson = body ?? "";
                     stateOk = body != null && body.TrimStart().StartsWith("{");
-                    if (stateOk) ApplyJson(body);
+                    if (stateOk)
+                    {
+                        ApplyJson(body);
+                        everStateOk = true;
+                        lastGoodState = Time.realtimeSinceStartup;
+                    }
                 }
                 catch (Exception)
                 {
                     stateOk = false;
-                    stateJson = "";
                 }
                 finally { Interlocked.Exchange(ref polling, 0); }
             });
@@ -102,6 +110,11 @@ namespace KSPChatBridge
             if (!dragColl) collective = JsonFloat(json, "collective", collective);
             heli = JsonBool(json, "heli");
             notesSaved = JsonBool(json, "notes_saved");
+            autoMaster = JsonBool(json, "auto_master", autoMaster);
+            autoPitch = JsonBool(json, "auto_pitch", autoPitch);
+            autoRoll = JsonBool(json, "auto_roll", autoRoll);
+            autoYaw = JsonBool(json, "auto_yaw", autoYaw);
+            autoRotor = JsonBool(json, "auto_rotor", autoRotor);
             string c = JsonString(json, "craft");
             if (c.Length > 0) craftName = c;
         }
@@ -129,8 +142,18 @@ namespace KSPChatBridge
             float w = trimRect.width - 16;
             if (craftName.Length > 0)
                 GUILayout.Label("Craft: " + craftName + (notesSaved ? "  (notes saved)" : ""), small, GUILayout.Width(w));
-            if (!stateOk)
+            if (!stateOk && !everStateOk)
                 GUILayout.Label("Bridge not responding or get_trim_state missing — start run_bridge.py serve.", valStyle, GUILayout.Width(w));
+            else if (!stateOk && Time.realtimeSinceStartup - lastGoodState > PollInterval * 3f)
+                GUILayout.Label("Trim state stale — retrying…", small, GUILayout.Width(w));
+
+            AutoTrimHeader(w);
+            AutoTrimRow(w, "Pitch", autoPitch, "auto_pitch");
+            AutoTrimRow(w, "Roll", autoRoll, "auto_roll");
+            AutoTrimRow(w, "Yaw", autoYaw, "auto_yaw");
+            if (heli)
+                AutoTrimRow(w, "Rotor", autoRotor, "auto_rotor");
+            GUILayout.Space(4);
 
             AxisRow(w, "Pitch", ref pitch, ref dragPitch, "pitch");
             AxisRow(w, "Roll", ref roll, ref dragRoll, "roll");
@@ -151,6 +174,51 @@ namespace KSPChatBridge
             if (e.type == EventType.MouseDown && e.button == 0 && grip.Contains(e.mousePosition)) { resizing = true; e.Use(); }
             if (GUI.Button(new Rect(trimRect.width - 22, 2, 18, 16), "x")) { TrimVisible = false; Save(); }
             GUI.DragWindow();
+        }
+
+        void AutoTrimHeader(float w)
+        {
+            GUILayout.BeginHorizontal(GUILayout.Width(w));
+            AutoDot(autoMaster);
+            GUILayout.Label("Auto-trim", keyStyle, GUILayout.Width(72));
+            if (GUILayout.Button(autoMaster ? "Master ON" : "Master OFF", GUILayout.Width(88)))
+                ToggleAuto("auto_master", !autoMaster);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+        }
+
+        void AutoTrimRow(float w, string label, bool on, string axis)
+        {
+            GUILayout.BeginHorizontal(GUILayout.Width(w));
+            AutoDot(on && autoMaster);
+            GUILayout.Label(label, small, GUILayout.Width(44));
+            if (GUILayout.Button(on ? "ON" : "OFF", GUILayout.Width(44)))
+                ToggleAuto(axis, !on);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+        }
+
+        static void AutoDot(bool on)
+        {
+            Color prev = GUI.color;
+            GUI.color = on ? new Color(0.2f, 0.85f, 0.25f) : new Color(0.45f, 0.45f, 0.45f);
+            GUILayout.Label("●", GUILayout.Width(14));
+            GUI.color = prev;
+        }
+
+        static void ToggleAuto(string axis, bool on)
+        {
+            if (axis == "auto_master") autoMaster = on;
+            else if (axis == "auto_pitch") autoPitch = on;
+            else if (axis == "auto_roll") autoRoll = on;
+            else if (axis == "auto_yaw") autoYaw = on;
+            else if (axis == "auto_rotor") autoRotor = on;
+            string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, on ? 1 : 0);
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { PostTool("set_trim", json); PollState(); }
+                catch (Exception ex) { ChatWindow.Notice("Trim auto: " + ex.Message); }
+            });
         }
 
         void AxisRow(float w, string label, ref float val, ref bool dragging, string axis)
@@ -240,10 +308,11 @@ namespace KSPChatBridge
             return def;
         }
 
-        static bool JsonBool(string json, string key)
+        static bool JsonBool(string json, string key, bool def = false)
         {
             var m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
-            return m.Success && m.Groups[1].Value.Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (!m.Success) return def;
+            return m.Groups[1].Value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
         static string JsonString(string json, string key)

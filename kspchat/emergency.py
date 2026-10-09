@@ -276,9 +276,9 @@ def _names(names, n=2):
 
 
 def _surf(s):
-    """Pad a surface scan tuple to 8 fields: title, P, Y, R, inverted, authority, deployed, deploy_dir."""
-    t = list(s) + [False] * 8
-    return t[:8]
+    """Pad a surface scan tuple: title, P, Y, R, inverted, authority, deployed, deploy_dir, deploy_angle."""
+    t = list(s) + [False] * 9
+    return t[:9]
 
 
 def diff_config(old, new, own=False, landing=False, want_gear=None):
@@ -1057,6 +1057,11 @@ def _apply_revert(v, ref, tags, s=None):
     if v is None or not ref:
         return 0
     own_change()
+    try:
+        from . import propulsion
+        propulsion.reset_spool_state()
+    except Exception:  # noqa: BLE001
+        pass
     n, tags = 0, set(tags or [])
     s = s or {}
     try:
@@ -1405,13 +1410,16 @@ def _scan_cfg(v):
            "lights": None, "sas": None, "rcs": None, "flow": [], "ag": []}
     try:
         from . import propulsion
+        from . import trim_auto
         for cs in v.parts.control_surfaces:
             try:
                 if propulsion.is_blade(cs.part.title):
                     continue  # propeller blades: their pitch / authority is Luke's prop control, not sabotage
+                mod = next((m for m in cs.part.modules if m.name == "ModuleControlSurface"), None)
+                dep_ang = trim_auto.get_deploy_angle(mod) if mod else 0.0
                 cfg["surfaces"].append((cs.part.title, bool(cs.pitch_enabled), bool(cs.yaw_enabled), bool(cs.roll_enabled),
                                         bool(cs.inverted), float(cs.authority_limiter), bool(cs.deployed),
-                                        bool(_surf_deploy_dir(cs))))
+                                        bool(_surf_deploy_dir(cs)), float(dep_ang or 0.0)))
             except Exception:  # noqa: BLE001
                 pass
     except Exception:  # noqa: BLE001
@@ -1782,6 +1790,11 @@ def vessel_changed(vid, vessel=""):
     if vid != DAMAGE["vid"]:
         DAMAGE.update(vid=vid, vessel=vessel, lost=[], inverted="")
         _clear_vessel_bridge_context(vid, vessel)
+        try:
+            from . import parking
+            parking.on_vessel_switch(vid)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _clear_vessel_bridge_context(vid, vessel=""):
@@ -1909,6 +1922,7 @@ def _sample(v, scan, sc=None):
         want_gear = True
     s = {"t": time.time(), "vid": getattr(v, "_object_id", None) or v.name, "sit": sit,
          "g": float(f.g_force), "speed": float(f.speed), "vs": float(f.vertical_speed), "aoa": float(f.angle_of_attack),
+         "q": float(f.dynamic_pressure),
          "throttle": float(v.control.throttle), "stage": int(v.control.current_stage), "parts": len(v.parts.all),
          "engines": _engine_sample(v), "intake_air": _ratio(v, "IntakeAir"), "fuel": _ratio(v, "LiquidFuel"),
          "crew": 0, "ctrl": None, "temp": None, "cfg": None, "stall": None,
@@ -2200,6 +2214,16 @@ class _Watcher(threading.Thread):
                 log.info("props: %s (spd %.0f)", did, float(s.get("speed") or 0.0))
         except Exception as ex:  # noqa: BLE001
             log.debug("prop governor: %s", ex)
+        try:
+            from . import parking, power_mgmt
+            note = parking.tick(v, s["sit"])
+            if note:
+                _post(note)
+            note = power_mgmt.low_ec_tick(v, s)
+            if note:
+                _post(note)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("parking/power: %s", ex)
         if s["cfg"] is not None:
             self.cfg = s["cfg"]
         handle(DET.tick(s), v, s)

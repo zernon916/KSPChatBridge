@@ -476,3 +476,20 @@ def test_rotor_brake_in_flight_is_tamper(monkeypatch):
     d3.tick(S(1, H()))
     evs = d3.tick(S(2, H(rpm=200.0, brake=100.0))) + d3.tick(S(4, H(rpm=200.0, brake=100.0)))
     assert evs[0]["what"] == "main rotor (Brake 100)" and "BRAKE 100" in evs[0]["short"]
+
+
+def test_coax_differential_yaw_skips_stale_lift_index(monkeypatch):
+    """Regression (heli._fly ~791): lift index past layout must not IndexError."""
+    v = NS(name="Test Heli")
+    lift = {0, 3}
+    lay_rotors = [{"dir": 1}, {"dir": -1}]
+    calls = []
+    monkeypatch.setattr(pr, "layout", lambda vv: {"rotors": lay_rotors})
+    monkeypatch.setattr(pr, "set_rotor", lambda vv, **k: calls.append(k.get("rotors")) or "ok")
+    u, ysign_sign = 0.4, 1.0
+    for i in lift:
+        if i >= len(lay_rotors):
+            continue
+        dq = heli.COAX_YAW_TQ * ysign_sign * u * (lay_rotors[i].get("dir") or 1)
+        pr.set_rotor(v, torque=90.0 + dq, rotors={i}, flying=True)
+    assert calls == [{0}]

@@ -12,6 +12,8 @@ GET  /landing?format=text -> one-line live landing distance/ETA estimate ("" whe
 GET  /spots?format=text   -> landing spots, "name<TAB>mode<TAB>lat<TAB>lon<TAB>builtin<TAB>runways" lines
 POST /tool  {"name": ..., "args": {...}} -> run one landing-menu tool directly (no model), plain-text result
 POST /setting {"key": "chatgpt_mode", "value": "mcp|api"} -> change a whitelisted runtime setting (AICS Settings)
+GET  /setting?key=altitude_band_m -> {"key": ..., "value": ...} (whitelisted bridge_settings keys)
+POST /setting {"key": "altitude_band_m", "value": 150} -> same (altitude band 10-500 m)
 GET  /api_keys            -> "backend<TAB>1|0<TAB>••••last4" lines + custom_url/custom_model (never full keys)
 POST /api_key {"backend": "gemini", "key": "...", "clear": false, "url": .., "model": ..} -> save key to .env + apply now
 POST /shutdown            -> stop the bridge (sent by the mod when KSP quits)
@@ -39,6 +41,11 @@ log = logging.getLogger("kspchat")
 _sessions = {}
 _chat_lock = threading.Lock()  # one chat at a time (kRPC + GPU are shared)
 _busy = [0]                    # chats in progress; /health reports it so restarts can wait
+
+
+def chat_in_progress():
+    """True while a /chat or flight-plan draft holds the shared model lock (crew skips LLM when busy)."""
+    return _busy[0] > 0
 
 
 def clear_vessel_sessions():
@@ -82,12 +89,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
-            try:
-                scene = ksp_actions._scene()
-            except Exception as e:
-                scene = f"kRPC unavailable: {e.__class__.__name__}"
             cg = mcp_chat.status()
-            return self._send(200, {"ok": True, "scene": scene, "busy": _busy[0], "ai_name": settings.get("ai_name") or "AI",
+            return self._send(200, {"ok": True, "busy": _busy[0], "ai_name": settings.get("ai_name") or "AI",
                                     "chatgpt_mode": cg["mode"], "chatgpt_open": cg["open"],
                                  "language_filter": _on("language_filter"), "crew_chatter": _on("crew_chatter"),
                                     "chatgpt_seen_s": cg["chatgpt_seen_s"],
@@ -147,6 +150,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/taxi"):  # AICS Taxi panel: "name<TAB>lat<TAB>lon" lines
             from . import taxi
             return self._send(200, "".join(f"{k}\t{a:.6f}\t{b:.6f}\n" for k, (a, b) in taxi.points().items()), text=True)
+        if self.path.startswith("/setting"):
+            import urllib.parse
+            key = (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("key") or [""])[0]
+            if key not in settings.SETTING_KEYS:
+                return self._send(400, {"error": f"setting '{key}' not allowed"})
+            return self._send(200, {"key": key, "value": settings.get_setting(key)})
         if self.path.startswith("/api_keys"):
             return self._send(200, keys.status_text(), text=True)
         self._send(404, {"error": "not found"})
@@ -176,11 +185,18 @@ class Handler(BaseHTTPRequestHandler):
             r = keys.set_key(str(b.get("backend") or ""), b.get("key"), b.get("url"), b.get("model"), bool(b.get("clear")))
             return self._send(200, r, text=True)
         if self.path.startswith("/setting"):
-            key, val = str(b.get("key") or ""), str(b.get("value") or "")
+            key, val = str(b.get("key") or ""), b.get("value")
             if key in ("language_filter", "crew_chatter"):  # AICS Settings toggles (on/off)
                 from . import crew, language
                 log.info("setting %s=%s", key, val)
                 return self._send(200, (language if key == "language_filter" else crew).command(val), text=True)
+            if key in settings.SETTING_KEYS:
+                try:
+                    out = settings.put_setting(key, val)
+                except ValueError as e:
+                    return self._send(400, str(e), text=True)
+                log.info("setting %s=%s", key, out)
+                return self._send(200, {"key": key, "value": out})
             if key != "chatgpt_mode":
                 return self._send(400, f"setting '{key}' not allowed", text=True)
             log.info("setting %s=%s", key, val)

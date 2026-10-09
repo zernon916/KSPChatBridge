@@ -22,3 +22,30 @@ def put(key, value):
             data = {}
         data[key] = value
         config.SETTINGS_FILE.write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+
+# Autopilot / bridge toggles exposed via GET/POST /setting (numeric values stored as JSON numbers).
+SETTING_KEYS = frozenset({
+    "altitude_band_m",
+    "autoland_reversers",
+    "rotor_brake_park",
+    "mayday_lights",
+})
+
+
+def get_setting(key, default=None):
+    if key not in SETTING_KEYS:
+        return None
+    return get(key, default)
+
+
+def put_setting(key, value):
+    if key not in SETTING_KEYS:
+        raise ValueError(f"setting '{key}' not allowed")
+    if key == "altitude_band_m":
+        from . import alt_hold
+        value = alt_hold.set_band_m(value)
+    elif key in ("autoland_reversers", "rotor_brake_park", "mayday_lights"):
+        value = bool(str(value).lower() in ("1", "true", "on", "yes"))
+    put(key, value)
+    return value

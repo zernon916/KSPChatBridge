@@ -126,6 +126,11 @@ def _drive(conn, wps, cap):
     except Exception:  # noqa: BLE001
         pass
     ctl.sas = False
+    try:
+        from . import parking
+        parking.release("taxi")
+    except Exception:  # noqa: BLE001
+        pass
     ctl.brakes = False
     if not powered and v.available_thrust <= 0:
         ctl.activate_next_stage()  # engines not started yet (plane on the runway)

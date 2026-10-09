@@ -88,6 +88,16 @@ def clear_vessel_cache():
     STATE["radius"].clear()
     STATE["sense"] = None
     STATE.update(manual_pitch=None, manual_torque=False, reverse=False, diff=None)
+    reset_spool_state()
+
+
+def reset_spool_state():
+    """Forget 'already spooled' so the next ground takeoff runs a full spool-up."""
+    try:
+        from . import heli
+        heli.STATE.pop("spooled", None)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def rotor_status(v):
@@ -423,29 +433,51 @@ def log_fields(v):
                 _log.info("props: %s fields unreadable (%s)", kind, e)
 
 
-def _set_float(m, key, value):
+def _read_float(m, key):
+    if key is None:
+        return None
+    try:
+        return num(fields(m).get(key))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _set_float(m, key, value, *, verify=False, tol=1.0, tries=4):
     if key is None:
         return False
-    fid = _field_id(m, key)
-    if fid:
+    val = float(value)
+
+    def _write_once():
+        fid = _field_id(m, key)
+        if fid:
+            try:
+                m.set_field_float_by_id(fid, val)
+                return True
+            except Exception:  # noqa: BLE001
+                try:
+                    m.set_field_string_by_id(fid, f"{val:g}")
+                    return True
+                except Exception:  # noqa: BLE001
+                    return False
         try:
-            m.set_field_float_by_id(fid, float(value))
+            m.set_field_float(key, val)
             return True
         except Exception:  # noqa: BLE001
             try:
-                m.set_field_string_by_id(fid, f"{float(value):g}")
+                m.set_field_string(key, f"{val:g}")
                 return True
             except Exception:  # noqa: BLE001
                 return False
-    try:
-        m.set_field_float(key, float(value))
-        return True
-    except Exception:  # noqa: BLE001
-        try:
-            m.set_field_string(key, f"{float(value):g}")
+
+    if not verify:
+        return _write_once()
+    for _ in range(tries):
+        if not _write_once():
+            continue
+        got = _read_float(m, key)
+        if got is not None and abs(got - val) <= tol:
             return True
-        except Exception:  # noqa: BLE001
-            return False
+    return False
 
 
 def _set_motor(m, on):
@@ -509,14 +541,15 @@ def set_rotor(v, rpm=None, torque=None, motor=None, flying=False, group=None, ro
             f = fields(m)
         except Exception:  # noqa: BLE001
             continue
+        verify = not flying
         if rpm is not None:
             k = find_field(f, "rpm", "limit")
-            ok_r += bool(k and _set_float(m, k, min(RPM_MAX, max(0.0, rpm))))
+            ok_r += bool(k and _set_float(m, k, min(RPM_MAX, max(0.0, rpm)), verify=verify, tol=2.0))
             if not k:
                 missing.add("RPM Limit")
         if torque is not None:
             k = find_field(f, "torque", "limit") or find_field(f, "torque", exclude=("current", "max"))
-            ok_t += bool(k and _set_float(m, k, min(TORQUE_MAX, max(0.0, torque))))
+            ok_t += bool(k and _set_float(m, k, min(TORQUE_MAX, max(0.0, torque)), verify=verify, tol=2.0))
             if not k:
                 missing.add("Torque Limit")
         if motor is not None:
@@ -885,6 +918,7 @@ def fix_rotor_sense(v, bad):
         emergency.own_change()
     except Exception:  # noqa: BLE001
         pass
+    reset_spool_state()
     return f"stopped, corrected ({n}), spinning back up: {labels}" if n else f"couldn't correct {labels}"
 
 
@@ -946,7 +980,15 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
     """Pre-takeoff spool for EVERY selected rotor (code path, not the model): Brake 0, Motor Engaged, RPM Limit set,
     Torque Limit stepped up to 100%, then wait until each rotor is at >= frac of its RPM Limit.
     -> (ok, report). Field names are discovered via find_field on each part module (never hard-coded GUI strings)."""
+    try:
+        from . import power_mgmt
+        block = power_mgmt.rotor_spool_block(v)
+        if block:
+            return False, block
+    except Exception:  # noqa: BLE001
+        pass
     sleep = sleep or time.sleep
+    reset_spool_state()
     idxs = set(rotors) if rotors is not None else None
     pre, probs = preflight(v, rotors=idxs)
     rpm_t = float(rpm_target if rpm_target is not None else RPM_MAX)
@@ -960,6 +1002,8 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
         sleep(SPOOL_STEP_S)
     t0 = time.time()
     last = {}
+    prev_rpm = {}
+    stable = {}
     while time.time() - t0 < wait_s:
         if stop_event is not None and stop_event.is_set():
             return False, "spool-up cancelled"
@@ -974,11 +1018,29 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
             lim = float(c["rpm_limit"] or rpm_t)
             need = frac * lim
             rpm = float(c["rpm"] or 0.0)
-            last[c["label"]] = (rpm, need, c.get("motor_on"), c.get("brake"), c.get("torque"))
-            ready.append(rpm >= need and c.get("motor_on") is not False and not (c.get("brake") or 0) > 0)
+            br = float(c.get("brake") or 0.0)
+            tq = float(c.get("torque") or 0.0)
+            mot = c.get("motor_on")
+            last[c["label"]] = (rpm, need, mot, br, tq)
+            fields_ok = mot is not False and br <= 0.5 and tq >= 5.0
+            i = c["i"]
+            prev = prev_rpm.get(i)
+            climbing = prev is not None and rpm > prev + 0.5
+            at_target = rpm >= need
+            if at_target and fields_ok:
+                stable[i] = stable.get(i, 0) + 1
+            else:
+                stable[i] = 0
+            prev_rpm[i] = rpm
+            ready.append(fields_ok and at_target and (climbing or stable.get(i, 0) >= 2))
         if all(ready):
             detail = ", ".join(f"{lab} {rpm:.0f}/{need:.0f}" for lab, (rpm, need, *_) in last.items())
             _log.info("props: spool-up OK in %.1f s (%s)", time.time() - t0, detail)
+            try:
+                from . import heli
+                heli.STATE["spooled"] = True
+            except Exception:  # noqa: BLE001
+                pass
             return True, f"spool-up OK ({len(checks)} rotor{'s' if len(checks) != 1 else ''} >= {100 * frac:.0f}% RPM): {detail}"
         sleep(0.5)
     detail = "; ".join(
@@ -996,7 +1058,7 @@ def set_brake(v, value, rotors=None):
         try:
             f = fields(m)
             k = find_field(f, "brake", exclude=("auto",))
-            if k and _set_float(m, k, value):
+            if k and _set_float(m, k, value, verify=True, tol=1.5, tries=5):
                 n += 1
                 continue
             # direct id fallback (live miss: Brake stuck at 100 when GUI map missed the field)

@@ -17,7 +17,7 @@ import threading
 import time
 
 log = logging.getLogger("kspchat")
-LLM_TIMEOUT_S = 4.0
+LLM_TIMEOUT_S = 2.5
 MAX_WORDS = 22   # (a dad joke needs a few more words than a scream)
 BACKEND = {"name": "local", "override": None}   # the chat's last backend (chat.Session.send notes it)
 
@@ -257,6 +257,14 @@ def _llm(name, trait, facts, text=None):
 def _one(name, trait, canned, facts, post, gen, timeout, text=None, check=None):
     """Generate with a deadline (in its own thread), else canned; then post. text = a full prompt (else the
     emergency prompt from facts); check(line) -> False rejects a line (e.g. invented numbers)."""
+    try:
+        from . import http_server
+        if http_server.chat_in_progress():
+            log.info("crew: %s (%s) line canned: chat busy", name, trait)
+            post(fmt(name, trait, canned))
+            return
+    except Exception:  # noqa: BLE001
+        pass
     box = {}
 
     def work():

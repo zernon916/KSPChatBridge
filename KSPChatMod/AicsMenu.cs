@@ -49,6 +49,7 @@ namespace KSPChatBridge
         static volatile bool bridgeOk;
         static volatile bool bridgeChecked;
         static int bridgePolling;
+        static int bridgeFailStreak;
         static float nextBridgeCheck;
         static bool warned;
         // modules that work without MechJeb / the bridge (local KSP data only)
@@ -78,7 +79,6 @@ namespace KSPChatBridge
                     using (var rd = new StreamReader(resp.GetResponseStream()))
                     {
                         string body = rd.ReadToEnd();
-                        bridgeOk = true;
                         const string key = "\"chatgpt_mode\": \"";
                         int k = body.IndexOf(key);
                         int end = k >= 0 ? body.IndexOf('"', k + key.Length) : -1;
@@ -88,8 +88,14 @@ namespace KSPChatBridge
                         int rend = r >= 0 ? body.IndexOf('"', r + rk.Length) : -1;
                         ChatWindow.BackendsReady = rend >= 0 ? body.Substring(r + rk.Length, rend - r - rk.Length) : null;
                     }
+                    Interlocked.Exchange(ref bridgeFailStreak, 0);
+                    bridgeOk = true;
                 }
-                catch (Exception) { bridgeOk = false; }
+                catch (Exception)
+                {
+                    if (Interlocked.Increment(ref bridgeFailStreak) >= 3)
+                        bridgeOk = false;
+                }
                 finally { bridgeChecked = true; Interlocked.Exchange(ref bridgePolling, 0); }
             });
         }

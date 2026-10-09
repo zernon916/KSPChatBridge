@@ -1023,7 +1023,9 @@ def _do_climb(st, rest):
     cur = _hs(key)
     dh = abs(st["alt"] - (cur if cur is not None else 0))
     rate = max(5.0, 0.5 * (st.get("vs") or 15.0))
-    res = _wait(lambda: _hs(key) is not None and abs(_hs(key) - st["alt"]) < 75, 90.0 + dh / rate,
+    from . import alt_hold
+    band = alt_hold.band_m()
+    res = _wait(lambda: _hs(key) is not None and abs(_hs(key) - st["alt"]) <= band, 90.0 + dh / rate,
                 lambda: f"{_hs(key)} m -> {_g(st['alt'])} m {st.get('ref', 'agl')}, V/S {_hs('vs')}, {_hs('speed')} m/s")
     if res is None:
         return None, ""

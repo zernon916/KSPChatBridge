@@ -239,6 +239,11 @@ def set_brakes(on: bool = True) -> str:
         air = -1
     _own_change()
     v.control.brakes = bool(on)
+    try:
+        from . import parking
+        parking.note_player_brakes(bool(on))
+    except Exception:  # noqa: BLE001
+        pass
     msg = f"Brakes {'on' if on else 'off'}"
     if air == 0:
         return msg + " - note: this craft has no airbrake parts (only wheel brakes, if any)."
@@ -1214,7 +1219,10 @@ def heli_control(mode: str = "hover", altitude_m: float = -1, heading: float = -
     spd = float(speed) if speed is not None and speed >= 0 else None
     pre = ""
     if sit != "flying" and m in ("takeoff", "hover", "climb"):
-        from . import propulsion
+        from . import parking, propulsion
+        parking.release("heli takeoff")
+        heli.STATE.pop("spooled", None)
+        propulsion.reset_spool_state()
         # Bridge (not the model): release brakes, engage motors, ramp torque, wait for ~90% RPM on EVERY rotor
         # before the heli thread adds collective. Live miss (daeebe3): preflight alone left Brake 100 / Torque 0.
         lift = set(info.get("lift") or ())
@@ -2555,6 +2563,9 @@ def trim(direction: str = "up", percent: float = 5, axis: str = "pitch") -> str:
     new = 0.0 if d in ("reset", "zero", "neutral", "0", "off") else \
         _clampf(cur + (1.0 if d.startswith("u") else -1.0) * abs(float(percent)) / 100.0, -1.0, 1.0)
     if d in ("reset", "zero", "neutral", "0", "off") and ax == "pitch":
+        from . import trim_auto
+        n = trim_auto.restore_surface_snapshot(_vessel())
+        trim_auto.reset_vessel_context()
         for other in ("pitch_trim", "roll_trim", "yaw_trim"):
             try:
                 setattr(ctl, other, 0.0)
@@ -2567,15 +2578,31 @@ def trim(direction: str = "up", percent: float = 5, axis: str = "pitch") -> str:
         return f"This kRPC version has no {ax} trim ({attr})."
     note = " (the autopilot flies pitch itself, so trim mostly offsets its input)" if hold.active() or plane.active() else ""
     label = {"pitch": "Pitch", "roll": "Roll", "yaw": "Yaw"}[ax]
-    return f"{label} trim {100 * new:+.0f}%{note if ax == 'pitch' else ''}."
+    extra = ""
+    if d in ("reset", "zero", "neutral", "0", "off") and ax == "pitch":
+        try:
+            extra = f" Restored {n} control surface(s) to pre-trim snapshot." if n else " Surfaces unchanged (no snapshot)."
+        except NameError:
+            extra = ""
+    return f"{label} trim {100 * new:+.0f}%{note if ax == 'pitch' else ''}.{extra}"
 
 
 def set_trim(axis: str = "pitch", value: float = 0.0) -> str:
-    """AICS Trim panel: axis pitch|roll|yaw|collective; value -1..1 (or collective blade degrees if |value|>1)."""
-    from . import heli, propulsion
-    v = _vessel()
+    """AICS Trim panel: axis pitch|roll|yaw|collective; value -1..1 (or collective blade degrees if |value|>1).
+    Auto-trim toggles: auto_master|auto_pitch|auto_roll|auto_yaw|auto_rotor with value 0 or 1."""
+    from . import heli, propulsion, trim_auto
     ax = str(axis or "pitch").strip().lower()
     val = float(value)
+    if ax.startswith("auto_"):
+        key = ax[5:]
+        if key not in trim_auto.auto_trim_settings():
+            return f"Unknown auto-trim axis '{axis}' (use auto_master, auto_pitch, auto_roll, auto_yaw, auto_rotor)."
+        trim_auto.set_auto_trim(key, val >= 0.5)
+        on = trim_auto.auto_trim_settings()[key]
+        label = {"master": "Auto-trim master", "pitch": "Pitch auto-trim", "roll": "Roll auto-trim",
+                 "yaw": "Yaw auto-trim", "rotor": "Rotor auto-trim"}.get(key, key)
+        return f"{label} {'ON' if on else 'OFF'}."
+    v = _vessel()
     ctl = v.control
     if ax == "collective":
         if not heli.is_heli(v):
@@ -2625,6 +2652,9 @@ def get_trim_state() -> dict:
     }
     if collective is not None:
         out["collective"] = collective
+    at = trim_auto.auto_trim_settings()
+    for k, v in at.items():
+        out[f"auto_{k}"] = bool(v)
     return out
 
 

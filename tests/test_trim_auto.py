@@ -50,6 +50,23 @@ def test_nudge_trim_adjusts_deploy(monkeypatch):
     assert angles[0] != 1.0
 
 
+def test_auto_trim_master_off_skips_hold(monkeypatch):
+    monkeypatch.setattr(trim_auto, "auto_trim_active", lambda axis: False)
+    v = SimpleNamespace(name="X", control=SimpleNamespace(pitch=0.5))
+    assert trim_auto.maybe_trim_hold(v, v.control, {"speed": 200}, 0, 0, 200, 1000, False, None, now=999) == ""
+
+
+def test_auto_trim_settings_roundtrip(monkeypatch):
+    from kspchat import settings
+    store = {}
+    monkeypatch.setattr(settings, "get", lambda k, d=None: store.get(k, d))
+    monkeypatch.setattr(settings, "put", lambda k, v: store.update({k: v}))
+    trim_auto.set_auto_trim("master", False)
+    assert trim_auto.auto_trim_settings()["master"] is False
+    trim_auto.set_auto_trim("pitch", True)
+    assert trim_auto.auto_trim_active("pitch") is False  # master still off
+
+
 def test_steady_cruise_gate():
     tgt = {"speed": 200.0}
     assert trim_auto.steady_cruise(tgt, vs=0.2, roll=2.0, spd=198.0, climbing=False, pitch_cmd=None)

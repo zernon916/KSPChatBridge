@@ -14,8 +14,46 @@ FUEL_FRAC_DELTA = 0.08
 TRIM_INTERVAL = 8.0    # s between nudges in hold loop
 DEPLOY_STEP = 0.35     # deg per nudge per surface
 TRIM_STEP = 0.015      # pitch_trim fraction per nudge
+DEPLOY_CLAMP = 12.0    # max |deploy angle| per surface from auto-trim
 
-_ctx = {"t": 0.0, "spd": None, "alt": None, "fuel_frac": None, "name": None}
+_ctx = {"t": 0.0, "spd": None, "alt": None, "fuel_frac": None, "name": None,
+        "watch_vs": None, "watch_pitch": None, "worse": 0}
+_surf_snap = {}  # vessel name -> [{title, deploy_angle, deployed, pitch/yaw/roll, inverted, authority}]
+
+_AUTO_TRIM_DEFAULT = {"master": True, "pitch": True, "roll": True, "yaw": True, "rotor": True}
+
+
+def auto_trim_settings():
+    """Runtime auto-trim toggles from bridge_settings.json ('auto_trim_enabled')."""
+    from . import settings
+    raw = settings.get("auto_trim_enabled")
+    out = dict(_AUTO_TRIM_DEFAULT)
+    if raw is None:
+        return out
+    if isinstance(raw, bool):
+        return {k: bool(raw) for k in out}
+    if isinstance(raw, dict):
+        for k in out:
+            if k in raw:
+                out[k] = bool(raw[k])
+    return out
+
+
+def set_auto_trim(key, enabled):
+    st = auto_trim_settings()
+    if key not in st:
+        raise ValueError(f"unknown auto-trim key {key!r}")
+    st[key] = bool(enabled)
+    from . import settings
+    settings.put("auto_trim_enabled", st)
+
+
+def auto_trim_active(axis):
+    """axis: pitch | roll | yaw | rotor (master off disables all)."""
+    st = auto_trim_settings()
+    if not st.get("master", True):
+        return False
+    return bool(st.get(axis, True))
 
 
 def _mod(cs):
@@ -63,6 +101,147 @@ def set_deploy_angle(mod, cs, deg):
         pass
     emergency.own_change()
     return True
+
+
+def _trim_surface_sign(vessel, cs):
+    """+1 if increasing deploy angle adds nose-up pitch (conventional rear elevator)."""
+    sign = 1.0
+    try:
+        y = float(cs.part.position(vessel.reference_frame)[1])
+        if y > 0.05:  # ahead of CoM (canard / foreplane)
+            sign = -1.0
+    except Exception:
+        pass
+    try:
+        if cs.inverted:
+            sign *= -1.0
+    except Exception:
+        pass
+    mod = _mod(cs)
+    if mod is not None:
+        try:
+            from . import propulsion as pr
+            if pr.invert_on(pr.fields(mod), deploy=True):
+                sign *= -1.0
+        except Exception:
+            pass
+    return sign
+
+
+def _control_surfaces(v):
+    """Non-blade control surfaces in stable order (matches emergency snapshot)."""
+    from . import propulsion as pr
+    try:
+        surfs = list(v.parts.control_surfaces)
+    except Exception:
+        return []
+    out = []
+    for cs in surfs:
+        try:
+            if pr.is_blade(cs.part.title):
+                continue
+            out.append(cs)
+        except Exception:
+            out.append(cs)
+    return out
+
+
+def capture_surface_snapshot(v):
+    """Remember deploy angles and authority before auto-trim (hold engage / takeoff)."""
+    name = craft_notes.vessel_name(v)
+    if not craft_notes.name_ok(name):
+        return
+    rows = []
+    for cs in _control_surfaces(v):
+        mod = _mod(cs)
+        ang = get_deploy_angle(mod) if mod else None
+        try:
+            rows.append({
+                "title": cs.part.title,
+                "deploy_angle": float(ang) if ang is not None else 0.0,
+                "deployed": bool(cs.deployed),
+                "pitch_enabled": bool(cs.pitch_enabled),
+                "yaw_enabled": bool(cs.yaw_enabled),
+                "roll_enabled": bool(cs.roll_enabled),
+                "inverted": bool(cs.inverted),
+                "authority_limiter": float(cs.authority_limiter),
+            })
+        except Exception:
+            pass
+    if rows:
+        _surf_snap[name] = rows
+        log.debug("trim: captured %d surface(s) for %s", len(rows), name)
+
+
+def restore_surface_snapshot(v):
+    """Restore every control surface from the pre-trim snapshot; hand authority back."""
+    name = craft_notes.vessel_name(v)
+    rows = _surf_snap.get(name)
+    if not rows:
+        try:
+            ref = emergency.DET.ref_cfg if emergency.DET else None
+        except Exception:
+            ref = None
+        refs = (ref or {}).get("surfaces") or []
+        surfs = _control_surfaces(v)
+        if len(refs) == len(surfs):
+            n = 0
+            for cs, r0 in zip(surfs, refs):
+                r = list(r0) + [0.0] * 9
+                mod = _mod(cs)
+                if mod and len(r) > 8 and r[8] is not None:
+                    set_deploy_angle(mod, cs, float(r[8]))
+                try:
+                    cs.deployed = bool(r[6])
+                    cs.inverted = bool(r[4])
+                    cs.authority_limiter = float(r[5])
+                    cs.pitch_enabled, cs.yaw_enabled, cs.roll_enabled = bool(r[1]), bool(r[2]), bool(r[3])
+                    n += 1
+                except Exception:
+                    pass
+            if n:
+                emergency.own_change()
+                return n
+        return 0
+    surfs = _control_surfaces(v)
+    if len(surfs) != len(rows):
+        return 0
+    n = 0
+    for cs, r in zip(surfs, rows):
+        mod = _mod(cs)
+        if mod is not None:
+            set_deploy_angle(mod, cs, float(r["deploy_angle"]))
+        try:
+            cs.deployed = bool(r["deployed"])
+            cs.inverted = bool(r["inverted"])
+            cs.authority_limiter = float(r["authority_limiter"])
+            cs.pitch_enabled = bool(r["pitch_enabled"])
+            cs.yaw_enabled = bool(r["yaw_enabled"])
+            cs.roll_enabled = bool(r["roll_enabled"])
+            n += 1
+        except Exception:
+            pass
+    if n:
+        emergency.own_change()
+    return n
+
+
+def _level_getting_worse(vs, pitch):
+    """Stop auto-trim when vertical speed or pitch keeps moving away from level."""
+    vs, pitch = float(vs), float(pitch)
+    w = int(_ctx.get("worse") or 0)
+    prev_vs = _ctx.get("watch_vs")
+    prev_pitch = _ctx.get("watch_pitch")
+    if prev_vs is not None and abs(vs) > abs(prev_vs) + 0.2 and abs(vs) > 0.8:
+        w += 1
+    if prev_pitch is not None and pitch < prev_pitch - 0.35 and pitch < 2.0:
+        w += 1
+    if prev_vs is not None and abs(vs) <= abs(prev_vs) - 0.15:
+        w = max(0, w - 1)
+    _ctx["watch_vs"] = vs
+    _ctx["watch_pitch"] = pitch
+    _ctx["worse"] = w
+    return w >= 2
 
 
 def pitch_authority_surfaces(vessel):
@@ -170,19 +349,23 @@ def nudge_trim(v, ctl, *, force=False):
         return ""
     if not force and abs(pitch_in) < 0.04:
         return ""
-    sign = -math.copysign(1.0, pitch_in) if pitch_in else 0.0
-    delta = sign * min(DEPLOY_STEP, abs(pitch_in) * 3.0)
+    base = math.copysign(1.0, pitch_in) if pitch_in else 0.0
+    step = min(DEPLOY_STEP, abs(pitch_in) * 3.0)
     n = 0
+    deltas = []
     for cs, mod in surfs:
         ang = get_deploy_angle(mod)
         if ang is None:
             ang = 0.0
-        if set_deploy_angle(mod, cs, ang + delta):
+        delta = base * _trim_surface_sign(v, cs) * step
+        new_ang = max(-DEPLOY_CLAMP, min(DEPLOY_CLAMP, ang + delta))
+        if set_deploy_angle(mod, cs, new_ang):
             n += 1
+            deltas.append(delta)
     trim_note = ""
     try:
         cur = float(ctl.pitch_trim)
-        new = max(-1.0, min(1.0, cur + sign * min(TRIM_STEP, abs(pitch_in) * 0.05)))
+        new = max(-1.0, min(1.0, cur + base * min(TRIM_STEP, abs(pitch_in) * 0.05)))
         if abs(new - cur) > 1e-4:
             ctl.pitch_trim = new
             trim_note = f", pitch trim {100 * new:+.0f}%"
@@ -190,15 +373,20 @@ def nudge_trim(v, ctl, *, force=False):
         pass
     emergency.own_change()
     if n:
-        log.info("auto-trim: %s nudged deploy %+.2f deg (pitch in %.2f)%s", name, delta, pitch_in, trim_note)
-        return f"Auto-trim: {n} surface(s) {delta:+.2f} deg{trim_note}."
+        dmean = sum(deltas) / len(deltas) if deltas else 0.0
+        log.info("auto-trim: %s nudged deploy ~%+.2f deg (pitch in %.2f)%s", name, dmean, pitch_in, trim_note)
+        return f"Auto-trim: {n} surface(s) ~{dmean:+.2f} deg{trim_note}."
     return ""
 
 
-def maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pitch_cmd, now=None):
+def maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pitch_cmd, pitch=None, now=None):
     """Called from hold.py ~every loop when in level cruise; rate-limited."""
     now = now or time.time()
+    if not auto_trim_active("pitch"):
+        return ""
     if not steady_cruise(tgt, vs, roll, spd, climbing, pitch_cmd):
+        return ""
+    if pitch is not None and _level_getting_worse(vs, pitch):
         return ""
     fuel = _fuel_frac(v)
     name = craft_notes.vessel_name(v)
@@ -216,6 +404,8 @@ def maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pitch_cmd, now=No
 
 def auto_trim_now():
     """Force one auto-trim step (Trim UI / tool)."""
+    if not auto_trim_active("pitch"):
+        return "Auto-trim is off (master or pitch disabled in Trim panel)."
     from . import ksp_actions
     v = ksp_actions._vessel()
     msg = nudge_trim(v, v.control, force=True)
@@ -279,12 +469,15 @@ def save_to_craft_notes(v=None):
 
 
 def reset_vessel_context():
-    _ctx.update(spd=None, alt=None, fuel_frac=None, name=None, t=0.0, heli_t=0.0, yaw_bias=0.0)
+    _ctx.update(spd=None, alt=None, fuel_frac=None, name=None, t=0.0, heli_t=0.0, yaw_bias=0.0,
+                 watch_vs=None, watch_pitch=None, worse=0)
 
 
 def maybe_trim_heli(v, info, coll, yaw_rate, vs, roll, spd, now=None):
     """§10: in a settled hover / slow cruise, bias collective and counter-rotating torque; save to craft_notes."""
     now = now or time.time()
+    if not auto_trim_active("rotor"):
+        return ""
     if abs(float(vs)) > 0.8 or abs(float(roll)) > 8.0:
         return ""
     if float(spd) > 25.0:  # translating fast — leave the yaw/tilt loops alone
@@ -321,6 +514,8 @@ def maybe_trim_heli(v, info, coll, yaw_rate, vs, roll, spd, now=None):
         try:
             lay = pr.layout(v)["rotors"]
             for i in lift:
+                if i >= len(lay):
+                    continue
                 d = lay[i].get("dir") or 1
                 pr.set_rotor(v, torque=90.0 + yaw_bias * d, rotors={i}, flying=True)
             notes.append(f"yaw torque bias {yaw_bias:+.1f}")

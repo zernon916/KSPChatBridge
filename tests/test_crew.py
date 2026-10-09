@@ -105,6 +105,19 @@ def test_speak_ai_line_and_fallbacks(monkeypatch):
     assert crew.speak(ev(), CREW, "Sidry Kerman", post=posted.append, gen=boom, wait=True) == []
 
 
+def test_speak_skips_llm_when_chat_busy(monkeypatch):
+    monkeypatch.setattr(crew, "enabled", lambda: True)
+    from kspchat import http_server
+    http_server._busy[0] = 1
+    try:
+        posted = []
+        calls = []
+        crew.speak(ev(), CREW, "Sidry Kerman", post=posted.append, gen=lambda *a: calls.append(1) or "AI line", wait=True)
+        assert len(posted) == 2 and calls == [] and not any("AI line" in x for x in posted)
+    finally:
+        http_server._busy[0] = 0
+
+
 def test_repair_offer_once_when_stopped(monkeypatch):
     monkeypatch.setattr(crew, "enabled", lambda: True)
     posted = []
