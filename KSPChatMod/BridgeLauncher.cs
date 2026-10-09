@@ -30,6 +30,7 @@ namespace KSPChatBridge
         static readonly object Lifecycle = new object();
         static BridgeLauncher instance;
         internal static volatile bool AiEnabled = true, NativeReady, Switching;
+        static double lastBridgeOkUtc;
         int starting;
         int healthFailStreak;
         float nextWatch;
@@ -126,9 +127,21 @@ namespace KSPChatBridge
             {
                 var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + "health");
                 req.Timeout = timeoutMs; req.Proxy = null;
-                using (var resp = (HttpWebResponse)req.GetResponse()) return resp.StatusCode == HttpStatusCode.OK;
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                {
+                    bool ok = resp.StatusCode == HttpStatusCode.OK;
+                    if (ok) lastBridgeOkUtc = DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
+                    return ok;
+                }
             }
             catch (Exception) { return false; }
+        }
+
+        /// <summary>True while a bridge /health answered recently — native safety services run when it does not
+        /// (P5-1: emergency / sabotage / parking / power coverage when the bridge is absent).</summary>
+        internal static bool BridgeResponding
+        {
+            get { return NativeSafety.IsFresh(lastBridgeOkUtc, DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond); }
         }
 
         static bool Healthy(int timeoutMs) { return BridgeHealthy(timeoutMs); }

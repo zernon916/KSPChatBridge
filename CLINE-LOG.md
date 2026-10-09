@@ -109,3 +109,64 @@ Ports of the bridge's crew-side behavior so in-mod chat has it without `:8765`. 
 **Still needs live check:** `/ai` chat tool calls hitting the new list_landing_spots/set_ai_name/remember_preference paths with native_control busy flag active.
 
 ---
+
+## P5-1 Part 7 — Native emergency/sabotage/parking/power when bridge absent — PARTIAL (NOT committed, NOT tested)
+
+**Done so far (uncommitted working-tree changes):**
+- `KSPChatMod/NativeSafety.cs` (NEW, pure/testable): `ShouldRun(aiEnabled, bridgeResponding)` — safety runs when AI off OR bridge absent; `IsFresh` (10 s health freshness); `ShouldRevert(safetyNet, nativeActive, flying)`; `ParkingAction(...)` parity with `parking.py` (rearm after landing, set-once on ground, player brake-off releases, taxi/takeoff exempt).
+- `BridgeLauncher.cs`: `BridgeHealthy()` now stamps `lastBridgeOkUtc` on success; new `BridgeResponding` property (fresh within 10 s).
+- `NativeFlightController.cs`: `Update()` gate reworked — computes `nativeMode` (AI off) vs `standInForBridge` (AI on + `!BridgeResponding`); added `wasAirborne`/`prevBrakes` fields.
+
+**NOT done (the actual wiring):**
+- Safety tick body (power.Tick / engines.Tick / recovery.Tick / reversers.Recover / parking block) still gated for nativeMode flow only — must run in `standInForBridge` mode too, while control loops (plan/spool/hold/trim) stay nativeMode-only. Parking block not yet rewritten onto `NativeSafety.ParkingAction` (still old inline logic; `wasAirborne`/`prevBrakes` unused so far).
+- `recovery.Tick` enabled arg should use `NativeSafety.ShouldRevert`.
+- NO tests written for `NativeSafety` (need `tests/csharp/Program.cs` block + `Aics.Tests.csproj` include of `NativeSafety.cs`).
+- Build/tests not run since these edits — tree may not even compile cleanly until the wiring lands.
+
+---
+# P5 REMAINING WORK (what's left overall)
+
+## P5-1 leftovers
+- [x] Part 1 native_chat default — DONE (75ffa5c)
+- [x] Part 2 Claude/Grok wired — DONE (3d75620)
+- [x] Part 3 crew/personality/memory/talk port — DONE (7147911)
+- [x] Part 4 ChatOrchestrator ownership — DONE (42ec704)
+- [x] Part 5 UI stubs removed — DONE (47b36fb)
+- [x] Part 6 tool matrix + thin ports — DONE (47b36fb)
+- [ ] **Part 7 native safety when bridge absent — FINISH WIRING + TESTS (see above)**
+- [ ] **Part 8 Dashboard honesty** — StatusWindow: label bridge-sourced rows (heading/phase/AP) as stale/unavailable after disconnect, never "live"; Systems/Rotors/Trim fully local; wire or delete dead `PollSystems()`.
+- [ ] **Part 9 Dual-ID cleanup** — one vessel/part identity story for native tools (flightID vs kRPC object id); `telemetry.reset()` on vessel switch; document single source of truth.
+- [ ] **Part 11 Packaging detectors + model SHA pin** — `package_release.ps1` always runs ForbiddenDlls/ModelBundled-style checks (verify `-SkipExe` path too); pin `ModelManager` SHA when available (currently size-check only).
+
+## P5-2 — Flight residual ports (all `p5-2` rows in tests/test_tool_matrix.py)
+land/land_at/land_at_ksc, fly_to/fly_to_place, touch_and_go/go_around/circle_here, prop_control/afterburner/engine_mode, flaps completion, set_throttle/set_engines/cut_engines/set_altitude/level_off/set_sas_mode, abort_ag/action_group, turn/plane_pitch/course_correction, reports (fuel_check, get_delta_v, get_landing_eta, how_far, landing_check, crew_report, flight_report, damage_report). C# tests per family; MATRIX rows → `native`; bridge fallback until P5-8.
+
+## P5-3 — Vessel lifecycle + science
+stage, recover_vessel, launch_craft, deploy_parachutes, eject_kerbal, run_science/reset_experiments/set_science_watcher (EC thresholds + safeguards from `kspchat/science.py`); rewire menu buttons off bridge HTTP onto native/InModAiHost; update MATRIX.
+
+## P5-4 — Orbital / docking / MechJeb-optional
+mechjeb_ascent, circularize, transfer_to, deorbit_burn, warp_*, dock_with, station_keep, change_apoapsis/periapsis/inclination, apsis_longitude, sun_lock/antenna_lock, sync_orbit_altitude, match_target_plane/launch_to_target_plane/time_to_target. Clear "needs MechJeb" when absent; update MATRIX.
+
+## P5-5 — Embedded llama.cpp download buttons
+Download model → `PluginData/models/` (progress/cancel, refuse when AI off, pin URL/version/license/SHA); Download runtime → `PluginData/native/*.bin` (never GameData-scanned `.dll`); wire embedded load/generate/cancel/unload (`InModAiHost.UnloadForAiOff`); LM Studio/Ollama/cloud unchanged; packaging still rejects `.gguf`/forbidden DLLs.
+
+## P5-6 — Bridge-free release candidate
+Ship zip: DLL + templates + docs (no exe, no weights, no native `.dll`s); rollback archive/tag with last bridge build; versioned PluginData migration (settings/keys/spots/craft notes/memory — never wipe user data); smoke with exe absent (AI-off, downloads, embedded+cloud chat, native tools from P5-1…5).
+
+## P5-7 — Live closure (LUKE — not automatable)
+Run + record results; only then flip "needs live check" → **DONE (live)**. Phase 1–3 debt (Systems RPM vs PAW, panels with exe absent, AI-off flight/trim/heli/descent/plans, ownership), P5-1…5 items, scene switch/revert/save-reload, API failure behavior. Failures stay listed.
+
+## P5-8 — Remove the bridge (ONLY after P5-7 passes)
+Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plugin; stop packaging `AICSBridge.exe`; update README/wiki/CKAN (download buttons; Desktop MCP discontinued; MJ-optional); repo keeps `kspchat/` source; final report (commits, zip/DLL paths, intentional limitations).
+
+---
+
+## Commit/state summary at stop
+- Committed: `75ffa5c` (P5-1.1), `3d75620` (P5-1.2), `7147911` (P5-1.3), `42ec704` (P5-1.4), `47b36fb` (P5-1.5-6). Nothing pushed. `old-local-main` untouched. `CURSOR_TODO.md` still shows your pre-existing edit (unstaged).
+- Uncommitted working tree: Part 7 partial (`NativeSafety.cs` new; `BridgeLauncher.cs` + `NativeFlightController.cs` gate edits) — needs wiring + tests + green build before commit.
+- Baseline at last full green run (after Part 6): **482 pytest passed**, C# suite green (P5-1 blocks: 3+4+22+10+2 checks), Release build 0 errors.
+## P5-1 Part 7 - native safety tick runs in-mod - DONE (tests; needs live check)
+**Problem:** power recovery / sabotage revert / parking / engine restart only ran in AI-off native mode; Cline's partial gate ran the whole flight loop when the bridge was absent.
+**Changed:** `NativeFlightController.Update` split into `SafetyTick` (power, engine restart, sabotage revert via `NativeSafety.ShouldRevert`, parking via `NativeSafety.ParkingAction` incl. re-arm after landing) which runs whenever `NativeSafety.ShouldRun`; local flight tick (plans/hold/spool/trim) still AI-off only. No bridge grace/dual-control logic (per Luke: bridge is being folded in).
+**Tests run:** C# "P5-1 native safety tick: 9 behavior checks passed"; pytest 482 passed; Release build 0 errors.
+**Still needs live check:** AI on with no bridge: parking set on runway, brake-off releases, re-arm after landing, sabotage revert in flight, power/engine recovery.

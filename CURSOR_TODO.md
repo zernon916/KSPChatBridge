@@ -1,4 +1,4 @@
-﻿# AICS - KSP Chat Bridge: Cursor TODO (rewritten Oct 9, 11:20)
+# AICS - KSP Chat Bridge: Cursor TODO (rewritten Oct 9, 11:20)
 
 Repo: C:\coding projects\KSPChatBridge, branch main. Commit as Luke Benko <38820023+zernon916@users.noreply.github.com>. Don't push, and never touch branch old-local-main.
 Bridge: `kspchat/` (Python). Plugin: `KSPChatMod/` (C#). Tests: `pytest`. Build: `tools/package_release.ps1` (--onefile, no loose DLLs; the only DLL allowed in GameData is Plugins/KSPChatBridge.dll).
@@ -382,4 +382,85 @@ Parallel agents + follow-up. Tests after fixes: **478 pytest passed**; C# suite 
 
 ### Phase 4 HTTP stubs finish (Oct 9 follow-up)
 Wired: `SecretsStore`, `OpenAiBackend`, `InModChatSession`, `InModAiHost`, `AiSettings`, ChatWindow `DispatchChat`/`UseInModChat`, Settings native_chat + keys, AI-off session unload. C# suite includes In-mod AI stack checks. `.gitignore` no longer blocks `SecretsStore.cs` via `*secret*`. Embedded 4A still gated.
+
+---
+
+## Phase 5 finish plan — eight mini-phases (stubs→DONE, then bridge removal)
+
+Status: PLANNED (Oct 9). Execute in order. Commit as Luke Benko; no push unless asked; never touch `old-local-main`. Mark **DONE (tests; needs live check)** only with tests; mark **DONE (live)** only after Luke validates in P5-7. Do not infer DONE from silence or pytest alone.
+
+### Locked decisions
+- Order: foundation/stubs → flight → science/lifecycle → orbital → llama downloads → bridge-free package → live DONE → delete bridge.
+- Bridge-free = no `AICSBridge.exe` in shipping zip; no `BridgeLauncher` autostart/watchdog after P5-8.
+- Model + runtime via **download buttons** (not zip). Never bundle `.gguf` or loose native `.dll` under GameData.
+- ChatGPT Desktop stdio-MCP discontinued for bridge-free release; document migration.
+- `kspchat/` Python source stays in repo as history/rollback; leaves shipping package only.
+- MechJeb optional for orbital/docking; clear “needs MechJeb” when absent.
+
+### P5-1 — Foundation: stubs and not-dones → code DONE
+Do first so later ports are not dual-wired to a dying bridge path.
+
+AI / UI stubs:
+- [ ] Default `native_chat=true` for new installs; chat/tools must not require `:8765` once providers resolve
+- [ ] Wire Claude and Grokbot (OpenAI-compatible / official HTTP) or remove from shipping UI — no stub replies
+- [ ] Port crew / personality / memory essentials (`crew.py` / `personality.py` / `memory.py` / `talk.py`): timeouts, canned lines when busy, PluginData persistence
+- [ ] Make `ChatOrchestrator` the real owner (or delete dead type): user-before-crew, cancel, deadlines, tool-loop limits
+- [ ] Clear `AicsMenu` Queued() stubs: implement or remove; no “stub for now” in shipping UI
+
+Architecture not-dones:
+- [ ] Per-tool replacement / test / live matrix for all BY_NAME tools (replace 5A prose); fill as P5-2…4 land
+- [x] **DONE (tests; needs live check)** Native emergency / sabotage / parking / power when bridge absent (AI-off must not need kRPC watcher)
+- [ ] Dashboard honesty: no stale bridge AP/phase rows looking live; Systems/Rotors/Trim fully local
+- [ ] Dual ID cleanup: one vessel/part identity story for native tools
+- [ ] `capture_plan`, `list_*`, `trim_panel_open`, `set_flight_plan` — port or drop with explicit note
+- [ ] Packaging detectors always run in `package_release.ps1`; pin model SHA when available
+
+### P5-2 — Flight residual ports
+- [ ] Aliases: `land` / `land_at` / `land_at_ksc`
+- [ ] `fly_to` / `fly_to_place`, `touch_and_go` / `go_around` / `circle_here`
+- [ ] `prop_control` / `afterburner` / `engine_mode`, flaps completion
+- [ ] `set_throttle` / `set_engines` / `cut_engines` / `set_altitude` / `level_off` / `set_sas_mode`, abort AGs
+- [ ] Telemetry reports: fuel / delta-v / landing ETA / how_far / landing_check / crew_report / flight_report / damage_report
+- [ ] C# tests per family; update matrix; bridge fallback until P5-8
+
+### P5-3 — Vessel lifecycle + science
+- [ ] `stage`, `recover_vessel`, `launch_*`, `deploy_parachutes`, `eject_kerbal`
+- [ ] `run_science` / `reset_experiments` / `set_science_watcher` (EC thresholds + safeguards from `kspchat/science.py`)
+- [ ] Rewire menu buttons off bridge HTTP onto native / InModAiHost; update matrix
+
+### P5-4 — Orbital / docking / MechJeb-optional
+- [ ] `mechjeb_ascent`, `circularize`, `transfer_to`, `deorbit_burn`, `warp_*`
+- [ ] `dock_with`, `station_keep`, apo/peri/inclination helpers, `sun_lock` / `antenna_lock`, plane-match helpers
+- [ ] Clear “needs MechJeb” when absent; no silent kRPC for AI-off core flight; update matrix
+
+### P5-5 — Embedded llama.cpp (download buttons)
+After P5-1 chat ownership and P5-2…4 native tools:
+- [ ] **Download model** → `PluginData/models/` (progress, cancel, refuse when AI off; pin URL/version/license/SHA)
+- [ ] **Download runtime** → `PluginData/native/*.bin` (same UI pattern; never GameData-scanned `.dll`)
+- [ ] Wire `embedded` load / generate / cancel / unload; AI-off unloads (`InModAiHost.UnloadForAiOff`)
+- [ ] LM Studio / Ollama / cloud remain without downloads
+- [ ] `package_release.ps1` still rejects bundled `.gguf` / forbidden DLLs
+
+### P5-6 — Bridge-free release candidate
+- [ ] Shipping zip: DLL + templates + docs; no exe, no weights, no native `.dll`s
+- [ ] Separate rollback archive/tag with last bridge-with-fallback build
+- [ ] Versioned PluginData migration (settings, keys, spots, craft notes, memory); never wipe user data
+- [ ] Smoke with exe absent: AI-off, downloads, embedded + cloud chat, native tools from P5-1…5
+
+### P5-7 — Live closure → “needs live check” becomes DONE
+Luke runs and records results here. Only then flip lines to **DONE (live)**.
+
+- [ ] Phase 1–3 debt: Systems RPM vs PAW; panels with exe absent; AI-off flight/trim/heli/descent/plans; ownership; blockers 1–9 if not already signed
+- [ ] P5-1…5: stubs gone; science/orbital claims; download model+runtime; embedded + cloud chat; AI-off unload; Hybrid/CPU note if measurable
+- [ ] Scene switch / revert / save-reload; API failure behavior
+- [ ] Failures stay listed; do not infer DONE
+
+### P5-8 — Remove the bridge
+Only after P5-7 pass:
+- [ ] Delete bridge launch / watchdog / shutdown and obsolete HTTP telemetry polling from shipping plugin
+- [ ] Stop packaging `AICSBridge.exe`; update README / wiki / CKAN (download buttons; Desktop MCP discontinued; MJ-optional)
+- [ ] Repo keeps `kspchat/` source
+- [ ] Final report: commits, zip/DLL paths, intentional limitations
+
+Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5 Llama downloads → P5-6 Bridge-free RC → P5-7 Live DONE → P5-8 Remove bridge.
 

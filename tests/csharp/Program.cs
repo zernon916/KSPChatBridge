@@ -585,6 +585,20 @@ class Program
         var emptySettings = new Dictionary<string, object>();
         Check(new NativeSpots(emptySettings).List() == "", "empty spot list");
         Console.WriteLine("P5-1 read-only ports: 2 behavior checks passed.");
+        // ---- P5-1.7: native safety tick policy (power/sabotage/parking/engine restart run in-mod) ----
+        Check(NativeSafety.ShouldRun(false, true) && NativeSafety.ShouldRun(true, false) && !NativeSafety.ShouldRun(true, true), "safety tick runs when AI off or bridge absent");
+        Check(NativeSafety.IsFresh(100, 105) && !NativeSafety.IsFresh(100, 111) && !NativeSafety.IsFresh(0, 5), "bridge freshness window");
+        Check(NativeSafety.ShouldRevert(true, false, true) && NativeSafety.ShouldRevert(false, true, true), "sabotage revert in flight (safety net or active pilot)");
+        Check(!NativeSafety.ShouldRevert(true, true, false) && !NativeSafety.ShouldRevert(false, false, true), "no revert landed or when idle without safety net");
+        Check(NativeSafety.ParkingAction(true, true, true, true, true, true, false, false) == "rearm", "parking re-arms after landing");
+        Check(NativeSafety.ParkingAction(true, false, false, false, true, true, false, false) == "set", "parking set when grounded idle with wheels");
+        Check(NativeSafety.ParkingAction(true, false, false, true, true, true, false, true) == "released", "player brake-off releases parking");
+        Check(NativeSafety.ParkingAction(true, false, false, false, false, true, false, false) == "none"
+            && NativeSafety.ParkingAction(true, false, false, false, true, false, false, false) == "none"
+            && NativeSafety.ParkingAction(false, false, false, false, true, true, false, false) == "none"
+            && NativeSafety.ParkingAction(true, false, true, false, true, true, false, false) == "none", "parking exempt: busy mode, no wheels, airborne, released");
+        Check(NativeSafety.ParkingAction(true, false, false, true, true, true, true, false) == "none", "parking holds while set");
+        Console.WriteLine("P5-1 native safety tick: 9 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

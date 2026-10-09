@@ -32,7 +32,7 @@ namespace KSPChatBridge
         float nextTerrain;
         float nextTrim, watchTrimUntil;
         double trimBaselineVs, trimBaselinePitch;
-        bool trimSuspended, parkingSet, parkingReleased;
+        bool trimSuspended, parkingSet, parkingReleased, wasAirborne, prevBrakes;
         int partCount;
         string settingsPath;
         Dictionary<string, object> settingsData = new Dictionary<string, object>();
@@ -161,13 +161,29 @@ namespace KSPChatBridge
         void Update()
         {
             Bind();
-            if (!BridgeLauncher.NativeReady || BridgeLauncher.AiEnabled || vessel == null) { wasNative = false; return; }
-            if (vessel.packed) return;
+            bool nativeMode = BridgeLauncher.NativeReady && !BridgeLauncher.AiEnabled;
+            // P5-1.7: the in-mod safety tick (power, sabotage revert, parking, engine restart) runs whenever
+            // NativeSafety.ShouldRun says so; the local flight tick (plans/hold/spool/trim) only in native mode.
+            bool safetyNet = NativeSafety.ShouldRun(BridgeLauncher.AiEnabled, BridgeLauncher.BridgeResponding);
+            if (!nativeMode && !safetyNet) { wasNative = false; return; }
+            if (vessel == null || vessel.packed) return;
             if (!wasNative)
             {
                 recovery = new NativeRecovery(vessel); wasNative = true;
                 foreach (var surface in new List<ModuleControlSurface>(originals.Keys)) if (surface != null) originals[surface] = new SurfaceState(surface);
             }
+            if (vessel.parts.Count != partCount)
+            {
+                partCount = vessel.parts.Count;
+                foreach (var surface in new List<ModuleControlSurface>(originals.Keys)) if (surface == null) originals.Remove(surface);
+                ChatWindow.Notice("Vessel parts changed; local controller state refreshed.");
+                if (mode != "spool") props = new NativePropulsion(vessel);
+                power = new NativePower(vessel);
+                reversers = new NativeReversers(vessel);
+                flaps = new NativeFlaps(vessel);
+            }
+            SafetyTick(nativeMode, safetyNet);
+            if (!nativeMode) return;
             if (rotorPark != null && Time.realtimeSinceStartup >= nextRotorPark)
             {
                 nextRotorPark = Time.realtimeSinceStartup + .5f;
@@ -213,34 +229,6 @@ namespace KSPChatBridge
                 }
                 catch (Exception ex) { Stop(); ChatWindow.Notice("Rotor spool stopped: " + ex.Message); }
             }
-            if (vessel.parts.Count != partCount)
-            {
-                partCount = vessel.parts.Count;
-                foreach (var surface in new List<ModuleControlSurface>(originals.Keys)) if (surface == null) originals.Remove(surface);
-                ChatWindow.Notice("Vessel parts changed; local controller state refreshed.");
-                if (mode != "spool") props = new NativePropulsion(vessel);
-                power = new NativePower(vessel);
-                reversers = new NativeReversers(vessel);
-                flaps = new NativeFlaps(vessel);
-            }
-            try { power.Tick(vessel, Time.realtimeSinceStartup); }
-            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local power recovery: " + ex.Message); }
-            try { engines.Tick(vessel, Time.realtimeSinceStartup); }
-            catch (Exception ex) { ChatWindow.Notice("Local engine restart failed: " + ex.Message); }
-            try
-            {
-                int restored = recovery.Tick(vessel, Time.realtimeSinceStartup, Active && !vessel.LandedOrSplashed);
-                restored += reversers.Recover(vessel, Time.realtimeSinceStartup, Active && !vessel.LandedOrSplashed);
-                if (restored > 0) ChatWindow.Notice("Local pilot: restored configuration on " + restored + " module(s).");
-            }
-            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local configuration recovery: " + ex.Message); }
-            if (vessel.LandedOrSplashed && !parkingReleased && mode == "idle")
-            {
-                bool wheels = false;
-                foreach (Part p in vessel.parts) if (p.FindModuleImplementing<ModuleWheelBase>() != null) { wheels = true; break; }
-                if (wheels && !parkingSet) { SetGroup(vessel, KSPActionGroup.Brakes, true); parkingSet = true; }
-                else if (parkingSet && !vessel.ActionGroups[KSPActionGroup.Brakes]) parkingReleased = true;
-            }
             if (mode == "hold" && auto["master"] && !trimSuspended && Time.realtimeSinceStartup >= nextTrim)
             {
                 nextTrim = Time.realtimeSinceStartup + 8;
@@ -248,6 +236,32 @@ namespace KSPChatBridge
             }
             if (watchTrimUntil > Time.realtimeSinceStartup && (Math.Abs(vessel.verticalSpeed) > Math.Abs(trimBaselineVs) + 2 || Math.Abs(Pitch() - trimBaselinePitch) > 3))
             { trimSuspended = true; watchTrimUntil = 0; ChatWindow.Notice("Auto-trim paused: flight drifted from level. Reset restores surfaces."); }
+        }
+        void SafetyTick(bool nativeMode, bool safetyNet)
+        {
+            float now = Time.realtimeSinceStartup;
+            bool flying = !vessel.LandedOrSplashed;
+            try { power.Tick(vessel, now); }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local power recovery: " + ex.Message); }
+            try { engines.Tick(vessel, now); }
+            catch (Exception ex) { ChatWindow.Notice("Local engine restart failed: " + ex.Message); }
+            try
+            {
+                bool revert = NativeSafety.ShouldRevert(!nativeMode && safetyNet, nativeMode && Active, flying);
+                int restored = recovery.Tick(vessel, now, revert);
+                restored += reversers.Recover(vessel, now, revert);
+                if (restored > 0) ChatWindow.Notice("Local pilot: restored configuration on " + restored + " module(s).");
+            }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local configuration recovery: " + ex.Message); }
+            bool brakes = vessel.ActionGroups[KSPActionGroup.Brakes];
+            bool wheels = false;
+            if (!flying) foreach (Part p in vessel.parts) if (p.FindModuleImplementing<ModuleWheelBase>() != null) { wheels = true; break; }
+            string park = NativeSafety.ParkingAction(!flying, wasAirborne, parkingReleased, parkingSet, mode == "idle", wheels, brakes, prevBrakes && !brakes);
+            if (park == "rearm") { parkingSet = false; parkingReleased = false; }
+            else if (park == "set") { SetGroup(vessel, KSPActionGroup.Brakes, true); parkingSet = true; brakes = true; }
+            else if (park == "released") parkingReleased = true;
+            wasAirborne = flying;
+            prevBrakes = brakes;
         }
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
