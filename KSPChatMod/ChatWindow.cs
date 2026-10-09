@@ -269,7 +269,7 @@ namespace KSPChatBridge
                 if (landVisible) { landRect.x = Mathf.Min(winRect.xMax + 6, Screen.width - landRect.width); landRect.y = winRect.y; RefreshSpots(); }
             }
             if (GUILayout.Button("Send", GUILayout.Width(60), GUILayout.Height(InputH))) { Send(input); input = ""; }
-            if (GUILayout.Button("Clear", GUILayout.Width(50), GUILayout.Height(InputH))) { History.Clear(); cgWaiting = false; Post("reset", "{\"session\":\"ingame\"}", null); }
+            if (GUILayout.Button("Clear", GUILayout.Width(50), GUILayout.Height(InputH))) { History.Clear(); cgWaiting = false; InModAiHost.CancelQueued(); Post("reset", "{\"session\":\"ingame\"}", null); }
             GUILayout.EndHorizontal();
 
             // Resize handle (bottom-right corner).

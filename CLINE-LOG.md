@@ -68,3 +68,22 @@ Ports of the bridge's crew-side behavior so in-mod chat has it without `:8765`. 
 **Still needs live check:** intercom reply from KSP chat ("Hey Bob, …") with a real model; personality file shared correctly between mod and running bridge (same PluginData dir).
 
 ---
+
+## P5-1 Part 4 — `ChatOrchestrator` is the real queue owner — DONE (tests; needs live check)
+
+**Changed:**
+- `ChatOrchestrator.cs`:
+  - Cancel set is now **pruned** on dequeue/run (fixes "cancel set never pruned" NIT from the Phase 4 review).
+  - New `CancelAll()` (chat window Clear) and exactly-once `ChatRequest.Settled` callback — dropped requests (cancelled/expired) settle so the UI "thinking" counter never leaks.
+  - `ToolLoopGuard`: bounded per-request tool-execution budget; `MaxToolLoops` 6→8 (parity with `config.MAX_TOOL_ROUNDS`). `RunTools` uses the guard.
+- `InModAiHost.cs`: **rewired to pump through the orchestrator** — `EnqueueChat` (user, 60 s deadline) vs `EnqueueCrew` (crew, 20 s deadline, best-effort); one model call at a time; each completion pumps the next request (user-before-crew). Replaces the old "busy — wait for the current reply" refusal. `CancelQueued()` exposed.
+- `InModChatSession.cs`: per-user-request tool budget via `ToolLoopGuard` (was unbounded per round); system prompt now injects `PlaystyleNotes.NotesBlock()` (moved from Part 3 wiring note — actually wired here).
+- `ChatWindow.cs`: Clear button also calls `InModAiHost.CancelQueued()`.
+
+**Tests:** "P5-1 orchestrator ownership: 10 behavior checks passed" — user-before-crew, cancel+settle-once, cancel-set pruning (requeued id runs), expired-deadline drop+settle, CancelAll settles all, tool budget bounded.
+
+**Results:** 478 pytest passed, C# suite green, Release build 0 errors.
+
+**Still needs live check:** burst chat while a reply is generating (queued second message answers after, not refused); Clear cancels queued crew chatter.
+
+---

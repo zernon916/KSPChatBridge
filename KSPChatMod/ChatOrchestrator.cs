@@ -5,9 +5,10 @@ namespace KSPChatBridge
 {
     internal sealed class ChatRequest
     {
-        internal string Id, Text, Provider;
+        internal string Id, Text, Provider, Session;
         internal bool UserPriority;
         internal DateTime DeadlineUtc;
+        internal Action Settled;   // exactly-once: invoked when the request runs or is dropped (releases UI pending)
     }
     internal sealed class ChatResult
     {
@@ -16,9 +17,10 @@ namespace KSPChatBridge
         internal bool Cancelled;
     }
     // Provider-neutral chat queue: user chat beats crew chatter; tools must go through NativeCommands.
+    // This is the real owner of in-mod chat queueing (P5-1): InModAiHost pumps requests out of here.
     internal sealed class ChatOrchestrator
     {
-        internal const int MaxToolLoops = 6;
+        internal const int MaxToolLoops = 8;   // per-request tool-execution budget (parity: config.MAX_TOOL_ROUNDS)
         readonly Queue<ChatRequest> user = new Queue<ChatRequest>();
         readonly Queue<ChatRequest> crew = new Queue<ChatRequest>();
         readonly HashSet<string> cancelled = new HashSet<string>();
@@ -31,31 +33,46 @@ namespace KSPChatBridge
             (request.UserPriority ? user : crew).Enqueue(request);
         }
         internal void Cancel(string id) { if (!string.IsNullOrEmpty(id)) cancelled.Add(id); }
+        /// <summary>Drop everything queued (chat window Clear); returns how many were dropped.</summary>
+        internal int CancelAll()
+        {
+            int n = user.Count + crew.Count;
+            foreach (var r in user) Settle(r);
+            foreach (var r in crew) Settle(r);
+            user.Clear();
+            crew.Clear();
+            return n;
+        }
         internal ChatRequest DequeueNext(DateTime utcNow)
         {
             while (user.Count > 0)
             {
                 var r = user.Dequeue();
-                if (cancelled.Contains(r.Id) || r.DeadlineUtc < utcNow) continue;
+                if (cancelled.Remove(r.Id) || r.DeadlineUtc < utcNow) { Settle(r); continue; }
                 return r;
             }
             while (crew.Count > 0)
             {
                 var r = crew.Dequeue();
-                if (cancelled.Contains(r.Id) || r.DeadlineUtc < utcNow) continue;
+                if (cancelled.Remove(r.Id) || r.DeadlineUtc < utcNow) { Settle(r); continue; }
                 return r;
             }
             return null;
+        }
+        static void Settle(ChatRequest r)
+        {
+            try { if (r != null && r.Settled != null) r.Settled(); }
+            catch (Exception) { }
         }
         internal ChatResult RunTools(string requestId, IEnumerable<string> toolNames, Func<string, string> execute, bool aiEnabled)
         {
             var result = new ChatResult { Id = requestId };
             if (!aiEnabled) { result.Error = "AI off."; return result; }
-            if (cancelled.Contains(requestId)) { result.Cancelled = true; return result; }
-            int loops = 0;
+            if (cancelled.Remove(requestId)) { result.Cancelled = true; return result; }
+            var guard = new ToolLoopGuard(MaxToolLoops);
             foreach (string name in toolNames ?? new string[0])
             {
-                if (++loops > MaxToolLoops) { result.Error = "Tool loop limit reached."; break; }
+                if (!guard.TryStep()) { result.Error = "Tool loop limit reached."; break; }
                 if (!NativeCommands.IsPorted(name)) { result.Error = "Tool not on native command boundary: " + name; break; }
                 string outcome = execute(name);
                 result.ToolCalls.Add(name + " => " + outcome);
@@ -67,6 +84,21 @@ namespace KSPChatBridge
         {
             if (userSelectedCloud) return true;
             return activeProvider != "local" && activeProvider != "lmstudio" && activeProvider != "ollama";
+        }
+    }
+
+    /// <summary>Bounded per-request tool-execution budget (multi-turn agent loops must stay finite).</summary>
+    internal sealed class ToolLoopGuard
+    {
+        readonly int limit;
+        int used;
+        internal ToolLoopGuard(int limit) { this.limit = limit < 1 ? 1 : limit; }
+        internal int Used { get { return used; } }
+        internal bool TryStep()
+        {
+            if (used >= limit) return false;
+            used++;
+            return true;
         }
     }
 }

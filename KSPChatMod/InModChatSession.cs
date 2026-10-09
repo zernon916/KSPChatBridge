@@ -45,6 +45,7 @@ namespace KSPChatBridge
             messages.Add(Msg("user", userText));
             if (messages.Count > 40) messages.RemoveRange(1, messages.Count - 39);
             object tools = MiniJson.DeserializeObject(ToolsJson);
+            var guard = new ToolLoopGuard(ChatOrchestrator.MaxToolLoops);   // tool budget per user request
             for (int round = 0; round < MaxRounds; round++)
             {
                 var body = new Dictionary<string, object> {
@@ -96,7 +97,7 @@ namespace KSPChatBridge
                         name = n == null ? "" : n.ToString();
                         args = a == null || string.IsNullOrEmpty(a.ToString()) ? "{}" : a.ToString();
                     }
-                    string result = executeTool != null ? executeTool(name, args) : "no tool executor";
+                    string result = executeTool != null && guard.TryStep() ? executeTool(name, args) : "tool budget spent";
                     messages.Add(new Dictionary<string, object> {
                         { "role", "tool" }, { "tool_call_id", idObj == null ? "" : idObj.ToString() },
                         { "content", result ?? "" }

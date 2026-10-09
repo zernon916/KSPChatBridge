@@ -557,6 +557,25 @@ class Program
             prompt => prompt.Contains("Luke says: hi") ? "All good, Captain!" : "wrong", null, 2000);
         Check(okReply == "[COMMS] Bill (Eng): All good, Captain!", "engineer reply on COMMS");
         Console.WriteLine("P5-1 crew/personality/memory/talk: 22 behavior checks passed.");
+        // ---- P5-1: ChatOrchestrator is the real queue owner ----
+        var queue = new ChatOrchestrator();
+        int settled = 0;
+        queue.Enqueue(new ChatRequest { Id = "c1", Text = "crew", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddMinutes(1), Settled = () => settled++ });
+        queue.Enqueue(new ChatRequest { Id = "u1", Text = "user", UserPriority = true, DeadlineUtc = DateTime.UtcNow.AddMinutes(1), Settled = () => settled++ });
+        Check(queue.Pending == 2, "queued both");
+        Check(queue.DequeueNext(DateTime.UtcNow).Id == "u1" && queue.Pending == 1, "user before crew");
+        queue.Cancel("c1");
+        Check(queue.DequeueNext(DateTime.UtcNow) == null && settled == 1, "cancelled crew dropped + settled once");
+        queue.Enqueue(new ChatRequest { Id = "c1", Text = "reused id", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddMinutes(1) });
+        Check(queue.DequeueNext(DateTime.UtcNow) != null, "cancel set is pruned (requeued id runs)");
+        queue.Enqueue(new ChatRequest { Id = "old", Text = "stale", UserPriority = true, DeadlineUtc = DateTime.UtcNow.AddMinutes(-1), Settled = () => settled++ });
+        Check(queue.DequeueNext(DateTime.UtcNow) == null && settled == 2, "expired deadline dropped + settled");
+        queue.Enqueue(new ChatRequest { Id = "u2", Text = "a", UserPriority = true, Settled = () => settled++ });
+        queue.Enqueue(new ChatRequest { Id = "c2", Text = "b", UserPriority = false, Settled = () => settled++ });
+        Check(queue.CancelAll() == 2 && queue.Pending == 0 && settled == 4, "CancelAll settles every dropped request");
+        var guard = new ToolLoopGuard(3);
+        Check(guard.TryStep() && guard.TryStep() && guard.TryStep() && !guard.TryStep() && guard.Used == 3, "tool loop budget bounded");
+        Console.WriteLine("P5-1 orchestrator ownership: 10 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

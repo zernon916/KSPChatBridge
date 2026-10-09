@@ -16,6 +16,7 @@ namespace KSPChatBridge
         readonly Queue<Action> main = new Queue<Action>();
         readonly Dictionary<string, InModChatSession> sessions = new Dictionary<string, InModChatSession>();
         internal static ModelManager Models;
+        readonly ChatOrchestrator queue = new ChatOrchestrator();
         int busy;
         void Awake()
         {
@@ -36,19 +37,39 @@ namespace KSPChatBridge
 
         internal static bool PreferInModChat { get { return UseInModChat(); } }
         static bool BridgeHealthy() { return BridgeLauncher.BridgeHealthy(800); }
+        /// <summary>User chat: highest priority in the orchestrator queue.</summary>
         internal static void EnqueueChat(string text, string provider, string session)
         {
             if (instance == null) { ChatWindow.ReleasePendingChat(); ChatWindow.Notice("In-mod AI host not ready."); return; }
-            instance.StartChat(text, provider, session ?? "ingame");
+            instance.Submit(text, provider, session ?? "ingame", true);
         }
-        void StartChat(string text, string provider, string session)
+        /// <summary>Crew chatter: queued behind user chat (user-before-crew).</summary>
+        internal static void EnqueueCrew(string text, string provider, string session)
         {
-            if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
+            if (instance == null) return;   // crew chatter is best-effort, no UI pending to release
+            instance.Submit(text, provider, session ?? "ingame", false);
+        }
+        /// <summary>Drop all queued chat (window Clear button); the running request finishes on its own.</summary>
+        internal static int CancelQueued()
+        {
+            return instance == null ? 0 : instance.queue.CancelAll();
+        }
+        void Submit(string text, string provider, string session, bool userPriority)
+        {
+            var request = new ChatRequest
             {
-                ChatWindow.ReleasePendingChat();
-                ChatWindow.Notice("In-mod AI is busy — wait for the current reply.");
-                return;
-            }
+                Text = text, Provider = provider, Session = session, UserPriority = userPriority,
+                DeadlineUtc = DateTime.UtcNow.AddSeconds(userPriority ? 60 : 20),
+                Settled = () => { if (userPriority) ChatWindow.ReleasePendingChat(); },
+            };
+            queue.Enqueue(request);
+            Pump();
+        }
+        void Pump()
+        {
+            if (Interlocked.CompareExchange(ref busy, 1, 0) != 0) return;   // one model call at a time
+            var request = queue.DequeueNext(DateTime.UtcNow);
+            if (request == null) { Interlocked.Exchange(ref busy, 0); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 string reply;
@@ -57,14 +78,20 @@ namespace KSPChatBridge
                     InModChatSession chat;
                     lock (gate)
                     {
-                        if (!sessions.TryGetValue(session, out chat)) sessions[session] = chat = new InModChatSession();
+                        if (!sessions.TryGetValue(request.Session ?? "ingame", out chat))
+                            sessions[request.Session ?? "ingame"] = chat = new InModChatSession();
                     }
-                    reply = chat.Process(text, provider, ExecuteTool);
+                    reply = chat.Process(request.Text, request.Provider, ExecuteTool);
                 }
                 catch (Exception ex) { reply = "In-mod AI failed: " + ex.Message; }
                 finally { Interlocked.Exchange(ref busy, 0); }
-                string line = "AICS: " + reply;
-                lock (main) main.Enqueue(() => { ChatWindow.ReleasePendingChat(); ChatWindow.Notice(line); });
+                string line = (request.UserPriority ? "AICS: " : "") + reply;
+                lock (main) main.Enqueue(() =>
+                {
+                    if (request.Settled != null) request.Settled();
+                    ChatWindow.Notice(line);
+                    Pump();   // next queued request (user first)
+                });
             });
         }
         string ExecuteTool(string name, string argsJson)
