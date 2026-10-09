@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -11,6 +12,8 @@ namespace KSPChatBridge
         static string ToolsJson { get { return NativeToolSchemas.Json; } }   // every ported tool (generated)
         readonly string baseSystem;
         internal string Persona = "";
+        internal string Craft = "";        // plane | heli | rocket | rover | "" (tool filtering)
+        internal bool TrimTools = true;    // offer only matched tools + find_tool (small local models)
         readonly Func<OpenAiBackend.Endpoint, string, string> complete;
         internal InModChatSession() : this(null) { }
         internal InModChatSession(Func<OpenAiBackend.Endpoint, string, string> completionsOverride)
@@ -33,7 +36,8 @@ namespace KSPChatBridge
             messages[0]["content"] = baseSystem + (Persona ?? "");
             messages.Add(Msg("user", userText));
             if (messages.Count > 40) messages.RemoveRange(1, messages.Count - 39);
-            object tools = MiniJson.DeserializeObject(ToolsJson);
+            var offered = TrimTools ? ToolRouter.Offer(userText, Craft) : new List<object>(((IList)MiniJson.DeserializeObject(ToolsJson)).Cast<object>());
+            object tools = offered;
             var guard = new ToolLoopGuard(ChatOrchestrator.MaxToolLoops);   // tool budget per user request
             for (int round = 0; round < MaxRounds; round++)
             {
@@ -88,7 +92,14 @@ namespace KSPChatBridge
                         name = n == null ? "" : n.ToString();
                         args = a == null || string.IsNullOrEmpty(a.ToString()) ? "{}" : a.ToString();
                     }
-                    string result = executeTool != null && guard.TryStep() ? executeTool(name, args) : "tool budget spent";
+                    string result;
+                    if (name == "find_tool")
+                    {
+                        string q = ""; try { object qv; var ad = MiniJson.Deserialize(args); if (ad != null && ad.TryGetValue("query", out qv) && qv != null) q = qv.ToString(); } catch (Exception) { }
+                        List<object> found; result = ToolRouter.Find(q.Length > 0 ? q : userText, Craft, out found);
+                        foreach (object f in found) if (!offered.Contains(f)) offered.Insert(offered.Count - 1, f);   // 2-step: real tools next round
+                    }
+                    else result = executeTool != null && guard.TryStep() ? executeTool(name, args) : "tool budget spent";
                     messages.Add(new Dictionary<string, object> {
                         { "role", "tool" }, { "tool_call_id", idObj == null ? "" : idObj.ToString() },
                         { "content", result ?? "" }

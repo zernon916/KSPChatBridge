@@ -491,7 +491,7 @@ class Program
         // ---- P5-1 foundation ----
         var cfgDefaults = BridgeConfigDefaults.Create();
         Check(cfgDefaults["native_chat"] == "true", "new installs default to native chat (no :8765 needed)");
-        Check(cfgDefaults["ai_enabled"] == "true" && cfgDefaults["autostart"] == "true", "defaults keep AI + autostart");
+        Check(cfgDefaults["ai_enabled"] == "true" && cfgDefaults["autostart"] == "false", "defaults: AI on, bridge autostart off (bridge-free)");
         Check(cfgDefaults.ContainsKey("bridge_dir") && cfgDefaults.ContainsKey("python"), "bridge fallback keys kept");
         Console.WriteLine("P5-1 config defaults: 3 behavior checks passed.");
         // ---- P5-1: Claude + Grok are real providers, not stubs ----
@@ -644,7 +644,7 @@ class Program
             var vs = new InModChatSession((ep, body) => { sentBody = body; return "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"On it.\"}}]}"; });
             vs.Persona = CrewVoice.Persona("Sidry Kerman", "Pilot", "", "Plane");
             vs.Process("land", "groq", (n, x) => "");
-            Check(sentBody != null && sentBody.Contains("You are Sidry") && sentBody.Contains("\"land\"") && sentBody.Contains("\"transfer_to\""), "session sends persona + full ported tool list (land included)");
+            Check(sentBody != null && sentBody.Contains("You are Sidry") && sentBody.Contains("\"land\"") && sentBody.Contains("find_tool") && !sentBody.Contains("\"transfer_to\""), "session sends persona + only matched tools + find_tool");
         }
         var cc = new CrewChatter(new Random(1));
         var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);
@@ -700,6 +700,33 @@ class Program
             tk.TalkRunning = true; Check(tk.TripTick(9000, "v2", true, crew, "Sidry Kerman", true, false, double.NaN).Count == 0, "no 'are we there yet' over a conversation");
         }
         Console.WriteLine("Crew chatter (model-written) + personalities: 17 behavior checks passed.");
+        // ---- Tool trimming ----
+        {
+            Func<string, string, string> D = (m, c) => { var d = ToolRouter.Direct(m, c); return d == null ? "null" : d.Value.Key + " " + d.Value.Value; };
+            Check(D("takeoff", "plane") == "takeoff {}" && D("Gear down", "plane") == "set_gear {\"down\":true}" && D("brakes off", "") == "set_brakes {\"on\":false}", "direct: takeoff / gear / brakes");
+            Check(D("land at 27", "plane") == "land {\"where\":\"27\"}" && D("land at KSP 27", "plane") == "land {\"where\":\"ksp 27\"}" && D("flaps 2", "plane") == "flaps {\"setting\":\"2\"}", "direct: land at runway / flaps");
+            Check(D("land at the mun base", "plane") == "null" && D("can you land?", "plane") == "null" && D("gear down and land", "plane") == "null", "vague / compound -> model");
+            Check(D("takeoff", "rocket") == "null" && D("flaps 2", "heli") == "null", "craft filter on direct commands");
+            Check(D("stage", "rocket") == "null" && D("abort", "") == "null", "destructive tools never auto-run");
+            var rk = ToolRouter.Rank("put the gear down please", ToolRouter.Descriptions, "plane");
+            Check(rk.Count >= 1 && rk.Count <= 3 && rk[0].Key == "set_gear", "rank: gear -> set_gear first");
+            var rk2 = ToolRouter.Rank("circularize our orbit", ToolRouter.Descriptions, "plane");
+            Check(!rk2.Exists(x => x.Key == "circularize"), "rank: orbital tools filtered out for a plane");
+            var offer = ToolRouter.Offer("hmm what should we do", "plane");
+            Check(offer.Count == 1 && MiniJson.Serialize(offer).Contains("find_tool"), "vague ask -> only find_tool");
+            List<object> found; string fr = ToolRouter.Find("raise apoapsis", "rocket", out found);
+            Check(found.Count >= 1 && found.Count <= 3 && fr.Contains("change_apoapsis"), "find_tool returns 1-3 schemas");
+            int fullLen = NativeToolSchemas.Json.Length, trimLen = MiniJson.Serialize(ToolRouter.Offer("gear down", "plane")).Length;
+            Check(trimLen * 10 < fullLen, "trimmed tools < 10% of full list (" + trimLen + " vs " + fullLen + " chars)");
+            Console.WriteLine("TOOLTRIM full=" + fullLen + " trimmed=" + trimLen);
+            int calls = 0; string sent2 = null;
+            var two = new InModChatSession((ep, body) => { calls++; sent2 = body; return calls == 1
+                ? "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"f1\",\"type\":\"function\",\"function\":{\"name\":\"find_tool\",\"arguments\":\"{\\\"query\\\":\\\"raise apoapsis\\\"}\"}}]}}]}"
+                : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"}}]}"; }) { Craft = "rocket" };
+            string ran = null; two.Process("make the orbit bigger", "groq", (n, x) => { ran = n; return "ok"; });
+            Check(calls == 2 && ran == null && sent2.Contains("change_apoapsis"), "2-step: find_tool adds the real schema for the next round");
+        }
+        Console.WriteLine("Tool trimming: 11 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

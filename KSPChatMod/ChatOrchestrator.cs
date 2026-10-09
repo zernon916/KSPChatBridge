@@ -7,6 +7,7 @@ namespace KSPChatBridge
     {
         internal string Id, Text, Provider, Session;
         internal string Speaker, Persona;   // native voice: who says the reply + their system-prompt lines
+        internal string Craft;              // craft kind for tool filtering
         internal Func<string> Run;           // custom work instead of the chat session (crew lines, @name intercom)
         internal Action<string> Done;        // custom result handler (main thread) instead of posting the reply
         internal bool UserPriority;

@@ -62,7 +62,18 @@ namespace KSPChatBridge
             if (instance == null) { ChatWindow.ReleasePendingChat(); ChatWindow.Notice("In-mod AI host not ready."); return; }
             KeyValuePair<string, string> voice;
             try { voice = NativeFlightController.Voice(); } catch (Exception) { voice = new KeyValuePair<string, string>("AICS", ""); }
-            instance.Submit(text, provider, session ?? "ingame", true, voice.Key, voice.Value);
+            string craft = "";
+            try { craft = NativeFlightController.CraftKind(); } catch (Exception) { }
+            var direct = ToolRouter.Direct(text, craft);
+            if (direct != null && NativeFlightController.OwnsControls)   // clear command: no model round-trip
+            {
+                string res;
+                try { res = NativeFlightController.Execute(direct.Value.Key, direct.Value.Value); } catch (Exception ex) { res = "Couldn't: " + ex.Message; }
+                ChatWindow.ReleasePendingChat();
+                ChatWindow.Notice(CrewVoice.Line(voice.Key, res));
+                return;
+            }
+            instance.Submit(text, provider, session ?? "ingame", true, voice.Key, voice.Value, null, craft);
         }
         /// <summary>Crew chatter: queued behind user chat (user-before-crew).</summary>
         internal static void EnqueueCrew(string text, string provider, string session)
@@ -131,12 +142,12 @@ namespace KSPChatBridge
                 () => IntercomTalk.Reply(member, said, facts, p => CrewComplete(provider, system, p, 20000, true), pilot, 25000));
         }
 
-        void Submit(string text, string provider, string session, bool userPriority, string speaker = null, string persona = null, Func<string> run = null)
+        void Submit(string text, string provider, string session, bool userPriority, string speaker = null, string persona = null, Func<string> run = null, string craft = "")
         {
             if (userPriority && Volatile.Read(ref crewRunning) != 0) EmbeddedLlm.Cancel();   // player chat preempts a crew line
             var request = new ChatRequest
             {
-                Speaker = speaker, Persona = persona ?? "", Run = run,
+                Speaker = speaker, Persona = persona ?? "", Run = run, Craft = craft,
                 Text = text, Provider = provider, Session = session, UserPriority = userPriority,
                 DeadlineUtc = DateTime.UtcNow.AddSeconds(userPriority ? 60 : 20),
                 Settled = () => { if (userPriority) ChatWindow.ReleasePendingChat(); },
@@ -162,7 +173,7 @@ namespace KSPChatBridge
                         if (!sessions.TryGetValue(request.Session ?? "ingame", out chat))
                             sessions[request.Session ?? "ingame"] = chat = new InModChatSession();
                     }
-                    chat.Persona = request.Persona ?? "";
+                    chat.Persona = request.Persona ?? ""; chat.Craft = request.Craft ?? "";
                     reply = chat.Process(request.Text, request.Provider, ExecuteTool);
                     }
                 }

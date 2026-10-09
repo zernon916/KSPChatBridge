@@ -12,7 +12,7 @@ namespace KSPChatBridge
         {
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                { "autostart", "true" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
+                { "autostart", "false" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
                 { "native_chat", "true" }, { "bridge_dir", "" }, { "python", "python" },
             };
         }

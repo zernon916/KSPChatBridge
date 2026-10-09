@@ -37,6 +37,19 @@ namespace KSPChatBridge
             return new KeyValuePair<string, string>(speaker, CrewVoice.Persona(pilot.Value.Key, pilot.Value.Value, desc, v.vesselName));
         }
 
+        /// <summary>plane | heli | rocket | rover | "" for tool filtering (main thread).</summary>
+        internal static string CraftKind()
+        {
+            if (instance == null || instance.vessel == null) return "";
+            var v = instance.vessel;
+            if (instance.props.HasLift(v)) return "heli";
+            if (instance.IsPlane()) return "plane";
+            bool motor = false, engine = false;
+            foreach (Part p in v.parts) { motor |= p.FindModuleImplementing<ModuleWheels.ModuleWheelMotor>() != null; engine |= p.FindModuleImplementing<ModuleEngines>() != null; }
+            if (motor && !engine) return "rover";
+            return "rocket";
+        }
+
         static bool ChatterOn { get { return BridgeLauncher.AiEnabled && !BridgeLauncher.UseBridge; } }
         bool chatterInit;
         static bool poolLoaded;
