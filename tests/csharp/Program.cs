@@ -5,6 +5,7 @@ using KSPChatBridge;
 
 class Program
 {
+    static string Root() { var d = new System.IO.DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory); while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "personalities.txt"))) d = d.Parent; return d == null ? "." : d.FullName; }
     class Servo { private float transformRateOfMotion = 380; }
     class Rotor : Servo { public float currentRPM = 0; }
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
@@ -647,7 +648,7 @@ class Program
         }
         var cc = new CrewChatter(new Random(1));
         var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);
-        Check(lines.Count == 2 && !lines.Exists(l => l.Contains("Sidry")) && lines.Exists(l => l.Contains("Bob (Sci)")), "emergency chatter: two non-pilot lines");
+        Check(lines.Count == 2 && !lines.Exists(l => l.ToString().Contains("Sidry")) && lines.Exists(l => l.ToString().Contains("Bob (Sci)")), "emergency chatter: two non-pilot lines");
         Check(cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 105).Count == 0, "emergency chatter rate-limited per member");
         var tc = new CrewChatter(new Random(2)); int posted = 0;
         for (int s = 0; s < 1200; s++) { var o = tc.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN); if (s < 120) Check(o.Count == 0, "no trip chatter in the first 2 min"); posted += o.Count; }
@@ -670,6 +671,35 @@ class Program
         Check(EmbeddedLlm.UnloadOnScene("MAINMENU") && !EmbeddedLlm.UnloadOnScene("FLIGHT") && !EmbeddedLlm.UnloadOnScene("SPACECENTER"), "model unloads only at the main menu");
         EmbeddedLlm.Unload(); Check(!EmbeddedLlm.Loaded, "unload with nothing loaded is safe; next chat reloads lazily");
         Console.WriteLine("Live bug fixes (menus, brakes, runway, voice, chatter, tools): 25 behavior checks passed.");
+        // ---- Model-written crew chatter + per-save personalities ----
+        {
+            var parsed = CrewPrompts.Parse(System.IO.File.ReadAllLines(System.IO.Path.Combine(Root(), "personalities.txt"), System.Text.Encoding.UTF8));
+            Check(parsed.Length == 36 && parsed.Length == PersonalityPrompts.All.Length && parsed[0][0] == "Nervous Scientist" && parsed[0][1] == "scientist", "personalities.txt: 36 parsed (em dash ok), roles");
+            var pr1 = CrewPrompts.Roll("Pilot", new Random(1)); var pr2 = CrewPrompts.Roll("Pilot", new Random(99));
+            Check(pr1[0] != pr1[1] && (PersonalityPrompts.All[pr1[0]][1] == "pilot" || PersonalityPrompts.All[pr1[0]][1] == "any"), "roll: two different traits, primary fits the job");
+            Check(pr1[0] != pr2[0] || pr1[1] != pr2[1], "different saves roll different personalities");
+            string sys = CrewPrompts.SystemFor(pr1);
+            Check(sys.Split(' ').Length < 60 && sys.Contains("Also a bit of a") && sys.Contains("at most 12 words"), "system prompt short (3B) with both traits");
+            var line = new CrewLine { Name = "Bob Kerman", Trait = "scientist", Canned = "Are we there yet?", AllowedNumbers = CrewLine.Numbers("about 5 min to go") };
+            Check(line.Accept("Bob: Five more minutes?! I'll never make it!") == "Five more minutes?! I'll never make it!", "model line accepted, name prefix stripped");
+            Check(line.Accept("About 12 min, I think.") == null && line.Accept("{\"tool\":\"land\"}") == null, "invented numbers / toolish output -> canned");
+            Check(line.Format(null) == "[INTERCOM] Bob (Sci): Are we there yet?", "canned fallback line");
+            Check(ChatterPolicy.ModelFree(false, 0) && !ChatterPolicy.ModelFree(true, 0) && !ChatterPolicy.ModelFree(false, 1), "chatter never over player chat / busy model");
+            Check(ChatterPolicy.ProviderReady(false, false) && !ChatterPolicy.ProviderReady(true, false) && ChatterPolicy.ProviderReady(true, true), "chatter never loads the model");
+            Check(ChatterPolicy.Content("{\"choices\":[{\"message\":{\"content\":\"Hi!\"}}]}") == "Hi!" && ChatterPolicy.Content("garbage") == null, "reply content parse");
+            var em = new CrewChatter(new Random(3)) { Describe = n => "a nervous scientist" };
+            var el = em.Emergency("flameout", "Juno", crew, "Sidry Kerman", 50);
+            Check(el.Count > 0 && el[0].Prompt.Contains("an engine (Juno) just flamed out") && el[0].Prompt.Contains("Bob, a nervous scientist") || el[0].Prompt.Contains("Jeb"), "emergency prompt carries facts + personality");
+            Check(em.Command("chatter off") == "Crew intercom chatter off." && !em.Enabled && em.TripTick(1000, "v", true, crew, "Sidry Kerman", true, false, double.NaN).Count == 0, "/crew chatter off silences");
+            Check(em.Command("on") == "Crew intercom chatter on." && em.Enabled && em.Command("").Contains("is on"), "/crew chatter on + status");
+            var tk = new CrewChatter(new Random(5)); CrewTalk talk = null;
+            for (int s = 0; s < 4000 && talk == null; s++) talk = tk.TalkTick(s, "v2", true, crew, "Sidry Kerman", false, false, double.NaN);
+            Check(talk != null && talk.Lines >= 4 && talk.Lines <= 6 && talk.Pair[0].Key != talk.Pair[1].Key, "small talk starts on a long cruise (4-6 lines, two kerbals)");
+            var tl = tk.TalkLine(talk, 1, new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Bob", "Hi") });
+            Check(tl.Prompt.Contains("So far: Bob: \"Hi\"") && tl.Canned == talk.Script[1], "conversation line uses transcript, canned script fallback");
+            tk.TalkRunning = true; Check(tk.TripTick(9000, "v2", true, crew, "Sidry Kerman", true, false, double.NaN).Count == 0, "no 'are we there yet' over a conversation");
+        }
+        Console.WriteLine("Crew chatter (model-written) + personalities: 17 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

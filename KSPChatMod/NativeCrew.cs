@@ -38,29 +38,152 @@ namespace KSPChatBridge
         }
 
         static bool ChatterOn { get { return BridgeLauncher.AiEnabled && !BridgeLauncher.UseBridge; } }
+        bool chatterInit;
+        static bool poolLoaded;
 
-        /// <summary>Emergency intercom reactions (crew.py speak): pilot excluded, canned lines.</summary>
+        void InitChatter()
+        {
+            if (chatterInit) return; chatterInit = true;
+            object v; chatter.Enabled = !(settingsData != null && settingsData.TryGetValue("crew_chatter", out v) && v is bool && !(bool)v);
+            chatter.Describe = n => { try { return KerbalPersonality.Describe(n, "kerbal").Replace("a kerbal", "a kerbal"); } catch (Exception) { return ""; } };
+            chatter.LovesDadJokes = n => { try { return KerbalPersonality.LikesPhrase(n, "loves dad jokes"); } catch (Exception) { return false; } };
+            if (!poolLoaded)
+            {
+                poolLoaded = true;
+                try
+                {
+                    string path = System.IO.Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/personalities.txt");
+                    if (System.IO.File.Exists(path)) { var parsed = CrewPrompts.Parse(System.IO.File.ReadAllLines(path, System.Text.Encoding.UTF8)); if (parsed.Length >= 4) CrewPrompts.Pool = parsed; }
+                }
+                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] personalities.txt: " + ex.Message); }
+            }
+        }
+
+        /// <summary>'/crew chatter on|off' - saved in native settings.</summary>
+        internal static string CrewCommand(string arg)
+        {
+            if (instance == null) return "Crew chatter: not in flight.";
+            instance.InitChatter();
+            string r = instance.chatter.Command(arg);
+            instance.settingsData["crew_chatter"] = instance.chatter.Enabled;
+            try { instance.Save(); } catch (Exception) { }
+            return r;
+        }
+
+        /// <summary>Say lines in order: each model-written when the model is free, else canned; never blocks.</summary>
+        void SpeakAll(List<CrewLine> lines, int i = 0, Action after = null)
+        {
+            if (lines == null || i >= lines.Count) { if (after != null) after(); return; }
+            var line = lines[i];
+            Action<string> post = text => { ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup); SpeakAll(lines, i + 1, after); };
+            string system = CrewPrompts.SystemFor(AicsCrewScenario.For(line.Name, line.Trait));
+            if (!InModAiHost.TryCrewLine(system, line.Prompt, txt => post(line.Accept(txt)))) post(null);
+        }
+
+        /// <summary>Emergency intercom reactions (crew.py speak): pilot excluded.</summary>
         internal static void CrewEmergency(string kind, string part)
         {
             if (instance == null || !ChatterOn || instance.vessel == null) return;
+            instance.InitChatter();
             var crew = CrewOf(instance.vessel); var p = CrewVoice.Pilot(crew);
-            foreach (string line in instance.chatter.Emergency(kind, part, crew, p == null ? "" : p.Value.Key, Time.realtimeSinceStartup, instance.vessel.geeForce))
-                ChatWindow.Notice(line);
+            instance.SpeakAll(instance.chatter.Emergency(kind, part, crew, p == null ? "" : p.Value.Key, Time.realtimeSinceStartup, instance.vessel.geeForce));
         }
 
         void ChatterTick()
         {
             if (!ChatterOn || vessel == null || Time.realtimeSinceStartup < nextChatter) return;
             nextChatter = Time.realtimeSinceStartup + 1f;
-            var crew = CrewOf(vessel); var p = CrewVoice.Pilot(crew);
+            InitChatter();
+            var crew = CrewOf(vessel); var p = CrewVoice.Pilot(crew); string pilot = p == null ? "" : p.Value.Key;
             bool flying = vessel.situation == Vessel.Situations.FLYING;
-            foreach (string line in chatter.TripTick(Time.realtimeSinceStartup, vessel.id.ToString(), flying, crew, p == null ? "" : p.Value.Key, mode != "idle", false, double.NaN))
-                ChatWindow.Notice(line);
+            float now = Time.realtimeSinceStartup;
+            var talk = chatter.TalkTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);
+            if (talk != null) { StartCoroutine(Converse(talk)); return; }
+            SpeakAll(chatter.TripTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN));
+        }
+
+        System.Collections.IEnumerator Converse(CrewTalk talk)
+        {
+            chatter.TalkRunning = true;
+            var transcript = new List<KeyValuePair<string, string>>();
+            var rng = new System.Random();
+            for (int i = 0; i < talk.Lines; i++)
+            {
+                if (!ChatterOn || !chatter.Enabled || chatter.RecentlyEmergency(Time.realtimeSinceStartup)) break;
+                var line = chatter.TalkLine(talk, i, transcript);
+                string said = null; bool done = false;
+                string system = CrewPrompts.SystemFor(AicsCrewScenario.For(line.Name, line.Trait));
+                if (!InModAiHost.TryCrewLine(system, line.Prompt, txt => { said = line.Accept(txt); done = true; })) done = true;
+                float until = Time.realtimeSinceStartup + 10f;
+                while (!done && Time.realtimeSinceStartup < until) yield return null;
+                if (chatter.RecentlyEmergency(Time.realtimeSinceStartup)) break;   // an emergency while generating: drop it
+                string text = said ?? line.Canned;
+                ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup);
+                transcript.Add(new KeyValuePair<string, string>(IntercomTalk.First(line.Name), text));
+                if (i < talk.Lines - 1) yield return new WaitForSeconds(5f + (float)rng.NextDouble() * 5f);
+            }
+            chatter.TalkRunning = false;
+        }
+
+        /// <summary>'@Bob ...' / 'Bob, ...': a crew member answers in character. true = handled (not pilot chat).</summary>
+        internal static bool TryIntercom(string text)
+        {
+            var v = FlightGlobals.ActiveVessel; if (v == null) return false;
+            var crew = CrewOf(v); var p = CrewVoice.Pilot(crew);
+            var known = new List<string>();
+            try { foreach (ProtoCrewMember k in HighLogic.CurrentGame.CrewRoster.Crew) known.Add(k.name); } catch (Exception) { }
+            var route = IntercomTalk.Route(text, crew, p == null ? "" : IntercomTalk.First(p.Value.Key), known);
+            if (route == null || route.Item1 == "order") return false;   // orders go to the pilot (tools)
+            if (route.Item1 == "absent") { ChatWindow.ReleasePendingChat(); ChatWindow.Notice("[INTERCOM] No answer - " + route.Item2.Key + " isn't aboard."); return true; }
+            var member = route.Item2;
+            string facts = v.situation.ToString().ToLowerInvariant().Replace('_', ' ') + ", " + v.altitude.ToString("0") + " m up, " + v.srfSpeed.ToString("0") + " m/s";
+            InModAiHost.EnqueueIntercom(member, route.Item3, facts, p == null ? "" : p.Value.Key, CrewPrompts.SystemFor(AicsCrewScenario.For(member.Key, member.Value)));
+            return true;
         }
 
         void OnPartDie(Part part)
         {
             if (part != null && vessel != null && part.vessel == vessel) CrewEmergency("parts", part.partInfo != null ? part.partInfo.title : part.name);
+        }
+    }
+
+    /// <summary>Per-save crew personalities (Luke: Jeb differs between saves, stays himself within one).</summary>
+    [KSPScenario(ScenarioCreationOptions.AddToAllGames, GameScenes.FLIGHT, GameScenes.SPACECENTER, GameScenes.TRACKSTATION, GameScenes.EDITOR)]
+    public class AicsCrewScenario : ScenarioModule
+    {
+        static readonly Dictionary<string, int[]> Map = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
+        static readonly System.Random Rng = new System.Random();
+
+        internal static int[] For(string name, string trait)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            int[] pair;
+            lock (Map) { if (!Map.TryGetValue(name, out pair)) { pair = CrewPrompts.Roll(trait, Rng); Map[name] = pair; } }
+            return pair;
+        }
+
+        public override void OnLoad(ConfigNode node)
+        {
+            lock (Map)
+            {
+                Map.Clear();
+                foreach (ConfigNode k in node.GetNodes("KERBAL"))
+                {
+                    int a, b; string n = k.GetValue("name");
+                    if (!string.IsNullOrEmpty(n) && int.TryParse(k.GetValue("primary"), out a) && int.TryParse(k.GetValue("secondary"), out b)) Map[n] = new[] { a, b };
+                }
+            }
+        }
+
+        public override void OnSave(ConfigNode node)
+        {
+            lock (Map)
+                foreach (var kv in Map)
+                {
+                    var k = node.AddNode("KERBAL");
+                    k.AddValue("name", kv.Key); k.AddValue("primary", kv.Value[0]); k.AddValue("secondary", kv.Value.Length > 1 ? kv.Value[1] : kv.Value[0]);
+                    k.AddValue("personality", CrewPrompts.Title(kv.Value));
+                }
         }
     }
 }

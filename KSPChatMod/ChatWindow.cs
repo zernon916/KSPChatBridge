@@ -434,6 +434,13 @@ namespace KSPChatBridge
                 scrollToEnd = true;
                 return;
             }
+            if (low == "/crew" || low.StartsWith("/crew "))
+            {
+                History.Add("You: " + text);
+                History.Add("AICS: " + NativeFlightController.CrewCommand(text.Length > 5 ? text.Substring(5) : ""));
+                scrollToEnd = true;
+                return;
+            }
             string model = ModelIds[modelIdx];
             History.Add("You: " + text);
             scrollToEnd = true;
@@ -446,6 +453,7 @@ namespace KSPChatBridge
             if (UseInModChat(model))
             {
                 Interlocked.Increment(ref pending);
+                if (HighLogic.LoadedSceneIsFlight && NativeFlightController.TryIntercom(text)) return;   // '@Bob ...' -> Bob answers
                 InModAiHost.EnqueueChat(text, model, "ingame");
                 return;
             }
@@ -492,6 +500,7 @@ namespace KSPChatBridge
             get { return modelIdx; }
             set { if (value != modelIdx && value >= 0 && value < ModelIds.Length) { modelIdx = value; lastModel = ""; SaveSettings(); } }
         }
+        internal static string CurrentModel { get { return ModelIds[modelIdx]; } }
         internal static void SettingFromMenu(string key, string value)
         {
             Interlocked.Increment(ref pending);

@@ -76,11 +76,67 @@ namespace KSPChatBridge
             EmbeddedLlm.Cancel();
             return instance == null ? 0 : instance.queue.CancelAll();
         }
-        void Submit(string text, string provider, string session, bool userPriority, string speaker = null, string persona = null)
+        static int crewRunning;
+        const int CrewTimeoutMs = 6000;
+
+        /// <summary>Model-written crew line: only when the model is idle and no player chat is waiting (never starves
+        /// chat; a player message preempts a running crew line). false = say the canned line instead.
+        /// done(text or null) runs on the main thread.</summary>
+        internal static bool TryCrewLine(string system, string prompt, Action<string> done)
         {
+            if (instance == null || !BridgeLauncher.AiEnabled || BridgeLauncher.UseBridge) return false;
+            if (!ChatterPolicy.ModelFree(Volatile.Read(ref instance.busy) != 0, instance.queue.Pending)) return false;
+            string provider = ChatWindow.CurrentModel;
+            if (!ChatterPolicy.ProviderReady(provider == "embedded", EmbeddedLlm.Loaded)) return false;   // never load a model just for chatter
+            Interlocked.Exchange(ref crewRunning, 1);
+            instance.queue.Enqueue(new ChatRequest
+            {
+                Text = prompt, Provider = provider, Session = "crew", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddSeconds(3),
+                Run = () => { try { return CrewComplete(provider, system, prompt, CrewTimeoutMs, false); } finally { Interlocked.Exchange(ref crewRunning, 0); } },
+                Done = done, Settled = () => Interlocked.Exchange(ref crewRunning, 0),
+            });
+            instance.Pump();
+            return true;
+        }
+
+        /// <summary>One short line from the current provider, no tools. null on any problem / timeout.</summary>
+        internal static string CrewComplete(string provider, string system, string prompt, int timeoutMs, bool allowLoad)
+        {
+            var ep = OpenAiBackend.Resolve(provider);
+            if (!ep.Ok) return null;
+            bool emb = ep.Url == OpenAiBackend.EmbeddedUrl;
+            if (emb && !allowLoad && !EmbeddedLlm.Loaded) return null;
+            var body = new Dictionary<string, object> {
+                { "model", ep.Model }, { "temperature", 0.9 }, { "max_tokens", CrewPrompts.MaxTokens },
+                { "messages", new List<object> {
+                    new Dictionary<string, object> { { "role", "system" }, { "content", system ?? "" } },
+                    new Dictionary<string, object> { { "role", "user" }, { "content", prompt ?? "" } } } } };
+            string raw;
+            try
+            {
+                string payload = MiniJson.Serialize(body);
+                if (emb) using (new Timer(_ => EmbeddedLlm.Cancel(), null, timeoutMs, Timeout.Infinite)) raw = EmbeddedLlm.Complete(ep, payload);
+                else raw = OpenAiBackend.ChatCompletions(ep, payload, timeoutMs);
+            }
+            catch (Exception) { return null; }
+            return ChatterPolicy.Content(raw);
+        }
+
+        /// <summary>'@Bob how are you?' - the crew member answers in character (player chat priority, canned on timeout).</summary>
+        internal static void EnqueueIntercom(KeyValuePair<string, string> member, string said, string facts, string pilot, string system)
+        {
+            if (instance == null) { ChatWindow.ReleasePendingChat(); return; }
+            string provider = ChatWindow.CurrentModel;
+            instance.Submit(said, provider, "intercom", true, null, null,
+                () => IntercomTalk.Reply(member, said, facts, p => CrewComplete(provider, system, p, 20000, true), pilot, 25000));
+        }
+
+        void Submit(string text, string provider, string session, bool userPriority, string speaker = null, string persona = null, Func<string> run = null)
+        {
+            if (userPriority && Volatile.Read(ref crewRunning) != 0) EmbeddedLlm.Cancel();   // player chat preempts a crew line
             var request = new ChatRequest
             {
-                Speaker = speaker, Persona = persona ?? "",
+                Speaker = speaker, Persona = persona ?? "", Run = run,
                 Text = text, Provider = provider, Session = session, UserPriority = userPriority,
                 DeadlineUtc = DateTime.UtcNow.AddSeconds(userPriority ? 60 : 20),
                 Settled = () => { if (userPriority) ChatWindow.ReleasePendingChat(); },
@@ -98,6 +154,8 @@ namespace KSPChatBridge
                 string reply;
                 try
                 {
+                    if (request.Run != null) reply = request.Run();
+                    else {
                     InModChatSession chat;
                     lock (gate)
                     {
@@ -106,14 +164,15 @@ namespace KSPChatBridge
                     }
                     chat.Persona = request.Persona ?? "";
                     reply = chat.Process(request.Text, request.Provider, ExecuteTool);
+                    }
                 }
                 catch (Exception ex) { reply = "In-mod AI failed: " + ex.Message; }
                 finally { Interlocked.Exchange(ref busy, 0); }
-                string line = request.UserPriority ? CrewVoice.Line(request.Speaker, reply) : reply;
+                string line = request.Run != null ? reply : request.UserPriority ? CrewVoice.Line(request.Speaker, reply) : reply;
                 lock (main) main.Enqueue(() =>
                 {
                     if (request.Settled != null) request.Settled();
-                    ChatWindow.Notice(line);
+                    if (request.Done != null) request.Done(reply); else ChatWindow.Notice(line);
                     Pump();   // next queued request (user first)
                 });
             });

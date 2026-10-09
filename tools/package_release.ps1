@@ -55,7 +55,7 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null
 Copy-Item "$root\KSPChatMod\bin\Release\KSPChatBridge.dll" "$mod\Plugins\"
-Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md" $mod
+Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md", "$root\personalities.txt" $mod
 New-Item -ItemType Directory -Force "$mod\templates" | Out-Null
 Copy-Item "$root\templates\env.example", "$root\playstyle_notes.example.md" "$mod\templates\"
 if ($BridgeFree) { Copy-Item "$root\docs\BRIDGE_FREE.md" $mod }
