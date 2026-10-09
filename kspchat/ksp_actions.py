@@ -2592,6 +2592,23 @@ def tool_schemas(hide=()):
     return out
 
 
+def _engine_restart_note(name, args, res):
+    """Throttle up with engines shut down (abort / emergency): the pilot re-lights them after a few seconds."""
+    from . import engine_restart
+    if name not in engine_restart.TOOLS or " failed: " in res or res.startswith("Not in flight"):
+        return ""
+    if name == "set_throttle":
+        try:
+            if float(args.get("value", 0)) <= 0:
+                return ""
+        except (TypeError, ValueError):
+            return ""
+    try:
+        return engine_restart.maybe_restart(_vessel(), pilot_name())
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def call_tool(name, args=None):
     """Run a tool by name with a dict of args. Always returns a string."""
     import json
@@ -2601,7 +2618,8 @@ def call_tool(name, args=None):
     try:
         with _lock:
             res = f(**(args or {}))
-        return res if isinstance(res, str) else json.dumps(res)
+        res = res if isinstance(res, str) else json.dumps(res)
+        return res + _engine_restart_note(name, args or {}, res)
     except TypeError as e:
         return f"Bad arguments for {name}: {e}"
     except Exception as e:
