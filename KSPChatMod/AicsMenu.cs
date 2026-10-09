@@ -448,6 +448,7 @@ namespace KSPChatBridge
             GUI.enabled = was && vertical;
             if (GUILayout.Button("Chute / dV check", GUILayout.Width(110))) ChatWindow.ToolFromMenu("landing_check", "{}");
             GUI.enabled = was;
+            if (!BridgeLauncher.AiEnabled && GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
             if (GUILayout.Button("Abort")) ChatWindow.ToolFromMenu("abort", "{}");
             GUILayout.EndHorizontal();
             LandingLine();

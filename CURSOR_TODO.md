@@ -1,4 +1,4 @@
-ï»¿# AICS - KSP Chat Bridge: Cursor TODO (rewritten Oct 9, 11:20)
+﻿# AICS - KSP Chat Bridge: Cursor TODO (rewritten Oct 9, 11:20)
 
 Repo: C:\coding projects\KSPChatBridge, branch main. Commit as Luke Benko <38820023+zernon916@users.noreply.github.com>. Don't push, and never touch branch old-local-main.
 Bridge: `kspchat/` (Python). Plugin: `KSPChatMod/` (C#). Tests: `pytest`. Build: `tools/package_release.ps1` (--onefile, no loose DLLs; the only DLL allowed in GameData is Plugins/KSPChatBridge.dll).
@@ -27,7 +27,7 @@ B. **The bridge stops responding / disappears:** after the failed spool and a cr
 Never trade altitude for speed. Change throttle in 5% steps and wait 2-5 s for spool-up. Never 0 throttle in flight except a hard abort. Bank max 20 deg slow, 10 deg fast. Low-altitude speed 200 target / 220 cap. Climb 5-15 deg in thick air.
 
 ## Done when
-Blockers 1-6 are fixed with tests, pytest is green, the onefile exe is rebuilt and nothing is pushed. Then report what changed and the zip/exe path. â€” **met (code); still needs Luke live check.**
+Blockers 1-6 are fixed with tests, pytest is green, the onefile exe is rebuilt and nothing is pushed. Then report what changed and the zip/exe path. — **met (code); still needs Luke live check.**
 
 
 ## NEW FEATURE: Rotors tab in AICS Systems
@@ -122,9 +122,7 @@ Continuation: custom named reverser events + rollout (mixed-engine/bounce guards
 
 Next checkpoint: selective/idempotent flight-settings migration + atomic native saves; saved taxi/runway spots; plan taxi/rates/distance/saved-runway support; flap placard/sequencing; guarded stall study + cache (timeout is not a measurement). Installed kRPC IL confirmed wheel sign; takeoff/rollout corrected. Checks: 266 C# passed; Release passed; Python unchanged (473). Continuation commit: 9bd1765. No live test/install.
 
-Helicopter checkpoint: hover-position/yaw feedback; lift/tail/compound axis classification; measured rotor-loss response; stable touchdown + RPM-gated parking; named-craft trim/rotor notes. Legacy uniform elevator notes preserved but not applied to mixed-sign surfaces. Checks: 293 C# passed; Release passed; Python unchanged (473). Settings/flaps commit: 0238b34. No live test/install.
-
-Approach checkpoint: grounded autoland validates destination before takeoff; transfers after airborne 100 m climbout; stop/failure clears pending approach. Saved vertical points rejected during runway-plan validation. Checks: 298 C# passed; Release build passed. Needs live check.
+Helicopter checkpoint (5c27428): hover-position/yaw feedback; lift/tail/compound axes; measured rotor-loss response; touchdown + RPM-gated parking; named-craft trim/rotor notes. Legacy uniform elevator notes preserved but not applied to mixed-sign surfaces. Grounded autoland validates destination, takes off, then approaches after 100 m airborne climbout; stop/failure clears pending approach. Saved vertical points rejected in runway plans. Checks: 298 C# passed; Release passed; Python unchanged (473). Settings/flaps commit: 0238b34. No live test/install.
 
 Remaining: vertical landing, helicopter layout/rotor-trim parity, remaining plan grammar, shared AI-to-C# dispatch and controller integration tests. Current native flight code is a partial port, not parity-complete. Phases 4-5 not started.
 
@@ -205,5 +203,45 @@ Validation and exit criteria:
 - Luke's bridge-free live acceptance is a required gate before final removal. If unavailable or failed, record the exact blocker and retain the working bridge/fallback; do not mark Phase 5 complete.
 - Final completion report: implemented parity, automated results, Luke's live results, remaining optional dependencies/limitations, commit IDs and final zip/DLL paths. No exe path is expected in the final bridge-free package.
 
-Resume checkpoint (implementation): Phase 1 commit 3166574; Phase 2 b583eee; Phase 3 foundation 74e33b6, recovery e9d339e, taxi/rollout 9bd1765. Packages retained under dist. Latest additions: NativeSettings/NativeSpots/AircraftLandingPolicy/NativeFlaps; checks above passed. DLL: KSPChatMod/bin/Release/net472/KSPChatBridge.dll. Settings/flaps commit: 0238b34. Helicopter/craft-note/grounded-approach checkpoint saved above. Next: vertical landing, then remaining Phase 3 items above. No live checks, installation, push, model download or Phase 4/5 implementation. Keep legacy fallback.
+Resume checkpoint (implementation): Phase 1 commit 3166574; Phase 2 b583eee; Phase 3 foundation 74e33b6, recovery e9d339e, taxi/rollout 9bd1765. Packages retained under dist. Latest additions: NativeSettings/NativeSpots/AircraftLandingPolicy/NativeFlaps; checks above passed. DLL: KSPChatMod/bin/Release/net472/KSPChatBridge.dll. Settings/flaps: 0238b34; helicopter/craft notes/grounded approach: 5c27428. Next: vertical landing, then remaining Phase 3 items above. No live checks, installation, push, model download or Phase 4/5 implementation. Keep legacy fallback.
+
+## HANDOFF
+
+Last commit: `5c27428` (`Add native helicopter feedback, craft notes and departure approach handoff`). No push; `old-local-main` untouched.
+
+Finished: Phase 1 rotor telemetry and bridge recovery; Phase 2 local dashboards and batch telemetry; Phase 3 native ownership/AI-off foundation, holds/trim, spool/brakes, recovery, reversers, power protection, engine restart, taxi, takeoff, runway approach/flare/rollout, flaps/stall study, saved spots/settings migration, deterministic plans, helicopter feedback/emergency/touchdown/parking, craft notes, and grounded aircraft takeoff-to-approach handoff. Native uniform elevator legacy notes are preserved but intentionally not applied to mixed-sign surfaces. Phase 3 remains partial and needs live acceptance.
+
+In progress at handoff: a new powered vertical-descent policy and game adapter were added. The pure policy has feasibility checks, 5%/3-second throttle stepping, sensor-loss retention, upright/side-speed limits, touchdown gating, and idealized gravity simulations. The adapter is not yet wired through a complete, live-validated vertical-landing workflow; orbital deorbit, target navigation, parachutes, and full rocket landing parity remain unported.
+
+NEXT STEPS remaining in Phase 3:
+
+- Finish and review vertical landing integration, including safe engine/thrust measurement, clearance/terrain handling, control-point alignment, abort behavior, and live KSP validation.
+- Complete helicopter layout and rotor-trim parity across one-rotor/tail, tricopter, quad, canted, and unusual control-point layouts.
+- Finish remaining flight-plan grammar and execution parity: compound plans, circuits/touch-and-go behavior, unsupported orbital/rocket steps, and stronger saved-route validation.
+- Implement the shared bridge-AI to C# validated command boundary and exclusive ownership handoff so legacy HTTP/MCP entry points cannot bypass the native controller.
+- Add controller integration/fake-game tests for lifecycle, vessel switch/revert, manual override, takeoff/approach/touchdown, helicopter failures, and AI-off transitions.
+- Run packaging checks and produce a Phase 3 package only after the above is stable; retain the bridge fallback.
+- Keep Phase 4 and Phase 5 blocked behind Phase 3, runtime/API compatibility work, full parity audit, and Luke's live acceptance.
+
+Tests and checks:
+
+- Passed: C# console behavior suite, latest reported total 298 checks, including helicopter, craft notes, departure/approach, and 13 powered-descent policy checks.
+- Passed: Release plugin build with `-p:SkipInstall=true`; only the known NU1900 vulnerability-feed warning remained.
+- Passed earlier: Python regression suite, 473 tests; no Python changes after that run.
+- Passed earlier: `git diff --check` for the implementation checkpoint; the TODO has historical CRLF/trailing-whitespace noise in older content.
+- Transient failure fixed: first vertical-landing build used unavailable `Vector3d.ClampMagnitude`; replaced with manual clamping and the subsequent Release build passed.
+- Not run after the newest vertical-landing changes: Python pytest, full package creation/content inspection, KSP install/startup, live flight, bridge-absent testing, controller integration tests against actual KSP, and Phase 4/5 validation.
+- No live acceptance has been recorded. Automated tests do not prove safe flight behavior.
+
+Uncommitted files at handoff:
+
+- `CURSOR_TODO.md` — half-done; this handoff is the only requested documentation change and is not committed.
+- `KSPChatMod/AicsMenu.cs` — half-done; adds a powered-descent menu entry, but the complete live workflow is unfinished.
+- `KSPChatMod/NativeFlightController.cs` — half-done; contains grounded autoland handoff and partial vertical-landing dispatch, pending integration review/live validation.
+- `KSPChatMod/NativeVerticalLanding.cs` — half-done; new KSP adapter, not live validated and not complete for orbital/targeted landings.
+- `KSPChatMod/VerticalLandingPolicy.cs` — finished for its pure-policy scope; automated checks pass, but it is not evidence of complete Phase 3 parity.
+- `tests/csharp/Aics.Tests.csproj` — finished for current offline coverage; includes the vertical policy, but integration coverage is still absent.
+- `tests/csharp/Program.cs` — finished for current offline coverage; includes 13 powered-descent checks, with no live-game assertions.
+
+Known artifacts: `KSPChatMod/bin/Release/net472/KSPChatBridge.dll` was rebuilt successfully. Existing Phase 1/2 packages remain under `dist`; no new Phase 3 package was produced. Continue from the vertical-landing integration review, update this file after the next checkpoint, and keep the legacy bridge fallback available.
 

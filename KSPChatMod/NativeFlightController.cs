@@ -70,6 +70,7 @@ namespace KSPChatBridge
         TakeoffMission takeoff;
         RunwayMission runway;
         bool landingAfterTakeoff;
+        NativeVerticalLanding verticalLanding;
         TaxiMission taxi;
         bool poweredTaxi;
         double stall = 45;
@@ -267,6 +268,14 @@ namespace KSPChatBridge
             try
             {
                 if (mode == "spool") return;
+                if (mode == "vertical landing")
+                {
+                    string previous = verticalLanding.Phase;
+                    verticalLanding.Fly(vessel, c, Planetarium.GetUniversalTime(), Math.Max(.001, Time.fixedDeltaTime));
+                    if (verticalLanding.Phase != previous) ChatWindow.Notice("Local powered descent: " + verticalLanding.Phase);
+                    if (verticalLanding.Phase == "landed") { Stop(false); SetGroup(vessel, KSPActionGroup.SAS, true); }
+                    return;
+                }
                 if (mode == "taxi")
                 {
                     taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi);
@@ -443,7 +452,7 @@ namespace KSPChatBridge
             reverseRollout = null;
             if (interruptPlan && plan != null) plan.Interrupt();
             mode = "idle"; lease.Release(); capture = null; spool = null;
-            rotorPark = null; landingAfterTakeoff = false;
+            rotorPark = null; landingAfterTakeoff = false; verticalLanding = null;
             stallStudy = null; needStallStudy = false;
             engines.Cancel();
         }
@@ -663,7 +672,19 @@ namespace KSPChatBridge
                     altitude = vessel.altitude + Math.Max(100, Num(a, "altitude_m", 300)); heading = FlightGlobals.ship_heading;
                     if (!vessel.LandedOrSplashed) return "Already airborne.";
                     BeginHold(); return StartTakeoff();
+                case "land_here":
+                    if (vessel.LandedOrSplashed) return "Already grounded.";
+                    if (props.HasLift(vessel)) return "Use helicopter land for a rotorcraft.";
+                    if (Bool(a, "use_chutes", false)) return "Local powered descent does not deploy parachutes yet.";
+                    var descentController = new NativeVerticalLanding(vessel, Num(a, "touchdown_speed", 1.5), Planetarium.GetUniversalTime());
+                    BeginHold(); engines.Cancel(); verticalLanding = descentController;
+                    vessel.ctrlState.pitchTrim = vessel.ctrlState.rollTrim = vessel.ctrlState.yawTrim = 0; SyncTrim();
+                    SetGroup(vessel, KSPActionGroup.Gear, true); mode = "vertical landing";
+                    return "Local powered descent engaged; upright near-vertical descent only.";
                 case "land_plane": case "land_at_spot":
+                    if (Str(a, "mode", "H").ToUpperInvariant() == "V") return "Targeted vertical landing is not yet ported; use local powered descent here.";
+                    if (Num(a, "touch_and_go", 0) != 0 || Num(a, "final_km", 0) != 0 || Num(a, "approach_heading", -1) != -1)
+                        return "Local runway landing does not yet support touch-and-go, final-length or approach-heading overrides.";
                     bool wheels = false, wings = false;
                     foreach (Part part in vessel.parts) { wheels |= part.FindModuleImplementing<ModuleWheelBase>() != null; wings |= part.FindModuleImplementing<ModuleLiftingSurface>() != null; }
                     if (!wheels || !wings) return "Plane autoland requires wheels and wings.";

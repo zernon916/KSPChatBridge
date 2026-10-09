@@ -343,5 +343,32 @@ class Program
         catch (ArgumentException) { verticalRejected = true; }
         Check(verticalRejected, "plan propagates runway validation before starting");
         Console.WriteLine("Departure and approach validation: 5 behavior checks passed.");
+        Check(VerticalLandingPolicy.Feasibility(500, -2, 0, 20, 9.81, 1, .5) == null, "upright powered descent feasible");
+        Check(VerticalLandingPolicy.Feasibility(20, -15, 0, 20, 9.81, 1, .05) != null, "throttle ramp clearance required");
+        Check(VerticalLandingPolicy.Feasibility(500, -2, 0, 9, 9.81, 1, .5) != null, "underpowered descent refused");
+        Check(VerticalLandingPolicy.Feasibility(500, -2, 4, 20, 9.81, 1, .5) != null, "lateral descent outside supported envelope");
+        Check(VerticalLandingPolicy.Feasibility(double.NaN, -2, 0, 20, 9.81, 1, .5) != null, "unknown clearance refused");
+        var descent = new VerticalLandingPolicy(.5, 1.5, 0);
+        Check(descent.Step(1, 500, -2, 20, 9.81, 1, false) == .5, "vertical throttle settling time");
+        double descentThrottle = descent.Step(3, 500, -2, 20, 9.81, 1, false);
+        Check(Math.Abs(descentThrottle - .5) <= .050001, "vertical throttle step limit");
+        Check(descent.Step(4, double.NaN, -2, 20, 9.81, 1, false) == descentThrottle, "sensor loss retains throttle");
+        Check(descent.Step(5, 0, 0, 20, 9.81, 1, true) == 0 && descent.Phase == "touchdown", "contact cuts throttle");
+        Check(descent.Step(6, 1, 0, 20, 9.81, 1, false) >= .05 && descent.Phase != "landed", "bounce resumes flight throttle");
+        descent.Step(7, 0, 0, 20, 9.81, 1, true);
+        Check(descent.Step(10, 0, 0, 20, 9.81, 1, true) == 0 && descent.Phase == "landed", "stable vertical touchdown");
+        foreach (double gravity in new[] { 1.63, 9.81 })
+        {
+            double acceleration = gravity * 2, height = 500, velocity = 0, now = 0;
+            descent = new VerticalLandingPolicy(.5, 1.5, 0);
+            while (height > 0 && now < 500)
+            {
+                double output = descent.Step(now, height, velocity, acceleration, gravity, 1, false);
+                velocity += (acceleration * output - gravity) * .05;
+                height += velocity * .05; now += .05;
+            }
+            Check(height <= 0 && velocity > -3, "bounded simulated touchdown under gravity " + gravity);
+        }
+        Console.WriteLine("Powered descent policy: 13 behavior checks passed (idealized dynamics only).");
     }
 }

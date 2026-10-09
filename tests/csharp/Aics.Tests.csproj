@@ -16,4 +16,5 @@
   <ItemGroup><Compile Include="../../KSPChatMod/AircraftLandingPolicy.cs"/><Compile Include="../../KSPChatMod/NativeFlaps.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/HelicopterPolicy.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativeCraftNotes.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/VerticalLandingPolicy.cs"/></ItemGroup>
 </Project>
