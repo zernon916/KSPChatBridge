@@ -210,7 +210,7 @@ namespace KSPChatBridge
             bool manual = (!InputLockManager.IsLocked(ControlTypes.PITCH) && (GameSettings.PITCH_UP.GetKey() || GameSettings.PITCH_DOWN.GetKey()))
                 || (!InputLockManager.IsLocked(ControlTypes.ROLL) && (GameSettings.ROLL_LEFT.GetKey() || GameSettings.ROLL_RIGHT.GetKey()))
                 || (!InputLockManager.IsLocked(ControlTypes.YAW) && (GameSettings.YAW_LEFT.GetKey() || GameSettings.YAW_RIGHT.GetKey()));
-            NativeCommands.WriteStatus(Busy, mode, vessel.id.ToString());
+            NativeCommands.WriteStatus(Busy, mode, NativeIds.Vessel(vessel.id));
             if (manual && Busy) { Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
             if (!manual)
             {
@@ -270,7 +270,7 @@ namespace KSPChatBridge
             var savedTrim = craftNotes.Load(vessel.vesselName);
             foreach (string key in new[] { "pitch_trim", "roll_trim", "yaw_trim", "pitch_deploy_bias" }) Num(savedTrim, key, 0);
             Stop(false);
-            if (!lease.Acquire(vessel.id.ToString(), "native")) throw new InvalidOperationException("Another controller owns this vessel");
+            if (!lease.Acquire(NativeIds.Vessel(vessel.id), "native")) throw new InvalidOperationException("Another controller owns this vessel");
             mode = "hold"; throttle = vessel.ctrlState.mainThrottle; prevPitch = Pitch(); prevRoll = Roll();
             elevator = vessel.ctrlState.pitch; lastThrottle = Planetarium.GetUniversalTime() - 3;
             pitchIntegral = vsIntegral = 0; capture = null; trimSuspended = false;

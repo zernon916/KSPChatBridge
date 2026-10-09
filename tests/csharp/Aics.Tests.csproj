@@ -29,5 +29,6 @@
     <Compile Include="../../KSPChatMod/IntercomTalk.cs"/>
     <Compile Include="../../KSPChatMod/NativeSafety.cs"/>
     <Compile Include="../../KSPChatMod/DashboardRows.cs"/>
+    <Compile Include="../../KSPChatMod/NativeIds.cs"/>
   </ItemGroup>
 </Project>

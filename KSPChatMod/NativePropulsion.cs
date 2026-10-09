@@ -99,7 +99,7 @@ namespace KSPChatBridge
             tailBase = tails == 0 ? 0 : (float)(tailPitch / tails);
         }
         internal IEnumerable<string> Ids()
-        { foreach (var r in Rotors) if (r != null) yield return r.part.flightID.ToString(); }
+        { foreach (var r in Rotors) if (r != null) yield return NativeIds.Part(r.part.flightID); }
         internal static void Field(PartModule module, string name, object value)
         {
             var field = module.Fields[name];
@@ -121,7 +121,7 @@ namespace KSPChatBridge
         internal List<RotorSpool.Measurement> Sample()
         {
             var rows = new List<RotorSpool.Measurement>();
-            foreach (var r in Rotors) if (r != null) rows.Add(new RotorSpool.Measurement { Id = r.part.flightID.ToString(), Rpm = RotorMeasurements.Rpm(r), Limit = r.rpmLimit, Brake = r.brakePercentage, Torque = r.servoMotorLimit, Motor = r.servoMotorIsEngaged });
+            foreach (var r in Rotors) if (r != null) rows.Add(new RotorSpool.Measurement { Id = NativeIds.Part(r.part.flightID), Rpm = RotorMeasurements.Rpm(r), Limit = r.rpmLimit, Brake = r.brakePercentage, Torque = r.servoMotorLimit, Motor = r.servoMotorIsEngaged });
             return rows;
         }
         internal void Collective(float degrees, string role = null)

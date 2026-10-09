@@ -176,3 +176,9 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** new `DashboardRows` (pure): bridge rows only when AI on and the answer is <5 s old, labeled `source=bridge`; otherwise local in-mod controller rows (`source=local`). Failed poll clears bridge rows. `TrimWindow` uses native get/set_trim whenever AI off or `native_chat` on. Systems/Rotors were already local (LocalVesselState/RotorTelemetry).
 **Tests run:** C# "P5-1 dashboard honesty: 4 behavior checks passed"; pytest 482; Release build 0 errors.
 **Still needs live check:** Status window with bridge absent shows local rows; trim panel works with AI on.
+
+## P5-1 Part 9 - dual ID cleanup - DONE (tests; needs live check)
+**Problem:** native code formatted vessel GUIDs / part flightIDs ad hoc next to kRPC remote ids.
+**Changed:** `NativeIds` (Vessel = GUID D form, Part = invariant flightID, tolerant compare); used by NativeFlightController (lease/status), NativePropulsion, RotorTelemetry. kRPC RpcId kept only as a bridge-side extra in the telemetry payload.
+**Tests run:** C# "P5-1 native ids: 3 behavior checks passed"; pytest 482; Release 0 errors.
+**Still needs live check:** lease/status and rotor rows still match the active vessel.

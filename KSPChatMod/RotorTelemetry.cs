@@ -69,7 +69,7 @@ namespace KSPChatBridge
                         float axisForward = Vector3.Dot(worldAxis, frame.up);
                         float axisUp = Vector3.Dot(worldAxis, -frame.forward);
                         rows.Add(new Row {
-                            PartId = part.flightID.ToString(CultureInfo.InvariantCulture),
+                            PartId = NativeIds.Part(part.flightID),
                             RpcId = RpcId(part, "KRPC.SpaceCenter.Services.Parts.Part"),
                             Title = part.partInfo.title, Label = part.partInfo.title,
                             Direction = rotor.rotateCounterClockwise ? "CCW" : "CW",
@@ -90,7 +90,7 @@ namespace KSPChatBridge
             try { LocalVesselState.Sample(vessel); }
             catch (Exception ex) { LocalVesselState.Clear(); Debug.LogWarning("[AICS] local telemetry: " + ex.Message); }
             if (!BridgeLauncher.AiEnabled) return;
-            string payload = Serialize(rows, vessel.id.ToString(), RpcId(vessel, "KRPC.SpaceCenter.Services.Vessel"));
+            string payload = Serialize(rows, NativeIds.Vessel(vessel.id), RpcId(vessel, "KRPC.SpaceCenter.Services.Vessel"));
             if (Interlocked.CompareExchange(ref sending, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ => {
                 try

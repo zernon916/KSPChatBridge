@@ -606,6 +606,12 @@ class Program
         Check(DashboardRows.Choose(true, br, 30, "idle", "")[0][1] == "local (in-mod)", "stale bridge rows replaced by local");
         Check(DashboardRows.Choose(true, null, 1, "idle", "")[1][1] == "Local idle" && DashboardRows.Choose(true, br, -1, null, null)[1][1] == "Local idle", "failed poll / never polled shows local");
         Console.WriteLine("P5-1 dashboard honesty: 4 behavior checks passed.");
+        // ---- P5-1.9: single native identity ----
+        var gid = new Guid("0123456789abcdef0123456789abcdef");
+        Check(NativeIds.Vessel(gid) == "01234567-89ab-cdef-0123-456789abcdef", "vessel id is GUID D form");
+        Check(NativeIds.Part(4294967295u) == "4294967295", "part id is invariant flightID");
+        Check(NativeIds.SameVessel("01234567-89AB-CDEF-0123-456789ABCDEF", NativeIds.Vessel(gid)) && !NativeIds.SameVessel("1234", NativeIds.Vessel(gid)), "vessel id compare tolerant of case, rejects kRPC ints");
+        Console.WriteLine("P5-1 native ids: 3 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {
