@@ -145,6 +145,8 @@ namespace KSPChatBridge
         static int keysPolling;
         static float nextKeysPoll;
         static bool clearArmed, typeLocked;
+        static int modelDlBusy;
+        static volatile string modelDlMsg = "";
         static readonly Dictionary<string, string> keyInfo = new Dictionary<string, string>();  // "gemini" -> "1\t••••abcd"
         static float opacity = 0.92f;       // window background alpha (slider)
         static float skinOpacity = -1f;
@@ -994,6 +996,7 @@ namespace KSPChatBridge
             if (ai != BridgeLauncher.AiEnabled) BridgeLauncher.SetAiEnabled(ai);
             if (BridgeLauncher.Switching) GUILayout.Label("Switching mode after controller handoff...");
             if (!BridgeLauncher.AiEnabled) GUILayout.Label("AI off: local controls available; unported commands are disabled.");
+            DrawInModAiSettings();
             if (!BridgeLauncher.AiEnabled) return;
             // AI backend dropdown (IMGUI has none: a button that unfolds the option list inline).
             string[] labels = ChatWindow.BackendLabels;
@@ -1043,6 +1046,87 @@ namespace KSPChatBridge
             opacity = Mathf.Round(GUILayout.HorizontalSlider(opacity, 0.2f, 1f) * 20f) / 20f;
             GUILayout.EndHorizontal();
             if (GUILayout.Button("Reset menu / tab position")) { menuRect.x = -1; menuRect.y = 24; tabX = -1; }
+        }
+
+        void DrawInModAiSettings()
+        {
+            GUILayout.Label("In-mod AI (Phase 4)", hdr);
+            bool nc = GUILayout.Toggle(BridgeLauncher.NativeChatEnabled, "Chat in-mod (no bridge)");
+            if (nc != BridgeLauncher.NativeChatEnabled) BridgeLauncher.SetNativeChat(nc);
+            var policy = AiSettings.Policy;
+            GUILayout.Label("Runtime offload (embedded llama still gated until 4A passes)", small);
+            GUILayout.BeginHorizontal();
+            int off = (int)policy.Offload;
+            int noff = GUILayout.Toolbar(off, new[] { "CPU", "Hybrid", "GPU" });
+            if (noff != off) AiSettings.ApplyOffload((AiOffloadMode)noff, policy.ContextTokens);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Context", small, GUILayout.Width(52));
+            int[] ctxOpts = { 16384, 20480, 24576 };
+            string[] ctxLbl = { "16k", "20k", "24k" };
+            int ctxIdx = 0;
+            for (int i = 0; i < ctxOpts.Length; i++) if (policy.ContextTokens == ctxOpts[i]) ctxIdx = i;
+            int nctx = GUILayout.Toolbar(ctxIdx, ctxLbl);
+            if (nctx != ctxIdx) AiSettings.ApplyOffload(policy.Offload, ctxOpts[nctx]);
+            GUILayout.EndHorizontal();
+            var mm = InModAiHost.Models ?? ModelManager.Instance;
+            string prog = mm.Phase == "idle" ? (mm.Ready ? "Model on disk." : "Model not downloaded.") :
+                string.Format(CultureInfo.InvariantCulture, "{0} {1:P0}", mm.Phase, mm.Progress);
+            GUILayout.Label(prog, small);
+            if (mm.Error != null && mm.Phase != "ready") GUILayout.Label(mm.Error, warnStyle);
+            else if (!string.IsNullOrEmpty(mm.Warning)) GUILayout.Label(mm.Warning, small);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = BridgeLauncher.AiEnabled && Interlocked.CompareExchange(ref modelDlBusy, 0, 0) == 0 && !mm.Ready;
+            if (GUILayout.Button("Download Qwen2.5-3B Q4_K_M"))
+            {
+                if (!BridgeLauncher.AiEnabled)
+                    ChatWindow.Notice("Turn on AI & Bridge (or enable AI in bridge.cfg) to download the local model.");
+                else if (Interlocked.CompareExchange(ref modelDlBusy, 1, 0) == 0)
+                {
+                    modelDlMsg = "Starting download...";
+                    ModelManager.Instance.Cancel();
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try
+                        {
+                            string err = ModelManager.Instance.Download(null, BridgeLauncher.AiEnabled);
+                            modelDlMsg = err ?? (ModelManager.Instance.Warning ?? "Download complete.");
+                        }
+                        catch (Exception ex) { modelDlMsg = ex.Message; }
+                        finally { Interlocked.Exchange(ref modelDlBusy, 0); }
+                    });
+                }
+            }
+            GUI.enabled = mm.Phase == "downloading" || modelDlBusy == 1;
+            if (GUILayout.Button("Cancel download")) ModelManager.Instance.Cancel();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            if (modelDlMsg.Length > 0) GUILayout.Label(modelDlMsg, small);
+            string inModStatus = InModChatStatus(mm);
+            GUILayout.Label("Status: " + inModStatus, inModStatus.StartsWith("In-mod chat ready") ? tagW : (inModStatus.Contains("error") || inModStatus.Contains("not") ? warnStyle : small));
+            if (BridgeLauncher.NativeChatEnabled)
+            {
+                string backend = ChatWindow.BackendId(ChatWindow.BackendIndex);
+                if (NeedsKey(backend) || backend == "local" || backend == "ollama")
+                {
+                    GUILayout.Label("Keys / endpoints (PluginData/.env — in-mod chat + bridge on restart)", small);
+                    if (NeedsKey(backend)) KeyBox(backend);
+                    else GUILayout.Label(backend == "local"
+                        ? "LM Studio: set LMSTUDIO_URL / LMSTUDIO_MODEL in .env if not localhost:1234."
+                        : "Ollama: set OLLAMA_URL / OLLAMA_MODEL in .env if not localhost:11434.", small);
+                }
+                else if (ChatWindow.IsStub(ChatWindow.BackendIndex))
+                    GUILayout.Label(backend + " is not wired yet — pick Groq, ChatGPT (API), Gemini, OpenRouter, HF, Custom, LM Studio, or Ollama.", warnStyle);
+            }
+        }
+
+        static string InModChatStatus(ModelManager mm)
+        {
+            if (!BridgeLauncher.NativeChatEnabled) return "In-mod chat disabled (bridge chat when AI & Bridge is on).";
+            if (!BridgeLauncher.AiEnabled) return "AI off — enable AI & Bridge to use in-mod HTTP chat.";
+            if (mm.Phase == "downloading") return "Downloading model...";
+            if (!string.IsNullOrEmpty(mm.Error) && mm.Phase != "ready") return "Model error: " + mm.Error;
+            return "In-mod chat ready (HTTP providers / LM Studio / Ollama). Embedded llama still gated until PluginData/native/*.bin load passes.";
         }
 
         static bool NeedsKey(string id)
@@ -1096,8 +1180,9 @@ namespace KSPChatBridge
             keyInfo.TryGetValue(id, out info);
             string[] st = (info ?? "").Split('\t');
             string masked = st.Length > 1 ? st[1] : "";
+            bool keysLocal = BridgeLauncher.NativeChatEnabled;
             string status;
-            if (!bridgeOk) status = bridgeChecked ? "bridge not responding" : "checking...";
+            if (!bridgeOk && !keysLocal) status = bridgeChecked ? "bridge not responding" : "checking...";
             else if (info == null) status = "checking...";
             else if (id == "custom") status = st[0] == "1" ? "configured (key " + (masked.Length > 0 ? masked : "none - fine if the API needs none") + ")" : "missing URL and/or model";
             else status = masked.Length > 0 ? "configured (" + masked + ")" : "missing - paste a key and Save";
@@ -1105,27 +1190,28 @@ namespace KSPChatBridge
             GUILayout.BeginHorizontal();
             bool changed = keyInput.Trim().Length > 0 || (id == "custom" &&
                 ((cuUrlT != null && cuUrlT != Val("custom_url")) || (cuModelT != null && cuModelT != Val("custom_model"))));
-            GUI.enabled = bridgeOk && changed;
+            GUI.enabled = changed && (bridgeOk || keysLocal);
             if (GUILayout.Button("Save") || (enter && GUI.enabled))
             {
-                string json = "{\"backend\":" + ChatWindow.JsonStr(id) + ",\"key\":" + ChatWindow.JsonStr(keyInput.Trim())
+                string trimmedKey = keyInput.Trim();
+                string json = "{\"backend\":" + ChatWindow.JsonStr(id) + ",\"key\":" + ChatWindow.JsonStr(trimmedKey)
                     + (id == "custom" && cuUrlT != null ? ",\"url\":" + ChatWindow.JsonStr(cuUrlT) : "")
                     + (id == "custom" && cuModelT != null ? ",\"model\":" + ChatWindow.JsonStr(cuModelT) : "") + "}";
                 keyInput = ""; clearArmed = false; keyMsg = "Saving...";
-                KeyPost(json);
+                KeyPost(json, id, trimmedKey, cuUrlT, cuModelT, false);
                 if (enter) e.Use();
             }
-            GUI.enabled = bridgeOk && masked.Length > 0;
+            GUI.enabled = (bridgeOk || keysLocal) && masked.Length > 0;
             if (GUILayout.Button(clearArmed ? "Really clear?" : "Clear key"))
             {
                 if (!clearArmed) clearArmed = true;
-                else { clearArmed = false; keyMsg = "Clearing..."; KeyPost("{\"backend\":" + ChatWindow.JsonStr(id) + ",\"clear\":true}"); }
+                else { clearArmed = false; keyMsg = "Clearing..."; KeyPost("{\"backend\":" + ChatWindow.JsonStr(id) + ",\"clear\":true}", id, "", cuUrlT, cuModelT, true); }
             }
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             string msg = keyMsg;
             if (msg.Length > 0) GUILayout.Label(msg, small);
-            GUILayout.Label("Saved to the bridge's .env on this PC (git-ignored); takes effect immediately.", small);
+            GUILayout.Label("Saved to PluginData/.env; in-mod chat reads it immediately; bridge picks up on restart.", small);
         }
 
         static string Val(string k) { string v; return keyInfo.TryGetValue(k, out v) ? v : ""; }
@@ -1143,33 +1229,43 @@ namespace KSPChatBridge
                     using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                         keysBody = rd.ReadToEnd();
                 }
-                catch (Exception) { }
+                catch (Exception)
+                {
+                    try { keysBody = SecretsStore.StatusText(); }
+                    catch (Exception) { }
+                }
                 finally { Interlocked.Exchange(ref keysPolling, 0); }
             });
         }
 
-        static void KeyPost(string json)
+        static void KeyPost(string json, string backend, string key, string customUrl, string customModel, bool clear)
         {
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                try
+                try { keyMsg = SecretsStore.SaveBackend(backend, key, customUrl, customModel, clear); }
+                catch (Exception ex) { keyMsg = ".env: " + ex.Message; }
+                if (bridgeOk)
                 {
-                    var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/api_key");
-                    req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000; req.Proxy = null;
-                    byte[] b = Encoding.UTF8.GetBytes(json);
-                    req.ContentLength = b.Length;
-                    using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
-                    using (var resp = req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                        keyMsg = rd.ReadToEnd().Trim();
+                    try
+                    {
+                        var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/api_key");
+                        req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000; req.Proxy = null;
+                        byte[] b = Encoding.UTF8.GetBytes(json);
+                        req.ContentLength = b.Length;
+                        using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
+                        using (var resp = req.GetResponse())
+                        using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                            keyMsg = rd.ReadToEnd().Trim();
+                    }
+                    catch (WebException ex) when (ex.Response != null)
+                    {
+                        using (var rd = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8))
+                            keyMsg = keyMsg + " Bridge: " + rd.ReadToEnd().Trim();
+                    }
+                    catch (Exception ex) { keyMsg = keyMsg + " Bridge unreachable: " + ex.Message; }
                 }
-                catch (WebException ex) when (ex.Response != null)
-                {
-                    using (var rd = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8)) keyMsg = "Bridge: " + rd.ReadToEnd().Trim();
-                }
-                catch (Exception ex) { keyMsg = "Couldn't reach the bridge: " + ex.Message; }
-                cuUrlT = cuModelT = null;   // reload from the bridge
-                nextKeysPoll = 0; nextBridgeCheck = 0;  // refresh status + dropdown hints now
+                cuUrlT = cuModelT = null;
+                nextKeysPoll = 0; nextBridgeCheck = 0;
             });
         }
 

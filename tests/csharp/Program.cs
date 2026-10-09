@@ -458,6 +458,34 @@ class Program
         Check(!ChatOrchestrator.AllowCloudFallback("local", false), "no silent cloud fallback after local");
         Check(ChatOrchestrator.AllowCloudFallback("groq", true), "explicit cloud allowed");
         Console.WriteLine("Phase 4 AI policy foundations: 20 behavior checks passed.");
+        string secretsDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-secrets-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(secretsDir);
+        SecretsStore.DataDirectoryOverride = () => secretsDir;
+        SecretsStore.Set("OPENAI_API_KEY", "sk-test-secret-key-1234567890");
+        Check(SecretsStore.Get("OPENAI_API_KEY") == "sk-test-secret-key-1234567890", "secrets set/get");
+        Check(SecretsStore.Mask("OPENAI_API_KEY").Contains("…"), "secrets mask");
+        SecretsStore.Set("GROQ_API_KEY", "gq-key");
+        Check(System.IO.File.Exists(System.IO.Path.Combine(secretsDir, ".env")), "secrets atomic file");
+        var groq = OpenAiBackend.Resolve("groq");
+        Check(groq.Ok && groq.Url == "https://api.groq.com/openai/v1" && groq.Model == "openai/gpt-oss-120b", "groq resolve url/model");
+        var local = OpenAiBackend.Resolve("local");
+        Check(local.Url == "http://localhost:1234/v1", "local lm studio url");
+        int fakeCalls = 0;
+        string toolResponse = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"get_status\",\"arguments\":\"{}\"}}]}}]}";
+        string finalResponse = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Altitude 5 km.\"}}]}";
+        var session = new InModChatSession((ep, body) =>
+        {
+            fakeCalls++;
+            return fakeCalls == 1 ? toolResponse : finalResponse;
+        });
+        string toolLog = "";
+        string answer = session.Process("status?", "groq", (name, args) =>
+        {
+            toolLog = name + ":" + args;
+            return "alt 5000 m";
+        });
+        Check(fakeCalls == 2 && toolLog == "get_status:{}" && answer == "Altitude 5 km.", "in-mod tool loop");
+        Console.WriteLine("In-mod AI stack: 7 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

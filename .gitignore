@@ -9,7 +9,7 @@ chatgpt_chat.json*
 .env
 .env.*
 *.key
-*secret*
+# note: do not ignore *secret* — that blocked SecretsStore.cs from git
 *token*
 # build output
 __pycache__/

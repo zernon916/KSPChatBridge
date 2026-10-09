@@ -40,8 +40,14 @@ namespace KSPChatBridge
         readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             { "autostart", "true" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
-            { "bridge_dir", "" }, { "python", "python" },
+            { "native_chat", "false" }, { "bridge_dir", "" }, { "python", "python" },
         };
+        internal static bool NativeChatEnabled { get; private set; }
+        internal static bool NativeChat { get { return NativeChatEnabled; } }
+        internal static string PluginDataDirectory
+        {
+            get { return NativeLibraryLayout.PluginDataRoot(KSPUtil.ApplicationRootPath); }
+        }
         internal static string DataDirectory
         {
             get
@@ -49,7 +55,7 @@ namespace KSPChatBridge
                 string path = Environment.GetEnvironmentVariable("KSPCHAT_DATA_DIR");
                 if (!string.IsNullOrWhiteSpace(path)) return path;
                 if (instance != null && !string.IsNullOrWhiteSpace(instance.cfg["bridge_dir"])) return instance.cfg["bridge_dir"];
-                return Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData");
+                return PluginDataDirectory;
             }
         }
 
@@ -59,6 +65,8 @@ namespace KSPChatBridge
             DontDestroyOnLoad(this);
             LoadCfg();
             AiEnabled = Bool("ai_enabled");
+            NativeChatEnabled = Bool("native_chat");
+            AiSettings.Load();
             if (!AiEnabled) NativeReady = true;
             if (!Bool("autostart")) { Debug.Log("[KSPChatBridge] bridge autostart off (bridge.cfg)"); return; }
             launchDir = cfg["bridge_dir"]; launchPython = cfg["python"];
@@ -116,7 +124,7 @@ namespace KSPChatBridge
             });
         }
 
-        static bool Healthy(int timeoutMs)
+        internal static bool BridgeHealthy(int timeoutMs)
         {
             try
             {
@@ -126,6 +134,8 @@ namespace KSPChatBridge
             }
             catch (Exception) { return false; }
         }
+
+        static bool Healthy(int timeoutMs) { return BridgeHealthy(timeoutMs); }
 
         static void StartBridge(string dir, string py, string exe)
         {
@@ -226,6 +236,32 @@ namespace KSPChatBridge
             using (var stream = req.GetRequestStream()) { stream.WriteByte(123); stream.WriteByte(125); }
             using (req.GetResponse()) { }
         }
+        internal static void SetNativeChat(bool enabled)
+        {
+            if (instance == null || enabled == NativeChatEnabled) return;
+            instance.cfg["native_chat"] = enabled ? "true" : "false";
+            SaveCfg(instance.cfg);
+            NativeChatEnabled = enabled;
+            AiSettings.Save();
+            ChatWindow.Notice(enabled
+                ? "In-mod chat enabled (HTTP providers / local model when runtime is wired)."
+                : "In-mod chat off; bridge chat unchanged when AI & Bridge is on.");
+            // TODO(InModAiHost): start/stop embedded chat host when native llama gate passes.
+        }
+
+        static void SaveCfg(Dictionary<string, string> values)
+        {
+            string configPath = Path.Combine(PluginDataDirectory, "bridge.cfg");
+            try
+            {
+                var lines = new StringBuilder("# AICS bridge settings\n");
+                foreach (var kv in values) lines.Append(kv.Key).Append(" = ").Append(kv.Value).Append('\n');
+                Directory.CreateDirectory(Path.GetDirectoryName(configPath));
+                File.WriteAllText(configPath, lines.ToString());
+            }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] bridge.cfg save: " + ex.Message); }
+        }
+
         internal static void SetAiEnabled(bool enabled)
         {
             if (instance == null || Switching || enabled == AiEnabled) return;
@@ -234,7 +270,6 @@ namespace KSPChatBridge
             if (Volatile.Read(ref instance.starting) != 0)
             { ChatWindow.Notice("Bridge startup is in progress; switch once it is ready."); return; }
             Switching = true;
-            string configPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/bridge.cfg");
             ThreadPool.QueueUserWorkItem(_ => {
                 bool prepared = false;
                 try
@@ -251,11 +286,10 @@ namespace KSPChatBridge
                         if (!enabled && proc != null && !proc.HasExited) throw new InvalidOperationException("Bridge still running; mode unchanged.");
                         if (!enabled && proc != null) { proc.Dispose(); proc = null; startedByUs = false; }
                         instance.cfg["ai_enabled"] = enabled ? "true" : "false";
-                        var lines = new StringBuilder("# AICS bridge settings\n");
-                        foreach (var kv in instance.cfg) lines.Append(kv.Key).Append(" = ").Append(kv.Value).Append('\n');
-                        File.WriteAllText(configPath, lines.ToString());
+                        SaveCfg(instance.cfg);
                         AiEnabled = enabled; NativeReady = !enabled;
                     }
+                    if (!enabled) InModAiHost.UnloadForAiOff();
                     ChatWindow.Notice(enabled ? "AI & bridge enabled." : "AI off. Local controls and dashboards remain available.");
                 }
                 catch (Exception ex)

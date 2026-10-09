@@ -12,7 +12,14 @@ namespace KSPChatBridge
         internal const string NativeFolder = "native";
         internal const string ModelsFolder = "models";
         internal const string BinExtension = ".bin";
+        internal const string ModDataRelative = "GameData/KSPChatBridge/PluginData";
         internal static readonly string[] ApprovedPluginDlls = { "KSPChatBridge.dll" };
+
+        internal static string PluginDataRoot(string applicationRoot)
+        {
+            if (string.IsNullOrEmpty(applicationRoot)) throw new ArgumentException("KSP application root required.");
+            return Path.Combine(applicationRoot, ModDataRelative);
+        }
 
         internal static string NativeRoot(string pluginData) { return Path.Combine(pluginData, NativeFolder); }
         internal static string ModelsRoot(string pluginData) { return Path.Combine(pluginData, ModelsFolder); }

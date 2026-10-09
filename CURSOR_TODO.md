@@ -147,9 +147,9 @@ Resume checkpoint: all three requested phase PLANS are saved. No implementation,
 
 ### Phase 4 - In-mod local AI and cloud API alternatives
 
-Status: FOUNDATION STARTED (4A layout + offline policies); LIVE RUNTIME GATE OPEN. Bridge remains available. No model downloaded; no LLamaSharp NuGet wired into the KSP plugin yet (native faults can kill KSP).
+Status: HTTP IN-MOD CHAT WIRED (testable) — ChatWindow → InModAiHost → OpenAiBackend/InModChatSession tool loop; SecretsStore PluginData/.env; ModelManager download + AICS Settings (native_chat toggle, keys, offload/context). Bridge remains fallback when native_chat is off or bridge is healthy. Embedded llama (4A LoadLibrary/generate) still gated — no LLamaSharp NuGet in GameData. Claude/Grokbot remain stub backends.
 
-Compatibility notes (4A research, Oct 9): Plugin targets net472/C# 7.3 (KSP Unity Mono). LLamaSharp supports net472; Unity/KSP requires natives outside GameData scan — use `PluginData/native/*.bin` + full-path `LoadLibrary` (`NativeAiLoader`, `NativeLibraryLayout`). LLamaSharp 0.19.0 has known Unity CUDA reports; newer backends need CPU ggml copy workarounds. Candidate wrapper recorded in `NativeAiLoader.CandidateWrapper`. Target model: `Qwen2.5-3B-Instruct-Q4_K_M.gguf` via `ModelManager` (finalize/checksum/AI-off guards tested). Offline: `AiRuntimePolicy` CPU/Hybrid/GPU fallback + 16–24k context; `ChatOrchestrator` user-priority queue, tool-loop limit, native command boundary, no silent cloud fallback. Package forbidden-DLL/model-bundle detectors tested. Remaining 4B–4F: real download network path, KSP load/generate experiment, provider HTTP ports, settings UI wiring.
+Compatibility notes (4A research, Oct 9): Plugin targets net472/C# 7.3 (KSP Unity Mono). LLamaSharp supports net472; Unity/KSP requires natives outside GameData scan — use `PluginData/native/*.bin` + full-path `LoadLibrary` (`NativeAiLoader`, `NativeLibraryLayout`). LLamaSharp 0.19.0 has known Unity CUDA reports; newer backends need CPU ggml copy workarounds. Candidate wrapper recorded in `NativeAiLoader.CandidateWrapper`. Target model: `Qwen2.5-3B-Instruct-Q4_K_M.gguf` via `ModelManager`. Offline: `AiRuntimePolicy` + `ChatOrchestrator` + packaging detectors. Live 4A gate and embedded generate still outstanding; HTTP cloud/LM Studio/Ollama path is the testable stub finish.
 
 Outcome: chat and crew AI run inside the mod with an embedded local inference runtime or a configured cloud API; autopilot and dashboards stay independent of AI availability.
 
@@ -170,7 +170,7 @@ Validation and exit criteria:
 - Luke live check: first-run local setup, CPU and supported Hybrid/GPU modes with measured RAM/VRAM/frame-time impact, chat tool execution during flight, provider switching, repeated AI-off/on and continued autopilot after inference/network failure. Test cloud integrations only with configured credentials and account for actual usage.
 - Phase 4 is complete only after inference works in the actual KSP runtime without blocking controls and cloud alternatives pass validation. Keep the bridge fallback and mark live checks outstanding until performed.
 
-Resume checkpoint: Phase 4 offline foundations implemented and tested; next is the in-KSP LoadLibrary/generate experiment with PluginData/native/*.bin (release gate). Do not wire LLamaSharp NuGet into GameData until that passes.
+Resume checkpoint: Phase 4 HTTP stubs finished and wired (SecretsStore, OpenAiBackend, InModChatSession, InModAiHost, ChatWindow DispatchChat, settings UI, AI-off unload). Next: Luke live check with native_chat + a cloud/LM Studio key; then 4A LoadLibrary/generate with PluginData/native/*.bin. Do not wire LLamaSharp NuGet into GameData until 4A passes.
 
 ### Phase 5 - Full parity, live acceptance and bridge removal
 
@@ -378,5 +378,8 @@ Parallel agents + follow-up. Tests after fixes: **478 pytest passed**; C# suite 
 | NativeAiLoader tests | `TryValidatePath` covered in C# suite |
 | Test isolation | `conftest` autouse calls `telemetry.reset()` |
 
-**Still needs Luke live check** (not automated): Systems RPM vs PAW, kill bridge recovery, AI-off flight, powered descent, ownership file with real GameData install. Bridge fallback retained. Phase 4 still has no in-KSP llama load/generate experiment.
+**Still needs Luke live check** (not automated): Systems RPM vs PAW, kill bridge recovery, AI-off flight, powered descent, ownership file with real GameData install. Bridge fallback retained. Phase 4 HTTP in-mod chat is wired for live test (`native_chat` + key/LM Studio); embedded llama load/generate experiment still outstanding.
+
+### Phase 4 HTTP stubs finish (Oct 9 follow-up)
+Wired: `SecretsStore`, `OpenAiBackend`, `InModChatSession`, `InModAiHost`, `AiSettings`, ChatWindow `DispatchChat`/`UseInModChat`, Settings native_chat + keys, AI-off session unload. C# suite includes In-mod AI stack checks. `.gitignore` no longer blocks `SecretsStore.cs` via `*secret*`. Embedded 4A still gated.
 

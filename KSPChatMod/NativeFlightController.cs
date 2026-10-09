@@ -111,6 +111,7 @@ namespace KSPChatBridge
                 string legacyPath = Path.Combine(BridgeLauncher.DataDirectory, "bridge_settings.json");
                 var legacy = Num(settingsData, "migration_version", 0) < 1 && File.Exists(legacyPath) ? Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(legacyPath)) : new Dictionary<string, object>();
                 settingsData = NativeSettings.Migrate(settingsData, legacy);
+                AiSettings.MergeInto(settingsData);
                 if (!settingsData.ContainsKey("craft_notes_imported"))
                 {
                     string notesPath = Path.Combine(BridgeLauncher.DataDirectory, "craft_notes.json");
@@ -544,7 +545,9 @@ namespace KSPChatBridge
         }
         internal static string Execute(string name, string argsJson)
         {
-            if (!BridgeLauncher.NativeReady || BridgeLauncher.AiEnabled) return "Local mode is not ready.";
+            // AI-off autopilot, or in-mod chat tool dispatch (NativeChat) may call into the local command layer.
+            bool allowed = BridgeLauncher.NativeChat || (BridgeLauncher.NativeReady && !BridgeLauncher.AiEnabled);
+            if (!allowed) return "Local mode is not ready.";
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";
             try { instance.Bind(); return instance.Command(name, Json().Deserialize<Dictionary<string, object>>(argsJson ?? "{}")); }
             catch (Exception ex) { return "Local command failed: " + ex.Message; }

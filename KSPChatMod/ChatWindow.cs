@@ -416,9 +416,7 @@ namespace KSPChatBridge
             lock (Sync) Incoming.Enqueue("You (AICS): " + text);
             if (!visible) SetVisible(true);
             MarkChatGpt(text);
-            string json = "{\"message\":" + JsonStr(text) + ",\"model\":" + JsonStr(ModelIds[modelIdx]) + ",\"session\":\"ingame\"}";
-            Interlocked.Increment(ref pending);
-            Post("chat?format=text", json, (name, reply) => name + ": " + reply);
+            DispatchChat(text, ModelIds[modelIdx]);
         }
 
         void Send(string text)
@@ -438,9 +436,34 @@ namespace KSPChatBridge
             History.Add("You: " + text);
             scrollToEnd = true;
             MarkChatGpt(text);
+            DispatchChat(text, model);
+        }
+
+        static void DispatchChat(string text, string model)
+        {
+            if (UseInModChat(model))
+            {
+                Interlocked.Increment(ref pending);
+                InModAiHost.EnqueueChat(text, model, "ingame");
+                return;
+            }
             string json = "{\"message\":" + JsonStr(text) + ",\"model\":" + JsonStr(model) + ",\"session\":\"ingame\"}";
             Interlocked.Increment(ref pending);
             Post("chat?format=text", json, (name, reply) => name + ": " + reply);
+        }
+
+        static bool UseInModChat(string model)
+        {
+            if (!InModAiHost.UseInModChat()) return false;
+            if (model == "chatgpt" && ChatGptMode != "api") return false;
+            int idx = Array.IndexOf(ModelIds, model);
+            if (idx >= 0 && IsStub(idx)) return false;
+            return true;
+        }
+
+        internal static void ReleasePendingChat()
+        {
+            Interlocked.Decrement(ref pending);
         }
 
         // ChatGPT in MCP mode: the bridge queues the message for the ChatGPT desktop app; its reply arrives via /events.

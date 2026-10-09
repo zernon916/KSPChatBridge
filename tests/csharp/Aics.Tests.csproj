@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net472</TargetFramework><LangVersion>7.3</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup><PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" PrivateAssets="all" /></ItemGroup>
   <ItemGroup><Compile Include="Program.cs"/><Compile Include="../../KSPChatMod/RestartPolicy.cs"/><Compile Include="../../KSPChatMod/RotorMeasurements.cs"/><Compile Include="../../KSPChatMod/RotorPlacement.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/FlightPolicy.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/RotorSpool.cs"/></ItemGroup>
@@ -18,4 +19,17 @@
   <ItemGroup><Compile Include="../../KSPChatMod/NativeCraftNotes.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/VerticalLandingPolicy.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativeCommands.cs"/><Compile Include="../../KSPChatMod/NativeLibraryLayout.cs"/><Compile Include="../../KSPChatMod/ModelManager.cs"/><Compile Include="../../KSPChatMod/AiRuntimePolicy.cs"/><Compile Include="../../KSPChatMod/ChatOrchestrator.cs"/><Compile Include="../../KSPChatMod/NativeAiLoader.cs"/></ItemGroup>
+  <ItemGroup>
+    <Compile Include="InModTestStubs.cs"/>
+    <Compile Include="../../KSPChatMod/SecretsStore.cs"/>
+    <Compile Include="../../KSPChatMod/OpenAiBackend.cs"/>
+    <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
+  </ItemGroup>
+  <!-- Real framework assembly (reference assemblies cannot execute JavaScriptSerializer). -->
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions">
+      <HintPath>$(windir)\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
 </Project>
