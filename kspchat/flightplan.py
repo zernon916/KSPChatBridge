@@ -828,6 +828,10 @@ def _run():
 # ---- helpers (module-level so tests can replace them)
 def _tool(name, **args):
     from . import ksp_actions
+    if name in ksp_actions.STEER_TOOLS:  # plan steps wait for the climb-out gate (call_tool would defer them)
+        t0 = time.time()
+        while ksp_actions.takeoff_in_progress() and time.time() - t0 < 240 and not _stop.is_set():
+            time.sleep(0.5)
     return ksp_actions.call_tool(name, args)
 
 

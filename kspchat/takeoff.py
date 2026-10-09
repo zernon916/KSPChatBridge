@@ -329,3 +329,36 @@ def vessel_ceiling(v, body=None):
         return ceil, info
     except Exception:  # noqa: BLE001
         return None, {}
+
+
+# ---- ground roll steering (runway heading only; small, damped, capped) ----
+GS_KP, GS_KD = 0.04, 0.03     # per deg of heading error / per deg/s of yaw rate (damping)
+GS_CAP_SLOW, GS_CAP_FAST = 0.30, 0.12   # max wheel steering / rudder: walking pace vs >= 40 m/s
+RUNAWAY_HDG = 30.0            # deg off the runway heading on the ground -> stop (no circles in the grass)
+RUNAWAY_XT = 45.0             # m off the centerline (KSC runway is ~70 m wide) -> off the runway: stop
+CLIMBOUT_AGL = 150.0          # m radar: below this (or not climbing) after liftoff = keep runway heading, wings level
+
+
+def ground_steer(herr, yaw_rate, spd):
+    """(wheel_steering, rudder) for the takeoff roll. herr = desired - actual heading (deg, + = turn right),
+    yaw_rate = heading change (deg/s, + = turning right). PD with speed-scheduled gain and a cap that shrinks with
+    speed, so the nose wheel can't saturate and swing the plane into a ground loop. Wheel sign: kRPC + = left."""
+    sched = min(1.0, max(0.25, 20.0 / max(spd, 1.0)))
+    u = GS_KP * sched * herr - GS_KD * yaw_rate
+    cap = GS_CAP_SLOW + (GS_CAP_FAST - GS_CAP_SLOW) * min(1.0, max(0.0, spd / 40.0))
+    u = max(-cap, min(cap, u))
+    return -u, u
+
+
+def ground_runaway(rwy_herr, xt_m, spd):
+    """Why the roll must stop now ('' = fine): more than RUNAWAY_HDG off the runway heading, or off the runway."""
+    if spd > 3.0 and abs(rwy_herr) > RUNAWAY_HDG:
+        return f"swung {abs(rwy_herr):.0f} deg off the runway heading"
+    if abs(xt_m) > RUNAWAY_XT:
+        return f"{abs(xt_m):.0f} m off the centerline (off the runway)"
+    return ""
+
+
+def climbout_done(hr, vs, on_ground):
+    """Gate for turns after takeoff: off the ground, > CLIMBOUT_AGL radar and climbing."""
+    return (not on_ground) and hr > CLIMBOUT_AGL and vs > 0.0

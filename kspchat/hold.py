@@ -262,13 +262,14 @@ def _hold(conn):
         ctl.throttle = emergency.shape("throttle", c)  # idle while reversed in flight
 
     # ---- takeoff from the ground (old smooth takeoff, on the runway's own heading) ----
+    STATUS.pop("climbout_hdg", None)  # set again below only for a takeoff from the ground
     sit = str(s_sit()).split(".")[-1]
     if sit in ("landed", "pre_launch"):
         line = _runway_line(body, v, bref, s_hdg())
         if line is None:
             return ("Not lined up on a known runway (heading %.0f) - I won't take off from here (cliffs!). Line up on "
                     "a runway first, or take off by hand and then engage the holds." % s_hdg())
-        STATUS.update(phase="takeoff", runway_heading=round(line[2], 1))
+        STATUS.update(phase="takeoff", runway_heading=round(line[2], 1), climbout_hdg=line[2])
         ctl.brakes = False
         ctl.gear = True
         from . import propulsion
@@ -290,6 +291,7 @@ def _hold(conn):
         gov = None  # TWR-based takeoff throttle (plane._takeoff_governor)
         i_to, air_since, t_tg, tg_pitch_t = 0.0, None, 0.0, None
         rot, pitch0, t_rwy = tko.RotateAssist(), s_pitch(), 0.0
+        hdg_prev, yaw_rate = s_hdg(), 0.0
         while True:
             if _stop.is_set():
                 ctl.throttle = 0.0 if s_ralt() < 3 else ctl.throttle
@@ -317,9 +319,28 @@ def _hold(conn):
             else:
                 hdg_t = line[2]
             herr = _wrap(hdg_t - hdg)
-            out("yaw", _clamp(0.06 * herr, -0.5, 0.5), dt)
+            yaw_rate += (_wrap(hdg - hdg_prev) / dt - yaw_rate) * min(1.0, dt / 0.2)
+            hdg_prev = hdg
+            if on_ground:  # runway heading only: small, damped, capped (no ground loops)
+                wheel, rud = tko.ground_steer(herr, yaw_rate, spd)
+                why_stop = tko.ground_runaway(_wrap(line[2] - hdg), xt_r, spd)
+                if why_stop:
+                    ctl.throttle = 0.0  # on the ground only (never 0 in flight)
+                    ctl.brakes = True
+                    try:
+                        ctl.wheel_steering = 0.0
+                    except Exception:  # noqa: BLE001
+                        pass
+                    out("yaw", 0.0, dt)
+                    STATUS.pop("climbout_hdg", None)
+                    msg = f"Takeoff stopped: {why_stop}. Throttle idle, brakes on."
+                    log.warning("hold: %s", msg)
+                    return msg
+            else:
+                wheel, rud = 0.0, _clamp(0.04 * herr - 0.03 * yaw_rate, -0.3, 0.3)
+            out("yaw", rud, dt)
             try:
-                ctl.wheel_steering = _clamp(-0.05 * herr, -1, 1) if on_ground else 0.0
+                ctl.wheel_steering = wheel
             except Exception:  # noqa: BLE001
                 pass
             out("roll", ROLL_SIGN * (0.02 * (0.0 - roll) - 0.01 * 0), dt)
@@ -418,10 +439,15 @@ def _hold(conn):
         # ---------------- lateral
         bank_lim = speedcap.bank_limit(spd)  # 20 / 15 above 250 m/s unless an override raised it
         hdg_des = None
-        if tgt.get("roll") is not None:
+        if tgt.get("roll") is not None and STATUS.get("climbout_hdg") is None:
             bank_raw = _clamp(float(tgt["roll"]), -bank_lim, bank_lim)
         else:
             hdg_des = float(tgt["heading"]) % 360 if tgt.get("heading") is not None else hold_hdg0
+            if STATUS.get("climbout_hdg") is not None:  # just took off: runway heading until > 150 m and climbing
+                if tko.climbout_done(ralt, vs, ralt < 3.0):
+                    STATUS.pop("climbout_hdg", None)
+                else:
+                    hdg_des = float(STATUS["climbout_hdg"])
             herr = _wrap(hdg_des - hdg)
             r_des = _clamp(HDG_K * herr, -MAX_TURN, MAX_TURN)
             r_cmd = r_des + TURN_KD * (r_des - r_f)

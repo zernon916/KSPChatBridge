@@ -1182,6 +1182,9 @@ def heli_control(mode: str = "hover", altitude_m: float = -1, heading: float = -
     info = _heli_v(v)
     m = str(mode or "hover").strip().lower()
     if info is None:
+        if str(v.situation).split(".")[-1] in ("landed", "pre_launch") and _planeish(v):  # a plane, not a heli
+            alt = float(altitude_m) if altitude_m is not None and altitude_m > 0 else 300.0
+            return "Not a helicopter - plane runway takeoff instead: " + takeoff(altitude_m=alt)
         if m == "fly":
             out = []
             if heading is not None and heading >= 0:
@@ -2638,12 +2641,43 @@ def _engine_restart_note(name, args, res):
         return ""
 
 
+# tools that steer toward a target: during a plane takeoff (roll, rotation, climb-out < 150 m) they wait for climb-out
+STEER_TOOLS = {"land_at_ksc", "land_plane", "land_at_spot", "land", "fly_to", "fly_to_place", "set_heading", "turn",
+               "circle_here", "heli_control", "go_around", "touch_and_go", "set_flight_plan"}
+
+
+def takeoff_in_progress():
+    return hold.active() and (hold.STATUS.get("phase") == "takeoff" or hold.STATUS.get("climbout_hdg") is not None)
+
+
+def _defer_until_climbout(name, args, timeout=240.0):
+    """Run the tool once the takeoff is past the climb-out gate; dropped if the takeoff ends any other way."""
+    def run():
+        t0 = time.time()
+        while takeoff_in_progress() and time.time() - t0 < timeout:
+            time.sleep(0.5)
+        if hold.active() and not takeoff_in_progress():
+            res = call_tool(name, args)
+            science.post_event(f"Climb-out done - {name}: {res}")
+        else:
+            science.post_event(f"Takeoff ended - dropped the deferred {name}.")
+    threading.Thread(target=run, daemon=True, name=f"defer-{name}").start()
+    return (f"Deferred: taking off - holding the runway heading, wings level. {name} starts by itself once we're "
+            f"above {tko.CLIMBOUT_AGL:.0f} m and climbing. No need to call it again.")
+
+
 def call_tool(name, args=None):
     """Run a tool by name with a dict of args. Always returns a string."""
     import json
     f = BY_NAME.get(name)
     if f is None:
         return f"Unknown tool '{name}'."
+    if name in STEER_TOOLS:
+        try:
+            if takeoff_in_progress():
+                return _defer_until_climbout(name, dict(args or {}))
+        except Exception:  # noqa: BLE001
+            pass
     try:
         with _lock:
             res = f(**(args or {}))
