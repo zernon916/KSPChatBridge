@@ -20,8 +20,8 @@ namespace KSPChatBridge
             if (core == null) return what + " node created (" + dv.ToString("0.0", Inv) + " m/s). Burn it manually - auto-execute " + MechJebLink.Missing;
             try
             {
-                try { MechJebLink.Use(MechJebLink.Module(core, "MechJebModuleStagingController"), MjOwner); } catch (Exception) { }
-                MechJebLink.Call(MechJebLink.Module(core, "MechJebModuleNodeExecutor"), "ExecuteOneNode", MjOwner);
+                try { MechJebLink.Use(MechJebLink.Get(core, "Staging"), MjOwner); } catch (Exception) { }
+                MechJebLink.Call(MechJebLink.Get(core, "Node") ?? MechJebLink.Module(core, "MechJebModuleNodeExecutor"), "ExecuteOneNode", MjOwner);
                 return what + " node created (" + dv.ToString("0.0", Inv) + " m/s); MechJeb is executing it (autostage on).";
             }
             catch (Exception ex) { return what + " node created (" + dv.ToString("0.0", Inv) + " m/s) but MechJeb execute failed: " + (ex.InnerException ?? ex).Message; }
@@ -125,8 +125,10 @@ namespace KSPChatBridge
                     try
                     {
                         double alt = Num(a, "target_altitude_km", 80) * 1000, inc = Num(a, "inclination_deg", 0);
-                        object ap = MechJebLink.Module(core, "MechJebModuleAscentAutopilot"), settings = null;
-                        try { settings = MechJebLink.Module(core, "MechJebModuleAscentSettings"); } catch (Exception) { }
+                        string vgate = MechJebPolicy.VersionGate(core.GetType().Assembly.GetName().Version); if (vgate != null) return "Ascent: " + vgate;
+                        object ap = MechJebLink.Get(core, "Ascent"), settings = MechJebLink.Get(core, "AscentSettings");   // MechJeb 2.15 fields
+                        if (ap == null) return "MechJeb API mismatch: core.Ascent";
+                        if (settings != null) MechJebLink.SetValue(settings, 1, "_autostage");
                         bool okAlt = (settings != null && MechJebLink.SetValue(settings, alt, "DesiredOrbitAltitude", "desiredOrbitAltitude")) || MechJebLink.SetValue(ap, alt, "desiredOrbitAltitude", "DesiredOrbitAltitude");
                         bool okInc = (settings != null && MechJebLink.SetValue(settings, inc, "DesiredInclination", "desiredInclination")) || MechJebLink.SetValue(ap, inc, "desiredInclination", "DesiredInclination");
                         if (!okAlt || !okInc) return "MechJeb API mismatch: could not set ascent altitude/inclination.";
@@ -167,10 +169,10 @@ namespace KSPChatBridge
                     if (name == "land_at_ksc" && vessel.mainBody != FlightGlobals.GetHomeBody()) return "KSC is on " + FlightGlobals.GetHomeBody().bodyName + ".";
                     try
                     {
-                        object tc = MechJebLink.Get(core, "target"); if (tc == null) return "MechJeb API mismatch: core.target";
+                        object tc = MechJebLink.Get(core, "Target"); if (tc == null) return "MechJeb API mismatch: core.Target";
                         MechJebLink.Call(tc, "SetPositionTarget", vessel.mainBody, lat, lon);
-                        object land = MechJebLink.Module(core, "MechJebModuleLandingAutopilot");
-                        MechJebLink.SetValue(land, Num(a, "touchdown_speed", 1.5), "touchdownSpeed", "TouchdownSpeed");
+                        object land = MechJebLink.Get(core, "Landing") ?? MechJebLink.Module(core, "MechJebModuleLandingAutopilot");
+                        MechJebLink.SetValue(land, Num(a, "touchdown_speed", 1.5), "TouchdownSpeed", "touchdownSpeed");
                         Stop(); MechJebLink.Call(land, "LandAtPositionTarget", MjOwner);
                         return "MechJeb landing autopilot: landing at " + lat.ToString("0.000", Inv) + ", " + lon.ToString("0.000", Inv) + ".";
                     }

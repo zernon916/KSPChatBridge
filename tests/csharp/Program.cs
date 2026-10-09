@@ -454,7 +454,7 @@ class Program
         Check(chat.DequeueNext(DateTime.UtcNow).Id == "u1", "user chat priority");
         chat.Cancel("c1");
         Check(chat.DequeueNext(DateTime.UtcNow) == null, "cancelled crew dropped");
-        var tools = chat.RunTools("t1", new[] { "plane_hold", "transfer_to" }, name => "ok", true);
+        var tools = chat.RunTools("t1", new[] { "plane_hold", "not_a_ported_tool" }, name => "ok", true);
         Check(tools.ToolCalls.Count == 1 && tools.Error.Contains("native command"), "tool boundary rejects unported");
         Check(!ChatOrchestrator.AllowCloudFallback("local", false), "no silent cloud fallback after local");
         Check(ChatOrchestrator.AllowCloudFallback("groq", true), "explicit cloud allowed");
@@ -603,6 +603,25 @@ class Program
         Check(NativeSafety.NativeOwns(false, true, false) && !NativeSafety.NativeOwns(false, false, true), "AI off: native owns after handoff");
         Check(NativeSafety.NativeOwns(true, false, true) && !NativeSafety.NativeOwns(true, true, false), "AI on: native owns when in-mod chat/tools on");
         Console.WriteLine("Native ownership with AI on: 2 behavior checks passed.");
+        // ---- MechJeb 2.15 planner ports ----
+        Check(MechJebPolicy.VersionGate(new Version(2, 15, 0, 0)) == null && MechJebPolicy.VersionGate(new Version(2, 16)) == null, "MJ 2.15+ supported");
+        Check(MechJebPolicy.VersionGate(new Version(2, 14, 1)).StartsWith("Unsupported MechJeb version") && MechJebPolicy.VersionGate(null) == MechJebPolicy.Missing, "old/missing MJ refused gracefully");
+        Check(MechJebPolicy.TransferKind("Kerbin", "Sun", "Mun", "Kerbin") == "moon" && MechJebPolicy.TransferKind("Mun", "Kerbin", "Kerbin", "Sun") == "return", "moon / return transfer");
+        Check(MechJebPolicy.TransferKind("Kerbin", "Sun", "Duna", "Sun") == "interplanetary" && MechJebPolicy.TransferKind("Mun", "Kerbin", "Duna", "Sun") == "unsupported" && MechJebPolicy.TransferKind("Mun", "Kerbin", "Mun", "Kerbin") == "here", "interplanetary / unsupported / here");
+        {
+            double inc = 30 * Math.PI / 180; var n = new[] { 0.0, -Math.Sin(inc), Math.Cos(inc) };
+            bool north; double w = 2 * Math.PI / 100.0;
+            double t1 = MechJebPolicy.LaunchWindow(n, new[] { 0.0, 0, 0 }, new[] { 0.0, -1, 0 }, new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, w, out north);
+            Check(Math.Abs(t1 - 25) < 0.01, "launch window: site reaches node line after a quarter turn (" + t1 + ")");
+            Check(north, "launch window: ascending-node pass launches north (+inclination)");
+            double t2 = MechJebPolicy.LaunchWindow(n, new[] { 0.0, 0, 0 }, new[] { 0.0, 1, 0 }, new[] { -1.0, 0, 0 }, new[] { 0.0, 0, 1 }, w, out north);
+            Check(Math.Abs(t2 - 25) < 0.01 && !north, "launch window: descending-node pass launches south");
+            double hi = MechJebPolicy.LaunchWindow(n, new[] { 0.0, 0, 0.9 }, new[] { 0.0, -0.436, 0 }, new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, w, out north);
+            Check(double.IsNaN(hi), "launch window: site latitude above target inclination -> none");
+        }
+        foreach (var tl in new[] { "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude" })
+            Check(NativeCommands.IsPorted(tl), tl + " ported in-process");
+        Console.WriteLine("MechJeb planner ports: 14 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");
@@ -672,7 +691,7 @@ class Program
         Check(OrbitMath.WarpUt(1000, 1100, 30) == 1070 && OrbitMath.WarpUt(1000, 1010, 30) == 1000, "warp lead never in the past");
         Check(OrbitMath.ApsisGate("Apoapsis", 50, 70000, true, 0) != null && OrbitMath.ApsisGate("Periapsis", 90, 80000, false, 0) != null && OrbitMath.ApsisGate("Apoapsis", 100, 70000, true, 0) == null
             && OrbitMath.ApsisGate("Periapsis", -1, 1, false, 0) != null, "apsis request gates");
-        Check(NativeCommands.IsPorted("circularize") && NativeCommands.IsPorted("mechjeb_ascent") && NativeCommands.IsPorted("sun_lock") && !NativeCommands.IsPorted("transfer_to"), "P5-4 ported set (transfer_to still bridge)");
+        Check(NativeCommands.IsPorted("circularize") && NativeCommands.IsPorted("mechjeb_ascent") && NativeCommands.IsPorted("sun_lock") && NativeCommands.IsPorted("transfer_to"), "P5-4 ported set (planners included)");
         Console.WriteLine("P5-4 orbital math: 10 behavior checks passed.");
         // ---- P5-5: embedded llama.cpp (runtime layout, zip extract, prompt/tool parsing, ABI guard) ----
         Check(LlamaRuntime.BinName("llama.dll") == "llama.bin" && LlamaRuntime.BinName("bin/ggml-cpu-haswell.dll") == "ggml-cpu-haswell.bin" && LlamaRuntime.BinName("libomp.dll") == "libomp.bin"

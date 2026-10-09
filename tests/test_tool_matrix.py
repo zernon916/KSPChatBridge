@@ -48,16 +48,16 @@ MATRIX = {
     "set_sas_mode": NATIVE, "abort_ag": NATIVE, "action_group": NATIVE, "fuel_check": NATIVE,
     "get_delta_v": NATIVE, "get_landing_eta": NATIVE, "how_far": NATIVE, "landing_check": NATIVE,
     "crew_report": NATIVE, "flight_report": NATIVE, "damage_report": NATIVE, "turn": NATIVE,
-    "plane_pitch": NATIVE, "course_correction": "p5-4",
+    "plane_pitch": NATIVE, "course_correction": NATIVE,
     # -- P5-3 vessel lifecycle + science --
     "stage": NATIVE, "recover_vessel": NATIVE, "launch_craft": NATIVE, "deploy_parachutes": NATIVE,
     "eject_kerbal": NATIVE, "run_science": NATIVE, "reset_experiments": NATIVE, "set_science_watcher": NATIVE,
     # -- P5-4 orbital / docking / MechJeb-optional --
-    "mechjeb_ascent": NATIVE, "circularize": NATIVE, "transfer_to": "p5-4", "deorbit_burn": NATIVE,
-    "warp_to_apoapsis": NATIVE, "warp_to_soi_change": NATIVE, "dock_with": NATIVE, "station_keep": "p5-4",
+    "mechjeb_ascent": NATIVE, "circularize": NATIVE, "transfer_to": NATIVE, "deorbit_burn": NATIVE,
+    "warp_to_apoapsis": NATIVE, "warp_to_soi_change": NATIVE, "dock_with": NATIVE, "station_keep": NATIVE,
     "change_apoapsis": NATIVE, "change_periapsis": NATIVE, "change_inclination": NATIVE,
-    "apsis_longitude": "p5-4", "sun_lock": NATIVE, "antenna_lock": NATIVE, "sync_orbit_altitude": NATIVE,
-    "match_target_plane": "p5-4", "launch_to_target_plane": "p5-4", "time_to_target": NATIVE,
+    "apsis_longitude": NATIVE, "sun_lock": NATIVE, "antenna_lock": NATIVE, "sync_orbit_altitude": NATIVE,
+    "match_target_plane": NATIVE, "launch_to_target_plane": NATIVE, "time_to_target": NATIVE,
     # -- personality / settings / misc: stay bridge-or-native thin (P5-1 decisions) --
     "set_ai_name": "native", "remember_preference": "native", "captain_order": DROP,  # orders.parse handles speech
     "set_override": DROP, "authorise_all": DROP,   # security toggles become in-mod settings, no chat tool

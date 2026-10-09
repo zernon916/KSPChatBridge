@@ -26,7 +26,9 @@ namespace KSPChatBridge
             // P5-4 orbital / docking, MechJeb optional (NativeOrbital.cs)
             "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis",
             "change_periapsis", "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with",
-            "land_at", "land_at_ksc"
+            "land_at", "land_at_ksc",
+            // MechJeb 2.15 planners in-process (NativeMechJebOps.cs)
+            "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;

@@ -62,6 +62,7 @@ namespace KSPChatBridge
         {
             string life = LifecycleCommand(name, a); if (life != null) return life;
             string orbital = OrbitalCommand(name, a); if (orbital != null) return orbital;
+            string planner = MechJebPlannerCommand(name, a); if (planner != null) return planner;
             switch (name)
             {
                 case "land":

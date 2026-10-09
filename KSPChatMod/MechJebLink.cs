@@ -7,7 +7,7 @@ namespace KSPChatBridge
     // "needs MechJeb" / API mismatch instead of silently falling back to kRPC.
     internal static class MechJebLink
     {
-        internal const string Missing = "needs MechJeb: install MechJeb2 (and have a MechJeb part or the tech unlocked) for this.";
+        internal const string Missing = MechJebPolicy.Missing;
         static Type coreType; static bool searched;
 
         static Type CoreType()
