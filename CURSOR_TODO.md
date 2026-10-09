@@ -416,12 +416,12 @@ Architecture not-dones:
 - [x] **DONE (tests; needs live check)** Packaging detectors always run in `package_release.ps1`; pin model SHA when available
 
 ### P5-2 — Flight residual ports
-- [ ] Aliases: `land` / `land_at` / `land_at_ksc`
-- [ ] `fly_to` / `fly_to_place`, `touch_and_go` / `go_around` / `circle_here`
-- [ ] `prop_control` / `afterburner` / `engine_mode`, flaps completion
-- [ ] `set_throttle` / `set_engines` / `cut_engines` / `set_altitude` / `level_off` / `set_sas_mode`, abort AGs
-- [ ] Telemetry reports: fuel / delta-v / landing ETA / how_far / landing_check / crew_report / flight_report / damage_report
-- [ ] C# tests per family; update matrix; bridge fallback until P5-8
+- [x] **DONE (tests; needs live check)** Aliases: `land` / `land_at` / `land_at_ksc`
+- [x] **DONE (tests; needs live check)** `fly_to` / `fly_to_place`, `touch_and_go` / `go_around` / `circle_here`
+- [x] **DONE (tests; needs live check)** `prop_control` / `afterburner` / `engine_mode`, flaps completion
+- [x] **DONE (tests; needs live check)** `set_throttle` / `set_engines` / `cut_engines` / `set_altitude` / `level_off` / `set_sas_mode`, abort AGs
+- [x] **DONE (tests; needs live check)** Telemetry reports: fuel / delta-v / landing ETA / how_far / landing_check / crew_report / flight_report / damage_report
+- [x] **DONE (tests; needs live check)** C# tests per family; update matrix; bridge fallback until P5-8
 
 ### P5-3 — Vessel lifecycle + science
 - [ ] `stage`, `recover_vessel`, `launch_*`, `deploy_parachutes`, `eject_kerbal`

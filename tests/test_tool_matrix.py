@@ -41,14 +41,14 @@ MATRIX = {
     "trim_panel_open": DROP,       # opens an in-mod window; menus open it directly now
     "set_flight_plan": DROP,       # plan editor is filled by the in-mod Flight Plan UI / flightplan/check
     # -- P5-2 flight residuals --
-    "land": "p5-2", "land_at": "p5-2", "land_at_ksc": "p5-2", "fly_to": "p5-2", "fly_to_place": "p5-2",
-    "touch_and_go": "p5-2", "go_around": "p5-2", "circle_here": "p5-2", "prop_control": "p5-2",
-    "afterburner": "p5-2", "engine_mode": "p5-2", "flaps": "p5-2", "set_throttle": "p5-2",
-    "set_engines": "p5-2", "cut_engines": "p5-2", "set_altitude": "p5-2", "level_off": "p5-2",
-    "set_sas_mode": "p5-2", "abort_ag": "p5-2", "action_group": "p5-2", "fuel_check": "p5-2",
-    "get_delta_v": "p5-2", "get_landing_eta": "p5-2", "how_far": "p5-2", "landing_check": "p5-2",
-    "crew_report": "p5-2", "flight_report": "p5-2", "damage_report": "p5-2", "turn": "p5-2",
-    "plane_pitch": "p5-2", "course_correction": "p5-2",
+    "land": NATIVE, "land_at": "p5-4", "land_at_ksc": "p5-4", "fly_to": NATIVE, "fly_to_place": NATIVE,
+    "touch_and_go": NATIVE, "go_around": NATIVE, "circle_here": NATIVE, "prop_control": NATIVE,
+    "afterburner": NATIVE, "engine_mode": NATIVE, "flaps": NATIVE, "set_throttle": NATIVE,
+    "set_engines": NATIVE, "cut_engines": NATIVE, "set_altitude": NATIVE, "level_off": NATIVE,
+    "set_sas_mode": NATIVE, "abort_ag": NATIVE, "action_group": NATIVE, "fuel_check": NATIVE,
+    "get_delta_v": NATIVE, "get_landing_eta": NATIVE, "how_far": NATIVE, "landing_check": NATIVE,
+    "crew_report": NATIVE, "flight_report": NATIVE, "damage_report": NATIVE, "turn": NATIVE,
+    "plane_pitch": NATIVE, "course_correction": "p5-4",
     # -- P5-3 vessel lifecycle + science --
     "stage": "p5-3", "recover_vessel": "p5-3", "launch_craft": "p5-3", "deploy_parachutes": "p5-3",
     "eject_kerbal": "p5-3", "run_science": "p5-3", "reset_experiments": "p5-3", "set_science_watcher": "p5-3",

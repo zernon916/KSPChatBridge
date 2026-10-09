@@ -612,6 +612,30 @@ class Program
         Check(NativeIds.Part(4294967295u) == "4294967295", "part id is invariant flightID");
         Check(NativeIds.SameVessel("01234567-89AB-CDEF-0123-456789ABCDEF", NativeIds.Vessel(gid)) && !NativeIds.SameVessel("1234", NativeIds.Vessel(gid)), "vessel id compare tolerant of case, rejects kRPC ints");
         Console.WriteLine("P5-1 native ids: 3 behavior checks passed.");
+        // ---- P5-2: flight residual ports (policy) ----
+        Check(FlightResidualPolicy.LandRoute("", true, false, true, false) == "grounded" && FlightResidualPolicy.LandRoute("", false, true, true, false) == "heli"
+            && FlightResidualPolicy.LandRoute("", false, false, true, false) == "plane" && FlightResidualPolicy.LandRoute("ksc", false, false, true, false) == "spot"
+            && FlightResidualPolicy.LandRoute("", false, false, false, false) == "vertical", "land alias routes by craft/where");
+        Check(FlightResidualPolicy.RunwayAlias("ksc") == "KSC Runway" && FlightResidualPolicy.RunwayAlias("Island 09") == "Island 09", "KSC runway alias");
+        Check(FlightResidualPolicy.Throttle(0.5) == 0.5 && FlightResidualPolicy.Throttle(75) == 0.75 && FlightResidualPolicy.Throttle(-1) == 0 && FlightResidualPolicy.Throttle(500) == 1, "throttle fraction/percent clamp");
+        Check(FlightResidualPolicy.SasMode("Radial Out") == "RadialOut" && FlightResidualPolicy.SasMode("node") == "Maneuver" && FlightResidualPolicy.SasMode("sideways") == null, "SAS mode names");
+        Check(FlightResidualPolicy.FlapDegrees("up") == 0 && FlightResidualPolicy.FlapDegrees("2") == 20 && FlightResidualPolicy.FlapDegrees("full") == 30 && FlightResidualPolicy.FlapDegrees("7") == -1, "flap settings");
+        Check(FlightResidualPolicy.CircleBank("right", 40, 100) == 20 && FlightResidualPolicy.CircleBank("left", 15, 300) == -10 && FlightResidualPolicy.CircleBank("left", 1, 100) == -5, "circle bank sign/limits");
+        Check(FlightResidualPolicy.Turn(350, "right", 30) == 20 && FlightResidualPolicy.Turn(10, "left", 90) == 280, "turn wraps heading");
+        Check(FlightResidualPolicy.ConfirmGate(false, "x") != null && FlightResidualPolicy.ConfirmGate(true, "x") == null, "destructive tools need confirmed");
+        Check(FlightResidualPolicy.ActionGroup(3) == 3 && FlightResidualPolicy.ActionGroup(0) == 0 && FlightResidualPolicy.ActionGroup(11) == 0 && FlightResidualPolicy.ActionGroup(2.5) == 0, "action group range");
+        Check(Math.Abs(FlightResidualPolicy.DeltaV(300, 10, 5) - 300 * 9.80665 * Math.Log(2)) < 1e-6 && FlightResidualPolicy.DeltaV(300, 5, 10) == 0, "delta-v rocket equation");
+        Check(FlightResidualPolicy.LandingEta(100, -10) == 10 && double.IsNaN(FlightResidualPolicy.LandingEta(100, 2)) && FlightResidualPolicy.LandingEta(0, 0) == 0, "landing ETA");
+        Check(FlightResidualPolicy.Distance(850) == "850 m" && FlightResidualPolicy.Distance(2500) == "2.5 km" && FlightResidualPolicy.Distance(42000) == "42 km"
+            && FlightResidualPolicy.Duration(3725) == "1h 2m" && FlightResidualPolicy.Duration(75) == "1m 15s", "distance/duration text");
+        var famt = new Dictionary<string, double> { { "LiquidFuel", 90 }, { "Oxidizer", 110 } }; var fcap = new Dictionary<string, double> { { "LiquidFuel", 360 }, { "Oxidizer", 440 }, { "Ablator", 10 } };
+        Check(FlightResidualPolicy.FuelReport(famt, fcap) == "LiquidFuel 90/360 (25%); Oxidizer 110/440 (25%)" && FlightResidualPolicy.FuelReport(famt, new Dictionary<string, double>()) == "No fuel tanks.", "fuel report");
+        Check(FlightResidualPolicy.LandingCheck(true, true, 60, -3, 100) == "Landing check OK." && FlightResidualPolicy.LandingCheck(true, false, 150, -20, 100).Contains("gear up")
+            && FlightResidualPolicy.LandingCheck(true, false, 150, -20, 100).Contains("too fast") && FlightResidualPolicy.LandingCheck(true, false, 150, -20, 100).Contains("speed"), "landing check gates");
+        Check(double.IsNaN(FlightResidualPolicy.PropField("", 0, 460)) && FlightResidualPolicy.PropField("600", 0, 460) == 460 && FlightResidualPolicy.PropField("50%", 0, 100) == 50
+            && FlightResidualPolicy.PropSwitch("on") == true && FlightResidualPolicy.PropSwitch("") == null, "prop_control parsing");
+        Check(NativeCommands.IsPorted("fly_to") && NativeCommands.IsPorted("cut_engines") && NativeCommands.IsPorted("damage_report") && !NativeCommands.IsPorted("land_at"), "P5-2 tools ported; land_at stays bridge until P5-4");
+        Console.WriteLine("P5-2 flight residuals: 16 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

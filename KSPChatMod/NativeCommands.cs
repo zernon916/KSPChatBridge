@@ -15,7 +15,12 @@ namespace KSPChatBridge
             "save_landing_spot", "get_status", "autopilot_status", "set_gear", "set_brakes", "set_lights",
             "set_rcs", "set_sas", "auto_trim_now", "trim", "set_heading", "set_speed",
             "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status",
-            "list_landing_spots", "list_taxi_points", "set_ai_name", "remember_preference"
+            "list_landing_spots", "list_taxi_points", "set_ai_name", "remember_preference",
+            // P5-2 flight residuals (NativeFlightResidual.cs)
+            "land", "fly_to", "fly_to_place", "touch_and_go", "go_around", "circle_here", "turn", "plane_pitch",
+            "prop_control", "afterburner", "engine_mode", "flaps", "set_throttle", "set_engines", "cut_engines", "set_altitude",
+            "level_off", "set_sas_mode", "abort_ag", "action_group", "fuel_check", "get_delta_v", "get_landing_eta", "how_far",
+            "landing_check", "crew_report", "flight_report", "damage_report"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;

@@ -8,7 +8,7 @@ using Expansions.Serenity;
 namespace KSPChatBridge
 {
     [KSPAddon(KSPAddon.Startup.Flight, false)]
-    public class NativeFlightController : MonoBehaviour
+    public partial class NativeFlightController : MonoBehaviour
     {
         static NativeFlightController instance;
         internal static bool Active { get { return instance != null && instance.mode != "idle"; } }
@@ -229,6 +229,7 @@ namespace KSPChatBridge
                 }
                 catch (Exception ex) { Stop(); ChatWindow.Notice("Rotor spool stopped: " + ex.Message); }
             }
+            ResidualTick();
             if (mode == "hold" && auto["master"] && !trimSuspended && Time.realtimeSinceStartup >= nextTrim)
             {
                 nextTrim = Time.realtimeSinceStartup + 8;
@@ -367,6 +368,7 @@ namespace KSPChatBridge
                     {
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
                         SetGroup(vessel, KSPActionGroup.Gear, runway.Gear);
+                        if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
                         {
                             c.mainThrottle = 0;
@@ -789,7 +791,7 @@ namespace KSPChatBridge
                     return StartRotorMode("helicopter");
                 case "set_heading": heading = Num(a, "heading", FlightGlobals.ship_heading); return Active ? "Heading updated." : "Engage local holds first.";
                 case "set_speed": speed = FlightPolicy.Clamp(Num(a, "speed", 150), 25, 200); return Active ? "Speed updated." : "Engage local holds first.";
-                default: return "Not yet ported to local control: " + name + ". Enable AI & Bridge for the existing implementation.";
+                default: return ResidualCommand(name, a);
             }
         }
         string StartTakeoff()
