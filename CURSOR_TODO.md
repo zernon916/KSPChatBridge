@@ -205,7 +205,7 @@ Resume checkpoint (implementation): Phase 1 `3166574`; Phase 2 `b583eee`; Phase 
 
 ## HANDOFF
 
-Last commits: `5ab9ea6` (powered-descent checkpoint), `30dc788` (Phase 3 harden + ownership), plus pending Phase 4/5 foundation commit. No push; `old-local-main` untouched.
+Last commits: `5ab9ea6` (powered-descent), `30dc788` (Phase 3 harden + ownership), `12b7991` (Phase 4/5 foundations + this HANDOFF). No push; `old-local-main` untouched.
 
 Finished this session:
 - Uncommitted vertical-landing work tested (473 pytest → 474; C# green) then committed.
