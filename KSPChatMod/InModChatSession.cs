@@ -55,7 +55,9 @@ namespace KSPChatBridge
                 try
                 {
                     string payload = MiniJson.Serialize(body);
-                    raw = complete != null ? complete(ep, payload) : OpenAiBackend.ChatCompletions(ep, payload);
+                    raw = complete != null ? complete(ep, payload)
+                        : ep.Url == OpenAiBackend.EmbeddedUrl ? EmbeddedLlm.Complete(ep, payload)
+                        : OpenAiBackend.ChatCompletions(ep, payload);
                 }
                 catch (Exception ex) { return ex.Message; }
                 Dictionary<string, object> parsed;

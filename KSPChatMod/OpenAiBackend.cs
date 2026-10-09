@@ -12,6 +12,7 @@ namespace KSPChatBridge
         internal const int CloudRetryMaxWaitSec = 30;
         internal delegate string ChatPostOverride(Endpoint ep, string bodyJson, int timeoutMs);
         internal static ChatPostOverride PostOverride;
+        internal const string EmbeddedUrl = "embedded://llama";
 
         internal struct Endpoint
         {
@@ -107,7 +108,9 @@ namespace KSPChatBridge
             }
             if (provider == "embedded")
             {
-                ep.Error = "Embedded Qwen needs llama natives in PluginData/native (not installed yet). Use LM Studio (local) or a cloud key for now.";
+                // P5-5: in-process llama.cpp; ready once runtime + model are downloaded.
+                ep.Url = EmbeddedUrl; ep.Model = ModelManager.DefaultFile;
+                ep.Error = EmbeddedLlm.Readiness();
                 return ep;
             }
             ep.Error = "Unknown AI backend: " + provider;

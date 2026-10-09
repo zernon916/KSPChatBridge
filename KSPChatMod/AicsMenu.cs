@@ -1052,7 +1052,7 @@ namespace KSPChatBridge
             bool nc = GUILayout.Toggle(BridgeLauncher.NativeChatEnabled, "Chat in-mod (no bridge)");
             if (nc != BridgeLauncher.NativeChatEnabled) BridgeLauncher.SetNativeChat(nc);
             var policy = AiSettings.Policy;
-            GUILayout.Label("Runtime offload (embedded llama still gated until 4A passes)", small);
+            GUILayout.Label("Embedded Qwen offload (GPU = all layers, Hybrid = half, CPU = none)", small);
             GUILayout.BeginHorizontal();
             int off = (int)policy.Offload;
             int noff = GUILayout.Toolbar(off, new[] { "CPU", "Hybrid", "GPU" });
@@ -1100,6 +1100,23 @@ namespace KSPChatBridge
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             if (modelDlMsg.Length > 0) GUILayout.Label(modelDlMsg, small);
+            // P5-5: llama.cpp runtime download (pinned, SHA-checked, stored as PluginData/native/*.bin)
+            var rt = InModAiHost.Runtime;
+            if (rt != null)
+            {
+                GUILayout.Label(rt.Phase == "idle" ? (rt.Ready ? "llama.cpp runtime " + LlamaRuntime.Tag + " on disk." : "llama.cpp runtime not downloaded (~33 MB).")
+                    : string.Format(CultureInfo.InvariantCulture, "Runtime {0} {1:P0}", rt.Phase, rt.Progress), small);
+                if (rt.Error != null && rt.Phase != "ready") GUILayout.Label(rt.Error, warnStyle);
+                GUILayout.BeginHorizontal();
+                GUI.enabled = BridgeLauncher.AiEnabled && !rt.Ready && rt.Phase != "downloading" && rt.Phase != "extracting";
+                if (GUILayout.Button("Download runtime")) InModAiHost.StartRuntimeDownload();
+                GUI.enabled = rt.Phase == "downloading";
+                if (GUILayout.Button("Cancel")) rt.Cancel();
+                GUI.enabled = EmbeddedLlm.Loaded;
+                if (GUILayout.Button("Unload model")) System.Threading.ThreadPool.QueueUserWorkItem(_ => EmbeddedLlm.Unload());
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
             string inModStatus = InModChatStatus(mm);
             GUILayout.Label("Status: " + inModStatus, inModStatus.StartsWith("In-mod chat ready") ? tagW : (inModStatus.Contains("error") || inModStatus.Contains("not") ? warnStyle : small));
             if (BridgeLauncher.NativeChatEnabled)
@@ -1122,7 +1139,8 @@ namespace KSPChatBridge
             if (!BridgeLauncher.AiEnabled) return "AI off — enable AI & Bridge to use in-mod HTTP chat.";
             if (mm.Phase == "downloading") return "Downloading model...";
             if (!string.IsNullOrEmpty(mm.Error) && mm.Phase != "ready") return "Model error: " + mm.Error;
-            return "In-mod chat ready (HTTP providers / LM Studio / Ollama). Embedded llama still gated until PluginData/native/*.bin load passes.";
+            string emb = EmbeddedLlm.Readiness();
+            return "In-mod chat ready (HTTP providers / LM Studio / Ollama). " + (emb == null ? "Embedded Qwen ready" + (EmbeddedLlm.Loaded ? " (loaded)." : " (loads on first chat).") : emb);
         }
 
         static bool NeedsKey(string id)

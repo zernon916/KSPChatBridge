@@ -670,6 +670,72 @@ class Program
             && OrbitMath.ApsisGate("Periapsis", -1, 1, false, 0) != null, "apsis request gates");
         Check(NativeCommands.IsPorted("circularize") && NativeCommands.IsPorted("mechjeb_ascent") && NativeCommands.IsPorted("sun_lock") && !NativeCommands.IsPorted("transfer_to"), "P5-4 ported set (transfer_to still bridge)");
         Console.WriteLine("P5-4 orbital math: 10 behavior checks passed.");
+        // ---- P5-5: embedded llama.cpp (runtime layout, zip extract, prompt/tool parsing, ABI guard) ----
+        Check(LlamaRuntime.BinName("llama.dll") == "llama.bin" && LlamaRuntime.BinName("bin/ggml-cpu-haswell.dll") == "ggml-cpu-haswell.bin" && LlamaRuntime.BinName("libomp.dll") == "libomp.bin"
+            && LlamaRuntime.BinName("llama-server-impl.dll") == null && LlamaRuntime.BinName("llama-cli.exe") == null && LlamaRuntime.BinName("mtmd.dll") == null && LlamaRuntime.BinName("../llama.dll") == "llama.bin", "runtime keep-list -> .bin names");
+        bool gdRefused = false; try { LlamaRuntime.CacheDir(@"C:\KSP\GameData\x"); } catch (InvalidOperationException) { gdRefused = true; }
+        Check(gdRefused && LlamaRuntime.CacheDir(@"C:\Users\u\AppData\Local").EndsWith(LlamaRuntime.Tag), "load cache outside GameData");
+        Check(LlamaRuntime.GpuLayers(AiOffloadMode.Gpu, 18) == 999 && LlamaRuntime.GpuLayers(AiOffloadMode.Hybrid, 18) == 18 && LlamaRuntime.GpuLayers(AiOffloadMode.Cpu, 18) == 0, "GPU/Hybrid/CPU layers");
+        Check(LlamaRuntime.ContextTokens(4096) == 16384 && LlamaRuntime.ContextTokens(20480) == 20480 && LlamaRuntime.ContextTokens(65536) == 24576 && LlamaRuntime.Threads(16) == 8 && LlamaRuntime.Threads(1) == 1, "context 16-24k, threads");
+        Check(LlamaRuntime.ZipUrl.Contains("/" + LlamaRuntime.Tag + "/") && LlamaRuntime.ZipSha256.Length == 64, "runtime pinned (tag + SHA-256)");
+        string zdir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-zip-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(zdir);
+        try
+        {
+            string src = System.IO.Path.Combine(zdir, "src"); System.IO.Directory.CreateDirectory(src);
+            foreach (string nm in new[] { "llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "llama-server.exe", "llama-common.dll" }) CreateTempBytes(src, nm, 5000 + nm.Length);
+            string zp = System.IO.Path.Combine(zdir, "rt.zip"); System.IO.Compression.ZipFile.CreateFromDirectory(src, zp);
+            string nd = System.IO.Path.Combine(zdir, "PluginData", "native");
+            var mgr = new LlamaRuntimeManager(nd);
+            Check(mgr.Install(zp, "00") != null && !mgr.Ready, "runtime checksum mismatch refused");
+            Check(mgr.Install(zp, LlamaRuntime.Sha256(zp)) == null && mgr.Ready, "runtime install from verified zip");
+            var files = System.IO.Directory.GetFiles(nd);
+            Check(Array.TrueForAll(files, f => !f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !f.EndsWith(".exe")) && files.Length == 5, "only kept libs stored, all non-.dll (4 .bin + manifest)");
+            Check(System.IO.File.ReadAllBytes(System.IO.Path.Combine(nd, "ggml.bin")).Length == 5008, "MiniZip deflate round-trip");
+            string cache = LlamaRuntime.Materialize(nd, System.IO.Path.Combine(zdir, "cache"));
+            Check(System.IO.File.Exists(System.IO.Path.Combine(cache, "llama.dll")) && System.IO.File.Exists(System.IO.Path.Combine(cache, "ggml-cpu-x64.dll")), "materialize .bin -> cache .dll");
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(nd, "ggml.bin"), new byte[] { 1 });
+            bool damaged = false; try { LlamaRuntime.Materialize(nd, System.IO.Path.Combine(zdir, "cache2")); } catch (InvalidOperationException) { damaged = true; }
+            Check(damaged, "damaged runtime file refused");
+        }
+        finally { try { System.IO.Directory.Delete(zdir, true); } catch (Exception) { } }
+        var msgs = new System.Collections.ArrayList {
+            new Dictionary<string, object> { { "role", "system" }, { "content", "SYS" } },
+            new Dictionary<string, object> { { "role", "user" }, { "content", "gear down" } },
+            new Dictionary<string, object> { { "role", "assistant" }, { "content", "" }, { "tool_calls", new System.Collections.ArrayList { new Dictionary<string, object> { { "id", "call_1" }, { "function", new Dictionary<string, object> { { "name", "set_gear" }, { "arguments", "{\"down\":true}" } } } } } } },
+            new Dictionary<string, object> { { "role", "tool" }, { "content", "Gear set." } } };
+        var toolList = (System.Collections.IList)MiniJson.DeserializeObject("[{\"type\":\"function\",\"function\":{\"name\":\"set_gear\"}}]");
+        string qprompt = EmbeddedPrompt.Render(msgs, toolList);
+        Check(qprompt.StartsWith("<|im_start|>system\nSYS\n\n# Tools") && qprompt.Contains("<tools>\n{") && qprompt.Contains("<|im_start|>user\ngear down<|im_end|>")
+            && qprompt.Contains("<tool_call>\n{\"name\": \"set_gear\", \"arguments\": {\"down\":true}}\n</tool_call><|im_end|>")
+            && qprompt.Contains("<|im_start|>user\n<tool_response>\nGear set.\n</tool_response><|im_end|>") && qprompt.EndsWith("<|im_start|>assistant\n"), "Qwen ChatML render with tools / calls / responses");
+        var reply = MiniJson.Deserialize(EmbeddedPrompt.ToOpenAi("Lowering gear.\n<tool_call>\n{\"name\": \"set_gear\", \"arguments\": {\"down\": true}}\n</tool_call>"));
+        var rmsg = (Dictionary<string, object>)((Dictionary<string, object>)((System.Collections.IList)reply["choices"])[0])["message"];
+        var rcall = (Dictionary<string, object>)((Dictionary<string, object>)((System.Collections.IList)rmsg["tool_calls"])[0])["function"];
+        Check((string)rmsg["content"] == "Lowering gear." && (string)rcall["name"] == "set_gear" && ((string)rcall["arguments"]).Contains("\"down\""), "tool_call parsed to OpenAI shape");
+        var plain = (Dictionary<string, object>)((Dictionary<string, object>)((System.Collections.IList)MiniJson.Deserialize(EmbeddedPrompt.ToOpenAi("Hi there<|im_end|>"))["choices"])[0])["message"];
+        var cut = (Dictionary<string, object>)((Dictionary<string, object>)((System.Collections.IList)MiniJson.Deserialize(EmbeddedPrompt.ToOpenAi("Ok <tool_call>{\"name\": \"set_g"))["choices"])[0])["message"];
+        Check((string)plain["content"] == "Hi there" && !plain.ContainsKey("tool_calls") && (string)cut["content"] == "Ok", "plain reply / truncated call hidden");
+        Check(LlamaNative.CheckDefaults(512, 2048, 512, 1, 1) == null && LlamaNative.CheckDefaults(0, 0, 0, 0, 7) != null, "ABI default guard");
+        Check(OpenAiBackend.Resolve("embedded").Error != null && OpenAiBackend.Resolve("embedded").Url == OpenAiBackend.EmbeddedUrl, "embedded provider reports missing downloads");
+        Console.WriteLine("P5-5 embedded llama: 15 behavior checks passed.");
+        string smoke = Environment.GetEnvironmentVariable("AICS_LLAMA_SMOKE");
+        if (!string.IsNullOrEmpty(smoke))
+        {
+            // opt-in: AICS_LLAMA_SMOKE=<dir with the pinned runtime zip + a tiny .gguf>; runs real llama.cpp on net472, CPU only
+            string zip = System.IO.Path.Combine(smoke, LlamaRuntime.ZipName), nd = System.IO.Path.Combine(smoke, "native");
+            Check(LlamaRuntime.Sha256(zip) == LlamaRuntime.ZipSha256, "smoke: pinned zip SHA");
+            var rtm = new LlamaRuntimeManager(nd); Check(rtm.Install(zip, LlamaRuntime.ZipSha256) == null, "smoke: real runtime extract");
+            Check(!Array.Exists(System.IO.Directory.GetFiles(nd), f => f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)), "smoke: no .dll stored in native dir");
+            string cache = LlamaRuntime.Materialize(nd, System.IO.Path.Combine(smoke, "cache", LlamaRuntime.Tag));
+            LlamaNative.EnsureBackend(cache);
+            string gguf = System.IO.Directory.GetFiles(smoke, "*.gguf")[0];
+            using (var l = new LlamaNative(gguf, 0, 16384, 2))
+            {
+                string text = l.Generate("Once upon a time", 24, 0.3f, null);
+                Check(l.ContextTokens >= 16384 && text.Length > 0, "smoke: real generate");
+                Console.WriteLine("P5-5 llama smoke: generated " + text.Length + " chars on CPU: " + text.Replace("\n", " ").Substring(0, Math.Min(60, text.Length)));
+            }
+        }
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

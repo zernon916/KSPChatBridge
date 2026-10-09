@@ -68,9 +68,11 @@ namespace KSPChatBridge
         internal static void ApplyOffload(AiOffloadMode mode, int contextTokens)
         {
             Policy.ContextTokens = (int)FlightPolicy.Clamp(contextTokens, 16384, 24576);
-            string note = Policy.Apply(mode, Policy.ContextTokens, gpuAvailable: true, freeGpuBytes: 0);
+            // P5-5: store the request; llama.cpp offloads what fits (GPU = all layers, Hybrid = half, CPU = none).
+            // The old Apply(freeGpuBytes: 0) call forced every Hybrid/GPU choice back to CPU.
+            Policy.Offload = mode;
             Save();
-            if (!string.IsNullOrEmpty(note)) ChatWindow.Notice("[in-mod AI] " + note);
+            EmbeddedLlm.Unload();   // reload with the new settings on the next embedded chat
         }
 
         static AiOffloadMode ParseOffload(string s)

@@ -23,6 +23,22 @@ namespace KSPChatBridge
             instance = this;
             DontDestroyOnLoad(this);
             Models = ModelManager.Instance;
+            Runtime = new LlamaRuntimeManager(NativeLibraryLayout.NativeRoot(BridgeLauncher.PluginDataDirectory));
+            EmbeddedLlm.ModelPath = () => Models.Ready ? Models.FinalPath : null;
+            EmbeddedLlm.NativeDir = () => Runtime.NativeDir;
+            EmbeddedLlm.GpuLayers = () => LlamaRuntime.GpuLayers(AiSettings.Policy.Offload, 18);   // Qwen2.5-3B has 36 layers: Hybrid = half
+            EmbeddedLlm.ContextTokens = () => AiSettings.Policy.ContextTokens;
+        }
+        internal static LlamaRuntimeManager Runtime;
+        internal static void StartRuntimeDownload()
+        {
+            if (instance == null || Runtime == null) return;
+            if (!BridgeLauncher.AiEnabled) { ChatWindow.Notice("Turn AI on before downloading the runtime."); return; }
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string err = Runtime.Download(BridgeLauncher.AiEnabled);
+                lock (instance.main) instance.main.Enqueue(() => ChatWindow.Notice(err == null ? "llama.cpp runtime " + LlamaRuntime.Tag + " ready." : "Runtime download: " + err));
+            });
         }
         void Update()
         {
@@ -52,6 +68,7 @@ namespace KSPChatBridge
         /// <summary>Drop all queued chat (window Clear button); the running request finishes on its own.</summary>
         internal static int CancelQueued()
         {
+            EmbeddedLlm.Cancel();
             return instance == null ? 0 : instance.queue.CancelAll();
         }
         void Submit(string text, string provider, string session, bool userPriority)
@@ -147,6 +164,8 @@ namespace KSPChatBridge
         internal static void UnloadForAiOff()
         {
             if (Models != null) Models.Cancel();
+            if (Runtime != null) Runtime.Cancel();
+            ThreadPool.QueueUserWorkItem(_ => { try { EmbeddedLlm.Unload(); } catch (Exception) { } });   // frees model/KV off the main thread
             if (instance == null) return;
             lock (instance.gate) instance.sessions.Clear();
             Interlocked.Exchange(ref instance.busy, 0);

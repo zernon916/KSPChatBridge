@@ -33,5 +33,10 @@
     <Compile Include="../../KSPChatMod/FlightResidualPolicy.cs"/>
     <Compile Include="../../KSPChatMod/SciencePolicy.cs"/>
     <Compile Include="../../KSPChatMod/OrbitMath.cs"/>
+    <Compile Include="../../KSPChatMod/LlamaRuntime.cs"/>
+    <Compile Include="../../KSPChatMod/LlamaNative.cs"/>
+    <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>
+    <Compile Include="../../KSPChatMod/EmbeddedLlm.cs"/>
+    <Reference Include="System.IO.Compression"/><Reference Include="System.IO.Compression.FileSystem"/>
   </ItemGroup>
 </Project>

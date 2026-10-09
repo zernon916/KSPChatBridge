@@ -437,9 +437,9 @@ Architecture not-dones:
 After P5-1 chat ownership and P5-2…4 native tools:
 - [ ] **Download model** → `PluginData/models/` (progress, cancel, refuse when AI off; pin URL/version/license/SHA)
 - [ ] **Download runtime** → `PluginData/native/*.bin` (same UI pattern; never GameData-scanned `.dll`)
-- [ ] Wire `embedded` load / generate / cancel / unload; AI-off unloads (`InModAiHost.UnloadForAiOff`)
-- [ ] LM Studio / Ollama / cloud remain without downloads
-- [ ] `package_release.ps1` still rejects bundled `.gguf` / forbidden DLLs
+- [x] **DONE (tests; needs live check)** Wire `embedded` load / generate / cancel / unload; AI-off unloads (`InModAiHost.UnloadForAiOff`)
+- [x] **DONE (tests; needs live check)** LM Studio / Ollama / cloud remain without downloads
+- [x] **DONE (tests; needs live check)** `package_release.ps1` still rejects bundled `.gguf` / forbidden DLLs
 
 ### P5-6 — Bridge-free release candidate
 - [ ] Shipping zip: DLL + templates + docs; no exe, no weights, no native `.dll`s
