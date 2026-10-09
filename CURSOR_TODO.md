@@ -118,7 +118,9 @@ Progress (Oct 9): Phase 2 commit b583eee. Guarded AI-off handoff; native holds/t
 
 Checkpoint commit: 74e33b6 (native foundation, local only; not pushed). Recovery checkpoint: delayed surface/intake/thrust-limit recovery; unambiguous engine-mode reverse recovery; own-trim baseline updates; detached-part protection. Release build passed; 210 C# checks passed (includes 6 production recovery checks with fake game modules); diff check clean. Python unchanged since 473-pass run. No live verification.
 
-Remaining: custom reverser events/rollout, lights/action-group/resource-flow recovery; full trim axes, stall learning/terrain checks, taxi/vertical landing, helicopter layout parity, full plan grammar/spots/settings migration, shared AI-to-C# dispatch and controller integration tests. Current native flight code is a partial port, not parity-complete. Phases 4-5 not started.
+Continuation: custom named reverser events + rollout (mixed-engine/bounce guards); lights/groups/resource-flow recovery tracks own writes; roll/yaw trim + input-state sync; collective display; spherical terrain look-ahead; local taxi with timeouts. Checks: 245 C# passed; Release build passed (same NU1900 warning); Python unchanged since 473-pass run. Recovery commit: e9d339e. No live test/install.
+
+Remaining: stall learning/flap sequencing, vertical landing, helicopter layout/rotor-trim parity, full plan grammar/spots/settings migration, shared AI-to-C# dispatch and controller integration tests. Current native flight code is a partial port, not parity-complete. Phases 4-5 not started.
 
 Outcome: holds, takeoff, landing, trim, rotor control, sabotage restoration, parking, emergencies and flight plans operate with no bridge process or loaded model. Retain the bridge for optional AI and remaining legacy features until the later removal stage passes live tests.
 
@@ -197,5 +199,5 @@ Validation and exit criteria:
 - Luke's bridge-free live acceptance is a required gate before final removal. If unavailable or failed, record the exact blocker and retain the working bridge/fallback; do not mark Phase 5 complete.
 - Final completion report: implemented parity, automated results, Luke's live results, remaining optional dependencies/limitations, commit IDs and final zip/DLL paths. No exe path is expected in the final bridge-free package.
 
-Resume checkpoint (implementation): Phase 1 commit 3166574; Phase 2 commit b583eee; Phase 3 foundation 74e33b6. Packages retained under dist. Current partial native code includes NativeRecovery/RecoveryGate plus controller/power/plan files listed above. DLL: KSPChatMod/bin/Release/net472/KSPChatBridge.dll. Next: custom reverser events/rollout and light/action-group/resource-flow recovery, then remaining Phase 3 parity listed above. No live checks, installation, push, model download or Phase 4/5 implementation. Keep legacy fallback.
+Resume checkpoint (implementation): Phase 1 commit 3166574; Phase 2 b583eee; Phase 3 foundation 74e33b6, recovery e9d339e. Packages retained under dist. New native files: NativeReversers/ReverseRollout/TaxiMission; checks above passed. DLL: KSPChatMod/bin/Release/net472/KSPChatBridge.dll. Next: saved spots/settings migration, then remaining Phase 3 parity listed above. No live checks, installation, push, model download or Phase 4/5 implementation. Keep legacy fallback.
 

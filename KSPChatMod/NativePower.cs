@@ -30,7 +30,7 @@ namespace KSPChatBridge
             double charge = NativePropulsion.Charge(vessel);
             if (double.IsNaN(charge) || charge >= .25) return;
             int changed = 0;
-            if (vessel.ActionGroups[KSPActionGroup.Light]) { vessel.ActionGroups.SetGroup(KSPActionGroup.Light, false); changed++; }
+            if (vessel.ActionGroups[KSPActionGroup.Light]) { NativeFlightController.SetGroup(vessel, KSPActionGroup.Light, false); changed++; }
             bool retainedWheel = false;
             foreach (var wheel in wheels) if (wheel != null && wheel.wheelState == ModuleReactionWheel.WheelState.Active)
             {

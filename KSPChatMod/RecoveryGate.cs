@@ -2,6 +2,14 @@ namespace KSPChatBridge
 {
     internal static class ReversePolicy
     {
+        internal static bool? EventDirection(string name)
+        {
+            string value = (name ?? "").ToLowerInvariant();
+            if (value.Contains("toggle")) return null;
+            if (value.Contains("forward") && value.Contains("thrust")) return false;
+            if (value.Contains("revers") && (value.Contains("thrust") || value.Contains("reverser"))) return true;
+            return null;
+        }
         internal static bool? ForwardPrimary(string primary, string secondary)
         {
             bool a = (primary ?? "").IndexOf("revers", System.StringComparison.OrdinalIgnoreCase) >= 0;

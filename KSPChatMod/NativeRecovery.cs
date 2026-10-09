@@ -11,13 +11,25 @@ namespace KSPChatBridge
             internal PartModule Module;
             internal Func<bool> Changed;
             internal Action Restore;
+            internal Func<bool> Alive;
+            internal bool? Desired;
             internal readonly RecoveryGate Gate = new RecoveryGate();
         }
-        readonly Dictionary<PartModule, Entry> entries = new Dictionary<PartModule, Entry>();
+        readonly Dictionary<object, Entry> entries = new Dictionary<object, Entry>();
         internal bool CanTrim(ModuleControlSurface surface)
         { Entry entry; return !entries.TryGetValue(surface, out entry) || !entry.Changed(); }
         internal NativeRecovery(Vessel vessel)
         {
+            foreach (KSPActionGroup group in Enum.GetValues(typeof(KSPActionGroup)))
+                if (group == KSPActionGroup.Light || group == KSPActionGroup.Gear || group == KSPActionGroup.Brakes
+                    || group == KSPActionGroup.SAS || group == KSPActionGroup.RCS || group.ToString().StartsWith("Custom"))
+                    AcceptGroup(vessel, group, vessel.ActionGroups[group]);
+            foreach (Part part in vessel.parts) foreach (PartResource resource in part.Resources)
+            {
+                PartResource target = resource; bool enabled = resource.flowState;
+                entries[target] = new Entry { Alive = () => target.part != null && target.part.vessel == vessel,
+                    Changed = () => target.flowState != enabled, Restore = () => target.flowState = enabled };
+            }
             foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
             {
                 var surface = module as ModuleControlSurface;
@@ -47,6 +59,12 @@ namespace KSPChatBridge
                 }
             }
         }
+        internal void AcceptGroup(Vessel vessel, KSPActionGroup group, bool value)
+        {
+            Entry existing; if (entries.TryGetValue(group, out existing) && existing.Desired == value) return;
+            entries[group] = new Entry { Desired = value, Alive = () => true, Changed = () => vessel.ActionGroups[group] != value,
+                Restore = () => vessel.ActionGroups.SetGroup(group, value) };
+        }
         internal void AcceptSurface(ModuleControlSurface surface)
         {
             float angle = surface.deployAngle, authority = surface.authorityLimiter;
@@ -63,10 +81,10 @@ namespace KSPChatBridge
         internal int Tick(Vessel vessel, double now, bool enabled)
         {
             int restored = 0;
-            foreach (var pair in new List<KeyValuePair<PartModule, Entry>>(entries))
+            foreach (var pair in new List<KeyValuePair<object, Entry>>(entries))
             {
                 var entry = pair.Value;
-                if (entry.Module == null || entry.Module.part.vessel != vessel) { entries.Remove(pair.Key); continue; }
+                if (entry.Alive != null ? !entry.Alive() : entry.Module == null || entry.Module.part.vessel != vessel) { entries.Remove(pair.Key); continue; }
                 if (!enabled) { entry.Gate.Reset(); continue; }
                 if (entry.Gate.Tick(entry.Changed(), now)) { entry.Restore(); entry.Gate.Reset(); restored++; }
             }

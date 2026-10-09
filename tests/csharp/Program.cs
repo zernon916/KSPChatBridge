@@ -167,5 +167,77 @@ class Program
         part.vessel = new Vessel();
         Check(safeguards.Tick(vessel, 20, true) == 0 && surface.deployAngle == 9, "detached parts never restored");
         Console.WriteLine("Configuration recovery game adapter: 6 behavior checks passed.");
+        part.vessel = vessel;
+        var named = new PartModule { part = part };
+        var reverseEvent = new BaseEvent { guiName = "Reverse Thrust" };
+        var forwardEvent = new BaseEvent { guiName = "Forward Thrust", active = false };
+        reverseEvent.action = () => { reverseEvent.active = false; forwardEvent.active = true; };
+        forwardEvent.action = () => { forwardEvent.active = false; reverseEvent.active = true; };
+        named.Events.AddRange(new[] { reverseEvent, forwardEvent }); part.Modules.Add(named);
+        var reversers = new NativeReversers(vessel);
+        Check(reversers.Set(vessel, true) && !multi.runningPrimary && forwardEvent.active, "named and multimode reverse");
+        Check(reversers.Recover(vessel, 0, true) == 0, "reverse recovery delay");
+        Check(reversers.Recover(vessel, 3, true) == 2 && multi.runningPrimary && reverseEvent.active, "forward recovery confirmed");
+        Check(ReversePolicy.EventDirection("Toggle Thrust Reverser") == null, "unknown toggle never guessed");
+        Check(ReversePolicy.EventDirection("Forward Thrust") == false, "forward event identified");
+        Check(ReversePolicy.EventDirection("Reverse Thrust") == true, "reverse event identified");
+        Console.WriteLine("Custom reversers and game adapter: 6 behavior checks passed.");
+        var rollout = new ReverseRollout(); bool reverseOn = false;
+        Func<bool, bool> switchReverse = value => { reverseOn = value; return true; };
+        Check(rollout.Tick(true, 60, 0, switchReverse) == 0 && reverseOn, "reverse before adding thrust");
+        Check(rollout.Tick(true, 55, 2, switchReverse) == 0, "reverse throttle settle");
+        Check(rollout.Tick(true, 50, 3, switchReverse) == .05, "reverse throttle five percent");
+        Check(rollout.Tick(true, 30, 4, switchReverse) == 0 && !reverseOn, "cut reverse before taxi");
+        Check(rollout.Tick(true, 60, 5, switchReverse) == 0 && !reverseOn, "no reverse rearm");
+        rollout = new ReverseRollout(); rollout.Tick(true, 60, 0, switchReverse);
+        Check(rollout.Tick(false, 60, 1, switchReverse) == 0 && !reverseOn, "bounce cancels reverse");
+        var plainPart = new Part { vessel = vessel }; plainPart.Modules.Add(new ModuleEngines { part = plainPart }); vessel.parts.Add(plainPart);
+        Check(!reversers.Set(vessel, true) && multi.runningPrimary, "mixed engines cannot use global reverse throttle");
+        Console.WriteLine("Reverse rollout: 7 behavior checks passed.");
+        var resource = new PartResource { part = part }; part.Resources.Add(resource);
+        safeguards = new NativeRecovery(vessel);
+        vessel.ActionGroups.SetGroup(KSPActionGroup.Light, true);
+        vessel.ActionGroups.SetGroup(KSPActionGroup.Custom01, true);
+        vessel.ActionGroups.SetGroup(KSPActionGroup.Stage, true); resource.flowState = false;
+        safeguards.Tick(vessel, 0, true);
+        Check(safeguards.Tick(vessel, 3, true) == 3 && resource.flowState, "flow and group configuration restored");
+        Check(!vessel.ActionGroups[KSPActionGroup.Light] && !vessel.ActionGroups[KSPActionGroup.Custom01] && vessel.ActionGroups[KSPActionGroup.Stage], "staging is never replayed");
+        vessel.ActionGroups.SetGroup(KSPActionGroup.Gear, true); safeguards.AcceptGroup(vessel, KSPActionGroup.Gear, true);
+        Check(safeguards.Tick(vessel, 7, true) == 0 && vessel.ActionGroups[KSPActionGroup.Gear], "own gear command preserved");
+        resource.flowState = false; safeguards.Tick(vessel, 8, true); part.vessel = null;
+        Check(safeguards.Tick(vessel, 12, true) == 0 && !resource.flowState, "lost resource owner excluded");
+        Console.WriteLine("Action groups and resource recovery: 4 behavior checks passed.");
+        Check(FlightPolicy.Trim(.1, .01) == .1, "neutral trim deadband");
+        Check(Math.Abs(FlightPolicy.Trim(.1, .3) - .115) < 1e-9, "trim toward neutral stick");
+        Check(FlightPolicy.Trim(1, 1) == 1 && FlightPolicy.Trim(-1, -1) == -1, "trim bounded");
+        Console.WriteLine("Axis trim: 3 behavior checks passed.");
+        double offsetLat, offsetLon;
+        NavigationMath.Offset(85, 179, 30, 50000, 600000, out offsetLat, out offsetLon);
+        Check(Math.Abs(NavigationMath.Distance(85, 179, offsetLat, offsetLon, 600000) - 50000) < .001, "spherical offset near pole");
+        Check(offsetLon >= -180 && offsetLon <= 180, "longitude wraps");
+        int terrainSamples = 0;
+        double terrain = NavigationMath.TerrainAhead(0, 0, 90, 100, 600000, (lat, lon) => { terrainSamples++; return terrainSamples == 3 ? 1200 : 30; });
+        Check(terrainSamples == 5 && terrain == 1200, "terrain high point ahead");
+        Check(double.IsNaN(NavigationMath.TerrainAhead(0, 0, 0, 100, 600000, (lat, lon) => double.NaN)), "unknown terrain remains unknown");
+        Console.WriteLine("Terrain and spherical navigation: 4 behavior checks passed.");
+        var taxi = new TaxiMission("0,0.1", "Mun", 8);
+        taxi.Step(0, 0, 0, 90, 0, 600000, true, true);
+        Check(taxi.Drive == 1 && !taxi.Brakes && Math.Abs(taxi.Wheel) < .001, "powered taxi straight ahead");
+        taxi.Step(1, 0, 0, 0, 10, 600000, true, true);
+        Check(taxi.Brakes && taxi.Drive < 0 && taxi.Wheel == -1, "taxi slows for turn");
+        taxi.Step(2, 0, .1, 90, 0, 600000, true, true);
+        Check(taxi.Result.Contains("arrived") && taxi.Brakes && taxi.Drive == 0, "taxi arrival stops");
+        taxi = new TaxiMission("0,0.1", "Mun", 8); taxi.Step(0, 0, 0, 90, 0, 600000, true, false);
+        Check(taxi.Throttle == .05 && taxi.Drive == 0, "engine taxi throttle steps");
+        taxi.Step(2000, 0, 0, 90, 0, 600000, true, false);
+        Check(taxi.Result.Contains("timeout") && taxi.Throttle == 0, "stuck taxi timeout");
+        taxi = new TaxiMission("0,0.1", "Mun", 8); taxi.Step(0, 0, 0, 90, 0, 600000, false, true);
+        Check(taxi.Result.Contains("not on the ground"), "taxi cannot fly");
+        foreach (string route in new[] { "91,0", "NaN,0", "0,Infinity", "", "Runway 09 start" })
+        {
+            bool refused = false; try { new TaxiMission(route, "Mun", 8); } catch (ArgumentException) { refused = true; }
+            Check(refused, "invalid taxi route " + route);
+        }
+        Console.WriteLine("Taxi: 11 behavior checks passed.");
     }
 }

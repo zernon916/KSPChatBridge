@@ -11,6 +11,8 @@ namespace KSPChatBridge
         { return !double.IsNaN(chargeFraction) && !double.IsInfinity(chargeFraction) && chargeFraction >= .25; }
         internal static bool SafeSolar(bool atmosphericFlight, double speed, double pressurePa)
         { return !atmosphericFlight || (speed <= 220 && pressurePa <= 12000); }
+        internal static double Trim(double current, double input)
+        { return Math.Abs(input) < .04 ? current : Clamp(current + Math.Sign(input) * Math.Min(.015, Math.Abs(input) * .05), -1, 1); }
         internal static double SurfaceSign(double forward, bool inverted, bool deployInverted)
         { return (forward > .05 ? -1 : 1) * (inverted ? -1 : 1) * (deployInverted ? -1 : 1); }
         // Port of alt_hold.vertical_speed_target; state is captured on band entry.

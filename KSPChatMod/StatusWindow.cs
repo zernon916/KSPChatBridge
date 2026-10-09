@@ -66,6 +66,7 @@ namespace KSPChatBridge
                 string phase = NativeFlightController.Phase;
                 return key == "ind_holds" ? phase == "hold" || phase == "takeoff" || phase == "spool" || phase == "helicopter"
                     : key == "ind_autoland" ? phase == "landing"
+                    : key == "ind_taxi" ? phase == "taxi"
                     : key == "ind_flightplan" && NativeFlightController.PlanRunning;
             }
             var d = data;
@@ -200,7 +201,7 @@ namespace KSPChatBridge
                 if (Time.realtimeSinceStartup >= nextBlink)
                 {
                     nextBlink = Time.realtimeSinceStartup + 0.5f;
-                    v.ActionGroups.ToggleGroup(KSPActionGroup.Light);
+                    NativeFlightController.SetGroup(v, KSPActionGroup.Light, !v.ActionGroups[KSPActionGroup.Light]);
                 }
             }
             else RestoreLights();
@@ -210,7 +211,7 @@ namespace KSPChatBridge
         {
             if (!blinking) return;
             blinking = false;
-            try { if (blinkVessel != null) blinkVessel.ActionGroups.SetGroup(KSPActionGroup.Light, lightOrig); }
+            try { if (blinkVessel != null) NativeFlightController.SetGroup(blinkVessel, KSPActionGroup.Light, lightOrig); }
             catch (Exception) { }
             blinkVessel = null;
         }

@@ -18,8 +18,21 @@ namespace KSPChatBridge
         }
         internal static void Offset(double lat, double lon, double heading, double distance, double radius, out double toLat, out double toLon)
         {
-            toLat = lat + distance * Math.Cos(heading * Rad) / radius / Rad;
-            toLon = lon + distance * Math.Sin(heading * Rad) / (radius * Math.Max(.05, Math.Cos(lat * Rad))) / Rad;
+            double a = lat * Rad, b = lon * Rad, course = heading * Rad, arc = distance / radius;
+            double q = Math.Asin(FlightPolicy.Clamp(Math.Sin(a) * Math.Cos(arc) + Math.Cos(a) * Math.Sin(arc) * Math.Cos(course), -1, 1));
+            toLat = q / Rad;
+            toLon = FlightPolicy.Wrap((b + Math.Atan2(Math.Sin(course) * Math.Sin(arc) * Math.Cos(a), Math.Cos(arc) - Math.Sin(a) * Math.Sin(q))) / Rad);
+        }
+        internal static double TerrainAhead(double lat, double lon, double heading, double speed, double radius, Func<double, double, double> height)
+        {
+            double highest = double.NaN;
+            foreach (double seconds in new[] { 0.0, 10, 20, 35, 60 })
+            {
+                double la, lo; Offset(lat, lon, heading, Math.Max(50, speed) * seconds, radius, out la, out lo);
+                double value = height(la, lo);
+                if (!double.IsNaN(value) && !double.IsInfinity(value)) highest = double.IsNaN(highest) ? value : Math.Max(highest, value);
+            }
+            return highest;
         }
     }
 

@@ -903,6 +903,7 @@ namespace KSPChatBridge
 
         static void LoadTaxi()
         {
+            if (!BridgeLauncher.AiEnabled) { taxiBody = NativeFlightController.Execute("taxi/list", "{}"); return; }
             BridgeText("taxi", null, 4000, (ok, body) => { if (ok) taxiBody = body; else ChatWindow.Notice("AICS Taxi: " + body); });
         }
 

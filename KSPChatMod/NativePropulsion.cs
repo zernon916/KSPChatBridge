@@ -14,6 +14,15 @@ namespace KSPChatBridge
         readonly Dictionary<ModuleControlSurface, ModuleRoboticServoRotor> hubs = new Dictionary<ModuleControlSurface, ModuleRoboticServoRotor>();
         readonly Dictionary<ModuleRoboticServoRotor, string> roles = new Dictionary<ModuleRoboticServoRotor, string>();
         internal bool Compound { get { return roles.ContainsValue("left") && roles.ContainsValue("right"); } }
+        internal double? CollectiveValue
+        {
+            get
+            {
+                double total = 0; int count = 0;
+                foreach (var surface in blades) if (surface != null) { total += surface.deployAngle * bladeSign[surface]; count++; }
+                return count == 0 ? (double?)null : total / count;
+            }
+        }
         internal double Radius
         {
             get
