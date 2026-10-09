@@ -58,13 +58,13 @@ Some antivirus tools flag PyInstaller-built exes by heuristics; if yours does, s
 
 ### Transparency / build it yourself
 The source is public in this repository, and `AICSBridge.exe` is built from it (`run_bridge.py` + `kspchat/`) with
-PyInstaller (one-folder, windowed, no extra code). `powershell -ExecutionPolicy Bypass -File tools\package_release.ps1`
+PyInstaller (one-file, windowed, no extra code). `powershell -ExecutionPolicy Bypass -File tools\package_release.ps1`
 rebuilds everything: it creates a venv (`dist\.buildvenv`) with `requirements.txt` + `pyinstaller==6.22.3`, builds the
 plugin (without touching your GameData) and the exe, and writes `dist/KSPChatBridge-<version>.zip` plus
 `dist/SHA256SUMS-<version>.txt`. The PyInstaller command it runs (from the repo root):
 
 ```
-python -m PyInstaller --noconfirm --clean --onedir --windowed --name AICSBridge --icon assets\AICSBridge.ico ^
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name AICSBridge --icon assets\AICSBridge.ico ^
   --add-data "playstyle_notes.example.md;." --collect-submodules kspchat run_bridge.py
 ```
 

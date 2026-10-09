@@ -2,7 +2,8 @@
 # manual-install package:
 #   dist/KSPChatBridge-<version>.zip
 #     GameData/KSPChatBridge/Plugins/KSPChatBridge.dll
-#     GameData/KSPChatBridge/Bridge/AICSBridge.exe (+ _internal/)   PyInstaller one-folder build of run_bridge.py
+#     GameData/KSPChatBridge/Bridge/AICSBridge.exe   PyInstaller one-file build of run_bridge.py
+#     (one-file on purpose: KSP tries to load EVERY *.dll under GameData as a plugin and hangs at LOADING PARTS)
 #     GameData/KSPChatBridge/KSPChatBridge.version   (KSP-AVC)
 #     GameData/KSPChatBridge/LICENSE, README.md
 # PluginData (per-user window/bridge settings, .env, logs) is never packaged; no PDB / build path is embedded in the DLL.
@@ -30,8 +31,8 @@ if (-not $SkipExe) {
     & $Python -m pip install -q --disable-pip-version-check -r "$root\requirements.txt" "pyinstaller==6.22.3" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
     if (Test-Path $pyi) { Remove-Item $pyi -Recurse -Force }
-    # one-folder (fast start), windowed (no console: the mod starts it hidden; logs go to PluginData/logs/bridge.log)
-    & $Python -m PyInstaller --noconfirm --clean --log-level WARN --onedir --windowed --name AICSBridge `
+    # one-file (no .dll/.pyd under GameData), windowed (no console: the mod starts it hidden; logs go to PluginData/logs/bridge.log)
+    & $Python -m PyInstaller --noconfirm --clean --log-level WARN --onefile --windowed --name AICSBridge `
         --icon "$root\assets\AICSBridge.ico" --add-data "$root\playstyle_notes.example.md;." `
         --collect-submodules kspchat `
         --distpath "$pyi\dist" --workpath "$pyi\build" --specpath "$pyi" "$root\run_bridge.py" | Out-Host
@@ -44,7 +45,9 @@ $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null
 Copy-Item "$root\KSPChatMod\bin\Release\KSPChatBridge.dll" "$mod\Plugins\"
 Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md" $mod
-if (-not $SkipExe) { Copy-Item "$pyi\dist\AICSBridge" "$mod\Bridge" -Recurse }
+if (-not $SkipExe) { New-Item -ItemType Directory -Force "$mod\Bridge" | Out-Null; Copy-Item "$pyi\dist\AICSBridge.exe" "$mod\Bridge\" }
+$stray = Get-ChildItem $stage -Recurse -File -Include *.dll, *.pyd | Where-Object { $_.FullName -ne "$mod\Plugins\KSPChatBridge.dll" }
+if ($stray) { throw "KSP would try to load these as plugins: $($stray.FullName -join ', ')" }
 $zip = Join-Path $root "dist\KSPChatBridge-$Version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 # entries with forward slashes (Windows PowerShell's Compress-Archive writes backslashes, which breaks CKAN / unzip)
