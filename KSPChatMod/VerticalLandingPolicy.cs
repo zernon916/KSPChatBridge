@@ -9,6 +9,7 @@ namespace KSPChatBridge
         internal string Phase { get; private set; } = "descent";
         readonly double touchdown;
         double lastStep;
+        int thrustFaults;
         readonly TouchdownGate contact = new TouchdownGate();
         internal VerticalLandingPolicy(double throttle, double touchdown, double now)
         {
@@ -23,10 +24,10 @@ namespace KSPChatBridge
                 if (!Finite(x)) return "Powered descent needs valid height, velocity and thrust measurements.";
             if (height < 10 || height > 5000 || Math.Abs(vs) > 15 || horizontal > 3 || up < .98)
                 return "Powered descent requires 10-5000 m clearance, vertical speed within 15 m/s, sideways speed below 3 m/s and an upright craft.";
-            if (gravity <= 0 || acceleration * up < gravity * 1.2 || throttle < .05 || throttle > 1)
+            if (gravity <= 0 || acceleration * up < gravity * 1.2 || throttle < 0 || throttle > 1)
                 return "Powered descent needs a burning controllable engine and at least 1.2 thrust-to-weight.";
-            // Worst-case height loss while respecting the 5%/3-second throttle ramp.
-            double t = throttle, velocity = vs, loss = 0, worst = 0;
+            // Worst-case height loss while respecting the 5%/3-second throttle ramp from the measured throttle.
+            double t = Math.Max(.05, throttle), velocity = vs, loss = 0, worst = 0;
             for (int i = 0; i < 20; i++)
             {
                 double net = acceleration * up * t - gravity;
@@ -39,6 +40,13 @@ namespace KSPChatBridge
             }
             return height <= worst + 10 ? "Insufficient clearance for the required throttle ramp." : null;
         }
+        // Keep a terrain floor above look-ahead peaks; returns the raised clearance target, or height when unknown.
+        internal static double ClearanceFloor(double height, double terrainPeakAgl)
+        {
+            if (!Finite(height)) return height;
+            if (!Finite(terrainPeakAgl)) return height;
+            return Math.Min(height, Math.Max(5, height - Math.Max(0, terrainPeakAgl)));
+        }
         internal double Step(double now, double height, double vs, double acceleration, double gravity, double up, bool grounded)
         {
             foreach (double x in new[] { now, height, vs, acceleration, gravity, up })
@@ -48,9 +56,12 @@ namespace KSPChatBridge
             double vertical = acceleration * Math.Max(0, up);
             if (vertical < gravity * 1.05)
             {
+                thrustFaults++;
                 Phase = "insufficient thrust";
+                if (thrustFaults >= 4) { Phase = "abort"; return Throttle = 0; }
                 return Throttle = FlightPolicy.Throttle(Throttle, 1, true, now, ref lastStep);
             }
+            thrustFaults = 0;
             Phase = height < 40 ? "final" : "descent";
             double predictedHeight = Math.Max(0, height + Math.Min(0, vs) * 6 - 5);
             double desiredVs = -Math.Min(10, touchdown + Math.Sqrt(.4 * (vertical - gravity) * predictedHeight));

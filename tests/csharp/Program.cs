@@ -370,5 +370,44 @@ class Program
             Check(height <= 0 && velocity > -3, "bounded simulated touchdown under gravity " + gravity);
         }
         Console.WriteLine("Powered descent policy: 13 behavior checks passed (idealized dynamics only).");
+        Check(VerticalLandingPolicy.ClearanceFloor(100, 40) == 60, "terrain peak reduces clearance");
+        Check(VerticalLandingPolicy.ClearanceFloor(100, double.NaN) == 100, "unknown terrain keeps clearance");
+        var aborting = new VerticalLandingPolicy(.5, 1.5, 0);
+        for (int i = 0; i < 5; i++) aborting.Step(i * 3, 200, -2, 1, 9.81, 1, false);
+        Check(aborting.Phase == "abort" && aborting.Throttle == 0, "persistent thrust loss aborts descent");
+        var single = HelicopterPolicy.Classify(new[] {
+            new RotorDescriptor { Up = 1, Dir = 1, Blades = 4 },
+            new RotorDescriptor { Up = 0, Right = 1, Side = 2, Dir = 1, Blades = 2 }
+        }, false);
+        Check(single.Heli && !single.Multirotor && single.Yaw == "tail rotor" && single.Kind.Contains("tail"), "main+tail layout");
+        var quad = HelicopterPolicy.Classify(new[] {
+            new RotorDescriptor { Up = 1, North = 1, East = -1, Dir = 1, Blades = 2 },
+            new RotorDescriptor { Up = 1, North = 1, East = 1, Dir = -1, Blades = 2 },
+            new RotorDescriptor { Up = 1, North = -1, East = -1, Dir = -1, Blades = 2 },
+            new RotorDescriptor { Up = 1, North = -1, East = 1, Dir = 1, Blades = 2 }
+        }, false);
+        Check(quad.Multirotor && quad.Counter && quad.Yaw.Contains("differential"), "quad counter-rotating yaw");
+        Check(HelicopterPolicy.LayoutLabel(quad, 0, -1).StartsWith("L"), "multirotor speech label");
+        var soft = HelicopterPolicy.Classify(new[] {
+            new RotorDescriptor { Up = .4, Forward = .9, Dir = 1, Blades = 2 },
+            new RotorDescriptor { Up = .4, Forward = .9, Dir = -1, Blades = 2 },
+            new RotorDescriptor { Up = .4, Forward = .9, Dir = 1, Blades = 2 }
+        }, false);
+        Check(soft.Multirotor && soft.Lift.Length >= 3, "sideways-hub soft lift reclassification");
+        bool orbitRejected = false, tgRejected = false, flyRejected = false;
+        try { NativePlan.Parse("ascent to 80 km"); } catch (ArgumentException) { orbitRejected = true; }
+        try { NativePlan.Parse("land Runway 09 tg 2"); } catch (ArgumentException) { tgRejected = true; }
+        try { NativePlan.Parse("fly to Island"); } catch (ArgumentException) { flyRejected = true; }
+        Check(orbitRejected && tgRejected && flyRejected, "plan rejects orbital touch-and-go and fly-to");
+        bool badTaxi = false;
+        try { NativePlan.Parse("taxi to Nowhere", null, route => false); } catch (ArgumentException) { badTaxi = true; }
+        Check(badTaxi, "plan taxi route validation");
+        var controlLease = new ControlLease();
+        Check(controlLease.Acquire("v1", "native") && !controlLease.Acquire("v1", "bridge") && !controlLease.Acquire("v2", "native"), "exclusive control lease");
+        controlLease.Release();
+        Check(controlLease.Acquire("v2", "native"), "lease reusable after release");
+        controlLease.VesselChanged("v3");
+        Check(controlLease.Owner == null && controlLease.Acquire("v3", "native"), "vessel switch clears lease");
+        Console.WriteLine("Phase 3 integration policies: 12 behavior checks passed.");
     }
 }

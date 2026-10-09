@@ -35,6 +35,11 @@ namespace KSPChatBridge
                 if (line.Length == 0) continue;
                 string low = line.ToLowerInvariant();
                 var step = new Step { Text = line, Reference = low.Contains("msl") ? "msl" : "agl" };
+                if (Regex.IsMatch(low, @"\b(ascent|orbit|deorbit|transfer|rendezvous|dock|warp|stage|science|chutes?)\b")
+                    || Regex.IsMatch(low, @"^fly\s+to\b"))
+                    throw new ArgumentException("Local plan rejects unsupported orbital/rocket step: " + line);
+                if (Regex.IsMatch(low, @"\btg\b|\btouch\s*and\s*go\b"))
+                    throw new ArgumentException("Local plan does not yet support touch-and-go: " + line);
                 if (low == "takeoff" || low == "take off") step.Op = "takeoff";
                 else if (Regex.IsMatch(low, @"^(climb|descend)\b")) step.Op = "climb";
                 else if (Regex.IsMatch(low, @"^cruise\b")) step.Op = "cruise";

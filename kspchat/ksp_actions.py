@@ -2832,6 +2832,23 @@ def _defer_until_climbout(name, args, timeout=240.0):
 
 NATIVE_HANDOFF = False
 
+# Tools that must not bypass an active in-mod controller (mirrors NativeCommands.Ported steer set).
+NATIVE_EXCLUSIVE = STEER_TOOLS | {
+    "land_here", "plane_hold", "takeoff", "heli_control", "taxi_to", "abort", "stop_current",
+    "flightplan/fly", "flightplan/stop", "flightplan/resume",
+}
+
+
+def _native_controller_busy():
+    """True when the C# autopilot owns the vessel (PluginData/native_control.json)."""
+    import json
+    path = config.ROOT / "native_control.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return bool(data.get("busy")) and data.get("owner") == "native"
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def call_tool(name, args=None):
     """Run a tool by name with a dict of args. Always returns a string."""
@@ -2849,6 +2866,8 @@ def call_tool(name, args=None):
         with _lock:
             if NATIVE_HANDOFF:
                 return "Bridge is handing control to the in-mod autopilot; retry after the mode switch."
+            if name in NATIVE_EXCLUSIVE and _native_controller_busy():
+                return "In-mod autopilot owns this vessel; bridge steer tools are blocked until it releases control."
             res = f(**(args or {}))
         res = res if isinstance(res, str) else json.dumps(res)
         return res + _engine_restart_note(name, args or {}, res)

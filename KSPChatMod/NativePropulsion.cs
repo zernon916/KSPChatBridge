@@ -14,11 +14,13 @@ namespace KSPChatBridge
         readonly Dictionary<ModuleControlSurface, ModuleRoboticServoRotor> hubs = new Dictionary<ModuleControlSurface, ModuleRoboticServoRotor>();
         readonly Dictionary<ModuleRoboticServoRotor, string> roles = new Dictionary<ModuleRoboticServoRotor, string>();
         float tailBase;
+        internal RotorLayoutInfo Layout { get; private set; }
         internal bool CounterLift
         {
             get { bool cw = false, ccw = false; foreach (var rotor in Rotors) if (rotor != null && roles[rotor] == "lift") { cw |= !rotor.rotateCounterClockwise; ccw |= rotor.rotateCounterClockwise; } return cw && ccw; }
         }
-        internal bool Compound { get { return roles.ContainsValue("left") && roles.ContainsValue("right"); } }
+        internal bool Compound { get { return Layout != null ? Layout.Compound : roles.ContainsValue("left") && roles.ContainsValue("right"); } }
+        internal bool Multirotor { get { return Layout != null && Layout.Multirotor; } }
         internal double? CollectiveValue
         {
             get
@@ -67,6 +69,31 @@ namespace KSPChatBridge
             }
             foreach (var rotor in Rotors)
                 if (hubs.Count > 0 && !hubs.ContainsValue(rotor)) roles[rotor] = "drive";
+            bool wings = false;
+            foreach (Part p in vessel.parts) if (p.FindModuleImplementing<ModuleLiftingSurface>() != null) { wings = true; break; }
+            var descriptors = new RotorDescriptor[Rotors.Count];
+            for (int i = 0; i < Rotors.Count; i++)
+            {
+                var r = Rotors[i];
+                Vector3 axis = r.part.transform.TransformDirection((Vector3)axisField.GetValue(r)).normalized;
+                Vector3 relative = r.part.transform.position - vessel.CoM;
+                int blades = 0; foreach (var pair in hubs) if (pair.Value == r) blades++;
+                descriptors[i] = new RotorDescriptor
+                {
+                    Up = Vector3.Dot(axis, vessel.upAxis),
+                    Forward = Vector3.Dot(axis, vessel.ReferenceTransform.up),
+                    Right = Vector3.Dot(axis, vessel.ReferenceTransform.right),
+                    Side = Vector3.Dot(relative, vessel.ReferenceTransform.right),
+                    North = Vector3.Dot(relative, vessel.north),
+                    East = Vector3.Dot(relative, vessel.east),
+                    Dir = r.rotateCounterClockwise ? -1 : 1,
+                    Blades = blades,
+                    Locked = r.lockPartOnPowerLoss || r.servoIsLocked
+                };
+            }
+            Layout = HelicopterPolicy.Classify(descriptors, wings);
+            if (Layout.Multirotor)
+                foreach (int i in Layout.Lift) if (i >= 0 && i < Rotors.Count) roles[Rotors[i]] = "lift";
             double tailPitch = 0; int tails = 0;
             foreach (var pair in hubs) if (roles[pair.Value] == "tail") { tailPitch += pair.Key.deployAngle * bladeSign[pair.Key]; tails++; }
             tailBase = tails == 0 ? 0 : (float)(tailPitch / tails);
@@ -111,13 +138,22 @@ namespace KSPChatBridge
             demand = Mathf.Clamp(demand, -1, 1);
             if (Compound) { Collective(forwardPitch + 10 * demand, "left"); Collective(forwardPitch - 10 * demand, "right"); }
             else if (roles.ContainsValue("tail")) Collective(tailBase + 8 * demand, "tail");
-            else
+            else if ((Multirotor || CounterLift) && CounterLift)
             {
-                bool cw = false, ccw = false;
-                foreach (var r in Rotors) if (r != null && roles[r] == "lift") { cw |= !r.rotateCounterClockwise; ccw |= r.rotateCounterClockwise; }
-                if (cw && ccw) foreach (var r in Rotors) if (r != null && roles[r] == "lift")
+                foreach (var r in Rotors) if (r != null && roles[r] == "lift")
                     Field(r, "servoMotorLimit", 90f + 10f * demand * (r.rotateCounterClockwise ? -1 : 1));
             }
+        }
+        internal string RotorSpeechName(ModuleRoboticServoRotor rotor)
+        {
+            int index = Rotors.IndexOf(rotor);
+            if (index < 0 || Layout == null) return rotor != null && rotor.part != null ? rotor.part.partInfo.title : "rotor";
+            Vector3 relative = rotor.part.transform.position - rotor.part.vessel.CoM;
+            string code = HelicopterPolicy.LayoutLabel(Layout, index, Vector3.Dot(relative, rotor.part.vessel.ReferenceTransform.right));
+            string full = code == "MR" ? "Main Rotor" : code == "TR" ? "Tail Rotor" : code.StartsWith("L") && code.Length > 1 && char.IsDigit(code[1]) ? "Left " + code.Substring(1)
+                : code.StartsWith("R") && code.Length > 1 && char.IsDigit(code[1]) ? "Right " + code.Substring(1)
+                : code == "LP" ? "Left Prop" : code == "RP" ? "Right Prop" : code;
+            return full + " rotor";
         }
         internal bool HasLift(Vessel vessel)
         {

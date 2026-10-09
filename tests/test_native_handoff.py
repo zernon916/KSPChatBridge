@@ -32,3 +32,17 @@ def test_idle_handoff_blocks_new_commands_until_cancelled(monkeypatch):
     r = Request("/native/cancel-off"); r.do_POST()
     assert r.code == 200 and not ka.NATIVE_HANDOFF
     assert ka.call_tool("handoff_probe") == "done" and calls == [1]
+
+
+def test_native_control_file_blocks_steer_tools(tmp_path, monkeypatch):
+    from kspchat import config
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    (tmp_path / "native_control.json").write_text(
+        '{"busy":true,"mode":"hold","owner":"native","vessel":"abc"}', encoding="utf-8"
+    )
+    calls = []
+    monkeypatch.setitem(ka.BY_NAME, "plane_hold", lambda **a: calls.append(1) or "should not run")
+    assert "owns this vessel" in ka.call_tool("plane_hold", {"engage": True})
+    assert calls == []
+    (tmp_path / "native_control.json").write_text('{"busy":false,"owner":null}', encoding="utf-8")
+    assert ka.call_tool("plane_hold", {"engage": True}) == "should not run" and calls == [1]

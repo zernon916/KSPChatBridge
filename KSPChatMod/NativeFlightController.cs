@@ -193,6 +193,7 @@ namespace KSPChatBridge
             bool manual = (!InputLockManager.IsLocked(ControlTypes.PITCH) && (GameSettings.PITCH_UP.GetKey() || GameSettings.PITCH_DOWN.GetKey()))
                 || (!InputLockManager.IsLocked(ControlTypes.ROLL) && (GameSettings.ROLL_LEFT.GetKey() || GameSettings.ROLL_RIGHT.GetKey()))
                 || (!InputLockManager.IsLocked(ControlTypes.YAW) && (GameSettings.YAW_LEFT.GetKey() || GameSettings.YAW_RIGHT.GetKey()));
+            NativeCommands.WriteStatus(Busy, mode, vessel.id.ToString());
             if (manual && Busy) { Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
             if (!manual)
             {
@@ -273,6 +274,11 @@ namespace KSPChatBridge
                     string previous = verticalLanding.Phase;
                     verticalLanding.Fly(vessel, c, Planetarium.GetUniversalTime(), Math.Max(.001, Time.fixedDeltaTime));
                     if (verticalLanding.Phase != previous) ChatWindow.Notice("Local powered descent: " + verticalLanding.Phase);
+                    if (verticalLanding.Phase == "abort")
+                    {
+                        c.mainThrottle = 0; vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                        Stop(); ChatWindow.Notice("Powered descent aborted: insufficient thrust."); return;
+                    }
                     if (verticalLanding.Phase == "landed") { Stop(false); SetGroup(vessel, KSPActionGroup.SAS, true); }
                     return;
                 }
@@ -455,6 +461,7 @@ namespace KSPChatBridge
             rotorPark = null; landingAfterTakeoff = false; verticalLanding = null;
             stallStudy = null; needStallStudy = false;
             engines.Cancel();
+            NativeCommands.ClearStatus();
         }
         void TickPlan()
         {
@@ -568,10 +575,15 @@ namespace KSPChatBridge
         {
             return NativePlan.Parse(text, name => spots.Runway(name, vessel.mainBody.bodyName, vessel.mainBody.Radius,
                 (lat, lon) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(lat, lon)) - vessel.mainBody.Radius)) != null,
-                route => { new TaxiMission(route, vessel.mainBody.bodyName, 8, name => spots.Point(name, vessel.mainBody.bodyName)); return true; });
+                route =>
+                {
+                    try { new TaxiMission(route, vessel.mainBody.bodyName, 8, name => spots.Point(name, vessel.mainBody.bodyName)); return true; }
+                    catch (ArgumentException) { return false; }
+                });
         }
         string Command(string name, Dictionary<string, object> a)
         {
+            if (!NativeCommands.IsPorted(name)) return "Local command not yet ported: " + name;
             switch (name)
             {
                 case "save_craft_notes":
@@ -615,7 +627,11 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     if (poweredTaxi) engines.Cancel(); else NativeEngines.Takeoff(vessel);
                     return "Local taxi started: straight lines; no obstacle avoidance.";
-                case "abort": if (plan != null) plan.Pause(); Stop(); vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; return "Hard abort: local control stopped, throttle zero.";
+                case "abort":
+                    if (plan != null) plan.Pause();
+                    bool descending = mode == "vertical landing";
+                    Stop(); vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                    return descending ? "Hard abort: powered descent stopped, throttle zero." : "Hard abort: local control stopped, throttle zero.";
                 case "stop_current": if (plan != null) plan.Pause(); Stop(); return "Local controller stopped; throttle preserved.";
                 case "flightplan/check": ParsePlan(Str(a, "plan", "")); return "Local plan valid.";
                 case "flightplan/stop": if (plan != null) plan.Pause(); return "Plan paused; active controller continues.";
