@@ -410,7 +410,7 @@ AI / UI stubs:
 Architecture not-dones:
 - [ ] Per-tool replacement / test / live matrix for all BY_NAME tools (replace 5A prose); fill as P5-2…4 land
 - [x] **DONE (tests; needs live check)** Native emergency / sabotage / parking / power when bridge absent (AI-off must not need kRPC watcher)
-- [ ] Dashboard honesty: no stale bridge AP/phase rows looking live; Systems/Rotors/Trim fully local
+- [x] **DONE (tests; needs live check)** Dashboard honesty: no stale bridge AP/phase rows looking live; Systems/Rotors/Trim fully local
 - [ ] Dual ID cleanup: one vessel/part identity story for native tools
 - [ ] `capture_plan`, `list_*`, `trim_panel_open`, `set_flight_plan` — port or drop with explicit note
 - [ ] Packaging detectors always run in `package_release.ps1`; pin model SHA when available

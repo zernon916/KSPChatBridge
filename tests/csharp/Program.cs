@@ -599,6 +599,13 @@ class Program
             && NativeSafety.ParkingAction(true, false, true, false, true, true, false, false) == "none", "parking exempt: busy mode, no wheels, airborne, released");
         Check(NativeSafety.ParkingAction(true, false, false, true, true, true, true, false) == "none", "parking holds while set");
         Console.WriteLine("P5-1 native safety tick: 9 behavior checks passed.");
+        // ---- P5-1.8: dashboard honesty ----
+        var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
+        Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");
+        Check(DashboardRows.Choose(true, br, 1, "idle", "")[0][1] == "bridge" && DashboardRows.Choose(true, br, 1, "idle", "")[1][1] == "BRIDGE hold", "fresh bridge rows labeled bridge");
+        Check(DashboardRows.Choose(true, br, 30, "idle", "")[0][1] == "local (in-mod)", "stale bridge rows replaced by local");
+        Check(DashboardRows.Choose(true, null, 1, "idle", "")[1][1] == "Local idle" && DashboardRows.Choose(true, br, -1, null, null)[1][1] == "Local idle", "failed poll / never polled shows local");
+        Console.WriteLine("P5-1 dashboard honesty: 4 behavior checks passed.");
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

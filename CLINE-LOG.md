@@ -170,3 +170,9 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** `NativeFlightController.Update` split into `SafetyTick` (power, engine restart, sabotage revert via `NativeSafety.ShouldRevert`, parking via `NativeSafety.ParkingAction` incl. re-arm after landing) which runs whenever `NativeSafety.ShouldRun`; local flight tick (plans/hold/spool/trim) still AI-off only. No bridge grace/dual-control logic (per Luke: bridge is being folded in).
 **Tests run:** C# "P5-1 native safety tick: 9 behavior checks passed"; pytest 482 passed; Release build 0 errors.
 **Still needs live check:** AI on with no bridge: parking set on runway, brake-off releases, re-arm after landing, sabotage revert in flight, power/engine recovery.
+
+## P5-1 Part 8 - dashboard honesty - DONE (tests; needs live check)
+**Problem:** Status AP/phase rows depended on bridge /status ("unavailable" when down); trim panel still posted to bridge when AI on.
+**Changed:** new `DashboardRows` (pure): bridge rows only when AI on and the answer is <5 s old, labeled `source=bridge`; otherwise local in-mod controller rows (`source=local`). Failed poll clears bridge rows. `TrimWindow` uses native get/set_trim whenever AI off or `native_chat` on. Systems/Rotors were already local (LocalVesselState/RotorTelemetry).
+**Tests run:** C# "P5-1 dashboard honesty: 4 behavior checks passed"; pytest 482; Release build 0 errors.
+**Still needs live check:** Status window with bridge absent shows local rows; trim panel works with AI on.

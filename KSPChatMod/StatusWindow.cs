@@ -41,6 +41,8 @@ namespace KSPChatBridge
         static volatile string[] master = { "", "0", "" };   // level, seq, text
         static volatile bool bridgeLights = true;
         static volatile bool statusOk, systemsOk;
+        static volatile List<string[]> bridgeRows;
+        static double bridgeRowsAt = -1;
         static int polling, lightsPolling;
         static int ackSeq;
         static float nextLightsPoll;
@@ -122,8 +124,13 @@ namespace KSPChatBridge
 
         static void PollStatus()
         {
-            if (!BridgeLauncher.AiEnabled) { statusOk = true; rows = new List<string[]> { new[] { "autopilot", "Local " + NativeFlightController.Phase }, new[] { "plan", NativeFlightController.PlanStatus } }; return; }
+            // P5-1.8: always show something honest: fresh bridge rows, else the in-mod controller's own state.
+            double age = bridgeRowsAt < 0 ? -1 : Time.realtimeSinceStartup - bridgeRowsAt;
+            rows = DashboardRows.Choose(BridgeLauncher.AiEnabled, bridgeRows, age, NativeFlightController.Phase, NativeFlightController.PlanStatus);
+            statusOk = true;
+            if (!BridgeLauncher.AiEnabled) { bridgeRows = null; data = new Dictionary<string, string>(); return; }
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
+            float started = Time.realtimeSinceStartup;
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -139,13 +146,13 @@ namespace KSPChatBridge
                         if (!k.StartsWith("ind_")) r.Add(new[] { k, v });
                     }
                     data = d;
-                    rows = r;
-                    statusOk = true;
+                    bridgeRows = r;
+                    bridgeRowsAt = started;
                 }
                 catch (Exception)
                 {
                     data = new Dictionary<string, string>();
-                    statusOk = false;
+                    bridgeRows = null;
                 }
                 finally { Interlocked.Exchange(ref polling, 0); }
             });

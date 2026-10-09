@@ -81,7 +81,7 @@ namespace KSPChatBridge
             if (Time.realtimeSinceStartup >= nextPoll)
             {
                 nextPoll = Time.realtimeSinceStartup + PollInterval;
-                if (!BridgeLauncher.AiEnabled)
+                if (LocalTrim)
                 {
                     string local = NativeFlightController.Execute("get_trim_state", "{}");
                     stateOk = local.StartsWith("{");
@@ -92,9 +92,12 @@ namespace KSPChatBridge
             }
         }
 
+        // P5-1.8: trim panel is fully local whenever AI is off or in-mod chat/tools are on (native set_trim/get_trim_state).
+        static bool LocalTrim { get { return !BridgeLauncher.AiEnabled || BridgeLauncher.NativeChat; } }
+
         static void PollState()
         {
-            if (!BridgeLauncher.AiEnabled) return;
+            if (LocalTrim) return;
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -232,7 +235,7 @@ namespace KSPChatBridge
             else if (axis == "auto_yaw") autoYaw = on;
             else if (axis == "auto_rotor") autoRotor = on;
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, on ? 1 : 0);
-            if (!BridgeLauncher.AiEnabled) { ChatWindow.Notice(NativeFlightController.Execute("set_trim", json)); return; }
+            if (LocalTrim) { ChatWindow.Notice(NativeFlightController.Execute("set_trim", json)); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { PostTool("set_trim", json); PollState(); }
@@ -283,7 +286,7 @@ namespace KSPChatBridge
         static void SetTrim(string axis, float value)
         {
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, value);
-            if (!BridgeLauncher.AiEnabled) { NativeFlightController.Execute("set_trim", json); return; }
+            if (LocalTrim) { NativeFlightController.Execute("set_trim", json); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { PostTool("set_trim", json); }
