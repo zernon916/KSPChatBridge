@@ -54,7 +54,7 @@ PROBE_SETTLE_S, PROBE_MAX_BANK = 20.0, 10.0   # only probe a settled autopilot i
 FLIGHT_SITS = ("flying", "sub_orbital", "orbiting", "escaping")
 GROUND_SITS = ("landed", "splashed", "pre_launch")
 WARNING_KINDS = ("flameout", "reverse", "config", "blackout", "overheat", "parts", "stall", "upside_down", "prop_out",
-                 "heli_rpm", "heli_tail", "rotor_brake", "rotor_torque")
+                 "heli_rpm", "heli_tail", "rotor_brake", "rotor_torque", "rotor_sense")
 # upside down (Luke 2026-10-08: the plane flipped on landing): roll beyond INV_ROLL (only while the nose is within
 # INV_MAX_PITCH of the horizon - roll means nothing pointing straight up / down) or, at rest, the craft's top
 # pointing down (UP_DOWN = vertical component of its 'up' vector)
@@ -133,6 +133,9 @@ LINES = {
     "rotor_brake_ok": ["Rotor brake off on the {what}. Spinning free again."],
     "rotor_torque": ["The {what} torque just went to ZERO! Who did that?!", "Zero torque on the {what}?! Put it BACK!"],
     "rotor_torque_ok": ["{what} torque is back. Phew."],
+    "rotor_sense": ["The {what} is spinning the WRONG way! Stopping it, flipping it back, spinning up!",
+                    "Who reversed the {what}?! Stopping, correcting, spinning back up!"],
+    "rotor_sense_ok": ["{what} is spinning the right way again."],
     "prop_out": ["MAYDAY! Lost the {what}! She's yawing!", "MAYDAY MAYDAY! The {what} quit! Hold her straight!",
                  "The {what} just stopped! Rudder, rudder, RUDDER!"],
     "prop_out_ok": ["The {what} is turning again! Phew.", "{what} back up to speed. My hands are still shaking."],
@@ -605,6 +608,26 @@ class Detector:
             elif kt in self.active and (not zero or not flying):
                 self._ev(out, "rotor_torque", kt, False, quiet=not flying, what=c["label"])
 
+        # --- rotor spinning the wrong way (reversed motor direction or invert flipped vs pre-takeoff sense)
+        if (flying or hs) and not s.get("own"):
+            try:
+                from . import propulsion
+                ref = propulsion.STATE.get("sense")
+                bad = propulsion.sense_bad(ref, s.get("rotors") or [])
+            except Exception:  # noqa: BLE001
+                bad = []
+            seen_sense = set()
+            for b in bad:
+                ks = f"rotor_sense:{b.get('i', b.get('j'))}:{b['kind']}"
+                seen_sense.add(ks)
+                if ks not in self.active:
+                    why = {"dir": "direction reversed", "invert": "invert flipped",
+                           "blade": "blade deploy invert flipped"}.get(b["kind"], "wrong way")
+                    self._ev(out, "rotor_sense", ks, True, what=b["label"], short=f"ROTOR WRONG WAY: {b['label']} ({why})"[:60],
+                             actions=[f"rotor_sense:{b.get('i', -1)}"], bad=[b])
+            for ks in [k for k in list(self.active) if k.startswith("rotor_sense:") and k not in seen_sense]:
+                self._ev(out, "rotor_sense", ks, False, quiet=not flying, what=self.active.get(ks) or "")
+
         # --- upside down: in flight (planes) -> MAYDAY + roll upright; at rest after a landing / crash -> funny panic
         roll, pit, up = s.get("roll"), s.get("pitch"), s.get("up")
         level_nose = pit is None or abs(pit) < INV_MAX_PITCH
@@ -764,7 +787,7 @@ def _act(code, ev, v, s):
     if code.startswith("prop_yaw_off:"):
         _flags["yaw_trim"] = 0.0
         return ""
-    if code.startswith("rotor_release:") or code.startswith("rotor_torque:"):
+    if code.startswith("rotor_release:") or code.startswith("rotor_torque:") or code.startswith("rotor_sense:"):
         from . import propulsion
         i = int(code.split(":")[1])
         if v is None:
@@ -772,6 +795,12 @@ def _act(code, ev, v, s):
         if code.startswith("rotor_release:"):  # a brake in flight is never ours: release it (like the reversers)
             n = propulsion.set_brake(v, 0.0, rotors={i})
             return "Brake released (0)" if n else "couldn't release the Brake - set it to 0 by hand!"
+        if code.startswith("rotor_sense:"):
+            bad = ev.get("bad") or []
+            if not bad and i >= 0:
+                ref = propulsion.STATE.get("sense")
+                bad = [b for b in propulsion.sense_bad(ref, propulsion.rotor_checks(v)) if b.get("i") == i]
+            return propulsion.fix_rotor_sense(v, bad)
         tq = propulsion.flight_floor("torque", 100.0 * float(s.get("throttle") or 0.0))
         if s.get("heli"):
             tq = propulsion.TORQUE_MAX

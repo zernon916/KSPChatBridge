@@ -188,9 +188,10 @@ def set_throttle(value: float) -> str:
     note = ""
     if str(v.situation).split(".")[-1] == "flying" and value < hold.THR_FLOOR:
         value, note = hold.THR_FLOOR, " (never 0 in flight: idle is 5%)"
-    from . import propulsion
+    from . import propulsion, heli as heli_mod
     pnote = ""
-    if propulsion.has_props(v):  # propellers: the throttle maps to the rotor torque limit too
+    # Prop planes: throttle maps to rotor torque. Helicopters: lift is collective pitch — never the main throttle.
+    if propulsion.has_props(v) and not heli_mod.is_heli(v):
         flying = str(v.situation).split(".")[-1] == "flying"
         propulsion.STATE["manual_torque"] = False
         pnote = " Props: " + propulsion.set_rotor(v, torque=100.0 * value, flying=flying) + "."

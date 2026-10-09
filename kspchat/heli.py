@@ -572,12 +572,14 @@ def _fly(conn):
     pre, probs = pr.preflight(v)  # Luke: Brake 0, Torque Limit > 0, Motor Engaged on EVERY rotor
     if probs:
         _post(f"Heli {pre}")
+    pr.remember_sense(v)  # baseline spin direction / invert before we lift
     log.info("heli: lift %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=lift))
-    log.info("heli: lift %s", pr.set_blades(v, deploy=True, rotors=lift))
+    # blades out at zero collective until the main rotor is actually spinning (altitude = collective, not throttle)
+    log.info("heli: lift %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=lift))
     others = side_l | side_r | tail
     if others:
         log.info("heli: side/tail %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=others))
-        log.info("heli: side/tail %s", pr.set_blades(v, deploy=True, rotors=others))
+        log.info("heli: side/tail %s", pr.set_blades(v, pitch=0.0, deploy=True, rotors=others))
     tail_base = None
     if tail:
         try:

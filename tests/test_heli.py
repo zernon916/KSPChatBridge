@@ -88,11 +88,13 @@ def luke_vessel():
 
 
 def reset_caches():
-    pr._CACHE.clear()
+    if hasattr(pr, "_CACHE"):
+        pr._CACHE.clear()
     heli._INFO.clear()
     for k in ("sign", "radius", "layout"):
         pr.STATE[k] = {}
     pr.STATE["logged"] = set()
+    pr.STATE["sense"] = None
 
 
 def test_scan_and_sample_lukes_fields(monkeypatch):

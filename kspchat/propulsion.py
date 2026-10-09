@@ -145,7 +145,7 @@ GROUP_X = 0.5                # m: |lateral offset| from the CoM below this = cen
 GROUPS = ("left", "right", "center")
 DIFF_DEAD, DIFF_FRAC = 3.0, 0.5   # rollout differential reverse: heading error (deg) deadband / weak-side torque
 STATE = {"manual_pitch": None, "manual_torque": False, "reverse": False, "logged": set(), "sign": {}, "radius": {},
-         "layout": {}, "diff": None}
+         "layout": {}, "diff": None, "sense": None}
 _NUM = re.compile(r"-?\d+(?:\.\d+)?")
 
 
@@ -297,6 +297,18 @@ def spin_dir(fields):
     if "clock" in val or val == "cw":
         return 1
     return None
+
+
+def invert_on(fields, deploy=False):
+    """True when Invert Direction (rotor) or Invert Deploy Direction (blade) is on."""
+    if deploy:
+        k = find_field(fields, "deploy", "invert") or find_field(fields, "invert", "deploy")
+    else:
+        k = find_field(fields, "invert", exclude=("deploy",))
+    if not k:
+        return None
+    val = str(fields.get(k, "")).strip().lower()
+    return val in _TRUE or val in ("inverted", "yes")
 
 
 def layout(v):
@@ -719,8 +731,150 @@ def rotor_checks(v):
                     "brake": g("brake", exclude=("auto",)), "torque": g("torque", "limit"),
                     "motor_on": _motor_on(f.get(k_mot)) if k_mot else None,
                     "rpm": g("current", "rpm"), "rpm_limit": g("rpm", "limit"),
-                    "has_brake": find_field(f, "brake", exclude=("auto",)) is not None})
+                    "has_brake": find_field(f, "brake", exclude=("auto",)) is not None,
+                    "dir": spin_dir(f), "invert": invert_on(f)})
     return out
+
+
+def _set_bool(m, key, value):
+    if key is None:
+        return False
+    fid = _field_id(m, key)
+    try:
+        if fid:
+            m.set_field_bool_by_id(fid, bool(value))
+        else:
+            m.set_field_bool(key, bool(value))
+        return True
+    except Exception:  # noqa: BLE001
+        try:
+            (m.set_field_string_by_id if fid else m.set_field_string)(fid or key, "True" if value else "False")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+
+def set_spin_dir(m, want):
+    """Set rotor Rotation Direction to want (+1 CW, -1 CCW). Returns True on success."""
+    try:
+        f = fields(m)
+    except Exception:  # noqa: BLE001
+        return False
+    k = find_field(f, "direction", exclude=("deploy",)) or find_field(f, "counter")
+    if not k or want not in (1, -1):
+        return False
+    if "counter" in str(k).lower() or k == "rotateCounterClockwise":
+        return _set_bool(m, k, want < 0)
+    # text field: Clockwise / Counterclockwise
+    try:
+        text = "Counterclockwise" if want < 0 else "Clockwise"
+        fid = _field_id(m, k)
+        if fid:
+            m.set_field_string_by_id(fid, text)
+        else:
+            m.set_field_string(k, text)
+        return True
+    except Exception:  # noqa: BLE001
+        return _set_bool(m, k, want < 0)
+
+
+def set_invert_flag(m, want, deploy=False):
+    """Set Invert Direction (rotor) or Invert Deploy Direction (blade)."""
+    try:
+        f = fields(m)
+    except Exception:  # noqa: BLE001
+        return False
+    if deploy:
+        k = find_field(f, "deploy", "invert") or find_field(f, "invert", "deploy")
+    else:
+        k = find_field(f, "invert", exclude=("deploy",))
+    return _set_bool(m, k, bool(want))
+
+
+def sense_snapshot(v):
+    """Baseline rotor spin direction + invert, and blade deploy-invert, for wrong-way detection."""
+    rotors = [{"i": c["i"], "dir": c.get("dir"), "invert": c.get("invert"), "label": c["label"]}
+              for c in rotor_checks(v)]
+    blades = []
+    for j, b in enumerate(layout(v)["blades"]):
+        try:
+            inv = invert_on(fields(b["mod"]), deploy=True)
+        except Exception:  # noqa: BLE001
+            inv = None
+        blades.append({"j": j, "rotor": b.get("rotor"), "invert": inv})
+    return {"rotors": rotors, "blades": blades}
+
+
+def remember_sense(v, force=False):
+    """Store the craft's rotor/blade sense as the known-good baseline (once per vessel unless force)."""
+    try:
+        key = (str(v.name), len(v.parts.all))
+    except Exception:  # noqa: BLE001
+        key = None
+    cur = STATE.get("sense")
+    if not force and cur and cur.get("key") == key:
+        return cur
+    snap = sense_snapshot(v)
+    snap["key"] = key
+    STATE["sense"] = snap
+    return snap
+
+
+def sense_bad(ref, checks, blade_inverts=None):
+    """Changes from the baseline sense -> [{i|j, label, kind dir|invert|blade, want, got}]."""
+    out = []
+    if not ref:
+        return out
+    by = {c["i"]: c for c in checks or []}
+    for r in ref.get("rotors") or []:
+        c = by.get(r["i"])
+        if not c:
+            continue
+        if r.get("dir") is not None and c.get("dir") is not None and r["dir"] != c["dir"]:
+            out.append({"i": r["i"], "label": r["label"], "kind": "dir", "want": r["dir"], "got": c["dir"]})
+        if r.get("invert") is not None and c.get("invert") is not None and bool(r["invert"]) != bool(c["invert"]):
+            out.append({"i": r["i"], "label": r["label"], "kind": "invert", "want": bool(r["invert"]),
+                        "got": bool(c["invert"])})
+    if blade_inverts is not None:
+        for b, inv in zip(ref.get("blades") or [], blade_inverts):
+            if b.get("invert") is not None and inv is not None and bool(b["invert"]) != bool(inv):
+                out.append({"j": b["j"], "i": b.get("rotor"), "label": f"blade {b['j'] + 1}", "kind": "blade",
+                            "want": bool(b["invert"]), "got": bool(inv)})
+    return out
+
+
+def fix_rotor_sense(v, bad):
+    """Stop affected rotors, restore direction / invert / blade deploy-invert from the baseline, spin back up.
+    -> short report."""
+    if not bad:
+        return "nothing to fix"
+    lay = layout(v)
+    idxs = {b["i"] for b in bad if b.get("i") is not None}
+    if idxs:
+        set_rotor(v, torque=0.0, rotors=idxs, flying=False)
+        set_brake(v, 100.0, rotors=idxs)
+    n = 0
+    for b in bad:
+        try:
+            if b["kind"] == "dir" and b.get("i") is not None:
+                n += bool(set_spin_dir(lay["rotors"][b["i"]]["mod"], b["want"]))
+            elif b["kind"] == "invert" and b.get("i") is not None:
+                n += bool(set_invert_flag(lay["rotors"][b["i"]]["mod"], b["want"]))
+            elif b["kind"] == "blade" and b.get("j") is not None:
+                n += bool(set_invert_flag(lay["blades"][b["j"]]["mod"], b["want"], deploy=True))
+        except Exception:  # noqa: BLE001
+            pass
+    if idxs:
+        set_brake(v, 0.0, rotors=idxs)
+        set_rotor(v, rpm=RPM_MAX, torque=TORQUE_MAX, motor=True, rotors=idxs, flying=False)
+    labs = [b["label"] for b in bad]
+    labels = ", ".join(labs[:2]) + (f" +{len(labs) - 2}" if len(labs) > 2 else "")
+    try:
+        from . import emergency
+        emergency.own_change()
+    except Exception:  # noqa: BLE001
+        pass
+    return f"stopped, corrected ({n}), spinning back up: {labels}" if n else f"couldn't correct {labels}"
 
 
 def group_sample(v, checks=None):
@@ -764,6 +918,7 @@ def preflight(v, rotors=None, torque=TORQUE_MAX):
             probs.append(f"{c['label']} has no 'Brake' field - can't check it")
     if not n:
         return "", []
+    remember_sense(v)  # known-good spin direction / invert after the checklist
     line = ("Pre-flight: " + "; ".join(probs)) if probs else \
         f"Pre-flight: {n} rotor{'s' if n != 1 else ''} Brake 0, torque set, Motor Engaged - OK"
     (_log.warning if probs else _log.info)("props: %s", line)
