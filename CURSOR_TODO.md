@@ -44,4 +44,20 @@ Never trade altitude for speed; change throttle in 5% steps with 2-5 s spool wai
 - Tests: sideways quad classify, heli_control spool, spool ramp, 3/4 rotor cases
 
 ## Done when
-Unit tests pass, onefile rebuilt, committed as Luke Benko, not pushed → Luke installs and live-checks the seven items above.
+Unit tests pass, onefile rebuilt, committed as Luke Benko, not pushed → Luke installs and live-checks items 1–7 above, then work 8–11.
+
+---
+
+# >>> NEXT after live check of 1–7 (NOT started; recovered after dual-edit overwrite) <<<
+
+## 8. Pitch oscillation on bigger planes
+Heavy planes porpoise in cruise. Scale the pitch/altitude-hold gains by mass/MOI, add pitch-rate damping, target vertical speed rather than altitude, smooth the elevator, and cap the pitch rate. Add a test for a heavy plane holding level with no sustained oscillation.
+
+## 9. Auto-trim plus per-craft notes
+In steady cruise, the bridge computes and sets control-surface DEPLOY ANGLES (math, not the model) so the elevator sits near neutral, and re-trims after big speed, altitude or fuel changes. Save the trim, rotation speed, cruise speed and quirks per craft in PluginData/craft_notes.json (keyed by craft name) and load them at launch. Skip default-named craft (check KSP's default editor name, likely "Untitled Space Craft"). Covers planes and rockets with control surfaces.
+
+## 10. Rotorcraft auto-trim
+For helicopters, quads and tricopters, adjust collective, blade deploy angles, and per-rotor torque and RPM on the fly to hold a balanced hover and level cruise with no drift or spin. Save it in craft_notes too.
+
+## 11. Player TRIM panel (C# UI)
+A "Trim" window with pitch, roll and yaw trim (plus collective/rotor trim on rotorcraft), +/- buttons and sliders, "Auto-trim now", "Save to craft notes" and Reset, applied live through the bridge. Add "Trim" to the AICS drop-down menu (next to Systems and Flight Plan) and as the typed command `trim`. Match the existing window style and save the window position.
