@@ -2183,6 +2183,11 @@ class _Watcher(threading.Thread):
         s["plane"] = self.planeish[s["vid"]] and not s["heli"]
         vessel_changed(s["vid"], v.name)
         try:
+            from . import craft_notes
+            craft_notes.apply_on_engage(v)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("craft notes on vessel change: %s", ex)
+        try:
             _learn_liftoff(v, s)
         except Exception as ex:  # noqa: BLE001
             log.debug("liftoff learner: %s", ex)

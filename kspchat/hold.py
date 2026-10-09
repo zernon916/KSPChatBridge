@@ -42,6 +42,26 @@ RESUME_MARGIN = 20.0   # m/s above the stall margin (nose up) / below the EAS ca
 LEAD_S = 5.0           # s of current V/S used as a lead for the target-altitude / ceiling end of a pitch hold
 PITCH_KEYS = ("pitch", "pitch_t", "pitch_ceiling")
 THR_FLOOR = 0.05       # in-flight throttle floor ("idle"): never 0 in the air
+# §8 pitch smoothness: heavy craft porpoise if gains stay Aeris-sized
+REF_MASS_T = 10.0      # tonnes — gain reference (light jet)
+MASS_GAIN_EXP = 0.4
+PITCH_KP, PITCH_KD, PITCH_KI = 0.022, 0.012, 0.04
+VS_PITCH_P, VS_PITCH_I = 0.8, 0.25
+ALT_VS_K = 0.08
+ELEV_SLEW = 0.35       # softer elevator (was 0.6) — reduces porpoise overshoot
+Q_SOFT_CAP = 4.0       # deg/s: extra rate damping above this
+
+
+def _inertia_scale(mass_t):
+    """<1 for heavy craft → smaller alt/V/S/pitch gains, slightly more rate damping."""
+    return _clamp((REF_MASS_T / max(float(mass_t), 1.0)) ** MASS_GAIN_EXP, 0.30, 1.30)
+
+
+def _mass_t(v):
+    try:
+        return max(0.5, float(v.mass) / 1000.0)  # kRPC mass is kg
+    except Exception:  # noqa: BLE001
+        return REF_MASS_T
 
 
 def active():
@@ -207,6 +227,12 @@ def _note(msg):
 def _hold(conn):
     sc = conn.space_center
     v = sc.active_vessel
+    try:
+        from . import craft_notes, trim_auto
+        craft_notes.apply_on_engage(v)
+        trim_auto.reset_vessel_context()
+    except Exception:  # noqa: BLE001
+        pass
     body = v.orbit.body
     bref = body.reference_frame
     ctl = v.control
@@ -238,7 +264,10 @@ def _hold(conn):
         return _clamp(2205.0 / max(s_q(), 200.0), 0.05, 2.5)
 
     cmd = {"pitch": float(ctl.pitch), "roll": float(ctl.roll), "yaw": float(ctl.yaw), "throttle": float(ctl.throttle)}
-    SLEW = {"pitch": 0.6, "roll": 0.8, "yaw": 0.8}
+    SLEW = {"pitch": ELEV_SLEW, "roll": 0.8, "yaw": 0.8}
+    mass_t = _mass_t(v)
+    kin = _inertia_scale(mass_t)
+    log.info("hold: mass %.1f t, inertia scale %.2f (pitch gains soft for heavy craft)", mass_t, kin)
 
     def out(axis, val, dt_, slew=None):
         m = (slew or SLEW[axis]) * dt_
@@ -482,7 +511,8 @@ def _hold(conn):
         if alt_des is not None:
             up = abs(float(vs_t)) if vs_t is not None and float(vs_t) > 0 else CLIMB_VS_DEFAULT
             dn = abs(float(vs_t)) if vs_t is not None and float(vs_t) < 0 else 15.0
-            vs_des = _clamp(0.08 * (alt_des - alt), -dn, up)
+            # V/S from altitude error (not a hard altitude PID on the elevator) — softened by mass
+            vs_des = _clamp(ALT_VS_K * kin * (alt_des - alt), -dn, up)
         else:
             vs_des = float(vs_t)
         terrain_hold = False
@@ -546,18 +576,22 @@ def _hold(conn):
             pd_new = p_climb
             pitch_base = pitch_des_prev
         else:
-            ks = _clamp(100.0 / max(spd, 50.0), 0.25, 1.0)  # gentler at high speed (the 300 m/s cruise porpoised)
-            pitch_base = _clamp(pitch_base + 0.25 * ks * e_vs * dt, -5.0, 12.0)
-            pd_new = _clamp(pitch_base + 0.8 * ks * e_vs, -5.0, 12.0)
+            # speed soften × inertia scale: heavy + fast → smallest V/S→pitch gains
+            ks = _clamp(100.0 / max(spd, 50.0), 0.25, 1.0) * kin
+            pitch_base = _clamp(pitch_base + VS_PITCH_I * ks * e_vs * dt, -5.0, 12.0)
+            pd_new = _clamp(pitch_base + VS_PITCH_P * ks * e_vs, -5.0, 12.0)
             lo = -5.0 if vs_des < -1.0 else -2.0  # nose-down only for a commanded descent; level hold trims to -2
             if stalling:
                 lo = max(lo, min(max(pitch, 0.0) + 1.0, 6.0))
             pd_new = max(pd_new, lo)
-        pd_new = _clamp(pd_new, pitch_des_prev - PITCH_RATE * dt, pitch_des_prev + PITCH_RATE * dt)
+        # pitch-rate cap on the command + extra damping when the nose is whipping
+        rate_lim = PITCH_RATE * (0.7 + 0.3 * kin)
+        pd_new = _clamp(pd_new, pitch_des_prev - rate_lim * dt, pitch_des_prev + rate_lim * dt)
         pitch_des_prev = pd_new
         e_p = pd_new - pitch
-        i_pitch = _clamp(i_pitch + 0.04 * e_p * dt, -0.4, 0.4)
-        out("pitch", PITCH_SIGN * (max(g_q, 0.25) * (0.022 * e_p - 0.012 * q_f) + i_pitch), dt)
+        i_pitch = _clamp(i_pitch + PITCH_KI * kin * e_p * dt, -0.35, 0.35)
+        kd = PITCH_KD * (1.0 + 0.6 * (1.0 - kin)) + 0.015 * max(0.0, abs(q_f) - Q_SOFT_CAP)
+        out("pitch", PITCH_SIGN * (max(g_q, 0.25) * (PITCH_KP * kin * e_p - kd * q_f) + i_pitch), dt)
 
         # ---------------- throttle
         spd_t = tgt.get("speed")
@@ -609,6 +643,13 @@ def _hold(conn):
             log.info("hold: alt=%.0f(agl %.0f, radar %.0f) vs=%.1f/%.1f spd=%.0f hdg=%.0f err=%+.0f bank=%.0f/%.0f pitch=%.1f/%.1f thr=%.2f floor=%.0f",
                      alt, alt - (ref_elev or 0.0), ralt, vs, vs_des, spd, hdg, hdg_err, roll, bank_des, pitch, pd_new,
                      cmd["throttle"], floor_msl)
+        try:
+            from . import trim_auto
+            trim_msg = trim_auto.maybe_trim_hold(v, ctl, tgt, vs, roll, spd, alt, climbing, pcmd, now)
+            if trim_msg:
+                _note(trim_msg)
+        except Exception:  # noqa: BLE001
+            pass
         time.sleep(0.03)
 
 

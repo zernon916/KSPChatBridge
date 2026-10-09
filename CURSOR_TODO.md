@@ -48,16 +48,16 @@ Unit tests pass, onefile rebuilt, committed as Luke Benko, not pushed → Luke i
 
 ---
 
-# >>> NEXT after live check of 1–7 (NOT started; recovered after dual-edit overwrite) <<<
+# >>> NEXT after live check of 1–7 — CODE DONE (needs live check) <<<
 
-## 8. Pitch oscillation on bigger planes
-Heavy planes porpoise in cruise. Scale the pitch/altitude-hold gains by mass/MOI, add pitch-rate damping, target vertical speed rather than altitude, smooth the elevator, and cap the pitch rate. Add a test for a heavy plane holding level with no sustained oscillation.
+## 8. Pitch oscillation on bigger planes — DONE (tests; needs live check)
+Heavy planes porpoise in cruise. Mass-scaled inertia gains in `hold.py` / `plane.py`, extra pitch-rate damping, softer elevator slew, V/S outer loop. Tests: `tests/test_pitch_smooth.py`.
 
-## 9. Auto-trim plus per-craft notes
-In steady cruise, the bridge computes and sets control-surface DEPLOY ANGLES (math, not the model) so the elevator sits near neutral, and re-trims after big speed, altitude or fuel changes. Save the trim, rotation speed, cruise speed and quirks per craft in PluginData/craft_notes.json (keyed by craft name) and load them at launch. Skip default-named craft (check KSP's default editor name, likely "Untitled Space Craft"). Covers planes and rockets with control surfaces.
+## 9. Auto-trim plus per-craft notes — DONE (tests; needs live check)
+`craft_notes.py` + `trim_auto.py`: deploy-angle + pitch_trim nudge in level cruise; save/load `PluginData/craft_notes.json`; skip Untitled Space Craft. Hooks on hold engage + vessel change.
 
-## 10. Rotorcraft auto-trim
-For helicopters, quads and tricopters, adjust collective, blade deploy angles, and per-rotor torque and RPM on the fly to hold a balanced hover and level cruise with no drift or spin. Save it in craft_notes too.
+## 10. Rotorcraft auto-trim — DONE (tests; needs live check)
+`trim_auto.maybe_trim_heli` from `heli._fly`: collective nudge + counter-rotating torque bias; saved under `craft_notes.rotor`. Test: `tests/test_heli_trim.py`.
 
-## 11. Player TRIM panel (C# UI)
-A "Trim" window with pitch, roll and yaw trim (plus collective/rotor trim on rotorcraft), +/- buttons and sliders, "Auto-trim now", "Save to craft notes" and Reset, applied live through the bridge. Add "Trim" to the AICS drop-down menu (next to Systems and Flight Plan) and as the typed command `trim`. Match the existing window style and save the window position.
+## 11. Player TRIM panel (C# UI) — DONE (tests; needs live check)
+`KSPChatMod/TrimWindow.cs`, AICS header **trim**, chat `trim` → `trim_panel_open` / `!cmd trim_show`. Tools: get/set_trim, auto_trim_now, save_craft_notes. Position: `PluginData/trim_window.txt`.

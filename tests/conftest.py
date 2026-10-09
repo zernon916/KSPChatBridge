@@ -15,6 +15,8 @@ from kspchat import config  # noqa: E402
 # plane_hold targets steer the holds). Every test process gets its own empty settings file.
 config.SETTINGS_FILE = Path(tempfile.mkdtemp(prefix="kspchat-test-")) / "bridge_settings.json"
 config.SETTINGS_FILE.write_text("{}", encoding="utf-8")
+config.CRAFT_NOTES_FILE = config.SETTINGS_FILE.with_name("craft_notes.json")
+config.CRAFT_NOTES_FILE.write_text("{}", encoding="utf-8")
 config.NOTES_FILE = config.SETTINGS_FILE.with_name("playstyle_notes.md")      # remember_preference
 config.CHAT_QUEUE_FILE = config.SETTINGS_FILE.with_name("chatgpt_chat.json")  # mcp_chat queue
 from kspchat import emergency, keys, ksp_actions, protect  # noqa: E402

@@ -618,6 +618,11 @@ namespace KSPChatBridge
                 }
                 History.Add("Bridge: " + Eject(p.Length > 2 ? p[2] : null));
             }
+            else if (p[0] == "trim_show")
+            {
+                TrimWindow.ShowTrim();
+                History.Add("Bridge: Trim panel opened.");
+            }
             else Debug.Log("[KSPChatBridge] unknown bridge command: " + cmd);
         }
 

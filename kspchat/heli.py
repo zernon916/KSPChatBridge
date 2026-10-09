@@ -798,6 +798,13 @@ def _fly(conn):
             STATUS.update(phase=("heli " + p["mode"]) + (f" ({p['note']})" if p["note"] else ""), agl=agl, vs=vs,
                           vs_t=p["vs_t"], coll=coll, fwd=fwd, fwd_t=p["fwd_t"], hdg=hdg, hdg_t=p["hdg_t"],
                           pitch_t=p["pitch_t"], roll_t=p["roll_t"], yaw_u=u, kind=info["kind"])
+            if not on_ground and p["mode"] in ("hover", "hold", "fly"):
+                try:
+                    from . import trim_auto
+                    trim_auto.maybe_trim_heli(v, info, coll, rate, vs, float(fs.roll) if hasattr(fs, "roll") else 0.0,
+                                              math.hypot(fwd, right), now)
+                except Exception:  # noqa: BLE001
+                    pass
             if int(now / 2.0) != int((now - dt) / 2.0):
                 log.info("heli: %s agl %.1f vs %+.1f->%+.1f coll %.1f fwd %.1f->%.1f hdg %.0f->%.0f u %+.2f",
                          p["mode"], agl, vs, p["vs_t"], coll, fwd, p["fwd_t"], hdg, p["hdg_t"], u)

@@ -41,6 +41,7 @@ _load_dotenv(ENV_FILE)
 LOG_DIR = ROOT / "logs"  # bridge.log + sessions-*.jsonl
 NOTES_FILE = ROOT / "playstyle_notes.md"
 SETTINGS_FILE = ROOT / "bridge_settings.json"   # shared runtime settings (science watcher mode)
+CRAFT_NOTES_FILE = ROOT / "craft_notes.json"    # per-craft trim / cruise notes (craft_notes.py)
 CHAT_QUEUE_FILE = ROOT / "chatgpt_chat.json"     # in-game <-> ChatGPT desktop (MCP) message queue (mcp_chat.py)
 
 HTTP_HOST = os.environ.get("KSPCHAT_HOST", "127.0.0.1")

@@ -148,7 +148,7 @@ def test_switches_and_captain_order(w):
     ("switch engine mode", ("engine_mode", {})), ("afterburner on", ("afterburner", {"on": True})),
     ("flaps 1", ("flaps", {"setting": "1"})), ("flaps up", ("flaps", {"setting": "up"})), ("flaps full", ("flaps", {"setting": "full"})),
     ("trim nose up 3", ("trim", {"direction": "up", "percent": 3.0})), ("trim down", ("trim", {"direction": "down", "percent": 5.0})),
-    ("reset trim", ("trim", {"direction": "reset", "percent": 0.0})),
+    ("reset trim", ("trim", {"direction": "reset", "percent": 0.0})), ("trim", ("trim_panel_open", {})),
     ("land", ("land", {"where": ""})), ("land at KSC", ("land", {"where": "ksc"})), ("land the plane", ("land", {"where": ""})),
     ("land at island airfield", ("land", {"where": "island airfield"})),
     ("go around", ("go_around", {})), ("go-around!", ("go_around", {})),

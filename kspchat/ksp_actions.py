@@ -1487,6 +1487,12 @@ def plane_hold(altitude_m: float = -1, altitude_ref: str = "agl", vertical_speed
         return note + "Holds updated: " + (", ".join(said) or "no change") + "."
     r = hold.start()
     time.sleep(1.0)
+    try:
+        from . import craft_notes
+        if craft_notes.apply_on_engage(v):
+            said.append("loaded craft trim notes")
+    except Exception:  # noqa: BLE001
+        pass
     first = "Taking off on the runway heading, then holding " if sit in ("landed", "pre_launch") else "Holds engaged: "
     return note + first + (", ".join(said) or "current altitude and heading") + "."
 
@@ -2532,19 +2538,113 @@ def flaps(setting: str = "1") -> str:
     return f"Flaps {s} (AG {ags['1']} {'on' if s != 'up' else 'off'}, AG {ags['2']} {'on' if s == '2' else 'off'})."
 
 
-def trim(direction: str = "up", percent: float = 5) -> str:
-    """Pitch trim nose up/down by N % of the trim range (default 5); direction 'reset' = neutral."""
+def trim(direction: str = "up", percent: float = 5, axis: str = "pitch") -> str:
+    """Pitch trim nose up/down by N % of the trim range (default 5); direction 'reset' = neutral. axis=pitch|roll|yaw."""
     ctl = _vessel().control
     d = str(direction).strip().lower()
+    ax = {"p": "pitch", "r": "roll", "y": "yaw"}.get(str(axis).strip().lower()[:1], str(axis).strip().lower())
+    if ax not in ("pitch", "roll", "yaw"):
+        ax = "pitch"
+    attr = f"{ax}_trim"
     try:
-        cur = float(ctl.pitch_trim)
-        new = 0.0 if d in ("reset", "zero", "neutral", "0", "off") else \
-            _clampf(cur + (1.0 if d.startswith("u") else -1.0) * abs(float(percent)) / 100.0, -1.0, 1.0)
-        ctl.pitch_trim = new
+        cur = float(getattr(ctl, attr))
     except AttributeError:
-        return "This kRPC version has no trim control (pitch_trim needs a newer kRPC)."
+        if ax == "pitch":
+            return "This kRPC version has no trim control (pitch_trim needs a newer kRPC)."
+        return f"This kRPC version has no {ax} trim ({attr})."
+    new = 0.0 if d in ("reset", "zero", "neutral", "0", "off") else \
+        _clampf(cur + (1.0 if d.startswith("u") else -1.0) * abs(float(percent)) / 100.0, -1.0, 1.0)
+    if d in ("reset", "zero", "neutral", "0", "off") and ax == "pitch":
+        for other in ("pitch_trim", "roll_trim", "yaw_trim"):
+            try:
+                setattr(ctl, other, 0.0)
+            except AttributeError:
+                pass
+        new = 0.0
+    try:
+        setattr(ctl, attr, new)
+    except AttributeError:
+        return f"This kRPC version has no {ax} trim ({attr})."
     note = " (the autopilot flies pitch itself, so trim mostly offsets its input)" if hold.active() or plane.active() else ""
-    return f"Pitch trim {100 * new:+.0f}%{note}."
+    label = {"pitch": "Pitch", "roll": "Roll", "yaw": "Yaw"}[ax]
+    return f"{label} trim {100 * new:+.0f}%{note if ax == 'pitch' else ''}."
+
+
+def set_trim(axis: str = "pitch", value: float = 0.0) -> str:
+    """AICS Trim panel: axis pitch|roll|yaw|collective; value -1..1 (or collective blade degrees if |value|>1)."""
+    from . import heli, propulsion
+    v = _vessel()
+    ax = str(axis or "pitch").strip().lower()
+    val = float(value)
+    ctl = v.control
+    if ax == "collective":
+        if not heli.is_heli(v):
+            return "Collective trim only applies to rotorcraft."
+        deg = val * 12.0 if abs(val) <= 1.0 else val
+        deg = _clampf(deg, 0.0, 12.0)
+        flying = str(v.situation).split(".")[-1] == "flying"
+        return propulsion.set_blades(v, pitch=deg, flying=flying)
+    if ax not in ("pitch", "roll", "yaw"):
+        return f"Unknown trim axis '{axis}' (use pitch, roll, yaw, or collective)."
+    attr = f"{ax}_trim"
+    try:
+        setattr(ctl, attr, _clampf(val, -1.0, 1.0))
+    except AttributeError:
+        return f"This kRPC build has no {attr}."
+    note = " (autopilot flies pitch)" if ax == "pitch" and (hold.active() or plane.active()) else ""
+    return f"{ax.title()} trim {100 * float(getattr(ctl, attr)):+.0f}%{note}."
+
+
+def get_trim_state() -> dict:
+    """Trim UI poll JSON: {pitch, roll, yaw, collective?, heli, craft, notes_saved}."""
+    from . import craft_notes, heli, trim_auto
+    v = _vessel()
+    snap = trim_auto.snapshot_state(v)
+    heli_craft = False
+    collective = None
+    try:
+        heli_craft = heli.is_heli(v)
+    except Exception:  # noqa: BLE001
+        pass
+    if heli_craft:
+        try:
+            from . import propulsion
+            ps = propulsion.prop_status(v)
+            if ps.get("pitch") is not None:
+                collective = float(ps["pitch"])
+        except Exception:  # noqa: BLE001
+            pass
+    name = craft_notes.vessel_name(v)
+    out = {
+        "pitch": float(snap.get("pitch_trim") or 0.0),
+        "roll": float(snap.get("roll_trim") or 0.0),
+        "yaw": float(snap.get("yaw_trim") or 0.0),
+        "heli": bool(heli_craft),
+        "craft": name,
+        "notes_saved": bool(craft_notes.load_for_vessel(v)),
+    }
+    if collective is not None:
+        out["collective"] = collective
+    return out
+
+
+def trim_panel_open() -> str:
+    """Bare 'trim' chat order: queue !cmd trim_show for the in-game Trim window."""
+    from . import science
+    science.post_command("trim_show")
+    return "Opening the Trim panel."
+
+
+def auto_trim_now() -> str:
+    """One auto-trim step in level flight (elevator deploy + pitch trim toward neutral input)."""
+    from . import trim_auto
+    return trim_auto.auto_trim_now()
+
+
+def save_craft_notes() -> str:
+    """Save current trim and cruise settings to craft_notes.json for this vessel."""
+    from . import trim_auto
+    return trim_auto.save_to_craft_notes()
 
 
 def land(where: str = "") -> str:
@@ -2631,7 +2731,8 @@ TOOLS = [heli_control, get_status, stage, set_throttle, set_gear, set_brakes, ej
 # aren't swamped by schemas
 MENU_ONLY = [stop_current, set_speed, set_altitude, turn, set_heading, fly_to_place, circle_here, flight_report, fuel_check, how_far,
              time_to_target, level_off, set_rcs, set_lights, action_group, set_engines, cut_engines, engine_mode,
-             afterburner, flaps, trim, land, go_around, touch_and_go, abort_ag, crew_report, set_override,
+             afterburner, flaps, trim, set_trim, get_trim_state, auto_trim_now, save_craft_notes, trim_panel_open, land, go_around,
+             touch_and_go, abort_ag, crew_report, set_override,
              authorise_all, match_target_plane, apsis_longitude, launch_to_target_plane, sync_orbit_altitude, landing_check,
              list_taxi_points]
 BY_NAME = {f.__name__: f for f in TOOLS + MENU_ONLY}

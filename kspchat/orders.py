@@ -49,6 +49,7 @@ _AB_RE = re.compile(r"^\s*after\s*burners?\s*(on|off)" + _END, re.I)
 _FLAPS_RE = re.compile(r"^\s*flaps?\s*(1|2|one|two|up|down|full|0|off|retract(?:ed)?)" + _END, re.I)
 _TRIM_RE = re.compile(r"^\s*trim\s*(?:nose\s*)?(up|down)(?:\s*(\d+(?:\.\d+)?))?\s*(?:%|percent)?" + _END, re.I)
 _TRIM0_RE = re.compile(r"^\s*(?:trim\s*(?:reset|zero|0|off|neutral)|reset\s*trim)" + _END, re.I)
+_TRIM_PANEL_RE = re.compile(r"^\s*trim\s*$" + _END, re.I)
 _LAND_RE = re.compile(r"^\s*land(?:\s+(?:the\s+)?(?:plane|aircraft|craft|ship))?"
                       r"(?:\s+(?:at|on)\s+(?:the\s+)?(ksc|base|home|runway|island(?:\s+airfield)?))?" + _END, re.I)
 _LAND_RWY_RE = re.compile(r"^\s*land\s+(?:at|on)\s+(?:the\s+)?(?:runway\s*|rwy\s*)?(0?9|27)"
@@ -348,6 +349,8 @@ def parse(text):
         return "trim", {"direction": m.group(1).lower(), "percent": float(m.group(2)) if m.group(2) else 5.0}
     if _TRIM0_RE.match(t):
         return "trim", {"direction": "reset", "percent": 0.0}
+    if _TRIM_PANEL_RE.match(t):
+        return "trim_panel_open", {}  # opens AICS Trim window (!cmd trim_show)
     if _TAKEOFF_RE.match(t):
         return "takeoff", {}
     m = _HOVER_RE.match(t)

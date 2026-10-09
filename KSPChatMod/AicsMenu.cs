@@ -184,6 +184,7 @@ namespace KSPChatBridge
             if ((showTab || Expanded) && lastTab.Contains(m)) return true;
             if (Expanded && menuRect.Contains(m)) return true;
             for (int i = 0; i < Open.Length; i++) if (Open[i] && panelRects[i].Contains(m)) return true;
+            if (TrimWindow.ContainsPoint(m)) return true;
             return false;
         }
 
@@ -285,10 +286,11 @@ namespace KSPChatBridge
             opacity = Mathf.Round(no * 20f) / 20f;  // 5 % steps (bounded texture cache)
             // toggle buttons that show their window's state (pressed = open); 'chat' used to only ever "show" (never
             // closed it, and the window could open behind this menu)
-            bool chatOn = ChatWindow.IsVisible, stOn = StatusWindow.StatusVisible, syOn = StatusWindow.SystemsVisible;
+            bool chatOn = ChatWindow.IsVisible, stOn = StatusWindow.StatusVisible, syOn = StatusWindow.SystemsVisible, trOn = TrimWindow.TrimVisible;
             if (GUILayout.Toggle(chatOn, "chat", GUI.skin.button, GUILayout.Width(40)) != chatOn) ChatWindow.ToggleChat();
             if (GUILayout.Toggle(stOn, "status", GUI.skin.button, GUILayout.Width(50)) != stOn) StatusWindow.ToggleStatus();     // live autopilot state window
             if (GUILayout.Toggle(syOn, "systems", GUI.skin.button, GUILayout.Width(60)) != syOn) StatusWindow.ToggleSystems();   // parts / emergency dashboard
+            if (GUILayout.Toggle(trOn, "trim", GUI.skin.button, GUILayout.Width(44)) != trOn) TrimWindow.ToggleTrim();
             GUILayout.EndHorizontal();
             DepsWarning();
             // two columns of module toggles (MechJeb style); each opens its own window
@@ -1236,6 +1238,12 @@ namespace KSPChatBridge
         {
             s.normal.textColor = s.hover.textColor = s.active.textColor = s.focused.textColor = c;
             s.onNormal.textColor = s.onHover.textColor = s.onActive.textColor = s.onFocused.textColor = c;
+        }
+
+        internal static GUISkin EnsureSkin()
+        {
+            if (skin == null || Mathf.Abs(skinOpacity - opacity) > 0.01f) BuildSkin();
+            return skin;
         }
 
         static void BuildSkin()

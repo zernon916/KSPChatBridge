@@ -1164,12 +1164,19 @@ def _fly(conn, runway, vapp, vcruise, strip, cruise_alt=None, touch_and_go=0):
         over = eas > v_hard - 12.0 and phase in ("to_entry", "final")
         # (Luke: the speed loop drives the THROTTLE only, never pitch - no pitch-up/nose-down for speed)
         e_vs = vs_des - vs
-        ks = 1.0 if phase in ("flare", "final") else _clamp(100.0 / max(spd, 50.0), 0.25, 1.0)
+        # mass soften on en-route pitch (same idea as hold._inertia_scale); leave flare/final crisp
+        try:
+            from . import hold as _hold
+            kin = 1.0 if phase in ("flare", "final") else _hold._inertia_scale(max(0.5, float(v.mass) / 1000.0))
+        except Exception:  # noqa: BLE001
+            kin = 1.0
+        ks = (1.0 if phase in ("flare", "final") else _clamp(100.0 / max(spd, 50.0), 0.25, 1.0)) * kin
         kv = (0.5 if phase == "flare" else 0.8) * ks
         pitch_base = _clamp(pitch_base + 0.25 * ks * e_vs * dt, -8, 14)
         pd_new = _clamp(pitch_base + kv * e_vs, -8, {"flare": 10, "stall_test": 20}.get(phase, 12))
         # rate-limit the commanded pitch attitude everywhere (no yanking; no porpoising near the ground)
-        pd_new = _clamp(pd_new, pitch_des_prev - PITCH_RATE * dt, pitch_des_prev + PITCH_RATE * dt)
+        rate_lim = PITCH_RATE * (0.7 + 0.3 * kin)
+        pd_new = _clamp(pd_new, pitch_des_prev - rate_lim * dt, pitch_des_prev + rate_lim * dt)
         g_now = s_g()
         if g_now > G_MAX:      # load-factor cap: don't pull further
             pd_new = min(pd_new, max(pitch, pitch_des_prev))
@@ -1211,12 +1218,12 @@ def _fly(conn, runway, vapp, vcruise, strip, cruise_alt=None, touch_and_go=0):
                         nose_rule, phase, hr, h_des, vs, vs_des, pitch, pd_new)
         pitch_des = pitch_des_prev = pd_new
         e_p = pitch_des - pitch
-        i_pitch = _clamp(i_pitch + 0.004 * e_p * dt * 10, -0.4, 0.4)
-        kd = 0.02 if hr < 40 else 0.012
+        i_pitch = _clamp(i_pitch + 0.004 * e_p * dt * 10 * kin, -0.4, 0.4)
+        kd = (0.02 if hr < 40 else 0.012) * (1.0 + 0.5 * (1.0 - kin))
         # dynamic-pressure gain scheduling: at ~30-40 m/s the elevator needs more deflection per degree
         # (the last flare commanded 10 deg nose-up but the nose sank from 9 to 4 deg -> 5 m/s touchdown)
         g_q = max(gsched(), 0.25)
-        out("pitch", PITCH_SIGN * (g_q * (0.022 * e_p - kd * q) + i_pitch), dt)
+        out("pitch", PITCH_SIGN * (g_q * (0.022 * kin * e_p - kd * q) + i_pitch), dt)
 
         # ------------------------------------------------------------ speed
         if phase == "stall_test":

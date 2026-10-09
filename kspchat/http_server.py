@@ -51,7 +51,8 @@ MENU_TOOLS = {"land_at_spot", "dock_with", "save_landing_spot", "get_landing_eta
               "plane_hold", "plane_pitch", "set_throttle", "set_gear", "set_brakes", "deploy_parachutes", "autopilot_status", "sun_lock", "antenna_lock", "reset_experiments", "fly_to",
               "mechjeb_ascent", "circularize", "change_apoapsis", "change_periapsis", "change_inclination",
               "match_target_plane", "apsis_longitude", "launch_to_target_plane", "station_keep", "capture_plan",
-              "landing_check", "taxi_to", "sync_orbit_altitude", "get_delta_v", "transfer_to"}  # + AICS menu
+              "landing_check", "taxi_to", "sync_orbit_altitude", "get_delta_v", "transfer_to",
+              "get_trim_state", "set_trim", "auto_trim_now", "save_craft_notes", "trim_panel_open"}  # + AICS menu / Trim UI
 
 
 class Handler(BaseHTTPRequestHandler):
