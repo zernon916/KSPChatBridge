@@ -5,6 +5,7 @@ using System.IO;
 namespace KSPChatBridge
 {
     // Single validated command surface for menu, AI-off tools, bridge handoff and future AI routing.
+    // Keep this file free of Unity/KSP types so the offline C# suite can compile it.
     internal static class NativeCommands
     {
         internal static readonly HashSet<string> Ported = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -16,20 +17,20 @@ namespace KSPChatBridge
             "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
-        internal static string StatusPath
+        internal static Func<string> StatusPathProvider = DefaultStatusPath;
+        static string DefaultStatusPath()
         {
-            get
-            {
-                return Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "KSPChatBridge", "PluginData", "native_control.json");
-            }
+            return Path.Combine("GameData", "KSPChatBridge", "PluginData", "native_control.json");
         }
+        internal static string StatusPath { get { return StatusPathProvider(); } }
         internal static void WriteStatus(bool busy, string mode, string vesselId)
         {
             try
             {
-                string dir = Path.GetDirectoryName(StatusPath);
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(StatusPath, "{\"busy\":" + (busy ? "true" : "false")
+                string path = StatusPath;
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(path, "{\"busy\":" + (busy ? "true" : "false")
                     + ",\"mode\":\"" + (mode ?? "idle").Replace("\\", "\\\\").Replace("\"", "\\\"")
                     + "\",\"vessel\":\"" + (vesselId ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"")
                     + "\",\"owner\":\"native\"}");

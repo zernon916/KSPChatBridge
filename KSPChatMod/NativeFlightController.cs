@@ -102,6 +102,7 @@ namespace KSPChatBridge
         void Awake()
         {
             instance = this;
+            NativeCommands.StatusPathProvider = () => Path.Combine(BridgeLauncher.DataDirectory, "native_control.json");
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
             try
             {

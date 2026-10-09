@@ -17,4 +17,5 @@
   <ItemGroup><Compile Include="../../KSPChatMod/HelicopterPolicy.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativeCraftNotes.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/VerticalLandingPolicy.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/NativeCommands.cs"/><Compile Include="../../KSPChatMod/NativeLibraryLayout.cs"/><Compile Include="../../KSPChatMod/ModelManager.cs"/><Compile Include="../../KSPChatMod/AiRuntimePolicy.cs"/><Compile Include="../../KSPChatMod/ChatOrchestrator.cs"/></ItemGroup>
 </Project>

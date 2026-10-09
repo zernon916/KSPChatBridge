@@ -409,5 +409,42 @@ class Program
         controlLease.VesselChanged("v3");
         Check(controlLease.Owner == null && controlLease.Acquire("v3", "native"), "vessel switch clears lease");
         Console.WriteLine("Phase 3 integration policies: 12 behavior checks passed.");
+        Check(NativeLibraryLayout.ForbiddenDlls(new[] { "GameData/KSPChatBridge/Plugins/KSPChatBridge.dll" }).Length == 0, "approved plugin DLL allowed");
+        Check(NativeLibraryLayout.ForbiddenDlls(new[] { "GameData/KSPChatBridge/Bridge/llama.dll" }).Length == 1, "loose native DLL forbidden");
+        Check(NativeLibraryLayout.ForbiddenDlls(new[] { "GameData/KSPChatBridge/PluginData/native/llama.bin" }).Length == 0, "encoded native bin allowed");
+        Check(NativeLibraryLayout.ModelBundled(new[] { "GameData/KSPChatBridge/PluginData/models/x.gguf" }), "model bundle detector");
+        Check(!NativeLibraryLayout.ModelBundled(new[] { "GameData/KSPChatBridge/Plugins/KSPChatBridge.dll" }), "release without model weights");
+        string encoded = NativeLibraryLayout.EncodedPath("PluginData", "llama.dll");
+        Check(encoded.EndsWith(".bin") && encoded.Replace('\\', '/').Contains("native/"), "native path rewritten to .bin");
+        var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-model-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tmp);
+        var models = new ModelManager(tmp, ModelManager.Sha256(CreateTempBytes(tmp, "partial", 64)), 32);
+        System.IO.File.WriteAllBytes(models.PartialPath, System.IO.File.ReadAllBytes(System.IO.Path.Combine(tmp, "partial")));
+        Check(models.FinalizeFromPartial(false) != null && !models.Ready, "AI-off blocks model finalize");
+        Check(models.FinalizeFromPartial(true) == null && models.Ready && models.Phase == "ready", "atomic model finalize");
+        var bad = new ModelManager(tmp, "deadbeef", 32);
+        System.IO.File.WriteAllBytes(bad.PartialPath, new byte[40]);
+        Check(bad.FinalizeFromPartial(true).Contains("Checksum"), "checksum failure");
+        var runtime = new AiRuntimePolicy();
+        Check(runtime.Apply(AiOffloadMode.Gpu, 20000, false, 0).Contains("CPU") && runtime.Offload == AiOffloadMode.Cpu, "GPU fallback");
+        Check(runtime.Apply(AiOffloadMode.Hybrid, 16384, true, 2L * 1024 * 1024 * 1024) == null && runtime.GpuLayers > 0, "hybrid budget accepted");
+        Check(AiRuntimePolicy.ProviderId("Groq") == "groq", "provider normalize");
+        var chat = new ChatOrchestrator();
+        chat.Enqueue(new ChatRequest { Id = "c1", Text = "crew", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddMinutes(1) });
+        chat.Enqueue(new ChatRequest { Id = "u1", Text = "user", UserPriority = true, DeadlineUtc = DateTime.UtcNow.AddMinutes(1) });
+        Check(chat.DequeueNext(DateTime.UtcNow).Id == "u1", "user chat priority");
+        chat.Cancel("c1");
+        Check(chat.DequeueNext(DateTime.UtcNow) == null, "cancelled crew dropped");
+        var tools = chat.RunTools("t1", new[] { "plane_hold", "mechjeb_ascent" }, name => "ok", true);
+        Check(tools.ToolCalls.Count == 1 && tools.Error.Contains("native command"), "tool boundary rejects unported");
+        Check(!ChatOrchestrator.AllowCloudFallback("local", false), "no silent cloud fallback after local");
+        Check(ChatOrchestrator.AllowCloudFallback("groq", true), "explicit cloud allowed");
+        Console.WriteLine("Phase 4 AI policy foundations: 14 behavior checks passed.");
+    }
+    static string CreateTempBytes(string dir, string name, int size)
+    {
+        string path = System.IO.Path.Combine(dir, name);
+        var bytes = new byte[size]; for (int i = 0; i < size; i++) bytes[i] = (byte)i;
+        System.IO.File.WriteAllBytes(path, bytes); return path;
     }
 }
