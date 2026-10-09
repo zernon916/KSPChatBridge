@@ -95,15 +95,16 @@ def test_fuel_overheat_stall_blackout(det):
     assert k(run(det, 13, 14, g=1.0, ctrl=True)) == [("blackout", False)]
 
 
-def SURF(p=True, y=False, r=True, inv=False, auth=100.0, dep=False):
-    return ("Elevon", p, y, r, inv, auth, dep)
+def SURF(p=True, y=False, r=True, inv=False, auth=100.0, dep=False, dep_dir=False):
+    return ("Elevon", p, y, r, inv, auth, dep, dep_dir)
 
 
 def test_diff_config():
     old = {"surfaces": [SURF(), SURF()], "wheels": [("Wheel", True, False)], "engines": [("J-33", True, "")]}
     new = {"surfaces": [SURF(p=False), SURF(dep=True)], "wheels": [("Wheel", False, False)], "engines": [("J-33", False, "")]}
     tags = [c[2] for c in em.diff_config(old, new) if c[0]]
-    assert tags == ["pitch_lost", "wheels", "engine_off"]                    # flap deploy is not sabotage
+    assert tags == ["deploy", "pitch_lost", "wheels", "engine_off"]          # cruise: unexpected deploy is sabotage
+    assert [c[2] for c in em.diff_config(old, new, landing=True) if c[0]] == ["pitch_lost", "wheels", "engine_off"]
     assert [c[2] for c in em.diff_config(old, new, own=True) if c[0]] == ["pitch_lost", "wheels"]
     inv = em.diff_config({"surfaces": [SURF()]}, {"surfaces": [SURF(auth=-100.0)]})
     assert inv[0][0] and inv[0][2] == "inverted"

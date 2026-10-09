@@ -215,6 +215,7 @@ def set_gear(down: bool = True) -> str:
         n = len(v.parts.wheels) + len(v.parts.legs)
     except Exception:  # noqa: BLE001
         n = -1
+    _own_change()
     v.control.gear = bool(down)
     from . import emergency
     return (f"Gear {'down' if down else 'up'}." + (" (No wheels or legs found on this craft.)" if n == 0 else "")
@@ -235,6 +236,7 @@ def set_brakes(on: bool = True) -> str:
         air = len(v.parts.modules_with_name("ModuleAeroSurface"))
     except Exception:  # noqa: BLE001
         air = -1
+    _own_change()
     v.control.brakes = bool(on)
     msg = f"Brakes {'on' if on else 'off'}"
     if air == 0:
@@ -264,6 +266,7 @@ def eject_kerbal(confirmed: bool = False) -> str:
 
 def set_sas(enabled: bool) -> str:
     """Turn SAS (stability assist) on or off."""
+    _own_change()
     _vessel().control.sas = bool(enabled)
     return f"SAS {'on' if enabled else 'off'}."
 
@@ -431,6 +434,7 @@ def deploy_parachutes(force: bool = False) -> str:
     vs = v.flight(v.orbit.body.reference_frame).vertical_speed
     if not force and (sit in ("pre_launch", "landed", "splashed") or vs > 5):
         return f"Not deploying parachutes now (situation {sit}, vertical speed {round(vs)} m/s). Use force=true to override."
+    _own_change()
     chutes = v.parts.parachutes
     done = 0
     for p in chutes:
@@ -2243,12 +2247,14 @@ def level_off() -> str:
 
 def set_rcs(on: bool = True) -> str:
     """RCS on / off."""
+    _own_change()
     _vessel().control.rcs = bool(on)
     return f"RCS {'on' if on else 'off'}."
 
 
 def set_lights(on: bool = True) -> str:
     """Lights action group on / off."""
+    _own_change()
     _vessel().control.lights = bool(on)
     return f"Lights {'on' if on else 'off'}."
 
@@ -2259,6 +2265,7 @@ def action_group(group: int, state: str = "toggle") -> str:
     if not 1 <= g <= 10:
         return "Action groups are 1-10."
     k = g % 10  # kRPC: 0 = AG 10
+    _own_change()
     ctl = _vessel().control
     st = str(state or "toggle").lower()
     if st in ("on", "off"):
