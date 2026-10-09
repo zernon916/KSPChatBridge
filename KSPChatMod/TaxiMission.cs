@@ -22,7 +22,7 @@ namespace KSPChatBridge
         internal string Result;
         readonly double cap;
         double deadline = double.NaN, lastThrottle;
-        internal TaxiMission(string route, string body, double speed)
+        internal TaxiMission(string route, string body, double speed, Func<string, Point> resolve = null)
         {
             cap = FlightPolicy.Clamp(speed, 1, 25);
             foreach (string raw in (route ?? "").Split(';'))
@@ -32,6 +32,8 @@ namespace KSPChatBridge
                 { if (body != "Kerbin") throw new ArgumentException("Built-in taxi points are on Kerbin."); }
                 else
                 {
+                    point = resolve == null ? null : resolve(name);
+                    if (point != null) { Points.Add(point); if (Points.Count > 50) throw new ArgumentException("Maximum 50 taxi points."); continue; }
                     var coords = name.Split(','); double lat, lon;
                     if (coords.Length != 2 || !double.TryParse(coords[0], NumberStyles.Float, CultureInfo.InvariantCulture, out lat)
                         || !double.TryParse(coords[1], NumberStyles.Float, CultureInfo.InvariantCulture, out lon)
@@ -58,7 +60,7 @@ namespace KSPChatBridge
             double error = FlightPolicy.Wrap(NavigationMath.Bearing(lat, lon, point.Lat, point.Lon) - heading);
             double desired = Math.Min(cap, Math.Max(2, Distance / 6));
             if (Math.Abs(error) > 30) desired = Math.Min(desired, 3);
-            Wheel = FlightPolicy.Clamp(-.04 * error, -1, 1); Yaw = FlightPolicy.Clamp(.02 * error, -.3, .3);
+            Wheel = FlightPolicy.WheelSteering(error, 1); Yaw = FlightPolicy.Clamp(.02 * error, -.3, .3);
             Drive = powered ? FlightPolicy.Clamp(.25 * (desired - speed), -.3, 1) : 0;
             Throttle = powered ? 0 : FlightPolicy.Throttle(Throttle, FlightPolicy.Clamp(Throttle + .05 * Math.Sign(desired - speed), 0, .4), false, now, ref lastThrottle);
             Brakes = speed > desired + (powered ? 3 : 2);

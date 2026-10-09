@@ -36,12 +36,18 @@ namespace KSPChatBridge
         bool trimSuspended, parkingSet, parkingReleased;
         int partCount;
         string settingsPath;
+        Dictionary<string, object> settingsData = new Dictionary<string, object>();
+        bool settingsWritable = true;
+        NativeSpots spots;
         double? directVs, directPitch, directBank;
         float elevator;
         NativePropulsion props;
         NativePower power;
         NativeRecovery recovery;
         NativeReversers reversers;
+        NativeFlaps flaps;
+        StallStudy stallStudy;
+        bool needStallStudy;
         ReverseRollout reverseRollout;
         bool wasNative;
         readonly NativeEngines engines = new NativeEngines();
@@ -88,21 +94,28 @@ namespace KSPChatBridge
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
             try
             {
-                if (File.Exists(settingsPath))
-                {
-                    var data = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(settingsPath));
-                    band = FlightPolicy.Clamp(Num(data, "altitude_band_m", 150), 10, 500);
-                    foreach (string key in new List<string>(auto.Keys)) auto[key] = Bool(data, "auto_" + key, true);
-                }
+                if (File.Exists(settingsPath)) settingsData = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(settingsPath));
+                string legacyPath = Path.Combine(BridgeLauncher.DataDirectory, "bridge_settings.json");
+                var legacy = Num(settingsData, "migration_version", 0) < 1 && File.Exists(legacyPath) ? Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(legacyPath)) : new Dictionary<string, object>();
+                settingsData = NativeSettings.Migrate(settingsData, legacy);
+                band = FlightPolicy.Clamp(Num(settingsData, "altitude_band_m", 150), 10, 500);
+                foreach (string key in new List<string>(auto.Keys)) auto[key] = Bool(settingsData, "auto_" + key, true);
+                Save();
             }
-            catch (Exception ex) { ChatWindow.Notice("Local settings: " + ex.Message); }
+            catch (Exception) { settingsWritable = false; ChatWindow.Notice("Local settings could not be loaded. Originals preserved; saving disabled for this flight."); }
+            if (settingsData == null) settingsData = new Dictionary<string, object>();
+            spots = new NativeSpots(settingsData);
         }
         void Save()
         {
-            var data = new Dictionary<string, object> { { "altitude_band_m", band } };
-            foreach (var kv in auto) data["auto_" + kv.Key] = kv.Value;
+            if (!settingsWritable) throw new InvalidOperationException("Settings load failed; originals preserved.");
+            settingsData["altitude_band_m"] = band;
+            foreach (var kv in auto) settingsData["auto_" + kv.Key] = kv.Value;
             Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
-            File.WriteAllText(settingsPath, Json().Serialize(data));
+            string temporary = settingsPath + ".tmp";
+            File.WriteAllText(temporary, Json().Serialize(settingsData));
+            if (File.Exists(settingsPath)) File.Replace(temporary, settingsPath, settingsPath + ".bak");
+            else File.Move(temporary, settingsPath);
         }
         void Bind()
         {
@@ -118,6 +131,9 @@ namespace KSPChatBridge
             recovery = new NativeRecovery(vessel); wasNative = false;
             terrainFloor = double.NaN; nextTerrain = 0;
             reversers = new NativeReversers(vessel);
+            flaps = new NativeFlaps(vessel);
+            object cached; var stallCache = settingsData.TryGetValue("stall_speeds", out cached) ? cached as Dictionary<string, object> : null;
+            stall = stallCache == null ? 45 : FlightPolicy.Clamp(Num(stallCache, vessel.vesselName, 45), 20, 200);
             partCount = vessel.parts.Count;
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
@@ -167,6 +183,7 @@ namespace KSPChatBridge
                 if (mode != "spool") props = new NativePropulsion(vessel);
                 power = new NativePower(vessel);
                 reversers = new NativeReversers(vessel);
+                flaps = new NativeFlaps(vessel);
             }
             try { power.Tick(vessel, Time.realtimeSinceStartup); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local power recovery: " + ex.Message); }
@@ -221,7 +238,7 @@ namespace KSPChatBridge
                     c.wheelSteer = (float)taxi.Wheel; c.wheelThrottle = (float)taxi.Drive; c.yaw = (float)taxi.Yaw;
                     c.mainThrottle = vessel.LandedOrSplashed ? (float)taxi.Throttle : Math.Max(.05f, c.mainThrottle);
                     SetGroup(vessel, KSPActionGroup.Brakes, taxi.Brakes);
-                    if (taxi.Result != null) { string result = taxi.Result; Stop(); ChatWindow.Notice(result); }
+                    if (taxi.Result != null) { string result = taxi.Result; Stop(!result.Contains("arrived")); ChatWindow.Notice(result); }
                     return;
                 }
                 double dt = Math.Max(.001, Math.Min(.1, Time.fixedDeltaTime));
@@ -239,10 +256,40 @@ namespace KSPChatBridge
                         parkingReleased = true;
                         SetGroup(vessel, KSPActionGroup.Brakes, throttle < .6 && vessel.LandedOrSplashed);
                         if (vessel.radarAltitude > 25) SetGroup(vessel, KSPActionGroup.Gear, false);
-                        c.wheelSteer = (float)FlightPolicy.Clamp(.04 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -.5, .5);
+                        c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .5);
                     }
                 }
-                if (mode == "landing")
+                if (mode == "landing" || mode == "takeoff")
+                    flaps.Tick(vessel, recovery, Time.realtimeSinceStartup, vessel.srfSpeed, stall, mode == "landing" ? 30 : 5);
+                if (mode == "landing" && needStallStudy && stallStudy == null && runway.Phase == "entry"
+                    && vessel.radarAltitude > 350 && Math.Abs(roll) < 10 && vessel.srfSpeed < 110)
+                    stallStudy = new StallStudy(Planetarium.GetUniversalTime(), vessel.altitude, FlightGlobals.ship_heading);
+                if (mode == "landing" && stallStudy != null && !stallStudy.Finished)
+                {
+                    double pathAngle = Math.Atan2(vessel.verticalSpeed, Math.Sqrt(Math.Max(0, vessel.srfSpeed * vessel.srfSpeed - vessel.verticalSpeed * vessel.verticalSpeed))) * 180 / Math.PI;
+                    stallStudy.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, pitch - pathAngle, vessel.verticalSpeed, vessel.radarAltitude, roll);
+                    if (stallStudy.Finished)
+                    {
+                        needStallStudy = false;
+                        if (stallStudy.Measured.HasValue)
+                        {
+                            stall = stallStudy.Measured.Value;
+                            object cacheObject;
+                            var cache = settingsData.TryGetValue("stall_speeds", out cacheObject) ? cacheObject as Dictionary<string, object> : null;
+                            if (cache == null) settingsData["stall_speeds"] = cache = new Dictionary<string, object>();
+                            cache[vessel.vesselName] = stall;
+                            try { Save(); } catch (Exception) { ChatWindow.Notice("Stall speed measured for this flight; settings could not be saved."); }
+                        }
+                        pitchIntegral = vsIntegral = 0;
+                        ChatWindow.Notice(stallStudy.Result);
+                    }
+                    else
+                    {
+                        heading = stallStudy.Heading; altitude = stallStudy.Altitude; speed = 0;
+                        directVs = FlightPolicy.Clamp((altitude - vessel.altitude) * .15, -3, 3);
+                    }
+                }
+                if (mode == "landing" && (stallStudy == null || stallStudy.Finished))
                 {
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, stall);
                     if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; ChatWindow.Notice("Local autoland: going around after missed touchdown."); }
@@ -254,11 +301,11 @@ namespace KSPChatBridge
                         if (runway.Phase == "rollout")
                         {
                             c.mainThrottle = 0;
-                            c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => reversers.Set(vessel, reverse));
+                            c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
                             c.pitch = (float)FlightPolicy.Clamp(-.04 * q, -.2, .3);
                             c.roll = (float)FlightPolicy.Clamp(-.02 * roll - .006 * p, -1, 1);
-                            c.wheelSteer = (float)FlightPolicy.Clamp(.04 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -.4, .4);
+                            c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
                             SetGroup(vessel, KSPActionGroup.Brakes, vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0));
                             return;
                         }
@@ -328,6 +375,7 @@ namespace KSPChatBridge
             reverseRollout = null;
             if (interruptPlan && plan != null) plan.Interrupt();
             mode = "idle"; lease.Release(); capture = null; spool = null;
+            stallStudy = null; needStallStudy = false;
             engines.Cancel();
         }
         void TickPlan()
@@ -339,24 +387,28 @@ namespace KSPChatBridge
             {
                 var args = new Dictionary<string, object>(); string result = "";
                 if (step.Op == "takeoff") result = Command("takeoff", args);
+                else if (step.Op == "taxi") { args["name"] = step.Destination; result = Command("taxi_to", args); }
                 else if (step.Op == "land") { args["name"] = step.Destination; result = Command("land_at_spot", args); }
                 else if (step.Op != "wait")
                 {
                     args["altitude_m"] = step.Altitude; args["altitude_ref"] = step.Reference;
                     args["heading"] = step.Heading; args["speed"] = step.Speed;
+                    args["vertical_speed"] = step.VerticalSpeed;
                     result = Command("plane_hold", args);
                     if (step.Op == "circle") { directBank = step.Bank; planTurn = 0; planLastHeading = FlightGlobals.ship_heading; }
                 }
                 bool accepted = step.Op == "wait" || result == "Local aircraft holds engaged."
+                    || result == "Local taxi started: straight lines; no obstacle avoidance."
                     || result == "Local takeoff engaged." || result == "Local rotor spool started; waiting for measured RPM."
                     || result == "Local autoland: proceeding to approach entry.";
                 if (!accepted) { plan.Interrupt(); ChatWindow.Notice("Plan paused: " + result); return; }
                 plan.Entered = true;
                 ChatWindow.Notice("Local plan: " + step.Text);
             }
-            else plan.Elapsed += dt;
+            else { plan.Elapsed += dt; plan.DistanceElapsed += Math.Max(0, vessel.srfSpeed) * dt; }
             bool complete = false;
-            if (step.Op == "wait" || step.Op == "cruise") complete = plan.Elapsed >= step.Seconds;
+            if (step.Op == "wait" || step.Op == "cruise") complete = step.Distance > 0 ? plan.DistanceElapsed >= step.Distance : plan.Elapsed >= step.Seconds;
+            else if (step.Op == "taxi") complete = taxi != null && taxi.Result != null && taxi.Result.Contains("arrived");
             else if (step.Op == "takeoff") complete = mode == "hold" && vessel.radarAltitude >= 100;
             else if (step.Op == "climb") complete = Math.Abs(vessel.altitude - altitude) <= band;
             else if (step.Op == "land") complete = vessel.LandedOrSplashed && vessel.srfSpeed < 1;
@@ -415,33 +467,50 @@ namespace KSPChatBridge
             FlightInputHandler.state.rollTrim = vessel.ctrlState.rollTrim;
             FlightInputHandler.state.yawTrim = vessel.ctrlState.yawTrim;
         }
+        NativePlan ParsePlan(string text)
+        {
+            return NativePlan.Parse(text, name => spots.Find(name, vessel.mainBody.bodyName) != null,
+                route => { new TaxiMission(route, vessel.mainBody.bodyName, 8, name => spots.Point(name, vessel.mainBody.bodyName)); return true; });
+        }
         string Command(string name, Dictionary<string, object> a)
         {
             switch (name)
             {
                 case "taxi/list":
-                    if (vessel.mainBody.bodyName != "Kerbin") return "";
                     var points = new System.Text.StringBuilder();
-                    foreach (var point in TaxiMission.Builtin.Values) points.Append(point.Name).Append('\t').Append(point.Lat.ToString(CultureInfo.InvariantCulture)).Append('\t').Append(point.Lon.ToString(CultureInfo.InvariantCulture)).Append('\n');
+                    var available = new List<TaxiMission.Point>(spots.Points(vessel.mainBody.bodyName));
+                    if (vessel.mainBody.bodyName == "Kerbin") available.AddRange(TaxiMission.Builtin.Values);
+                    foreach (var point in available) points.Append(point.Name).Append('\t').Append(point.Lat.ToString(CultureInfo.InvariantCulture)).Append('\t').Append(point.Lon.ToString(CultureInfo.InvariantCulture)).Append('\n');
                     return points.ToString();
+                case "save_landing_spot":
+                    double spotLat = Num(a, "latitude", 999), spotLon = Num(a, "longitude", 999);
+                    bool spotHere = spotLat == 999 || spotLon == 999;
+                    if (spotHere) { spotLat = vessel.latitude; spotLon = vessel.longitude; }
+                    string spotMode = Str(a, "mode", "V").ToUpperInvariant();
+                    if (spotMode == "") spotMode = vessel.LandedOrSplashed && !props.HasLift(vessel) ? "H" : "V";
+                    double spotHeading = Num(a, "heading", -1); if (spotHeading < 0) spotHeading = FlightGlobals.ship_heading;
+                    double spotElevation = spotHere ? vessel.altitude - vessel.radarAltitude : vessel.mainBody.pqsController == null ? double.NaN
+                        : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(spotLat, spotLon)) - vessel.mainBody.Radius);
+                    spots.Save(Str(a, "name", ""), vessel.mainBody.bodyName, spotMode, spotLat, spotLon, spotHeading, spotElevation);
+                    Save(); return "Local landing spot saved.";
                 case "taxi_to":
                     if (!vessel.LandedOrSplashed) return "Taxi requires a grounded vessel.";
                     bool taxiWheels = false; poweredTaxi = false;
                     foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
                     { taxiWheels |= module is ModuleWheelBase; var motor = module as ModuleWheels.ModuleWheelMotor; poweredTaxi |= motor != null && motor.motorEnabled; }
                     if (!taxiWheels) return "No wheels for taxi.";
-                    var route = new TaxiMission(Str(a, "name", ""), vessel.mainBody.bodyName, Num(a, "speed", 8));
+                    var route = new TaxiMission(Str(a, "name", ""), vessel.mainBody.bodyName, Num(a, "speed", 8), label => spots.Point(label, vessel.mainBody.bodyName));
                     BeginHold(); taxi = route; mode = "taxi"; parkingReleased = true;
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     if (poweredTaxi) engines.Cancel(); else NativeEngines.Takeoff(vessel);
                     return "Local taxi started: straight lines; no obstacle avoidance.";
                 case "abort": if (plan != null) plan.Pause(); Stop(); vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; return "Hard abort: local control stopped, throttle zero.";
                 case "stop_current": if (plan != null) plan.Pause(); Stop(); return "Local controller stopped; throttle preserved.";
-                case "flightplan/check": NativePlan.Parse(Str(a, "plan", "")); return "Local plan valid.";
+                case "flightplan/check": ParsePlan(Str(a, "plan", "")); return "Local plan valid.";
                 case "flightplan/stop": if (plan != null) plan.Pause(); return "Plan paused; active controller continues.";
                 case "flightplan/fly":
                     string text = Str(a, "plan", "");
-                    if (plan == null || plan.Text != text || !plan.Paused) plan = NativePlan.Parse(text);
+                    if (plan == null || plan.Text != text || !plan.Paused) plan = ParsePlan(text);
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan " + plan.Status;
                 case "get_status": case "autopilot_status": return "Local " + mode + "; " + vessel.vesselName;
                 case "set_gear": SetGroup(vessel, KSPActionGroup.Gear, Bool(a, "down", true)); return "Gear set.";
@@ -480,7 +549,7 @@ namespace KSPChatBridge
                     heading = Num(a, "heading", FlightGlobals.ship_heading); if (heading < 0) heading = FlightGlobals.ship_heading;
                     speed = Num(a, "speed", Math.Min(200, vessel.srfSpeed)); if (speed < 0) speed = Math.Min(200, vessel.srfSpeed);
                     speed = FlightPolicy.Clamp(speed, 25, 200);
-                    double vs = Num(a, "vertical_speed", -999); directVs = vs > -999 ? (double?)FlightPolicy.Clamp(vs, -15, 25) : null;
+                    double vs = Num(a, "vertical_speed", -999); directVs = vs > -999 ? (double?)FlightPolicy.Clamp(vs, -90, 90) : null;
                     if (off.Contains("vertical_speed")) directVs = null;
                     double rollTarget = Num(a, "roll", -999);
                     directBank = !off.Contains("roll") && rollTarget > -999 ? (double?)FlightPolicy.Clamp(rollTarget, -FlightPolicy.BankLimit(vessel.srfSpeed), FlightPolicy.BankLimit(vessel.srfSpeed)) : null;
@@ -492,19 +561,31 @@ namespace KSPChatBridge
                     if (!vessel.LandedOrSplashed) return "Already airborne.";
                     BeginHold(); return StartTakeoff();
                 case "land_plane": case "land_at_spot":
-                    if (vessel.mainBody.bodyName != "Kerbin") return "Local built-in runways are on Kerbin.";
                     bool wheels = false, wings = false;
                     foreach (Part part in vessel.parts) { wheels |= part.FindModuleImplementing<ModuleWheelBase>() != null; wings |= part.FindModuleImplementing<ModuleLiftingSurface>() != null; }
                     if (!wheels || !wings) return "Plane autoland requires wheels and wings.";
                     if (vessel.LandedOrSplashed) return "Take off before starting this local landing approach.";
                     string destination = Str(a, "name", ""), direction = Str(a, "runway", "");
-                    runway = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
-                    if (destination.IndexOf("Island", StringComparison.OrdinalIgnoreCase) >= 0) runway = new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 };
-                    else if (destination.Length > 0 && destination.IndexOf("Runway", StringComparison.OrdinalIgnoreCase) < 0) return "Local saved-spot migration pending: " + destination;
-                    if (direction == "27" || destination.EndsWith("27") || (direction == "" && destination == "" && vessel.longitude > -74.6))
+                    runway = spots.Runway(destination, vessel.mainBody.bodyName, vessel.mainBody.Radius,
+                        (lat, lon) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(lat, lon)) - vessel.mainBody.Radius));
+                    bool savedRunway = runway != null;
+                    bool island = destination.IndexOf("Island", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (!savedRunway)
+                    {
+                        if (vessel.mainBody.bodyName != "Kerbin") return "Built-in runways are on Kerbin.";
+                        if (destination.Length > 0 && !island && destination.IndexOf("Runway", StringComparison.OrdinalIgnoreCase) < 0) return "Unknown local runway: " + destination;
+                        runway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
+                            : new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                    }
+                    if (!savedRunway && (island ? direction == "09" || destination.EndsWith("09") : direction == "27" || destination.EndsWith("27") || (direction == "" && destination == "" && vessel.longitude > -74.6)))
                     { double lat = runway.Lat, lon = runway.Lon; runway.Lat = runway.EndLat; runway.Lon = runway.EndLon; runway.EndLat = lat; runway.EndLon = lon; }
                     if (NavigationMath.Distance(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon, vessel.mainBody.Radius) > 150000) return "Runway is beyond the 150 km approach limit.";
-                    BeginHold(); reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null; return "Local autoland: proceeding to approach entry.";
+                    BeginHold(); reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                    double approachSpeed = Num(a, "approach_speed", 0);
+                    object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
+                    needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
+                    if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);
+                    return "Local autoland: proceeding to approach entry.";
                 case "heli_control":
                     if (!props.HasLift(vessel)) return "No lift rotor found; use aircraft controls.";
                     string heliMode = Str(a, "mode", "hover");

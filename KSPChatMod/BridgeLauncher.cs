@@ -40,6 +40,16 @@ namespace KSPChatBridge
             { "autostart", "true" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
             { "bridge_dir", "" }, { "python", "python" },
         };
+        internal static string DataDirectory
+        {
+            get
+            {
+                string path = Environment.GetEnvironmentVariable("KSPCHAT_DATA_DIR");
+                if (!string.IsNullOrWhiteSpace(path)) return path;
+                if (instance != null && !string.IsNullOrWhiteSpace(instance.cfg["bridge_dir"])) return instance.cfg["bridge_dir"];
+                return Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData");
+            }
+        }
 
         void Awake()
         {

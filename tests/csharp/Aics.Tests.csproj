@@ -11,4 +11,7 @@
   <ItemGroup><Compile Include="../../KSPChatMod/NativeReversers.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/ReverseRollout.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/TaxiMission.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/NativeSettings.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/NativeSpots.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/AircraftLandingPolicy.cs"/><Compile Include="../../KSPChatMod/NativeFlaps.cs"/></ItemGroup>
 </Project>

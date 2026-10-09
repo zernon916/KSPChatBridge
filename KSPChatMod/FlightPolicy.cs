@@ -7,6 +7,8 @@ namespace KSPChatBridge
         internal static double Clamp(double value, double lo, double hi) { return Math.Max(lo, Math.Min(hi, value)); }
         internal static double Wrap(double degrees) { return (degrees % 360 + 540) % 360 - 180; }
         internal static double BankLimit(double speed) { return speed > 250 ? 10 : 20; }
+        internal static double WheelSteering(double headingError, double limit)
+        { return Clamp(-.04 * Wrap(headingError), -limit, limit); }
         internal static bool RotorPowerReady(double chargeFraction)
         { return !double.IsNaN(chargeFraction) && !double.IsInfinity(chargeFraction) && chargeFraction >= .25; }
         internal static bool SafeSolar(bool atmosphericFlight, double speed, double pressurePa)

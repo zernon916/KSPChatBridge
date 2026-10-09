@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using KSPChatBridge;
 
 class Program
@@ -106,7 +107,7 @@ class Program
         plan.Start(); while (plan.Running) plan.Advance(); plan.Pause();
         Check(!plan.Paused && plan.Status.StartsWith("Complete"), "completed plan not resumable beyond end");
         plan.Start(); Check(plan.Index == 0 && plan.Running && !plan.Entered, "completed plan restarts cleanly");
-        foreach (string invalid in new[] { "climb 500 vs 50", "cruise speed 150 garbage", "wait", "wait 0 s", "circle 0 laps", "cruise heading 999", "cruise speed 300", "land nowhere", "climb NaN", "wait 999999 min" })
+        foreach (string invalid in new[] { "climb 500 vs 100", "cruise speed 150 garbage", "wait", "wait 0 s", "circle 0 laps", "cruise heading 999", "cruise speed 300", "land nowhere", "climb NaN", "wait 999999 min" })
         {
             bool rejected = false; try { NativePlan.Parse(invalid); } catch (ArgumentException) { rejected = true; }
             Check(rejected, "reject unsupported plan: " + invalid);
@@ -239,5 +240,48 @@ class Program
             Check(refused, "invalid taxi route " + route);
         }
         Console.WriteLine("Taxi: 11 behavior checks passed.");
+        var legacySettings = new Dictionary<string, object> { { "altitude_band_m", 120 }, { "auto_trim_enabled", false }, { "openai_key", "test-secret" }, { "autoland_reversers", false } };
+        var nativeSettings = NativeSettings.Migrate(new Dictionary<string, object> { { "altitude_band_m", 180 } }, legacySettings);
+        Check((int)nativeSettings["altitude_band_m"] == 180 && !(bool)nativeSettings["auto_pitch"], "migration preserves native values and trim switch");
+        Check(!nativeSettings.ContainsKey("openai_key") && !(bool)nativeSettings["autoland_reversers"], "migration excludes secrets");
+        legacySettings["auto_trim_enabled"] = true;
+        Check(!(bool)NativeSettings.Migrate(nativeSettings, legacySettings)["auto_pitch"], "migration once only");
+        var localSpots = new NativeSpots(nativeSettings);
+        localSpots.Save("Test Field", "Mun", "H", 0, 0, 90, 100);
+        Check(localSpots.Point("test_field", "Mun").Lat == 0, "saved spot normalization");
+        var strip = localSpots.Runway("Test Field", "Mun", 600000, (lat, lon) => double.NaN);
+        Check(strip.Elevation == 100 && Math.Abs(NavigationMath.Distance(strip.Lat, strip.Lon, strip.EndLat, strip.EndLon, 600000) - 1000) < .001, "saved runway geometry");
+        taxi = new TaxiMission("Test Field", "Mun", 8, name => localSpots.Point(name, "Mun"));
+        Check(taxi.Points.Count == 1 && taxi.Points[0].Name == "Test Field", "saved taxi route");
+        bool wrongBody = false; try { localSpots.Point("Test Field", "Kerbin"); } catch (ArgumentException) { wrongBody = true; }
+        Check(wrongBody, "saved spot body isolation");
+        bool builtinOverwrite = false; try { localSpots.Save("Runway 09", "Kerbin", "H", 0, 0, 90, 100); } catch (ArgumentException) { builtinOverwrite = true; }
+        Check(builtinOverwrite, "built-in spot preserved");
+        Check(!legacySettings.ContainsKey("landing_spots"), "legacy settings object preserved");
+        Console.WriteLine("Settings migration and saved spots: 9 behavior checks passed.");
+        plan = NativePlan.Parse("climb 3000 m agl vs 50\ncruise alt 3000 m for 12 km\ndescend 1000 m vs 10\nland Test Field", name => name == "Test Field");
+        Check(plan.Steps[0].VerticalSpeed == 50 && plan.Steps[2].VerticalSpeed == -10, "plan climb descent rates");
+        Check(plan.Steps[1].Altitude == 3000 && plan.Steps[1].Distance == 12000, "distance does not change altitude units");
+        Check(plan.Steps[3].Destination == "Test Field", "plan saved destination");
+        plan = NativePlan.Parse("taxi to Test Field", null, name => name == "Test Field");
+        Check(plan.Steps[0].Op == "taxi" && plan.Steps[0].Destination == "Test Field", "plan taxi route");
+        Console.WriteLine("Plan rates distance and saved routes: 4 behavior checks passed.");
+        Check(FlightPolicy.WheelSteering(20, .5) == -.5 && FlightPolicy.WheelSteering(-20, .5) == .5, "wheel sign matches installed kRPC control mapping");
+        var flapSchedule = new FlapSchedule();
+        Check(flapSchedule.Step(0, 50, 45, 30) == 1 && flapSchedule.Step(1, 50, 45, 30) == 1, "flaps extend one step with delay");
+        Check(flapSchedule.Step(2, 50, 45, 30) == 5 && flapSchedule.Step(4, 50, 45, 30) == 15, "flap sequencing");
+        Check(flapSchedule.Step(4.1, 120, 45, 30) == 0, "overspeed retracts without waiting");
+        var study = new StallStudy(0, 1000, 90); study.Step(10, 50, 15, -1, 950, 0);
+        Check(study.Finished && study.Measured == 50, "stall measured at AoA threshold");
+        study = new StallStudy(0, 1000, 90); study.Step(91, 100, 2, 0, 1000, 0);
+        Check(study.Finished && study.Measured == null, "stall timeout is not measurement");
+        study = new StallStudy(0, 1000, 90); study.Step(5, 60, 16, -9, 200, 0);
+        Check(study.Finished && study.Measured == null, "stall study terrain guard");
+        var flapVessel = new Vessel(); var flapPart = new Part { vessel = flapVessel }; flapPart.partInfo.title = "Dedicated flap";
+        flapVessel.parts.Add(flapPart); var flap = new ModuleControlSurface { part = flapPart }; flapPart.Modules.Add(flap);
+        var flapRecovery = new NativeRecovery(flapVessel); var nativeFlaps = new NativeFlaps(flapVessel);
+        nativeFlaps.Tick(flapVessel, flapRecovery, 0, 50, 45, 30);
+        Check(flap.deploy && flap.deployAngle == 1 && flapRecovery.CanTrim(flap), "flap change is authorized configuration");
+        Console.WriteLine("Landing flap and stall policies: 8 behavior checks passed.");
     }
 }
