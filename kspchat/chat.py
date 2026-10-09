@@ -96,6 +96,47 @@ Rules:
 - Keep replies short (1-4 sentences), friendly, plain text, no markdown tables.
 """
 
+# Tiny local models (qwen3.5-0.8b, lfm2.5-1.2b, …): short prompt + core tools. Full SYSTEM is ~10k tokens and
+# fails in an 8k context; 24k works. Matched by model id.
+SYSTEM_LITE = """You are Luke's KSP flight assistant. Act only via tools; never claim an action without a tool call.
+Do ONLY what he asked. Replies: 1-2 short sentences, plain text.
+Planes: takeoff, plane_hold, land_plane, fly_to, captain_order. Helicopters: heli_control (never plane holds).
+Rockets: mechjeb_ascent, land_here, land_at_ksc, get_delta_v. Status: get_status. Abort: abort.
+Captain's orders (turn/gear/throttle/speed/…): captain_order with his exact words.
+If a tool says needs_confirm or needs_override, ask that yes/no and stop.
+"""
+LITE_TOOLS = frozenset({
+    "get_status", "captain_order", "takeoff", "plane_hold", "plane_pitch", "land_plane", "fly_to", "fly_to_place",
+    "heli_control", "land_here", "land_at_ksc", "land_at_spot", "land", "get_delta_v", "mechjeb_ascent",
+    "set_throttle", "set_gear", "set_brakes", "stage", "abort", "set_flight_plan", "remember_preference",
+    "damage_report", "autopilot_status", "prop_control", "set_sas", "set_rcs", "set_lights",
+})
+_SMALL_MODEL = re.compile(r"(?:^|[^\d])(?:0\.\d+|1\.[0-5])\s*b\b|0\.8b|1\.2b|\btiny\b", re.I)
+_CONTEXT_ERR = re.compile(r"context\s*(?:length|window|size)|maximum context|too many tokens|"
+                          r"n_ctx|exceed(?:s|ed)?\s+(?:the\s+)?context|context.?overflow", re.I)
+_HISTORY_ERR = re.compile(r"^(?:Chat error:|Can't reach the |.*(?:backend error|rate limit|rejected the API key|"
+                          r"context window is too small))", re.I)
+CONTEXT_HELP = ("This model's context window is too small for the bridge (the full prompt is ~10k tokens; 8k fails). "
+                "In LM Studio load the model with at least 24k context (or set LMSTUDIO_CONTEXT=24576 and reload). "
+                "Tiny models (*0.8b* / *1.2b*) automatically get a shorter lite prompt.")
+
+
+def is_small_model(model):
+    """True for sub-2B local instruct ids (qwen3.5-0.8b, lfm2.5-1.2b-instruct, …)."""
+    return bool(_SMALL_MODEL.search(str(model or "").replace("_", "-")))
+
+
+def prune_error_history(history):
+    """Drop assistant turns that are bridge/backend errors so tiny models don't echo them as replies."""
+    out = []
+    for m in history or []:
+        if m.get("role") == "assistant" and _HISTORY_ERR.search((m.get("content") or "").strip()):
+            if out and out[-1].get("role") == "user":
+                out.pop()  # drop the user turn that produced the error too
+            continue
+        out.append(m)
+    return out
+
 
 
 def _post(url, payload, key=None, timeout=300):
@@ -195,13 +236,15 @@ class Session:
     def reset(self):
         self.history = []
 
-    def system_prompt(self):
+    def system_prompt(self, lite=False):
         notes = memory.notes_block()
         name = settings.get("ai_name")
         who = (f"\nYour name is {name}. If Luke renames you, call set_ai_name." if name else
                "\nIf Luke gives you a name, call set_ai_name.")
         from . import language
-        return SYSTEM + who + "\n" + language.prompt_lines() + ("\n\n" + notes if notes else "")
+        base = SYSTEM_LITE if lite else SYSTEM
+        extra = ("\n" + language.prompt_lines()) if not lite else ""
+        return base + who + extra + ("\n\n" + notes if notes else "")
 
     def model_command(self, arg, backend):
         label = backends.LABELS.get(backend, backend)
@@ -377,12 +420,17 @@ class Session:
         except Exception:
             pass
         self.last_name = ksp_actions.pilot_name()  # the pilot speaks the AI's replies (None = the AI's name)
+        self.history = prune_error_history(self.history)  # tiny models echo old error text as replies
         self.history.append({"role": "user", "content": text})
         dctx, damaged = _damage_state(text)
-        msgs = [{"role": "system", "content": self.system_prompt() + ("\n\n" + dctx if dctx else "")}] + \
-            self.history[-config.HISTORY_MESSAGES:]
+        lite = is_small_model(model)
+        hist_n = 8 if lite else config.HISTORY_MESSAGES
+        msgs = [{"role": "system", "content": self.system_prompt(lite=lite) + ("\n\n" + dctx if dctx else "")}] + \
+            self.history[-hist_n:]
         # aircraft: the rocket powered-descent / suicide-burn landing tools are hidden (and refused if called anyway)
-        hide = ksp_actions.ROCKET_LANDING_TOOLS if ksp_actions.aircraft_now() else ()
+        hide = set(ksp_actions.ROCKET_LANDING_TOOLS if ksp_actions.aircraft_now() else ())
+        if lite:
+            hide |= {f.__name__ for f in ksp_actions.TOOLS if f.__name__ not in LITE_TOOLS}
         tools, tool_log, reply = ksp_actions.tool_schemas(hide), [], ""
         reprompted = False
         t0 = time.time()
@@ -439,23 +487,25 @@ class Session:
                                   + ", ".join(t["tool"] for t in tool_log) + ".")
         except urllib.error.HTTPError as e:
             label = backends.LABELS.get(backend, backend)
+            try:
+                detail = (e.read().decode(errors="replace") or "").strip()
+            except Exception:
+                detail = ""
             if e.code == 429:
                 reply = (f"{label} rate limit hit (free tiers allow only a few requests/tokens per minute or day). "
                          "Wait a minute, or switch AI in AICS > Settings.")
+            elif _CONTEXT_ERR.search(detail) or (e.code == 400 and "context" in detail.lower()):
+                reply = CONTEXT_HELP
             elif e.code in (401, 403):
-                try:
-                    detail = (e.read().decode(errors="replace") or "")[:160].strip()
-                except Exception:
-                    detail = ""
                 if "1010" in detail or "cloudflare" in detail.lower() or "Attention Required" in detail:
                     reply = (f"{label} blocked the request ({e.code}, CDN/firewall). "
                              "Usually a missing User-Agent — update the bridge. Detail: " + detail[:80])
                 else:
                     reply = (f"{label} rejected the API key ({e.code}). "
                              "Re-enter it in AICS > Settings (API key field, Save)."
-                             + (f" Detail: {detail}" if detail else ""))
+                             + (f" Detail: {detail[:160]}" if detail else ""))
             else:
-                reply = f"{label} backend error {e.code}: {e.read().decode(errors='replace')[:300]}"
+                reply = f"{label} backend error {e.code}: {detail[:300]}"
         except urllib.error.URLError as e:
             reply = (f"Can't reach the {backends.LABELS.get(backend, backend)} backend ({e.reason}). "
                      + {"local": "Is LM Studio's server running (lms server start)?",
