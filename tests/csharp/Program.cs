@@ -599,6 +599,10 @@ class Program
             && NativeSafety.ParkingAction(true, false, true, false, true, true, false, false) == "none", "parking exempt: busy mode, no wheels, airborne, released");
         Check(NativeSafety.ParkingAction(true, false, false, true, true, true, true, false) == "none", "parking holds while set");
         Console.WriteLine("P5-1 native safety tick: 9 behavior checks passed.");
+        // ---- Oct 9 decision: native controller owns the controls with AI on (AI issues commands only) ----
+        Check(NativeSafety.NativeOwns(false, true, false) && !NativeSafety.NativeOwns(false, false, true), "AI off: native owns after handoff");
+        Check(NativeSafety.NativeOwns(true, false, true) && !NativeSafety.NativeOwns(true, true, false), "AI on: native owns when in-mod chat/tools on");
+        Console.WriteLine("Native ownership with AI on: 2 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

@@ -158,13 +158,14 @@ namespace KSPChatBridge
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
         }
+        internal static bool OwnsControls { get { return NativeSafety.NativeOwns(BridgeLauncher.AiEnabled, BridgeLauncher.NativeReady, BridgeLauncher.NativeChat); } }
         void Update()
         {
             Bind();
-            bool nativeMode = BridgeLauncher.NativeReady && !BridgeLauncher.AiEnabled;
+            bool nativeMode = OwnsControls;
             // P5-1.7: the in-mod safety tick (power, sabotage revert, parking, engine restart) runs whenever
             // NativeSafety.ShouldRun says so; the local flight tick (plans/hold/spool/trim) only in native mode.
-            bool safetyNet = NativeSafety.ShouldRun(BridgeLauncher.AiEnabled, BridgeLauncher.BridgeResponding);
+            bool safetyNet = nativeMode || NativeSafety.ShouldRun(BridgeLauncher.AiEnabled, BridgeLauncher.BridgeResponding);
             if (!nativeMode && !safetyNet) { wasNative = false; return; }
             if (vessel == null || vessel.packed) return;
             if (!wasNative)
@@ -285,7 +286,7 @@ namespace KSPChatBridge
         }
         void Fly(FlightCtrlState c)
         {
-            if (!BridgeLauncher.NativeReady || BridgeLauncher.AiEnabled || mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
+            if (!OwnsControls || mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
             try
             {
                 if (mode == "spool") return;
@@ -564,7 +565,7 @@ namespace KSPChatBridge
         internal static string Execute(string name, string argsJson)
         {
             // AI-off autopilot, or in-mod chat tool dispatch (NativeChat) may call into the local command layer.
-            bool allowed = BridgeLauncher.NativeChat || (BridgeLauncher.NativeReady && !BridgeLauncher.AiEnabled);
+            bool allowed = OwnsControls;
             if (!allowed) return "Local mode is not ready.";
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";
             try { instance.Bind(); return instance.Command(name, MiniJson.Deserialize(argsJson ?? "{}")); }

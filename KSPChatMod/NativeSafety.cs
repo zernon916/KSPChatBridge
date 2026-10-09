@@ -13,6 +13,14 @@ namespace KSPChatBridge
             return !aiEnabled || !bridgeResponding;
         }
 
+        /// <summary>Luke (Oct 9): the in-mod controller owns the controls with AI on too - the AI only issues commands
+        /// to it. AI off: owned once the handoff marked native ready. AI on: owned whenever in-mod chat/tools are on
+        /// (native_chat, the default), so the bridge never flies.</summary>
+        internal static bool NativeOwns(bool aiEnabled, bool nativeReady, bool nativeChat)
+        {
+            return aiEnabled ? nativeChat : nativeReady;
+        }
+
         /// <summary>A health result older than this counts as "bridge absent" (watchdog polls ~2 s; 3 missed checks).</summary>
         internal const double RespondingFreshSeconds = 10;
 

@@ -450,7 +450,7 @@ namespace KSPChatBridge
             GUI.enabled = was && vertical;
             if (GUILayout.Button("Chute / dV check", GUILayout.Width(110))) ChatWindow.ToolFromMenu("landing_check", "{}");
             GUI.enabled = was;
-            if (!BridgeLauncher.AiEnabled && GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
+            if (NativeFlightController.OwnsControls && GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
             if (GUILayout.Button("Abort")) ChatWindow.ToolFromMenu("abort", "{}");
             GUILayout.EndHorizontal();
             LandingLine();
@@ -567,7 +567,7 @@ namespace KSPChatBridge
 
         static void PlanPost(string path, string json, bool toChat)
         {
-            if (!BridgeLauncher.AiEnabled) { planMsg = NativeFlightController.Execute(path, json); return; }
+            if (NativeFlightController.OwnsControls) { planMsg = NativeFlightController.Execute(path, json); return; }
             planMsg = "...";
             BridgeText(path, json, 30000, (ok, body) =>
             {
@@ -579,7 +579,7 @@ namespace KSPChatBridge
         // Live runner status + plans pushed by the chat AI (GET /flightplan?since=rev, about once a second).
         static void PollPlan()
         {
-            if (!BridgeLauncher.AiEnabled) { planStatus = NativeFlightController.PlanStatus; return; }
+            if (NativeFlightController.OwnsControls) { planStatus = NativeFlightController.PlanStatus; return; }
             if (Interlocked.CompareExchange(ref planPolling, 1, 0) != 0) return;
             int since = planRev;
             BridgeText("flightplan?format=text&since=" + since, null, 3000, (ok, body) =>
@@ -906,7 +906,7 @@ namespace KSPChatBridge
 
         static void LoadTaxi()
         {
-            if (!BridgeLauncher.AiEnabled) { taxiBody = NativeFlightController.Execute("taxi/list", "{}"); return; }
+            if (NativeFlightController.OwnsControls) { taxiBody = NativeFlightController.Execute("taxi/list", "{}"); return; }
             BridgeText("taxi", null, 4000, (ok, body) => { if (ok) taxiBody = body; else ChatWindow.Notice("AICS Taxi: " + body); });
         }
 

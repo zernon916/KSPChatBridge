@@ -126,9 +126,9 @@ namespace KSPChatBridge
         {
             // P5-1.8: always show something honest: fresh bridge rows, else the in-mod controller's own state.
             double age = bridgeRowsAt < 0 ? -1 : Time.realtimeSinceStartup - bridgeRowsAt;
-            rows = DashboardRows.Choose(BridgeLauncher.AiEnabled, bridgeRows, age, NativeFlightController.Phase, NativeFlightController.PlanStatus);
+            rows = DashboardRows.Choose(BridgeLauncher.AiEnabled && !NativeFlightController.OwnsControls, bridgeRows, age, NativeFlightController.Phase, NativeFlightController.PlanStatus);
             statusOk = true;
-            if (!BridgeLauncher.AiEnabled) { bridgeRows = null; data = new Dictionary<string, string>(); return; }
+            if (!BridgeLauncher.AiEnabled || NativeFlightController.OwnsControls) { bridgeRows = null; data = new Dictionary<string, string>(); return; }
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             float started = Time.realtimeSinceStartup;
             ThreadPool.QueueUserWorkItem(_ =>

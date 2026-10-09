@@ -407,7 +407,7 @@ namespace KSPChatBridge
         internal static void ToolFromMenu(string name, string argsJson)
         {
             // P5-3: menu buttons for ported tools run in-mod whenever AI is off or in-mod chat/tools are on.
-            if (!BridgeLauncher.AiEnabled || (BridgeLauncher.NativeChat && NativeCommands.IsPorted(name))) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
+            if (!BridgeLauncher.AiEnabled || (NativeFlightController.OwnsControls && NativeCommands.IsPorted(name))) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
             Interlocked.Increment(ref pending);
             Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "AICS " + name + ": " + reply);
         }
