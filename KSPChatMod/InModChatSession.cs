@@ -42,7 +42,7 @@ namespace KSPChatBridge
             for (int round = 0; round < MaxRounds; round++)
             {
                 var body = new Dictionary<string, object> {
-                    { "model", ep.Model }, { "messages", messages }, { "temperature", 0.3 }, { "tools", tools }
+                    { "model", ep.Model }, { "messages", messages }, { "temperature", 0.3 }, { "stream", false }, { "tools", tools }
                 };
                 string raw;
                 try

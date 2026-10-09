@@ -8,6 +8,8 @@ namespace KSPChatBridge
 {
     internal static class OpenAiBackend
     {
+        internal const string ClineUrl = "https://api.cline.bot/api/v1";
+        internal const string ClineDefaultModel = "minimax/minimax-m2.5";   // Cline's free model; set CLINE_MODEL for e.g. anthropic/claude-sonnet-4-6
         internal const int DefaultTimeoutMs = 60000;
         internal const int CloudRetryMaxWaitSec = 30;
         internal delegate string ChatPostOverride(Endpoint ep, string bodyJson, int timeoutMs);
@@ -72,6 +74,14 @@ namespace KSPChatBridge
                 ep.Key = First(SecretsStore.Get("GEMINI_API_KEY"), SecretsStore.Get("GOOGLE_API_KEY"));
                 ep.Model = First(SecretsStore.Get("GEMINI_MODEL"), "gemini-flash-latest");
                 if (ep.Key.Length == 0) ep.Error = "Gemini needs GEMINI_API_KEY in AICS > Settings.";
+                return ep;
+            }
+            if (provider == "cline")   // Cline API: OpenAI-compatible, provider/model ids (OpenRouter style); streams unless stream=false
+            {
+                ep.Url = TrimUrl(SecretsStore.Get("CLINE_BASE_URL")); if (ep.Url.Length == 0) ep.Url = ClineUrl;
+                ep.Key = SecretsStore.Get("CLINE_API_KEY");
+                ep.Model = First(SecretsStore.Get("CLINE_MODEL"), ClineDefaultModel);
+                if (ep.Key.Length == 0) ep.Error = "Cline needs CLINE_API_KEY in AICS > Settings (app.cline.bot).";
                 return ep;
             }
             if (provider == "groq")

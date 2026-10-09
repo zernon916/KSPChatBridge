@@ -242,3 +242,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Token estimate:** full list 21.7k chars (~5.4k tokens) per request -> 'gear down' offer 0.76k chars (~190 tokens), ~96% less; vague ask = find_tool only (~60 tokens) + one extra round.
 **Tests run:** C# 'Tool trimming: 11'; pytest 494; Release 0 errors.
 **Still needs live check:** whether Qwen 3B uses find_tool reliably; alias coverage.
+
+## Cline provider - DONE (tests; needs live check)
+**Changed:** provider 'cline': https://api.cline.bot/api/v1 (CLINE_BASE_URL override), CLINE_API_KEY (Settings key list, masked), CLINE_MODEL, default minimax/minimax-m2.5 (Cline's free model). Shown in the model list and Settings help. Chat and crew requests now send stream:false, because Cline streams by default.
+**Tests run:** C# resolve/no-key/override/stream checks; pytest 494; Release 0 errors.
+**Still needs live check:** a real Cline key and tool calls through their gateway.

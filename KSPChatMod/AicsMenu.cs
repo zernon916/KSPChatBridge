@@ -1026,6 +1026,7 @@ namespace KSPChatBridge
                                          : "API: paste your OpenAI API key (platform.openai.com) below and Save.", ncg == 1 ? warnStyle : small);
             }
             else if (id == "gemini") GUILayout.Label("Gemini (free tier): free key from aistudio.google.com. Paste it below and Save.", small);
+            else if (id == "cline") GUILayout.Label("Cline API: key from app.cline.bot. Default model minimax/minimax-m2.5 (free); set CLINE_MODEL for others (provider/model).", small);
             else if (id == "groq") GUILayout.Label("Groq (free tier, fast): free key from console.groq.com. Free = 8K tokens/min, so tool steps may pause ~10-30 s.", small);
             else if (id == "openrouter") GUILayout.Label("OpenRouter free models: key from openrouter.ai. Free = 50 requests/day (~15-25 chat messages).", small);
             else if (id == "huggingface") GUILayout.Label("Hugging Face router: token (huggingface.co/settings/tokens, Inference Providers permission). Free credits are tiny.", small);
@@ -1149,7 +1150,7 @@ namespace KSPChatBridge
         static bool NeedsKey(string id)
         {
             return id == "gemini" || id == "groq" || id == "openrouter" || id == "huggingface" || id == "custom"
-                || id == "claude" || id == "grokbot"
+                || id == "claude" || id == "grokbot" || id == "cline"
                 || (id == "chatgpt" && ChatWindow.ChatGptMode == "api");
         }
 

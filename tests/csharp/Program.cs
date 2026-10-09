@@ -470,6 +470,12 @@ class Program
         Check(System.IO.File.Exists(System.IO.Path.Combine(secretsDir, ".env")), "secrets atomic file");
         var groq = OpenAiBackend.Resolve("groq");
         Check(groq.Ok && groq.Url == "https://api.groq.com/openai/v1" && groq.Model == "openai/gpt-oss-120b", "groq resolve url/model");
+        Check(!OpenAiBackend.Resolve("cline").Ok && OpenAiBackend.Resolve("cline").Error.Contains("CLINE_API_KEY"), "cline without key -> friendly error");
+        SecretsStore.Set("CLINE_API_KEY", "cl-key");
+        var cline = OpenAiBackend.Resolve("cline");
+        Check(cline.Ok && cline.Url == "https://api.cline.bot/api/v1" && cline.Model == "minimax/minimax-m2.5" && cline.Key == "cl-key", "cline resolve url/model/key");
+        SecretsStore.Set("CLINE_MODEL", "anthropic/claude-sonnet-4-6");
+        Check(OpenAiBackend.Resolve("cline").Model == "anthropic/claude-sonnet-4-6", "cline model override");
         var local = OpenAiBackend.Resolve("local");
         Check(local.Url == "http://localhost:1234/v1", "local lm studio url");
         int fakeCalls = 0;
@@ -645,6 +651,7 @@ class Program
             vs.Persona = CrewVoice.Persona("Sidry Kerman", "Pilot", "", "Plane");
             vs.Process("land", "groq", (n, x) => "");
             Check(sentBody != null && sentBody.Contains("You are Sidry") && sentBody.Contains("\"land\"") && sentBody.Contains("find_tool") && !sentBody.Contains("\"transfer_to\""), "session sends persona + only matched tools + find_tool");
+        Check(sentBody.Contains("\"stream\":false"), "requests are non-streaming (Cline streams by default)");
         }
         var cc = new CrewChatter(new Random(1));
         var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);

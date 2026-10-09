@@ -26,8 +26,8 @@ namespace KSPChatBridge
 
         // AI backend: picked in AICS -> Settings (dropdown) or "/ai <name>" in the chat; persisted (by id) in window.txt.
         // Type "/model" in chat to list that backend's models, "/model <name>" to switch model.
-        static readonly string[] ModelLabels = { "LM Studio", "Ollama", "ChatGPT", "Gemini", "Groq", "OpenRouter", "Hugging Face", "Custom (OpenAI-compatible)", "Claude", "Grok Bot", "Embedded Qwen (in-mod)" };
-        static readonly string[] ModelIds = { "local", "ollama", "chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom", "claude", "grokbot", "embedded" };
+        static readonly string[] ModelLabels = { "LM Studio", "Ollama", "ChatGPT", "Gemini", "Groq", "OpenRouter", "Hugging Face", "Custom (OpenAI-compatible)", "Claude", "Grok Bot", "Cline", "Embedded Qwen (in-mod)" };
+        static readonly string[] ModelIds = { "local", "ollama", "chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom", "claude", "grokbot", "cline", "embedded" };
         static readonly string[] LegacyIds = { "local", "ollama", "chatgpt", "grokbot" };   // old window.txt stored an index
         internal static volatile string BackendsReady = null;  // GET /health "backends_ready" (keyed APIs configured), null = unknown
         const float MinW = 300, MinH = 200, InputH = 24;

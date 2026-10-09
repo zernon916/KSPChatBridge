@@ -118,7 +118,7 @@ namespace KSPChatBridge
             bool emb = ep.Url == OpenAiBackend.EmbeddedUrl;
             if (emb && !allowLoad && !EmbeddedLlm.Loaded) return null;
             var body = new Dictionary<string, object> {
-                { "model", ep.Model }, { "temperature", 0.9 }, { "max_tokens", CrewPrompts.MaxTokens },
+                { "model", ep.Model }, { "temperature", 0.9 }, { "stream", false }, { "max_tokens", CrewPrompts.MaxTokens },
                 { "messages", new List<object> {
                     new Dictionary<string, object> { { "role", "system" }, { "content", system ?? "" } },
                     new Dictionary<string, object> { { "role", "user" }, { "content", prompt ?? "" } } } } };
