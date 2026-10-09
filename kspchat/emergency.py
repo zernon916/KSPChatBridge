@@ -810,7 +810,7 @@ def _multirotor_rotor_labels(hs, rotors):
     out = []
     for c in rotors:
         c = dict(c)
-        if c["i"] in info["lift"]:
+        if c["i"] in info["lift"] and "sample" not in c:
             c["label"] = heli.motor_label(info, c["i"], c["title"], c.get("group") or "center")
         out.append(c)
     return out
@@ -1668,6 +1668,10 @@ def ship_rows(s, ship, kind, flying):
 
 
 def _hottest(v):
+    from . import telemetry
+    local = telemetry.state(v)
+    if local and local.get("temperature") is not None:
+        return local["temperature"], local.get("hottest", "")
     hot, title = 0.0, ""
     for p in v.parts.all:
         try:
@@ -1721,6 +1725,10 @@ def _engine_sample(v):
 
 
 def _ratio(v, name):
+    from . import telemetry
+    local = telemetry.state(v)
+    if local is not None and "resources" in local:
+        return local["resources"].get(name)
     try:
         mx = v.resources.max(name)
         return None if mx <= 0 else v.resources.amount(name) / mx

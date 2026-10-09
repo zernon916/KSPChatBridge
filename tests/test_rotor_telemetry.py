@@ -88,6 +88,22 @@ def test_unknown_rpm_does_not_repitch_airborne_prop(monkeypatch):
     p.PropGovernor().tick(NS(), dict(speed=60, sit="flying", throttle=.5), True, 1)
 
 
+def test_resource_and_temperature_consumers_use_local_batch():
+    from kspchat import emergency
+    s = snapshot(); s["state"] = dict(resources={"ElectricCharge": .8}, temperature=.3, hottest="Rotor")
+    t.accept(s)
+    v = NS(_object_id=10)  # no kRPC resources or parts: any poll would fail
+    assert emergency._ratio(v, "ElectricCharge") == .8
+    assert emergency._ratio(v, "LiquidFuel") is None
+    assert emergency._hottest(v) == (.3, "Rotor")
+    assert t.state(NS(_object_id=11)) is None
+
+
+def test_invalid_batched_state_rejected():
+    s = snapshot(); s["state"] = dict(resources={"ElectricCharge": float("nan")})
+    with pytest.raises(ValueError): t.accept(s)
+
+
 def test_spool_cannot_succeed_by_reusing_one_snapshot(monkeypatch):
     monkeypatch.setattr("kspchat.power_mgmt.rotor_spool_block", lambda v: None)
     monkeypatch.setattr(p, "preflight", lambda *a, **k: ([], []))

@@ -87,7 +87,9 @@ Resume checkpoint: planning saved; first implementation action is the baseline/l
 
 ### Phase 2 - In-mod dashboards and shared telemetry
 
-Status: PLAN COMPLETE; IMPLEMENTATION NOT STARTED. Depends on Phase 1's rotor snapshot contract.
+Status: DASHBOARD BASE IMPLEMENTED/TESTED/PACKAGED; needs live check. Controller-owned displays/alarm parity continue in Phase 3.
+
+Progress (Oct 9): Systems physical rows + alarms local; Overview/Rotors tabs, control-frame labels, physics RPM/direction/limits/torque/brakes/motor. Batched resources/temperature reused by bridge; physical trim local, unavailable controller actions disabled; disconnected plan status explicit. Tests: 470 pytest; 24 C# checks; Release build passed. Phase 1 commit: 3166574. Remaining: finish controller-state/collective/advanced alarm parity in Phase 3; broader removal of legacy polling follows controller migration. Package: dist/KSPChatBridge-0.1.1-phase2.zip (bridge exe: dist/pyi/dist/AICSBridge.exe). No live test.
 
 Outcome: physical vessel status and rotor panels render from local C# state even while the bridge is down. Controller-owned progress becomes fully local as its controller moves in Phase 3.
 

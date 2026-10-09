@@ -28,6 +28,7 @@ namespace KSPChatBridge
 
         internal static bool StatusVisible, SystemsVisible;
         static bool maydayLights = true;
+        int systemsTab;
         static Rect statusRect = new Rect(100, 320, 400, 300);
         static Rect sysRect = new Rect(520, 320, 440, 440);
         static bool loaded;
@@ -84,7 +85,12 @@ namespace KSPChatBridge
             if (Time.realtimeSinceStartup < nextPoll) return;
             nextPoll = Time.realtimeSinceStartup + 1f;
             if (StatusVisible || AicsMenu.Expanded) PollStatus();
-            if (HighLogic.LoadedSceneIsFlight) PollSystems();
+            if (HighLogic.LoadedSceneIsFlight)
+            {
+                sysRows = LocalVesselState.Systems;
+                master = new[] { LocalVesselState.Level, LocalVesselState.AlarmSequence.ToString(), LocalVesselState.Alarm };
+                systemsOk = LocalVesselState.Available;
+            }
             else if (master[0] != "") master = new[] { "", "0", "" };
         }
 
@@ -296,10 +302,14 @@ namespace KSPChatBridge
         {
             float w = statusRect.width - 16;
             if (HighLogic.LoadedSceneIsFlight && master[0] != "") DrawMaster(w, false);
-            if (!statusOk) GUILayout.Label("Bridge not responding on 127.0.0.1:8765 (run_bridge.py serve).", valStyle, GUILayout.Width(w));
+            if (!statusOk) GUILayout.Label("Controller status unavailable; vessel measurements are local.", valStyle, GUILayout.Width(w));
             statusScroll = GUILayout.BeginScrollView(statusScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
+            foreach (string[] kv in LocalVesselState.Flight)
+                GUILayout.Label(kv[0] + ": " + kv[1], valStyle);
+            if (statusOk)
             foreach (string[] kv in rows)
             {
+                if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
                 string label;
                 if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
                 GUILayout.BeginHorizontal();
@@ -315,11 +325,28 @@ namespace KSPChatBridge
         void DrawSystems(int id)
         {
             float w = sysRect.width - 16;
+            systemsTab = GUILayout.Toolbar(systemsTab, new[] { "Overview", "Rotors" });
             DrawMaster(w, true);
-            foreach (var rotor in RotorTelemetry.Rows)
-                GUILayout.Label(rotor.Title + ": " + (float.IsNaN(rotor.Rpm) ? "unknown" : rotor.Rpm.ToString("F0")) + " RPM", valStyle);
-            if (!systemsOk) GUILayout.Label("Bridge not responding on 127.0.0.1:8765 (run_bridge.py serve).", valStyle, GUILayout.Width(w));
+            if (!systemsOk) GUILayout.Label("Waiting for local vessel state.", valStyle, GUILayout.Width(w));
             sysScroll = GUILayout.BeginScrollView(sysScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
+            if (systemsTab == 1)
+            {
+                GUILayout.Label("Direction: viewed toward the hub along the rotor's positive spin axis.", valStyle);
+                if (RotorTelemetry.Rows.Count == 0) GUILayout.Label("No robotic rotors on this vessel.", valStyle);
+                foreach (var r in RotorTelemetry.Rows)
+                {
+                    var vessel = FlightGlobals.ActiveVessel;
+                    string status = RotorPlacement.Status(r.Rpm, r.Limit, r.Motor, r.Brake, vessel != null && !vessel.LandedOrSplashed);
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("\u25CF", status == "fail" ? failLight : status == "caution" ? cauLight : okLight, GUILayout.Width(16));
+                    GUILayout.Label(r.Label + " / " + r.Title + "\n" + r.Direction + "  "
+                        + (float.IsNaN(r.Rpm) ? "?" : r.Rpm.ToString("F0")) + "/" + r.Limit.ToString("F0")
+                        + " RPM  Torque " + r.Torque.ToString("F0") + "%  Brake " + r.Brake.ToString("F0")
+                        + "%  Motor " + (r.Motor ? "ON" : "OFF"), valStyle);
+                    GUILayout.EndHorizontal();
+                }
+            }
+            else
             foreach (string[] r in sysRows)
             {
                 GUIStyle light = r[0] == "fail" ? failLight : r[0] == "caution" ? cauLight : okLight;

@@ -27,5 +27,18 @@ class Program
         Check(RotorMeasurements.Rpm(new Rotor()) == 380, "physics RPM beats stale UI field");
         Check(float.IsNaN(RotorMeasurements.Rpm(new object())), "missing measurement is unknown");
         Console.WriteLine("Rotor measurement: 2 behavior checks passed.");
+        Check(RotorPlacement.Label(0, 0, 0, 0, 1, 1) == "MR - Main Rotor", "single main");
+        Check(RotorPlacement.Label(0, -3, 1, 0, 0, 1) == "TR - Tail Rotor", "tail");
+        Check(RotorPlacement.Label(-1, 1, 0, 0, 1, 4) == "LF - Left Front", "quad LF");
+        Check(RotorPlacement.Label(1, 1, 0, 0, 1, 4) == "RF - Right Front", "quad RF");
+        Check(RotorPlacement.Label(-1, -1, 0, 0, 1, 4) == "LR - Left Rear", "quad LR");
+        Check(RotorPlacement.Label(1, -1, 0, 0, 1, 4) == "RR - Right Rear", "quad RR");
+        Check(RotorPlacement.Label(0, -1, 0, 0, 1, 3) == "R - Rear", "tricopter rear");
+        Check(RotorPlacement.Label(0, 0, 0, 0, 1, 2) == "C - Center", "coax center");
+        Check(RotorPlacement.Label(0, 1, 0, 1, 0, 0) == "PU - Pusher/Puller", "forward axis");
+        Check(RotorPlacement.Status(380, 400, true, 0, true) == "ok", "normal RPM");
+        Check(RotorPlacement.Status(0, 400, true, 0, true) == "fail", "RPM lost");
+        Check(RotorPlacement.Status(double.NaN, 400, true, 0, true) == "caution", "RPM unknown");
+        Console.WriteLine("Placement and rotor status: 12 behavior checks passed.");
     }
 }

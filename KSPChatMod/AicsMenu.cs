@@ -573,7 +573,7 @@ namespace KSPChatBridge
             {
                 try
                 {
-                    if (!ok) { planStatus = ""; return; }
+                    if (!ok) { planStatus = "Controller unavailable"; return; }
                     int nl = body.IndexOf('\n');
                     string head = nl >= 0 ? body.Substring(0, nl) : body, rest = nl >= 0 ? body.Substring(nl + 1) : "";
                     int tab = head.IndexOf('\t');

@@ -32,6 +32,14 @@ def accept(data):
         raise ValueError("invalid sequence")
     if not isinstance(data.get("vessel_id"), str):
         raise ValueError("invalid vessel")
+    state_data = data.get("state")
+    if state_data is not None:
+        if not isinstance(state_data, dict) or not isinstance(state_data.get("resources", {}), dict):
+            raise ValueError("invalid vessel state")
+        values = list(state_data.get("resources", {}).values())
+        values += [state_data.get(k) for k in ("temperature", "altitude", "agl", "speed", "vs", "g")]
+        if any(x is not None and (type(x) not in (int, float) or not math.isfinite(x)) for x in values):
+            raise ValueError("invalid vessel measurement")
     rows = data.get("rotors")
     if not isinstance(rows, list) or len(rows) > 256:
         raise ValueError("invalid rotor list")
@@ -75,3 +83,13 @@ def rotor(vessel, part):
             if pid and pid != "0" and row.get("rpc_part_id") == pid:
                 return True, dict(row, sample=(_snapshot["session"], _snapshot["sequence"]))
         return True, None
+
+
+def state(vessel):
+    """Fresh local measurements, or None when unavailable (never another vessel)."""
+    with _lock:
+        if (_snapshot is None or time.monotonic() - _received > MAX_AGE
+                or not str(getattr(vessel, "_object_id", ""))
+                or str(getattr(vessel, "_object_id", "")) != _snapshot.get("rpc_vessel_id")):
+            return None
+        return copy.deepcopy(_snapshot.get("state"))

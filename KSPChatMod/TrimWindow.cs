@@ -70,6 +70,14 @@ namespace KSPChatBridge
         void Update()
         {
             if (!TrimVisible) return;
+            Vessel vessel = FlightGlobals.ActiveVessel;
+            if (vessel != null)
+            {
+                if (!dragPitch) pitch = vessel.ctrlState.pitchTrim;
+                if (!dragRoll) roll = vessel.ctrlState.rollTrim;
+                if (!dragYaw) yaw = vessel.ctrlState.yawTrim;
+                craftName = vessel.vesselName;
+            }
             if (Time.realtimeSinceStartup >= nextPoll)
             {
                 nextPoll = Time.realtimeSinceStartup + PollInterval;
@@ -104,9 +112,7 @@ namespace KSPChatBridge
 
         static void ApplyJson(string json)
         {
-            if (!dragPitch) pitch = JsonFloat(json, "pitch", pitch);
-            if (!dragRoll) roll = JsonFloat(json, "roll", roll);
-            if (!dragYaw) yaw = JsonFloat(json, "yaw", yaw);
+            // Physical trim is sampled from the vessel on the main thread.
             if (!dragColl) collective = JsonFloat(json, "collective", collective);
             heli = JsonBool(json, "heli");
             notesSaved = JsonBool(json, "notes_saved");
@@ -143,10 +149,12 @@ namespace KSPChatBridge
             if (craftName.Length > 0)
                 GUILayout.Label("Craft: " + craftName + (notesSaved ? "  (notes saved)" : ""), small, GUILayout.Width(w));
             if (!stateOk && !everStateOk)
-                GUILayout.Label("Bridge not responding or get_trim_state missing — start run_bridge.py serve.", valStyle, GUILayout.Width(w));
+                GUILayout.Label("Controller unavailable. Physical trim values are local.", valStyle, GUILayout.Width(w));
             else if (!stateOk && Time.realtimeSinceStartup - lastGoodState > PollInterval * 3f)
                 GUILayout.Label("Trim state stale — retrying…", small, GUILayout.Width(w));
 
+            bool wasEnabled = GUI.enabled;
+            GUI.enabled = wasEnabled && stateOk;
             AutoTrimHeader(w);
             AutoTrimRow(w, "Pitch", autoPitch, "auto_pitch");
             AutoTrimRow(w, "Roll", autoRoll, "auto_roll");
@@ -166,6 +174,8 @@ namespace KSPChatBridge
             if (GUILayout.Button("Save to craft notes")) ChatWindow.ToolFromMenu("save_craft_notes", "{}");
             if (GUILayout.Button("Reset")) ChatWindow.ToolFromMenu("trim", "{\"direction\":\"reset\",\"percent\":0}");
             GUILayout.EndHorizontal();
+
+            GUI.enabled = wasEnabled;
 
             GUILayout.Space(14);
             Event e = Event.current;

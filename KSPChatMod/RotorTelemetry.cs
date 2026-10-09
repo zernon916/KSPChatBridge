@@ -18,6 +18,7 @@ namespace KSPChatBridge
             internal string PartId, RpcId, Title, Label, Direction;
             internal float Rpm, Limit, Torque, Brake;
             internal bool Motor;
+            internal Vector3 Position, Axis;
         }
         internal static List<Row> Rows = new List<Row>();
         readonly string session = Guid.NewGuid().ToString("N");
@@ -47,7 +48,7 @@ namespace KSPChatBridge
             if (Time.realtimeSinceStartup < next) return;
             next = Time.realtimeSinceStartup + .5f;
             Vessel vessel = FlightGlobals.ActiveVessel;
-            if (vessel == null) { Rows = new List<Row>(); Available = false; return; }
+            if (vessel == null) { Rows = new List<Row>(); Available = false; LocalVesselState.Clear(); return; }
             var rows = new List<Row>();
             foreach (Part part in vessel.parts)
                 foreach (PartModule module in part.Modules)
@@ -56,6 +57,10 @@ namespace KSPChatBridge
                     if (rotor == null) continue;
                     try
                     {
+                        var frame = vessel.ReferenceTransform;
+                        Vector3 offset = part.transform.position - vessel.CoM;
+                        var axisField = typeof(BaseServo).GetField("axis", BindingFlags.Instance | BindingFlags.NonPublic);
+                        Vector3 worldAxis = axisField == null ? Vector3.zero : part.transform.TransformDirection((Vector3)axisField.GetValue(rotor)).normalized;
                         rows.Add(new Row {
                             PartId = part.flightID.ToString(CultureInfo.InvariantCulture),
                             RpcId = RpcId(part, "KRPC.SpaceCenter.Services.Parts.Part"),
@@ -63,19 +68,25 @@ namespace KSPChatBridge
                             Direction = rotor.rotateCounterClockwise ? "CCW" : "CW",
                             Rpm = RotorMeasurements.Rpm(rotor), Limit = rotor.rpmLimit,
                             Torque = rotor.servoMotorLimit, Brake = rotor.brakePercentage,
-                            Motor = rotor.servoMotorIsEngaged
+                            Motor = rotor.servoMotorIsEngaged,
+                            Position = new Vector3(Vector3.Dot(offset, frame.right), Vector3.Dot(offset, frame.up), Vector3.Dot(offset, -frame.forward)),
+                            Axis = new Vector3(Vector3.Dot(worldAxis, frame.right), Vector3.Dot(worldAxis, frame.up), Vector3.Dot(worldAxis, -frame.forward))
                         });
                     }
                     catch (Exception ex) { Debug.LogWarning("[AICS] rotor sample: " + ex.Message); }
                 }
+            int liftCount = rows.FindAll(r => Math.Abs(r.Axis.z) >= .7).Count;
+            foreach (var row in rows) row.Label = RotorPlacement.Label(row.Position.x, row.Position.y, row.Axis.x, row.Axis.y, row.Axis.z, liftCount);
             Rows = rows; Available = true;
+            try { LocalVesselState.Sample(vessel); }
+            catch (Exception ex) { LocalVesselState.Clear(); Debug.LogWarning("[AICS] local telemetry: " + ex.Message); }
             string payload = Serialize(rows, vessel.id.ToString(), RpcId(vessel, "KRPC.SpaceCenter.Services.Vessel"));
             if (Interlocked.CompareExchange(ref sending, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ => {
                 try
                 {
                     byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                    var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/telemetry/rotors");
+                    var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/telemetry");
                     req.Proxy = null; req.Method = "POST"; req.ContentType = "application/json";
                     req.Timeout = 1200; req.ReadWriteTimeout = 1200; req.ContentLength = bytes.Length;
                     using (var stream = req.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
@@ -105,8 +116,8 @@ namespace KSPChatBridge
                     .Append(",\"torque\":").Append(Number(row.Torque)).Append(",\"brake\":").Append(Number(row.Brake))
                     .Append(",\"motor_on\":").Append(row.Motor ? "true" : "false").Append('}');
             }
-            return s.Append("]}").ToString();
+            return s.Append("],\"state\":").Append(LocalVesselState.Json).Append('}').ToString();
         }
-        void OnDestroy() { Available = false; Rows = new List<Row>(); }
+        void OnDestroy() { Available = false; Rows = new List<Row>(); LocalVesselState.Clear(); }
     }
 }
