@@ -32,6 +32,8 @@ namespace KSPChatBridge
         float elevator;
         NativePropulsion props;
         NativePower power;
+        NativeRecovery recovery;
+        bool wasNative;
         readonly NativeEngines engines = new NativeEngines();
         RotorSpool spool;
         CollectiveController collective = new CollectiveController();
@@ -50,11 +52,11 @@ namespace KSPChatBridge
         sealed class SurfaceState
         {
             internal float Angle, Authority;
-            internal bool Deploy, Invert, Pitch, Roll, Yaw;
+            internal bool Deploy, Invert, PartInvert, Pitch, Roll, Yaw;
             internal SurfaceState(ModuleControlSurface s)
-            { Angle = s.deployAngle; Authority = s.authorityLimiter; Deploy = s.deploy; Invert = s.deployInvert; Pitch = s.ignorePitch; Roll = s.ignoreRoll; Yaw = s.ignoreYaw; }
+            { Angle = s.deployAngle; Authority = s.authorityLimiter; Deploy = s.deploy; Invert = s.deployInvert; PartInvert = s.partDeployInvert; Pitch = s.ignorePitch; Roll = s.ignoreRoll; Yaw = s.ignoreYaw; }
             internal void Restore(ModuleControlSurface s)
-            { s.deployAngle = Angle; s.authorityLimiter = Authority; s.deploy = Deploy; s.deployInvert = Invert; s.ignorePitch = Pitch; s.ignoreRoll = Roll; s.ignoreYaw = Yaw; }
+            { s.deployAngle = Angle; s.authorityLimiter = Authority; s.deploy = Deploy; s.deployInvert = Invert; s.partDeployInvert = PartInvert; s.ignorePitch = Pitch; s.ignoreRoll = Roll; s.ignoreYaw = Yaw; }
         }
         static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength = 65536, RecursionLimit = 16 }; }
         static double Num(Dictionary<string, object> a, string key, double fallback)
@@ -101,6 +103,7 @@ namespace KSPChatBridge
             vessel.OnFlyByWire += Fly;
             props = new NativePropulsion(vessel);
             power = new NativePower(vessel);
+            recovery = new NativeRecovery(vessel); wasNative = false;
             partCount = vessel.parts.Count;
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
@@ -108,7 +111,8 @@ namespace KSPChatBridge
         void Update()
         {
             Bind();
-            if (!BridgeLauncher.NativeReady || BridgeLauncher.AiEnabled || vessel == null) return;
+            if (!BridgeLauncher.NativeReady || BridgeLauncher.AiEnabled || vessel == null) { wasNative = false; return; }
+            if (!wasNative) { recovery = new NativeRecovery(vessel); wasNative = true; }
             bool manual = GameSettings.PITCH_UP.GetKey() || GameSettings.PITCH_DOWN.GetKey() || GameSettings.ROLL_LEFT.GetKey()
                 || GameSettings.ROLL_RIGHT.GetKey() || GameSettings.YAW_LEFT.GetKey() || GameSettings.YAW_RIGHT.GetKey();
             if (manual && Busy) { Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
@@ -141,6 +145,12 @@ namespace KSPChatBridge
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local power recovery: " + ex.Message); }
             try { engines.Tick(vessel, Time.realtimeSinceStartup); }
             catch (Exception ex) { ChatWindow.Notice("Local engine restart failed: " + ex.Message); }
+            try
+            {
+                int restored = recovery.Tick(vessel, Time.realtimeSinceStartup, Active && !vessel.LandedOrSplashed);
+                if (restored > 0) ChatWindow.Notice("Local pilot: restored configuration on " + restored + " module(s).");
+            }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local configuration recovery: " + ex.Message); }
             if (GameSettings.PITCH_UP.GetKey() || GameSettings.PITCH_DOWN.GetKey() || GameSettings.ROLL_LEFT.GetKey()
                 || GameSettings.ROLL_RIGHT.GetKey() || GameSettings.YAW_LEFT.GetKey() || GameSettings.YAW_RIGHT.GetKey())
                 if (Active) { Stop(); ChatWindow.Notice("Local autopilot released: manual input."); }
@@ -321,10 +331,12 @@ namespace KSPChatBridge
             {
                 var s = pair.Key;
                 if (s == null || s.ignorePitch || s.part.partInfo.title.IndexOf("blade", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                if (!recovery.CanTrim(s)) continue; // do not adopt a pending sabotage change as a trim baseline
                 double forward = Vector3.Dot(s.part.transform.position - vessel.CoM, vessel.ReferenceTransform.up);
                 double sign = FlightPolicy.SurfaceSign(forward, s.partDeployInvert, s.deployInvert);
                 s.deployAngle = (float)FlightPolicy.Clamp(s.deployAngle + Math.Sign(input) * sign * Math.Min(.35, Math.Abs(input) * 3), -12, 12);
                 s.deploy = Math.Abs(s.deployAngle) > .05;
+                recovery.AcceptSurface(s);
             }
             vessel.ctrlState.pitchTrim = (float)FlightPolicy.Clamp(vessel.ctrlState.pitchTrim + Math.Sign(input) * Math.Min(.015, Math.Abs(input) * .05), -1, 1);
             trimBaselineVs = vessel.verticalSpeed; trimBaselinePitch = Pitch(); watchTrimUntil = Time.realtimeSinceStartup + 8;
@@ -370,7 +382,7 @@ namespace KSPChatBridge
                 case "auto_trim_now": NudgeTrim(true); return "Trim checked; adjustment requires steady level flight and enabled pitch trim.";
                 case "trim":
                     if (Str(a, "direction", "up") != "reset") return "Use the local trim sliders to set trim.";
-                    foreach (var pair in originals) if (pair.Key != null) pair.Value.Restore(pair.Key);
+                    foreach (var pair in originals) if (pair.Key != null) { pair.Value.Restore(pair.Key); recovery.AcceptSurface(pair.Key); }
                     vessel.ctrlState.pitchTrim = vessel.ctrlState.rollTrim = vessel.ctrlState.yawTrim = 0;
                     trimSuspended = false; watchTrimUntil = 0; return "Trim and original surface state restored.";
                 case "plane_hold":

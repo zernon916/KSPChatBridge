@@ -135,5 +135,37 @@ class Program
         restart.Schedule(new[] { 1 }, 6); restart.Cancel();
         Check(restart.Tick(10, e => true, e => activated++) == 0, "abort cancels restart");
         Console.WriteLine("Engine restart: 10 behavior checks passed.");
+        var recovery = new RecoveryGate();
+        Check(!recovery.Tick(false, 0), "unchanged configuration");
+        Check(!recovery.Tick(true, 1) && !recovery.Tick(true, 3.9), "recovery delay");
+        Check(recovery.Tick(true, 4), "stable mismatch restores");
+        recovery.Reset(); Check(!recovery.Tick(true, 5), "authorized change resets delay");
+        Check(!recovery.Tick(false, 6) && !recovery.Tick(true, 8), "self corrected mismatch cancels");
+        Check(!recovery.Tick(true, 0), "clock reset restarts delay");
+        Console.WriteLine("Configuration recovery delay: 6 behavior checks passed.");
+        Check(ReversePolicy.ForwardPrimary("forward", "Reverse thrust") == true, "secondary reverser");
+        Check(ReversePolicy.ForwardPrimary("reverse", "forward") == false, "primary reverser");
+        Check(ReversePolicy.ForwardPrimary("AirBreathing", "ClosedCycle") == null, "normal mode switch preserved");
+        Check(ReversePolicy.ForwardPrimary("reverse A", "reverse B") == null, "ambiguous mode left alone");
+        Console.WriteLine("Reverse mode classification: 4 behavior checks passed.");
+        var vessel = new Vessel(); var part = new Part { vessel = vessel }; vessel.parts.Add(part);
+        var surface = new ModuleControlSurface { part = part, deployAngle = 2 };
+        var intake = new ModuleResourceIntake { part = part };
+        var engine = new ModuleEngines { part = part };
+        var multi = new MultiModeEngine { part = part };
+        part.Modules.AddRange(new PartModule[] { surface, intake, engine, multi });
+        var safeguards = new NativeRecovery(vessel);
+        surface.deployInvert = true; surface.ignorePitch = true; intake.intakeEnabled = false;
+        engine.thrustPercentage = 0; multi.runningPrimary = false;
+        Check(safeguards.Tick(vessel, 0, true) == 0 && !safeguards.CanTrim(surface), "pending recovery blocks baseline adoption");
+        Check(safeguards.Tick(vessel, 3, true) == 4, "restore changed modules by identity");
+        Check(!surface.deployInvert && !surface.ignorePitch && intake.intakeEnabled && engine.thrustPercentage == 100 && multi.runningPrimary, "configuration actually restored");
+        surface.deployAngle = 3; safeguards.AcceptSurface(surface);
+        Check(safeguards.Tick(vessel, 7, true) == 0 && safeguards.CanTrim(surface), "authorized trim retained");
+        surface.deployAngle = 9; safeguards.Tick(vessel, 8, true); safeguards.Tick(vessel, 12, false);
+        Check(safeguards.Tick(vessel, 13, true) == 0 && surface.deployAngle == 9, "manual release cancels pending restoration");
+        part.vessel = new Vessel();
+        Check(safeguards.Tick(vessel, 20, true) == 0 && surface.deployAngle == 9, "detached parts never restored");
+        Console.WriteLine("Configuration recovery game adapter: 6 behavior checks passed.");
     }
 }

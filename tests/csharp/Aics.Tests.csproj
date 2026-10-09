@@ -6,4 +6,6 @@
   <ItemGroup><Compile Include="../../KSPChatMod/FlightMissions.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativePlan.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/EngineRestart.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/RecoveryGate.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="RecoveryGameFakes.cs"/><Compile Include="../../KSPChatMod/NativeRecovery.cs"/></ItemGroup>
 </Project>
