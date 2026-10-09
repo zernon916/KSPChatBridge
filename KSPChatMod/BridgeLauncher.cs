@@ -28,6 +28,8 @@ namespace KSPChatBridge
         static bool startedByUs;
         static volatile bool quitting;
         static readonly object Lifecycle = new object();
+        static BridgeLauncher instance;
+        internal static volatile bool AiEnabled = true, NativeReady, Switching;
         int starting;
         float nextWatch;
         float aliveSince;
@@ -35,14 +37,17 @@ namespace KSPChatBridge
         string launchDir, launchPython, launchExe;
         readonly Dictionary<string, string> cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            { "autostart", "true" }, { "stop_on_quit", "true" },
+            { "autostart", "true" }, { "stop_on_quit", "true" }, { "ai_enabled", "true" },
             { "bridge_dir", "" }, { "python", "python" },
         };
 
         void Awake()
         {
+            instance = this;
             DontDestroyOnLoad(this);
             LoadCfg();
+            AiEnabled = Bool("ai_enabled");
+            if (!AiEnabled) ThreadPool.QueueUserWorkItem(_ => { NativeReady = !Healthy(1500); });
             if (!Bool("autostart")) { Debug.Log("[KSPChatBridge] bridge autostart off (bridge.cfg)"); return; }
             launchDir = cfg["bridge_dir"]; launchPython = cfg["python"];
             launchExe = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/Bridge/AICSBridge.exe");
@@ -50,6 +55,7 @@ namespace KSPChatBridge
 
         void Update()
         {
+            if (!AiEnabled || Switching) return;
             if (Time.realtimeSinceStartup < nextWatch || Volatile.Read(ref starting) != 0) return;
             nextWatch = Time.realtimeSinceStartup + 2;
             bool alive = false;
@@ -122,7 +128,7 @@ namespace KSPChatBridge
                 psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
                 lock (Lifecycle)
                 {
-                    if (quitting) return;
+                    if (quitting || !AiEnabled || Switching) return;
                     proc = Process.Start(psi);
                     startedByUs = true;
                 }
@@ -167,6 +173,55 @@ namespace KSPChatBridge
         }
 
         bool Bool(string k) { string v; return cfg.TryGetValue(k, out v) && v.Trim().ToLowerInvariant() == "true"; }
+
+        static void NativePost(string path)
+        {
+            var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + path);
+            req.Proxy = null; req.Method = "POST"; req.ContentType = "application/json";
+            req.ContentLength = 2; req.Timeout = 4000; req.ReadWriteTimeout = 4000;
+            using (var stream = req.GetRequestStream()) { stream.WriteByte(123); stream.WriteByte(125); }
+            using (req.GetResponse()) { }
+        }
+        internal static void SetAiEnabled(bool enabled)
+        {
+            if (instance == null || Switching || enabled == AiEnabled) return;
+            if (NativeFlightController.Busy)
+            { ChatWindow.Notice("Stop the local controller before switching AI mode."); return; }
+            if (Volatile.Read(ref instance.starting) != 0)
+            { ChatWindow.Notice("Bridge startup is in progress; switch once it is ready."); return; }
+            Switching = true;
+            string configPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/bridge.cfg");
+            ThreadPool.QueueUserWorkItem(_ => {
+                bool prepared = false;
+                try
+                {
+                    if (!enabled && Healthy(1500))
+                    {
+                        if (!startedByUs || proc == null) throw new InvalidOperationException("An externally started bridge is running; stop it before selecting AI off.");
+                        NativePost("native/prepare-off"); prepared = true;
+                        NativePost("shutdown");
+                        if (!proc.WaitForExit(6000)) throw new InvalidOperationException("Bridge has not stopped yet; mode unchanged.");
+                    }
+                    lock (Lifecycle)
+                    {
+                        if (!enabled && proc != null && !proc.HasExited) throw new InvalidOperationException("Bridge still running; mode unchanged.");
+                        if (!enabled && proc != null) { proc.Dispose(); proc = null; startedByUs = false; }
+                        instance.cfg["ai_enabled"] = enabled ? "true" : "false";
+                        var lines = new StringBuilder("# AICS bridge settings\n");
+                        foreach (var kv in instance.cfg) lines.Append(kv.Key).Append(" = ").Append(kv.Value).Append('\n');
+                        File.WriteAllText(configPath, lines.ToString());
+                        AiEnabled = enabled; NativeReady = !enabled;
+                    }
+                    ChatWindow.Notice(enabled ? "AI & bridge enabled." : "AI off. Local controls and dashboards remain available.");
+                }
+                catch (Exception ex)
+                {
+                    if (prepared) { try { NativePost("native/cancel-off"); } catch (Exception) { } }
+                    ChatWindow.Notice("AI mode: " + ex.Message);
+                }
+                finally { Switching = false; }
+            });
+        }
 
         void LoadCfg()
         {

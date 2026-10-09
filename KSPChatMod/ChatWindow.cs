@@ -406,11 +406,13 @@ namespace KSPChatBridge
         }
         internal static void ToolFromMenu(string name, string argsJson)
         {
+            if (!BridgeLauncher.AiEnabled) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
             Interlocked.Increment(ref pending);
             Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "AICS " + name + ": " + reply);
         }
         internal static void ChatFromMenu(string text)
         {
+            if (!BridgeLauncher.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
             lock (Sync) Incoming.Enqueue("You (AICS): " + text);
             if (!visible) SetVisible(true);
             MarkChatGpt(text);
@@ -421,6 +423,7 @@ namespace KSPChatBridge
 
         void Send(string text)
         {
+            if (!BridgeLauncher.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
             text = (text ?? "").Trim();
             if (text.Length == 0) return;
             string low = text.ToLowerInvariant();
@@ -521,6 +524,7 @@ namespace KSPChatBridge
         // Science-watcher notices from the bridge (GET /events, "id<TAB>text" lines), polled off the main thread.
         void PollEvents()
         {
+            if (!BridgeLauncher.AiEnabled) return;
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             int since = lastEventId;
             ThreadPool.QueueUserWorkItem(_ =>

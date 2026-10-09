@@ -2830,6 +2830,9 @@ def _defer_until_climbout(name, args, timeout=240.0):
             f"above {tko.CLIMBOUT_AGL:.0f} m and climbing. No need to call it again.")
 
 
+NATIVE_HANDOFF = False
+
+
 def call_tool(name, args=None):
     """Run a tool by name with a dict of args. Always returns a string."""
     import json
@@ -2844,6 +2847,8 @@ def call_tool(name, args=None):
             pass
     try:
         with _lock:
+            if NATIVE_HANDOFF:
+                return "Bridge is handing control to the in-mod autopilot; retry after the mode switch."
             res = f(**(args or {}))
         res = res if isinstance(res, str) else json.dumps(res)
         return res + _engine_restart_note(name, args or {}, res)

@@ -173,6 +173,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(ex)})
         if not isinstance(b, dict):
             return self._send(400, {"error": "JSON object required"})
+        if self.path == "/native/prepare-off":
+            from . import guard, hold, heli, plane, lander, taxi, docking
+            with ksp_actions._lock:
+                if _busy[0] or guard.busy() or any(m.active() for m in (hold, heli, plane, lander, taxi, docking)):
+                    return self._send(409, {"error": "Stop the current controller/chat before disabling the bridge"})
+                ksp_actions.NATIVE_HANDOFF = True
+            return self._send(200, {"ok": True})
+        if self.path == "/native/cancel-off":
+            with ksp_actions._lock:
+                ksp_actions.NATIVE_HANDOFF = False
+            return self._send(200, {"ok": True})
         sid = str(b.get("session") or "default")
         if self.path.startswith("/shutdown"):
             self._send(200, {"ok": True})

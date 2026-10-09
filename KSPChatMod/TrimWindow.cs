@@ -81,12 +81,20 @@ namespace KSPChatBridge
             if (Time.realtimeSinceStartup >= nextPoll)
             {
                 nextPoll = Time.realtimeSinceStartup + PollInterval;
+                if (!BridgeLauncher.AiEnabled)
+                {
+                    string local = NativeFlightController.Execute("get_trim_state", "{}");
+                    stateOk = local.StartsWith("{");
+                    if (stateOk) { ApplyJson(local); everStateOk = true; lastGoodState = Time.realtimeSinceStartup; }
+                    return;
+                }
                 PollState();
             }
         }
 
         static void PollState()
         {
+            if (!BridgeLauncher.AiEnabled) return;
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -224,6 +232,7 @@ namespace KSPChatBridge
             else if (axis == "auto_yaw") autoYaw = on;
             else if (axis == "auto_rotor") autoRotor = on;
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, on ? 1 : 0);
+            if (!BridgeLauncher.AiEnabled) { ChatWindow.Notice(NativeFlightController.Execute("set_trim", json)); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { PostTool("set_trim", json); PollState(); }
@@ -274,6 +283,7 @@ namespace KSPChatBridge
         static void SetTrim(string axis, float value)
         {
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, value);
+            if (!BridgeLauncher.AiEnabled) { NativeFlightController.Execute("set_trim", json); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { PostTool("set_trim", json); }

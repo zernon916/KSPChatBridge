@@ -1003,6 +1003,7 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
     reset_spool_state()
     idxs = set(rotors) if rotors is not None else None
     pre, probs = preflight(v, rotors=idxs)
+    required = set(idxs) if idxs is not None else {c["i"] for c in rotor_checks(v)}
     rpm_t = float(rpm_target if rpm_target is not None else RPM_MAX)
     set_brake(v, 0.0, rotors=idxs)
     set_rotor(v, rpm=rpm_t, motor=True, rotors=idxs, flying=False)
@@ -1026,6 +1027,8 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
         checks = [c for c in rotor_checks(v) if idxs is None or c["i"] in idxs]
         if not checks:
             return False, "spool-up: no rotors found"
+        if {c["i"] for c in checks} != required:
+            return False, "spool-up: rotor disappeared or layout changed"
         ready = []
         for c in checks:
             lim = float(c["rpm_limit"] or rpm_t)

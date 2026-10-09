@@ -68,6 +68,7 @@ namespace KSPChatBridge
 
         static void PollBridge()
         {
+            if (!BridgeLauncher.AiEnabled) return;
             if (Interlocked.CompareExchange(ref bridgePolling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -527,6 +528,7 @@ namespace KSPChatBridge
         // AI fill / From chat: POST /flightplan/draft -> the normalized plan text replaces the editor content.
         static void PlanDraft(bool fromChat)
         {
+            if (!BridgeLauncher.AiEnabled) { planMsg = "AI off: edit the plan or use a local template."; return; }
             planBusy = true;
             planMsg = fromChat ? "Converting the chat's plan..." : "AI is drafting the plan...";
             string json = "{\"model\":" + ChatWindow.JsonStr(ChatWindow.BackendId(ChatWindow.BackendIndex)) +
@@ -547,6 +549,12 @@ namespace KSPChatBridge
 
         static void PlanTemplate(string kind)
         {
+            if (!BridgeLauncher.AiEnabled)
+            {
+                if (kind == "orbit" || kind == "circuit") { planMsg = "This template is not yet supported in local mode."; return; }
+                planIncoming = "takeoff\nclimb 1500 m agl\ncruise hdg 090 speed 150 for 2 min\ncircle 1 laps left bank 15\nland Runway 27";
+                planMsg = "Local aircraft template loaded."; return;
+            }
             BridgeText("flightplan/template?kind=" + kind, null, 5000, (ok, body) =>
             {
                 if (ok) { planIncoming = body; planMsg = "Template loaded - edit the numbers, then Fly."; }
@@ -556,6 +564,7 @@ namespace KSPChatBridge
 
         static void PlanPost(string path, string json, bool toChat)
         {
+            if (!BridgeLauncher.AiEnabled) { planMsg = NativeFlightController.Execute(path, json); return; }
             planMsg = "...";
             BridgeText(path, json, 30000, (ok, body) =>
             {
@@ -567,6 +576,7 @@ namespace KSPChatBridge
         // Live runner status + plans pushed by the chat AI (GET /flightplan?since=rev, about once a second).
         static void PollPlan()
         {
+            if (!BridgeLauncher.AiEnabled) { planStatus = NativeFlightController.PlanStatus; return; }
             if (Interlocked.CompareExchange(ref planPolling, 1, 0) != 0) return;
             int since = planRev;
             BridgeText("flightplan?format=text&since=" + since, null, 3000, (ok, body) =>
@@ -978,6 +988,11 @@ namespace KSPChatBridge
 
         void Settings()
         {
+            bool ai = GUILayout.Toggle(BridgeLauncher.AiEnabled, "AI & Bridge");
+            if (ai != BridgeLauncher.AiEnabled) BridgeLauncher.SetAiEnabled(ai);
+            if (BridgeLauncher.Switching) GUILayout.Label("Switching mode after controller handoff...");
+            if (!BridgeLauncher.AiEnabled) GUILayout.Label("AI off: local controls available; unported commands are disabled.");
+            if (!BridgeLauncher.AiEnabled) return;
             // AI backend dropdown (IMGUI has none: a button that unfolds the option list inline).
             string[] labels = ChatWindow.BackendLabels;
             int cur = ChatWindow.BackendIndex;
@@ -1197,6 +1212,7 @@ namespace KSPChatBridge
 
         static void PollLanding()
         {
+            if (!BridgeLauncher.AiEnabled) return;
             if (!HighLogic.LoadedSceneIsFlight || Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {

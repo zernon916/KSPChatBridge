@@ -4,6 +4,18 @@ from types import SimpleNamespace as NS
 from kspchat import heli, ksp_actions, propulsion as pr
 
 
+def test_spool_rejects_disappearing_rotor(monkeypatch):
+    monkeypatch.setattr("kspchat.power_mgmt.rotor_spool_block", lambda v: None)
+    monkeypatch.setattr(pr, "preflight", lambda *a, **k: ([], []))
+    monkeypatch.setattr(pr, "set_brake", lambda *a, **k: None)
+    monkeypatch.setattr(pr, "set_rotor", lambda *a, **k: None)
+    snapshots = iter([[{"i": 0}, {"i": 1}], [{"i": 0}]])
+    monkeypatch.setattr(pr, "rotor_checks", lambda v: next(snapshots))
+    ok, report = pr.spool_up(NS(), sleep=lambda _: None)
+    assert not ok
+    assert "disappeared" in report
+
+
 def test_second_ground_hover_spools_after_fake_spooled(monkeypatch):
     reset = []
     monkeypatch.setattr(pr, "reset_spool_state", lambda: reset.append(1))

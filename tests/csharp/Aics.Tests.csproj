@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
   <ItemGroup><Compile Include="Program.cs"/><Compile Include="../../KSPChatMod/RestartPolicy.cs"/><Compile Include="../../KSPChatMod/RotorMeasurements.cs"/><Compile Include="../../KSPChatMod/RotorPlacement.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/FlightPolicy.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/RotorSpool.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/FlightMissions.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/NativePlan.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/EngineRestart.cs"/></ItemGroup>
 </Project>

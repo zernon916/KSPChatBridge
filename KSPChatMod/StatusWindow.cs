@@ -61,6 +61,13 @@ namespace KSPChatBridge
         /// <summary>AICS menu indicators: true if the bridge reports this "ind_..." key as active.</summary>
         internal static bool Active(string key)
         {
+            if (!BridgeLauncher.AiEnabled)
+            {
+                string phase = NativeFlightController.Phase;
+                return key == "ind_holds" ? phase == "hold" || phase == "takeoff" || phase == "spool" || phase == "helicopter"
+                    : key == "ind_autoland" ? phase == "landing"
+                    : key == "ind_flightplan" && NativeFlightController.PlanRunning;
+            }
             var d = data;
             string v;
             return d != null && d.TryGetValue(key, out v) && v == "1";
@@ -107,6 +114,7 @@ namespace KSPChatBridge
 
         static void PollStatus()
         {
+            if (!BridgeLauncher.AiEnabled) { statusOk = true; rows = new List<string[]> { new[] { "autopilot", "Local " + NativeFlightController.Phase }, new[] { "plan", NativeFlightController.PlanStatus } }; return; }
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ =>
             {

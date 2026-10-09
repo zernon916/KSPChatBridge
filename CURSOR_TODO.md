@@ -57,7 +57,7 @@ Luke's decision (Oct 9): condense ALL of AICS into the KSP mod. ChatGPT does the
 
 Luke requested that planning and progress stay in THIS file, with a report after each phase. These execution phases follow the five-phase plan in the chat: Phase 1 = RPM/recovery; Phase 2 = dashboards; Phase 3 = AI-off/autopilot port. They subdivide the earlier final-goal stages; the in-mod model and bridge removal remain later work.
 
-Planning only: no implementation, tests, builds, installation or commits have been performed for these plans. Existing DONE labels above are historical, not newly verified. Preserve all existing TODO items and user edits.
+Planning record retained below; implementation has since started. Phase 1/2 results and Phase 3 checkpoint are authoritative. Existing DONE labels above are historical unless reverified below. Preserve all existing TODO items and user edits.
 
 After every implementation phase (and before stopping mid-phase), record: completed changes and files, tests actually run and their results, remaining failures, live-check status, commit/build paths if produced, and the exact next step. Mark an implementation item done only with test coverage; retain "needs live check" until Luke validates it.
 
@@ -112,7 +112,11 @@ Resume checkpoint: planning saved; after Phase 1 validation, start with the pane
 
 ### Phase 3 - AI-off and the C# autopilot core
 
-Status: PLAN COMPLETE; IMPLEMENTATION NOT STARTED. Depends on Phases 1-2. Report the detailed implementation substage before beginning each port.
+Status: IN PROGRESS (3A/3B foundation, partial 3C-3F). Not complete; needs live check.
+
+Progress (Oct 9): Phase 2 commit b583eee. Guarded AI-off handoff; native holds/trim/parking; measured-RPM spool; initial takeoff/heli/runway states; limited deterministic plans + local progress. Manual input/vessel switch/errors pause plans; strict syntax rejects unsupported options. Power recovery + cancellable staged-engine restart added. AI-off blocks plan drafting; unsupported templates explicit. Bridge remains default. Checks: 473 pytest; 194 C# behavior checks; Release build passed (NU1900 vulnerability-feed warning only); diff check clean. No Phase 3 package/live test yet.
+
+Remaining: sabotage/reverser recovery; full trim axes, stall learning/terrain checks, taxi/vertical landing, helicopter layout parity, full plan grammar/spots/settings migration, shared AI-to-C# dispatch and controller integration tests. Current native flight code is a partial port, not parity-complete. Phases 4-5 not started.
 
 Outcome: holds, takeoff, landing, trim, rotor control, sabotage restoration, parking, emergencies and flight plans operate with no bridge process or loaded model. Retain the bridge for optional AI and remaining legacy features until the later removal stage passes live tests.
 
@@ -191,5 +195,5 @@ Validation and exit criteria:
 - Luke's bridge-free live acceptance is a required gate before final removal. If unavailable or failed, record the exact blocker and retain the working bridge/fallback; do not mark Phase 5 complete.
 - Final completion report: implemented parity, automated results, Luke's live results, remaining optional dependencies/limitations, commit IDs and final zip/DLL paths. No exe path is expected in the final bridge-free package.
 
-Resume checkpoint: ALL FIVE PHASE PLANS ARE COMPLETE in this file. Implementation has not started; no code tests, builds, downloads, installation, commits or pushes were performed for this planning pass. Next action remains Phase 1 baseline tests and installed crash-log investigation. Follow the per-phase progress-recording rule above and update this checkpoint with actual work before any future stop.
+Resume checkpoint (implementation): Phase 1 commit 3166574; Phase 2 commit b583eee; packages retained under dist. Phase 3 partial code in NativeFlightController/NativePropulsion/NativePlan/FlightMissions/FlightPolicy/RotorSpool/NativePower/NativeEngines/EngineRestart plus UI/handoff tests. Checks above passed; DLL: KSPChatMod/bin/Release/net472/KSPChatBridge.dll. Next: sabotage/reverser recovery and remaining Phase 3 parity listed above. No live checks, installation, push, model download or Phase 4/5 implementation. Keep legacy fallback.
 

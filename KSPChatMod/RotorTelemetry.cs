@@ -80,6 +80,7 @@ namespace KSPChatBridge
             Rows = rows; Available = true;
             try { LocalVesselState.Sample(vessel); }
             catch (Exception ex) { LocalVesselState.Clear(); Debug.LogWarning("[AICS] local telemetry: " + ex.Message); }
+            if (!BridgeLauncher.AiEnabled) return;
             string payload = Serialize(rows, vessel.id.ToString(), RpcId(vessel, "KRPC.SpaceCenter.Services.Vessel"));
             if (Interlocked.CompareExchange(ref sending, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ => {
