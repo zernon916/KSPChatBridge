@@ -464,3 +464,10 @@ Only after P5-7 pass:
 
 Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5 Llama downloads → P5-6 Bridge-free RC → P5-7 Live DONE → P5-8 Remove bridge.
 
+
+## POST-TESTING FEATURES (Luke approved, do after P5-7)
+- hold_pattern: circle a spot at a set altitude until told otherwise.
+- follow_terrain: hold a fixed height above ground.
+- fuel_check_return: fly home automatically when fuel equals what the return trip needs.
+- formation: AI wingman flies a second craft within KSP's ~2.5 km physics range.
+
