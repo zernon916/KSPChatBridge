@@ -718,6 +718,32 @@ class Program
         Check(LlamaNative.CheckDefaults(512, 2048, 512, 1, 1) == null && LlamaNative.CheckDefaults(0, 0, 0, 0, 7) != null, "ABI default guard");
         Check(OpenAiBackend.Resolve("embedded").Error != null && OpenAiBackend.Resolve("embedded").Url == OpenAiBackend.EmbeddedUrl, "embedded provider reports missing downloads");
         Console.WriteLine("P5-5 embedded llama: 15 behavior checks passed.");
+        // ---- P5-6: versioned PluginData migration (backup first, never wipe) ----
+        string pd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-pd-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(pd);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, ".env"), "GROQ_API_KEY=x");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "bridge_settings.json"), "{\"science_mode\":\"auto\"}");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "native_settings.json"), "{\"spots\":{\"Island\":{\"lat\":1}},\"craft_notes\":{\"A\":{}}}");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "kerbal_personalities.json"), "{}");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(pd, "models"));
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "models", "big.gguf"), "w");
+            Check(PluginDataMigration.Version(pd) == 0 && PluginDataMigration.UserFiles(pd).Count == 4, "user files found (models excluded)");
+            string rep = PluginDataMigration.Run(pd, new DateTime(2026, 10, 9, 21, 0, 0, DateTimeKind.Utc));
+            var bdir = System.IO.Path.Combine(pd, "backups", "v0-20261009-210000");
+            Check(rep != null && rep.Contains("4 file(s)") && System.IO.File.Exists(System.IO.Path.Combine(bdir, ".env")) && System.IO.File.Exists(System.IO.Path.Combine(bdir, "native_settings.json")), "backup before migration");
+            var ns = MiniJson.Deserialize(System.IO.File.ReadAllText(System.IO.Path.Combine(pd, "native_settings.json")));
+            Check((string)ns["science_mode"] == "auto" && ns.ContainsKey("spots") && ns.ContainsKey("craft_notes"), "science mode imported, spots/notes kept");
+            Check(System.IO.File.ReadAllText(System.IO.Path.Combine(pd, ".env")) == "GROQ_API_KEY=x" && System.IO.File.Exists(System.IO.Path.Combine(pd, "bridge_settings.json"))
+                && System.IO.File.Exists(System.IO.Path.Combine(pd, "models", "big.gguf")), "keys/bridge settings/models untouched");
+            Check(PluginDataMigration.Version(pd) == PluginDataMigration.Current && PluginDataMigration.Run(pd, DateTime.UtcNow) == null, "migration idempotent");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "data_version.txt"), "1");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(pd, "native_settings.json"), "{\"science_mode\":\"off\"}");
+            PluginDataMigration.Run(pd, new DateTime(2026, 10, 9, 22, 0, 0, DateTimeKind.Utc));
+            Check((string)MiniJson.Deserialize(System.IO.File.ReadAllText(System.IO.Path.Combine(pd, "native_settings.json")))["science_mode"] == "off", "existing native value never overwritten");
+        }
+        finally { try { System.IO.Directory.Delete(pd, true); } catch (Exception) { } }
+        Console.WriteLine("P5-6 PluginData migration: 6 behavior checks passed.");
         string smoke = Environment.GetEnvironmentVariable("AICS_LLAMA_SMOKE");
         if (!string.IsNullOrEmpty(smoke))
         {

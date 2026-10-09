@@ -10,7 +10,9 @@
 # The exe is built from this repo's source in a throw-away venv (dist/.buildvenv, or -Python <python.exe> of an
 # existing venv) with requirements.txt + PyInstaller. Writes SHA-256 sums to dist/SHA256SUMS-<version>.txt.
 # Nothing is installed, tagged or uploaded.
-param([string]$Version = "", [string]$Python = "", [switch]$SkipExe)
+param([string]$Version = "", [string]$Python = "", [switch]$SkipExe, [switch]$BridgeFree, [string]$Suffix = "")
+# P5-6: -BridgeFree = release candidate without AICSBridge.exe (implies -SkipExe), ships templates + docs/BRIDGE_FREE.md.
+if ($BridgeFree) { $SkipExe = $true; if (-not $Suffix) { $Suffix = "-bridgefree-rc" } }
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 # Validate every recursive-cleanup target before any deletion.
@@ -54,6 +56,9 @@ $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null
 Copy-Item "$root\KSPChatMod\bin\Release\KSPChatBridge.dll" "$mod\Plugins\"
 Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md" $mod
+New-Item -ItemType Directory -Force "$mod\templates" | Out-Null
+Copy-Item "$root\templates\env.example", "$root\playstyle_notes.example.md" "$mod\templates\"
+if ($BridgeFree) { Copy-Item "$root\docs\BRIDGE_FREE.md" $mod }
 if (-not $SkipExe) { New-Item -ItemType Directory -Force "$mod\Bridge" | Out-Null; Copy-Item "$pyi\dist\AICSBridge.exe" "$mod\Bridge\" }
 $stray = Get-ChildItem $stage -Recurse -File -Include *.dll, *.pyd | Where-Object { $_.FullName -ne "$mod\Plugins\KSPChatBridge.dll" }
 if ($stray) { throw "KSP would try to load these as plugins: $($stray.FullName -join ', ')" }
@@ -73,7 +78,8 @@ $bundledModels = @($relPaths | Where-Object {
     $n.Contains('/models/') -and ($n.EndsWith('.gguf') -or $n.EndsWith('.bin'))
 })
 if ($bundledModels.Count -gt 0) { throw "Release must not bundle models under PluginData/models: $($bundledModels -join ', ')" }
-$zip = Join-Path $root "dist\KSPChatBridge-$Version.zip"
+if ($BridgeFree -and @(Get-ChildItem $stage -Recurse -File -Include *.exe).Count -gt 0) { throw "Bridge-free package must not contain an exe" }
+$zip = Join-Path $root "dist\KSPChatBridge-$Version$Suffix.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 # entries with forward slashes (Windows PowerShell's Compress-Archive writes backslashes, which breaks CKAN / unzip)
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
@@ -93,9 +99,9 @@ $badZip = @($entries | Where-Object {
     $n.EndsWith('.so') -or $n.EndsWith('.dylib') -or $n.Contains('/pluginData/models/'.ToLowerInvariant()) -or $n.Contains('/plugindata/native/') -or $n.EndsWith('.env')
 })
 if ($badZip.Count -gt 0) { Remove-Item $zip -Force; throw "Package detector failed on zip: $($badZip -join ', ')" }
-$sums = @("$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  KSPChatBridge-$Version.zip")
+$sums = @("$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())  KSPChatBridge-$Version$Suffix.zip")
 if (-not $SkipExe) { $sums += "$((Get-FileHash "$mod\Bridge\AICSBridge.exe" -Algorithm SHA256).Hash.ToLower())  GameData/KSPChatBridge/Bridge/AICSBridge.exe" }
-Set-Content (Join-Path $root "dist\SHA256SUMS-$Version.txt") $sums -Encoding ascii
+Set-Content (Join-Path $root "dist\SHA256SUMS-$Version$Suffix.txt") $sums -Encoding ascii
 Remove-Item $stage -Recurse -Force
 $sums | Out-Host
 "package: $zip"

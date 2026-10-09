@@ -435,8 +435,8 @@ Architecture not-dones:
 
 ### P5-5 — Embedded llama.cpp (download buttons)
 After P5-1 chat ownership and P5-2…4 native tools:
-- [ ] **Download model** → `PluginData/models/` (progress, cancel, refuse when AI off; pin URL/version/license/SHA)
-- [ ] **Download runtime** → `PluginData/native/*.bin` (same UI pattern; never GameData-scanned `.dll`)
+- [x] **DONE (tests; needs live check)** **Download model** → `PluginData/models/` (progress, cancel, refuse when AI off; pin URL/version/license/SHA)
+- [x] **DONE (tests; needs live check)** **Download runtime** → `PluginData/native/*.bin` (same UI pattern; never GameData-scanned `.dll`)
 - [x] **DONE (tests; needs live check)** Wire `embedded` load / generate / cancel / unload; AI-off unloads (`InModAiHost.UnloadForAiOff`)
 - [x] **DONE (tests; needs live check)** LM Studio / Ollama / cloud remain without downloads
 - [x] **DONE (tests; needs live check)** `package_release.ps1` still rejects bundled `.gguf` / forbidden DLLs
@@ -444,7 +444,7 @@ After P5-1 chat ownership and P5-2…4 native tools:
 ### P5-6 — Bridge-free release candidate
 - [ ] Shipping zip: DLL + templates + docs; no exe, no weights, no native `.dll`s
 - [ ] Separate rollback archive/tag with last bridge-with-fallback build
-- [ ] Versioned PluginData migration (settings, keys, spots, craft notes, memory); never wipe user data
+- [x] **DONE (tests; needs live check)** Versioned PluginData migration (settings, keys, spots, craft notes, memory); never wipe user data
 - [ ] Smoke with exe absent: AI-off, downloads, embedded + cloud chat, native tools from P5-1…5
 
 ### P5-7 — Live closure → “needs live check” becomes DONE

@@ -22,6 +22,8 @@ namespace KSPChatBridge
         {
             instance = this;
             DontDestroyOnLoad(this);
+            try { string m = PluginDataMigration.Run(BridgeLauncher.PluginDataDirectory, DateTime.UtcNow); if (m != null) Debug.Log("[KSPChatBridge] " + m); }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] PluginData migration skipped (data untouched): " + ex.Message); }
             Models = ModelManager.Instance;
             Runtime = new LlamaRuntimeManager(NativeLibraryLayout.NativeRoot(BridgeLauncher.PluginDataDirectory));
             EmbeddedLlm.ModelPath = () => Models.Ready ? Models.FinalPath : null;

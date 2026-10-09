@@ -37,6 +37,7 @@
     <Compile Include="../../KSPChatMod/LlamaNative.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedLlm.cs"/>
+    <Compile Include="../../KSPChatMod/PluginDataMigration.cs"/>
     <Reference Include="System.IO.Compression"/><Reference Include="System.IO.Compression.FileSystem"/>
   </ItemGroup>
 </Project>
