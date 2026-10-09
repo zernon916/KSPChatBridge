@@ -231,6 +231,11 @@ def drop(sid=None):
         _pending.pop(str(sid or session()), None)
 
 
+def clear_all_pending():
+    with _lock:
+        _pending.clear()
+
+
 def set_authority(on, kind="speed"):
     with _lock:
         _state["authority"][kind] = bool(on)

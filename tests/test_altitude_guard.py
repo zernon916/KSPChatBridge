@@ -125,7 +125,7 @@ def test_rocket_tools_hidden_from_model_for_aircraft(jet, monkeypatch):
     assert {"land_here", "land_at", "land_at_ksc"} <= {t["function"]["name"] for t in ksp_actions.tool_schemas()}
     seen = {}
 
-    def post(url, body, key):
+    def post(url, body, key=None, timeout=None):
         seen["tools"] = {t["function"]["name"] for t in body.get("tools", [])}
         return {"choices": [{"message": {"role": "assistant", "content": "Roger."}}]}
     monkeypatch.setattr(chat, "_post", post)

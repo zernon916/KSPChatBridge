@@ -669,8 +669,10 @@ def draft(backend="local", model_override=None, request="", chat_reply=""):
         try:
             url, key, model = backends.resolve(backend, model_override)
             sysmsg = DRAFT_SYSTEM.format(runways=", ".join(_runway_names()))
+            from . import config
             data = chat._post(url + "/chat/completions", {"model": model, "temperature": 0.2, "messages": [
-                {"role": "system", "content": sysmsg}, {"role": "user", "content": user}]}, key)
+                {"role": "system", "content": sysmsg}, {"role": "user", "content": user}]}, key,
+                              timeout=config.LLM_CHAT_TIMEOUT_S)
             said = chat._strip_think(data["choices"][0]["message"].get("content"))
             lines = normalize(said)
             head = f"# AI draft ({backends.LABELS.get(backend, backend)} / {model}). Edit, then Fly."
@@ -725,6 +727,14 @@ def maybe_from_chat(user_msg, reply):
 
 def pushed_since(rev):
     return (_pushed["rev"], _pushed["text"] if _pushed["rev"] > rev else "")
+
+
+def clear_vessel_context():
+    """Player switched vessels: drop editor draft from the old craft and stop a running plan."""
+    _pushed["text"] = ""
+    if active():
+        _stop.set()
+    _state.update(running=False, steps=[], i=-1, detail="", result="Vessel switched - plan cleared.", field=None)
 
 
 # ---------------------------------------------------------------- runner

@@ -56,6 +56,21 @@ def test_classify_multirotor_quad_counter_yaw():
     assert "L1 =" in roles and "R2 =" in roles and "main rotor" not in roles
 
 
+def test_classify_quad_with_sideways_hub_axes():
+    """Live EM-16S hubs often report part.direction sideways (up~0) — still a multirotor."""
+    sideways = [
+        rot(0.05, (0, 1, 0), -1.5, h=(1.5, 1.5), d=1),
+        rot(0.05, (0, 1, 0), 1.5, h=(1.5, -1.5), d=-1),
+        rot(0.05, (0, 1, 0), -1.5, h=(-1.5, 1.5), d=-1),
+        rot(0.05, (0, 1, 0), 1.5, h=(-1.5, -1.5), d=1),
+    ]
+    info = heli.classify(sideways, wings=False)
+    assert info["heli"] and info["multirotor"] and len(info["lift"]) == 4
+    # winged prop plane with two side props must NOT become a multirotor
+    plane = heli.classify([rot(0.0, (0, 1, 0), -3.0), rot(0.0, (0, 1, 0), 3.0)], wings=True)
+    assert not plane["heli"]
+
+
 class Part:
     n = 0
 
@@ -348,9 +363,15 @@ def test_routing(monkeypatch):
     monkeypatch.setattr(ksp_actions, "_heli_v", lambda vv: info)
     monkeypatch.setattr(ksp_actions.guard, "busy", lambda: None)
     monkeypatch.setattr(pr, "preflight", lambda vv, **kw: ("Pre-flight: center rotor (M-32S Rotor) Brake was 100 -> released (0)", ["x"]))
+    def _spool(vv, rotors=None, **kw):
+        calls.append(("spool", rotors))
+        return True, "Pre-flight: center rotor (M-32S Rotor) Brake was 100 -> released (0)"
+    monkeypatch.setattr(pr, "spool_up", _spool)
     monkeypatch.setattr(heli, "command", lambda mode, **kw: calls.append((mode, kw)) or "started")
     r = ksp_actions.takeoff()
-    assert calls[-1][0] == "hover" and calls[-1][1]["alt"] == heli.HOVER_AGL
+    assert any(c[0] == "spool" for c in calls)
+    cmd = [c for c in calls if c[0] != "spool"][-1]
+    assert cmd[0] == "hover" and cmd[1]["alt"] == heli.HOVER_AGL
     assert "vertical takeoff to a hover at 20 m AGL" in r and "On Power Loss: Locked" in r and "side props" in r
     assert "Brake was 100 -> released (0)" in r and "Layout: main rotor = M-32S Rotor" in r
     assert "helicopter" in ksp_actions.plane_hold(altitude_m=500)

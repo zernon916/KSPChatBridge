@@ -88,6 +88,13 @@ def classify(rotors, wings):
     props = [i for i in horiz if ax(i, 1) > AXIS_ALIGN]
     left = [i for i in props if (rotors[i].get("lat") or 0.0) <= -pr.GROUP_X]
     right = [i for i in props if (rotors[i].get("lat") or 0.0) >= pr.GROUP_X]
+    # EM-16S / BG hubs often report a sideways part.direction, so every rotor looks like a "side prop".
+    # Only when there is NO solid vertical lift rotor: 3+ bladeful → multirotor (do not steal compound side props).
+    bladed = [i for i in range(len(rotors)) if i not in bare]
+    if len(bladed) >= MULTI_MIN and not lift:
+        soft = [i for i in bladed if abs(rotors[i].get("up") or 0.0) >= 0.3]
+        lift = soft if len(soft) >= MULTI_MIN else list(bladed)
+        horiz = tail = left = right = []
     compound = bool(lift and left and right)
     heli = bool(lift) and (compound or not wings or bool(tail) or len(lift) >= 2)
     mains = []
@@ -520,6 +527,14 @@ def active():
     return _thread is not None and _thread.is_alive()
 
 
+def clear_vessel_cache():
+    """Forget cached rotor scan / classification; stop heli autopilot tied to the old craft."""
+    _INFO.clear()
+    if active():
+        stop()
+    STATE.update(mode="off", alt=None, heading=None, track=None, face=None, speed=None, hold=None, goto=None, t=0.0)
+
+
 def stop():
     _stop.set()
 
@@ -660,16 +675,29 @@ def _fly(conn):
         krpcx.autopilot(ap, True)  # kRPC 0.6: no engage() - the `engaged` property
     sit = str(v.situation).split(".")[-1]
     if sit in ("landed", "pre_launch", "splashed"):
-        # gradual torque ramp on EVERY lift rotor; wait until each is >= SPOOL_FRAC of its RPM Limit
-        ok, report = pr.spool_up(v, rotors=lift, stop_event=_stop)
-        log.info("heli: spool-up lift: %s", report)
-        if not ok:
-            return f"Heli takeoff aborted: {report}"
-        if others:
-            ok2, report2 = pr.spool_up(v, rotors=others, stop_event=_stop)
-            log.info("heli: spool-up side/tail: %s", report2)
-            if not ok2:
-                return f"Heli takeoff aborted (side/tail): {report2}"
+        # heli_control may already have spooled; skip the long ramp if every lift rotor is already up
+        already = STATE.pop("spooled", False)
+        if already:
+            checks = [c for c in pr.rotor_checks(v) if c["i"] in lift]
+            need = lambda c: pr.SPOOL_FRAC * float(c["rpm_limit"] or pr.RPM_MAX)  # noqa: E731
+            already = bool(checks) and all(
+                float(c["rpm"] or 0) >= need(c) and c.get("motor_on") is not False
+                and not (c.get("brake") or 0) > 0 for c in checks)
+        if already:
+            log.info("heli: spool-up already done in heli_control - keeping RPM, collective still zero")
+            pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=lift)
+            if others:
+                pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=others)
+        else:
+            ok, report = pr.spool_up(v, rotors=lift, stop_event=_stop)
+            log.info("heli: spool-up lift: %s", report)
+            if not ok:
+                return f"Heli takeoff aborted: {report}"
+            if others:
+                ok2, report2 = pr.spool_up(v, rotors=others, stop_event=_stop)
+                log.info("heli: spool-up side/tail: %s", report2)
+                if not ok2:
+                    return f"Heli takeoff aborted (side/tail): {report2}"
     else:
         log.info("heli: lift %s", pr.set_rotor(v, rpm=pr.RPM_MAX, torque=pr.TORQUE_MAX, motor=True, rotors=lift))
         if others:

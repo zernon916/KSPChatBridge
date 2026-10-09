@@ -39,6 +39,12 @@ log = logging.getLogger("kspchat")
 _sessions = {}
 _chat_lock = threading.Lock()  # one chat at a time (kRPC + GPU are shared)
 _busy = [0]                    # chats in progress; /health reports it so restarts can wait
+
+
+def clear_vessel_sessions():
+    """Active vessel switched: drop chat history (model must not keep the old craft's context)."""
+    for sess in _sessions.values():
+        sess.reset()
 _srv = [None]
 MENU_TOOLS = {"land_at_spot", "dock_with", "save_landing_spot", "get_landing_eta", "list_landing_spots", "abort",
               "delete_landing_spot", "land_plane", "run_science", "set_science_watcher", "get_status",
@@ -190,12 +196,13 @@ class Handler(BaseHTTPRequestHandler):
         model = str(b.get("model") or "local")
         log.info("chat [%s] %s", model, msg[:200])
         _busy[0] += 1
+        sess = None
         try:
             with _chat_lock:
                 sess = _sessions.get(sid) or _sessions.setdefault(sid, Session(sid))
                 reply, tools = sess.send(msg, model)
         finally:
-            _busy[0] -= 1
+            _busy[0] = max(0, _busy[0] - 1)
         log.info("reply %s | tools %s", reply[:200], [t["tool"] for t in tools])
         try:  # a flight plan the chat AI wrote as text (not via set_flight_plan) still lands in AICS > Flight Plan
             if not any(t["tool"] == "set_flight_plan" for t in tools) and flightplan.maybe_from_chat(msg, reply):
@@ -237,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
                 text = flightplan.draft(model, (sess.model_override.get(backends.normalize(model)) if sess else None),
                                         request, chat_reply)
         finally:
-            _busy[0] -= 1
+            _busy[0] = max(0, _busy[0] - 1)
         return self._send(200, text, text=True)
 
 

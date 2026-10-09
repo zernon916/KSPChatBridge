@@ -193,6 +193,51 @@ def parse_prop(t):
     return args
 
 
+_HELI_NL = re.compile(r"\b(hover|hold\s+(?:position|here|this\s+spot)|station\s*keep|sidestep|side\s*step|"
+                      r"vertical\s+(?:take[\s-]?off|takeoff|lift)|take[\s-]?off\s+and\s+hover|hover\s+and\s+take[\s-]?off)\b",
+                      re.I)
+_TAKEOFF_NL = re.compile(r"\btake[\s-]?off\b", re.I)
+_ORBIT_NL = re.compile(r"\b(mech\s*jeb|mechjeb|launch\s+(?:to\s+)?orbit|ascent\s+(?:to\s+)?(?:orbit|space)|"
+                       r"reach\s+orbit|go\s+to\s+orbit)\b", re.I)
+
+
+def nl_craft_refusal(text):
+    """Obvious craft/phase mismatches in free-form chat -> bridge reply, else None (let the model handle it)."""
+    raw = (text or "").strip()
+    if not raw or raw.startswith("/"):
+        return None
+    t = fix_typos(raw)
+    if parse(t) is not None:
+        return None
+    try:
+        from . import ksp_actions
+        v = ksp_actions._vessel()
+        heli = ksp_actions._heli_v(v) is not None
+        plane = ksp_actions._planeish(v)
+        sit = str(v.situation).split(".")[-1]
+    except Exception:  # noqa: BLE001
+        return None
+    if _HELI_NL.search(t):
+        if heli:
+            if sit == "flying" and _TAKEOFF_NL.search(t) and "hover" not in t.lower():
+                return "We're already airborne - say 'hover' or 'climb to N m' for this helicopter."
+        elif plane:
+            if sit == "flying":
+                return ("This is a plane already in flight - no hover or vertical takeoff. Use heading, speed, "
+                        "altitude, or 'land' / 'land at KSC'.")
+            return "This is a plane - say 'take off' for a runway takeoff, not hover."
+        elif sit == "flying":
+            return "That's helicopter talk - this craft isn't a helicopter (no vertical lift rotor)."
+    if sit == "flying" and plane and not heli and _TAKEOFF_NL.search(t):
+        return "We're already airborne in the plane - no takeoff from up here."
+    if plane and not heli and _ORBIT_NL.search(t):
+        return ("This is an aircraft, not a rocket on the pad - use runway takeoff / climb, not MechJeb ascent to "
+                "orbit.")
+    if not heli and not plane and _HELI_NL.search(t) and sit != "flying":
+        return "This isn't a helicopter - those commands need a rotor-lift craft."
+    return None
+
+
 def parse(text):
     """A direct order -> (tool, args), else None. Numbers after 'throttle' are percent. Keyword typos are
     tolerated (fix_typos)."""

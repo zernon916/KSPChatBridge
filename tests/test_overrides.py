@@ -162,7 +162,8 @@ def _draft(monkeypatch, ai_text, request):
     monkeypatch.setattr(fp, "_context", lambda: ("Test Jet, flying over Kerbin", True))
     monkeypatch.setattr(fp, "_runway_names", lambda: ["KSC"])
     monkeypatch.setattr(backends, "resolve", lambda b, m=None: ("http://x", "k", "m"))
-    monkeypatch.setattr(chat, "_post", lambda url, body, key: {"choices": [{"message": {"content": ai_text}}]})
+    monkeypatch.setattr(chat, "_post", lambda url, body, key=None, timeout=None: {
+        "choices": [{"message": {"content": ai_text}}]})
     return fp.draft("local", request=request)
 
 

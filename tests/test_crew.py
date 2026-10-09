@@ -130,6 +130,32 @@ def test_command(monkeypatch):
     assert "is on" in crew.command("")
 
 
+def test_part_the_no_double_article():
+    assert crew._part(ev()) == "left main wheel"
+    assert crew._part_the(ev()) == "the left main wheel"
+    bare = ev(lost=[], what="")
+    assert crew._part(bare) == "that part"
+    assert crew._part_the(bare) == "that part"
+    cfg = ev("config", lost=[], what="", changes=["Elevon: deploy direction INVERTED"])
+    assert crew._part(cfg) == "Elevon"
+    assert crew._part_the(cfg) == "the Elevon"
+
+
+def test_config_sabotage_no_part_lost_chatter(monkeypatch):
+    monkeypatch.setattr(crew, "enabled", lambda: True)
+    posted = []
+    crew.speak(ev("config", lost=[], what="", changes=["Elevon: INVERTED"], tag="inverted"), CREW, "Sidry Kerman",
+               post=posted.append, gen=lambda *a: "nope", wait=True)
+    assert posted == []
+
+
+def test_parts_count_only_no_chatter(monkeypatch):
+    monkeypatch.setattr(crew, "enabled", lambda: True)
+    posted = []
+    crew.speak(ev("parts", lost=[], what="2 parts"), CREW, "Sidry Kerman", post=posted.append, wait=True)
+    assert posted == []
+
+
 def test_handle_posts_pilot_first_then_crew(monkeypatch):
     posted = []
     started = []

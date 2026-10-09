@@ -123,6 +123,27 @@ def test_heli_control_rejects_planes(monkeypatch):
     assert r.startswith("Not a helicopter") and "takeoff to 50" in r
 
 
+def test_heli_control_spools_before_hover_on_ground(monkeypatch):
+    """Ground hover must call spool_up (not just preflight) so Brake 100 / Torque 0 get fixed."""
+    reset_caches()
+    v = NS(situation="VesselSituation.landed",
+           flight=lambda rf=None: NS(surface_altitude=0.5, heading=90.0),
+           orbit=NS(body=NS(reference_frame="brf", equatorial_radius=600000.0)))
+    info = {"heli": True, "kind": "multirotor (4)", "yaw": "differential torque (counter-rotating pairs)",
+            "lift": [0, 1, 2, 3], "left": [], "right": [], "tail": [], "locked": False, "roles": "L1=…"}
+    calls = []
+    monkeypatch.setattr(ksp_actions, "_vessel", lambda: v)
+    monkeypatch.setattr(ksp_actions, "_heli_v", lambda vv: info)
+    monkeypatch.setattr(heli, "active", lambda: False)
+    monkeypatch.setattr(heli, "command", lambda *a, **k: calls.append(("cmd", a, k)) or "started")
+    monkeypatch.setattr(pr, "spool_up", lambda vv, rotors=None, **kw: calls.append(("spool", rotors)) or (True, "spool-up OK"))
+    monkeypatch.setattr("kspchat.guard.busy", lambda: None)
+    r = ksp_actions.heli_control("hover", altitude_m=20)
+    assert calls[0][0] == "spool" and set(calls[0][1]) == {0, 1, 2, 3}
+    assert any(c[0] == "cmd" for c in calls)
+    assert "spool-up OK" in r and heli.STATE.get("spooled") is True
+
+
 def test_wrong_way_rotor_detected_and_fixed(monkeypatch):
     """Reversed motor direction vs the pre-takeoff sense: stop, correct, spin back up."""
     reset_caches()

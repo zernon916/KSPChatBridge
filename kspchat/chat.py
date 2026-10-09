@@ -21,7 +21,9 @@ Chat commands handled here (not sent to the model):
 ChatGPT in mcp mode: messages are queued (mcp_chat.py) instead of calling a model.
 """
 import json
+import logging
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -139,7 +141,43 @@ def prune_error_history(history):
 
 
 
-def _post(url, payload, key=None, timeout=300):
+log = logging.getLogger("kspchat")
+COMMS_DOWN = "Comms with mission control just cut out - say again when you've got me back."
+
+
+def _request_timed_out(err):
+    if isinstance(err, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(err, urllib.error.URLError):
+        r = err.reason
+        return isinstance(r, (TimeoutError, socket.timeout)) or "timed out" in str(r).lower()
+    return False
+
+
+def _comms_down_line():
+    try:
+        pilot = ksp_actions.pilot_name()
+    except Exception:  # noqa: BLE001
+        pilot = None
+    if pilot:
+        return f"{pilot}: {COMMS_DOWN}"
+    name = settings.get("ai_name") or "Bridge"
+    return f"{name}: {COMMS_DOWN}"
+
+
+def _notify_comms_down(cause):
+    line = _comms_down_line()
+    log.warning("model request failed (%s); posting in-game: %s", cause, line)
+    try:
+        from . import science
+        science.post_event(line)
+    except Exception:  # noqa: BLE001
+        log.exception("comms-down post")
+
+
+def _post(url, payload, key=None, timeout=None):
+    if timeout is None:
+        timeout = config.LLM_CHAT_TIMEOUT_S
     """POST JSON. Free cloud tiers answer 429 when a per-minute limit is hit (Groq free = 8K tokens/min and one
     tool round here is ~10K): wait Retry-After (<= CLOUD_RETRY_MAX_WAIT s) and retry, at most twice."""
     body = json.dumps(payload).encode()
@@ -384,6 +422,12 @@ class Session:
                 self.history += [{"role": "user", "content": text}, {"role": "assistant", "content": talked[1]}]
                 self.history = self.history[-config.HISTORY_MESSAGES:]
                 return talked[1], []
+        mismatch = orders.nl_craft_refusal(text)
+        if mismatch:
+            self.last_name = "Bridge"
+            self.history += [{"role": "user", "content": text}, {"role": "assistant", "content": mismatch}]
+            self.history = self.history[-config.HISTORY_MESSAGES:]
+            return mismatch, []
         direct = parse_direct(text)
         if direct:  # direct flight command (pitch / throttle / gear / brakes / chutes / eject): no model needed
             self.last_name = "Bridge"
@@ -437,7 +481,7 @@ class Session:
         try:
             for _ in range(config.MAX_TOOL_ROUNDS):
                 payload = {"model": model, "messages": msgs, "tools": tools, "temperature": 0.3}
-                data = _post(url + "/chat/completions", payload, key)
+                data = _post(url + "/chat/completions", payload, key, timeout=config.LLM_CHAT_TIMEOUT_S)
                 m = data["choices"][0]["message"]
                 calls = m.get("tool_calls") or []
                 if not calls:
@@ -457,7 +501,8 @@ class Session:
                         continue
                     if not reply and tool_log:  # some local models go silent after tools: ask for a summary
                         msgs.append({"role": "user", "content": "Briefly tell me the result in plain text."})
-                        data = _post(url + "/chat/completions", {"model": model, "messages": msgs, "temperature": 0.3}, key)
+                        data = _post(url + "/chat/completions", {"model": model, "messages": msgs, "temperature": 0.3},
+                                      key, timeout=config.LLM_CHAT_TIMEOUT_S)
                         reply = _strip_think(data["choices"][0]["message"].get("content"))
                     break
                 msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
@@ -479,7 +524,8 @@ class Session:
                     "You hit the tool-step limit. Do not call tools. In 2-3 short sentences tell Luke what you "
                     "tried, what happened, and what is missing or what he could ask instead.")})
                 try:
-                    data = _post(url + "/chat/completions", {"model": model, "messages": msgs, "temperature": 0.3}, key)
+                    data = _post(url + "/chat/completions", {"model": model, "messages": msgs, "temperature": 0.3},
+                                  key, timeout=config.LLM_CHAT_TIMEOUT_S)
                     reply = _strip_think(data["choices"][0]["message"].get("content"))
                 except Exception:
                     reply = ""
@@ -507,12 +553,20 @@ class Session:
             else:
                 reply = f"{label} backend error {e.code}: {detail[:300]}"
         except urllib.error.URLError as e:
-            reply = (f"Can't reach the {backends.LABELS.get(backend, backend)} backend ({e.reason}). "
-                     + {"local": "Is LM Studio's server running (lms server start)?",
-                        "ollama": "Is Ollama running (ollama serve)?",
-                        "custom": "Check CUSTOM_AI_URL."}.get(backend, "Check the internet connection."))
+            if _request_timed_out(e):
+                _notify_comms_down(e.reason or e)
+                reply = _comms_down_line()
+            else:
+                reply = (f"Can't reach the {backends.LABELS.get(backend, backend)} backend ({e.reason}). "
+                         + {"local": "Is LM Studio's server running (lms server start)?",
+                            "ollama": "Is Ollama running (ollama serve)?",
+                            "custom": "Check CUSTOM_AI_URL."}.get(backend, "Check the internet connection."))
         except Exception as e:
-            reply = f"Chat error: {e.__class__.__name__}: {e}"
+            if _request_timed_out(e):
+                _notify_comms_down(e)
+                reply = _comms_down_line()
+            else:
+                reply = f"Chat error: {e.__class__.__name__}: {e}"
         if not tool_log and claims_action(reply):
             reply += " (no action taken)"  # still claiming a change without any tool call
         oc = overclaim(reply, tool_log, damaged)

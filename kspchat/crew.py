@@ -31,8 +31,7 @@ _offered = {}         # vessel id -> damage tuple already offered
 _rng = random.Random()
 
 # what the event is about (for the engineer / scientist)
-MECH = {"parts", "flameout", "overheat", "config", "prop_out", "rotor_brake", "rotor_torque", "heli_rpm", "heli_tail",
-        "reverse"}
+MECH = {"parts", "flameout", "overheat", "prop_out", "rotor_brake", "rotor_torque", "heli_rpm", "heli_tail", "reverse"}
 
 LINES = {
     "scientist": [
@@ -41,8 +40,8 @@ LINES = {
         "Somebody explain the data! Anybody!", "Is it supposed to make that noise?!",
     ],
     "scientist_mech": [
-        "Sensors just lost the {part}! WHAT HAPPENED?!", "The {part}?! That's not in my experiment plan!",
-        "Readings dropped out with the {part}! Engineers, talk to me!",
+        "Sensors just lost {part_the}! WHAT HAPPENED?!", "The {part}?! That's not in my experiment plan!",
+        "Readings dropped out on {part_the}! Engineers, talk to me!",
     ],
     "engineer": [
         "That's not supposed to do that!", "Hold together, baby, hold together...", "I just tightened those bolts!",
@@ -103,9 +102,28 @@ def fmt(name, trait, text, crackle=None):
 
 
 def _part(ev):
+    """Real part title for intercom lines (never 'the that part')."""
     lost = [x for x in (ev.get("lost") or []) if x]
-    what = lost[0] if lost else (ev.get("what") or "")
-    return what or "that part"
+    if lost:
+        return str(lost[0]).strip()
+    what = str(ev.get("what") or "").strip()
+    if what and what.lower() not in ("unknown",) and not _COUNT_PARTS.match(what):
+        return what
+    for line in ev.get("changes") or []:
+        bit = str(line).split(":", 1)[0].strip()
+        if bit and bit.lower() not in ("changed",):
+            return bit
+    return "that part"
+
+
+def _part_the(ev):
+    p = _part(ev)
+    if p == "that part" or p.lower().startswith(("the ", "a ", "an ")):
+        return p
+    return f"the {p}"
+
+
+_COUNT_PARTS = re.compile(r"^\d+\s+parts?$", re.I)
 
 
 def slots(ev, crew, pilot, now=None, g=1.0, rng=None):
@@ -129,7 +147,7 @@ def slots(ev, crew, pilot, now=None, g=1.0, rng=None):
         if tr in seen and len(others) > len(seen) + 1:  # variety: a second of the same trait only if nobody else
             continue
         pool = LINES[f"{tr}_mech"] if mech and f"{tr}_mech" in LINES and ev.get("kind") != "reverse" else LINES[tr]
-        text = rng.choice(pool).format(part=_part(ev), g=float(g or 1.0))
+        text = rng.choice(pool).format(part=_part(ev), part_the=_part_the(ev), g=float(g or 1.0))
         out.append((name, tr, text[:1].upper() + text[1:]))
         _last[name] = now
         seen.add(tr)
@@ -260,10 +278,20 @@ def _one(name, trait, canned, facts, post, gen, timeout, text=None, check=None):
         pass
 
 
+def _chatter_ok(ev):
+    """Skip intercom lines that sound like part loss when nothing was actually lost."""
+    k = ev.get("kind")
+    if k in ("config", "config_ok"):
+        return False
+    if k == "parts" and not (ev.get("lost") or []) and _COUNT_PARTS.match(str(ev.get("what") or "")):
+        return False
+    return bool(ev.get("start")) and not ev.get("quiet")
+
+
 def speak(ev, crew, pilot, g=1.0, post=None, gen=None, timeout=LLM_TIMEOUT_S, wait=False):
     """Intercom reactions to an emergency event, posted from background threads (the caller never waits unless
     wait=True, for tests). -> the threads started."""
-    if not enabled():
+    if not enabled() or not _chatter_ok(ev):
         return []
     picks = slots(ev, crew, pilot, g=g)
     if not picks:

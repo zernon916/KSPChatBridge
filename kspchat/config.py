@@ -81,6 +81,7 @@ CUSTOM_AI_MODEL = os.environ.get("CUSTOM_AI_MODEL", "")           # key (optiona
 
 MAX_TOOL_ROUNDS = 8          # tool-call iterations per user message
 HISTORY_MESSAGES = 20        # chat turns kept per session (user+assistant)
+LLM_CHAT_TIMEOUT_S = int(os.environ.get("LLM_CHAT_TIMEOUT_S", "60"))  # model HTTP timeout (/chat + flight-plan draft)
 MAX_NOTES = 100              # playstyle notes cap
 SESSION_LOG_MAX_BYTES = 2_000_000
 SESSION_LOG_MAX_FILES = 10

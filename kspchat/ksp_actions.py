@@ -677,6 +677,11 @@ def _is_aircraft(v):
         return False
 
 
+def invalidate_craft_cache():
+    """Force aircraft / propulsion / heli re-detection after the player switches vessels."""
+    _AIR["t"] = 0.0
+
+
 def aircraft_now():
     """Cached (AIR_TTL s) _is_aircraft for the active vessel; False if kRPC isn't reachable."""
     if time.time() - _AIR["t"] < AIR_TTL:
@@ -1210,7 +1215,20 @@ def heli_control(mode: str = "hover", altitude_m: float = -1, heading: float = -
     pre = ""
     if sit != "flying" and m in ("takeoff", "hover", "climb"):
         from . import propulsion
-        pre, _ = propulsion.preflight(v)  # Luke: Brake 0, Torque Limit > 0, Motor Engaged before lifting
+        # Bridge (not the model): release brakes, engage motors, ramp torque, wait for ~90% RPM on EVERY rotor
+        # before the heli thread adds collective. Live miss (daeebe3): preflight alone left Brake 100 / Torque 0.
+        lift = set(info.get("lift") or ())
+        others = set(info.get("left") or ()) | set(info.get("right") or ()) | set(info.get("tail") or ())
+        ok, report = propulsion.spool_up(v, rotors=lift or None)
+        pre = report
+        if not ok:
+            return f"Heli takeoff aborted: {report}"
+        if others:
+            ok2, report2 = propulsion.spool_up(v, rotors=others)
+            pre = f"{report}; {report2}"
+            if not ok2:
+                return f"Heli takeoff aborted (side/tail): {report2}"
+        heli.STATE["spooled"] = True  # _fly skips a second full ramp when RPM is already there
         m = "hover" if m == "climb" else m
     if m in ("takeoff", "hover"):
         alt = alt if alt is not None else (max(agl, heli.HOVER_AGL) if sit == "flying" else heli.HOVER_AGL)
@@ -1278,7 +1296,7 @@ def heli_control(mode: str = "hover", altitude_m: float = -1, heading: float = -
 def takeoff(altitude_m: float = 300) -> str:
     """PLANES on the ground: runway takeoff ("take off", "takeoff") - jets, rockets or PROPELLERS. Rolls on the runway
     heading, rotates and climbs to altitude_m above the field, then the autopilot holds fly on. Never use
-    mechjeb_ascent for a plane takeoff. HELICOPTERS: vertical liftoff to a 20 m hover."""
+    mechjeb_ascent for a plane takeoff. HELICOPTERS / MULTIROTORS: vertical liftoff to a 20 m hover (spool every rotor)."""
     from . import propulsion
     v = _vessel()
     if _heli_v(v) is not None:
@@ -1288,9 +1306,16 @@ def takeoff(altitude_m: float = 300) -> str:
         return "We're already airborne."
     if sit not in ("landed", "pre_launch"):
         return f"Can't take off from here ({sit})."
-    if not _planeish(v):
-        return ("Takeoff is for planes (wings + wheels). For a rocket say 'launch' (MechJeb ascent to orbit).")
     pk = propulsion.classify(v)
+    # Multirotor / heli without wings: clear scan cache and vertical-takeoff (don't demand wings+wheels)
+    if pk["rotors"] >= 3 or (pk["rotors"] and not _planeish(v)):
+        from . import heli as heli_mod
+        heli_mod.clear_vessel_cache()
+        if _heli_v(v) is not None:
+            return heli_control("hover", altitude_m=-1)
+    if not _planeish(v):
+        return ("Takeoff is for planes (wings + wheels). For a rocket say 'launch' (MechJeb ascent to orbit). "
+                "For a multirotor / heli, the bridge needs ModuleRoboticServoRotor parts with blades.")
     if not pk["any"]:
         return "No engines or propellers found on this craft - nothing to take off with."
     pre = ""

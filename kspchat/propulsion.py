@@ -79,6 +79,17 @@ def has_props(v):
     return classify(v)["props"]
 
 
+def clear_vessel_cache():
+    """Forget per-craft prop/heli classification and prop-control layout (vessel switch)."""
+    _CACHE.clear()
+    STATE["layout"].clear()
+    STATE["logged"].clear()
+    STATE["sign"].clear()
+    STATE["radius"].clear()
+    STATE["sense"] = None
+    STATE.update(manual_pitch=None, manual_torque=False, reverse=False, diff=None)
+
+
 def rotor_status(v):
     """[(title, motor, rpm)] for the robotic rotors (field texts as KSP shows them; '' if unknown)."""
     out = []
@@ -978,12 +989,23 @@ def spool_up(v, rotors=None, rpm_target=None, frac=SPOOL_FRAC, wait_s=SPOOL_WAIT
 
 
 def set_brake(v, value, rotors=None):
-    """Rotor 'Brake' (0 = released) on the given rotor indices (all if None). -> count set."""
+    """Rotor 'Brake' (0 = released) on the given rotor indices (all if None). -> count set.
+    Also writes brakePercentage by id when Module.fields is broken (kRPC 0.6 BG rotors)."""
     n = 0
     for m in _rotor_mods(v, rotors=rotors):
         try:
-            k = find_field(fields(m), "brake", exclude=("auto",))
-            n += bool(k and _set_float(m, k, value))
+            f = fields(m)
+            k = find_field(f, "brake", exclude=("auto",))
+            if k and _set_float(m, k, value):
+                n += 1
+                continue
+            # direct id fallback (live miss: Brake stuck at 100 when GUI map missed the field)
+            if hasattr(m, "set_field_float_by_id"):
+                try:
+                    m.set_field_float_by_id("brakePercentage", float(value))
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:  # noqa: BLE001
             pass
     return n

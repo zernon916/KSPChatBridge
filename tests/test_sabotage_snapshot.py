@@ -141,6 +141,93 @@ def test_own_changes_ignored():
     assert "deploy_dir" in tags and "engine_off" not in tags and "chute" not in tags and "gear" not in tags
 
 
+def test_thrust_limit_detected_and_reverted(monkeypatch):
+    """Engine thrust limiter lowered in flight -> call-out and revert after fumble."""
+    ok = {"surfaces": [], "gear": False, "chutes": [], "engines": [("J-33", True, "", 100.0)]}
+    bad = {"surfaces": [], "gear": False, "chutes": [], "engines": [("J-33", True, "", 40.0)]}
+    d = em.Detector()
+    d.tick(S(0, sit="landed", cfg=ok, want_gear=True))
+    evs = d.tick(S(1, cfg=bad))
+    assert evs and evs[0]["kind"] == "config" and evs[0]["tag"] == "thrust_limit"
+    assert "revert" in evs[0]["actions"]
+
+    class Mod:
+        name = "ModuleEnginesFX"
+        fields = ["Thrust Percentage"]
+        pct = 40.0
+
+        def get_field(self, k):
+            return str(self.pct)
+
+        def set_field_float(self, k, v):
+            self.pct = float(v)
+
+    eng = NS(part=NS(title="J-33", modules=[Mod()]), active=True, has_modes=False)
+    v = NS(parts=NS(control_surfaces=[], reaction_wheels=[], intakes=[], parachutes=[], engines=[eng], all=[]),
+           control=NS(gear=False, brakes=False, lights=False, sas=False, rcs=False,
+                      get_action_group=lambda i: False, set_action_group=lambda i, x: None))
+    made = []
+
+    class T:
+        def __init__(self, delay, fn):
+            self.d, self.fn = delay, fn
+            made.append(self)
+        def start(self):
+            pass
+    monkeypatch.setattr(em.threading, "Timer", T)
+    monkeypatch.setattr(em, "_engaged", lambda: True)
+    monkeypatch.setattr(em, "_post", lambda m: None)
+    lines = em.handle(evs, v, S(1, cfg=bad), post=lambda x: None)
+    assert "thrust limit" in lines[0].lower() or "limiter" in lines[0].lower()
+    assert made and 2.0 <= made[0].d <= 4.0
+    made[0].fn()
+    assert eng.part.modules[0].pct == 100.0
+
+
+def test_thrust_limit_own_change_ignored():
+    old = {"engines": [("J-33", True, "", 100.0)]}
+    new = {"engines": [("J-33", True, "", 50.0)]}
+    assert [c[2] for c in em.diff_config(old, new, own=True) if c[0]] == []
+
+
+def test_gear_wrong_steady_state_without_tick_change():
+    """Gear wrong vs want_gear with no last->cur transition (missed between scans) -> steady-state alert."""
+    down = {"surfaces": [], "gear": True, "chutes": []}
+    d = em.Detector()
+    d.tick(S(0, sit="landed", cfg=down, want_gear=True))
+    d.last_cfg = down
+    evs = d.tick(S(1, cfg=down, want_gear=False))
+    assert any(e.get("key") == "gear_wrong" for e in evs)
+
+
+def test_diff_gear_when_previous_scan_had_no_gear_field():
+    old = {"surfaces": [], "chutes": []}
+    new = {"surfaces": [], "gear": True, "chutes": []}
+    tags = [c[2] for c in em.diff_config(old, new, want_gear=False) if c[0]]
+    assert tags == ["gear"]
+
+
+def test_want_gear_cruise_during_hold_takeoff_if_gear_up(monkeypatch):
+    """Airborne with gear retracted: enforce gear-up even while hold still reports takeoff phase."""
+    from kspchat import hold, plane
+
+    monkeypatch.setattr(plane, "active", lambda: False)
+    monkeypatch.setattr(hold, "active", lambda: True)
+    monkeypatch.setattr(hold, "STATUS", {"phase": "takeoff"})
+    landing, want = em._phase_flags()
+    assert landing is False and want is None
+
+
+def test_heli_land_phase_wants_gear_down(monkeypatch):
+    from kspchat import heli, hold, plane
+
+    monkeypatch.setattr(heli, "active", lambda: True)
+    monkeypatch.setattr(heli, "STATE", {"mode": "land"})
+    monkeypatch.setattr(plane, "active", lambda: False)
+    monkeypatch.setattr(hold, "active", lambda: False)
+    assert em._phase_flags() == (True, True)
+
+
 def test_snapshot_refreshed_on_runway():
     """Sitting on the runway refreshes the pre-takeoff snapshot so the next flight baselines cleanly."""
     d = em.Detector()
@@ -149,5 +236,6 @@ def test_snapshot_refreshed_on_runway():
     d.tick(S(0, sit="landed", cfg=a, want_gear=True))
     d.tick(S(1, sit="landed", cfg=b, want_gear=True))          # still on runway: new normal
     assert d.ref_cfg["surfaces"][0][4] is True
-    evs = d.tick(S(2, cfg=b, want_gear=False))                 # airborne with same cfg: no alert
+    cfg_air = {"surfaces": [SURF(inv=True)], "gear": False}      # gear up in cruise; inverted was runway baseline
+    evs = d.tick(S(2, cfg=cfg_air, want_gear=False))
     assert not any(e["kind"] == "config" for e in evs)

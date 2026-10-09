@@ -99,6 +99,8 @@ LINES = {
     "authority": ["Somebody turned my control authority down! Who's messing with my plane!"],
     "wheels": ["Who switched off the reaction wheels?!"],
     "engine_off": ["Who shut down an engine?! I need those!"],
+    "thrust_limit": ["Who turned down the thrust limiter?! I need that power!", "Engine thrust limit just dropped - who did that?!",
+                     "Somebody clipped the thrust limiter! Put it back!"],
     "mode": ["The engine mode just changed by itself?! Who's messing with my plane!"],
     "intake": ["Who closed the intakes?! The engines need to BREATHE!"],
     "chute": ["A chute just deployed?! We're dragging like a brick - cutting it!"],
@@ -319,6 +321,11 @@ def diff_config(old, new, own=False, landing=False, want_gear=None):
                     out.append((True, f"Engine {i} ({b[0]}) shut down", "engine_off"))
                 if (a[2] or "") != (b[2] or ""):
                     out.append(("revers" in (b[2] or "").lower(), f"Engine {i} mode {a[2]} -> {b[2]}", "mode"))
+                ap = a[3] if len(a) > 3 else None
+                bp = b[3] if len(b) > 3 else None
+                if ap is not None and bp is not None and abs(float(ap) - float(bp)) > 0.5:
+                    out.append((True, f"Engine {i} ({b[0]}) thrust limit {float(ap):.0f}% -> {float(bp):.0f}%",
+                                "thrust_limit"))
         io, inn = old.get("intakes") or [], new.get("intakes") or []
         if len(io) == len(inn):
             closed = [b[0] for a, b in zip(io, inn) if a[1] and not b[1]]
@@ -329,9 +336,14 @@ def diff_config(old, new, own=False, landing=False, want_gear=None):
             opened = [b[0] for a, b in zip(co, cn) if not a[1] and b[1]]
             if opened:
                 out.append((True, f"parachute{'s' if len(opened) != 1 else ''} deployed ({_names(opened)})", "chute"))
-        if (want_gear is not None and old.get("gear") is not None and new.get("gear") is not None
-                and bool(old["gear"]) != bool(new["gear"]) and bool(new["gear"]) != bool(want_gear)):
-            out.append((True, f"gear {'down' if new.get('gear') else 'up'} (want {'down' if want_gear else 'up'})", "gear"))
+        gear_new = new.get("gear")
+        if not own and want_gear is not None and gear_new is not None:
+            gear_old = old.get("gear")
+            wrong = bool(gear_new) != bool(want_gear)
+            changed = gear_old is None or bool(gear_old) != bool(gear_new)
+            if wrong and changed:
+                out.append((True, f"gear {'down' if gear_new else 'up'} (want {'down' if want_gear else 'up'})",
+                            "gear"))
         if not landing:
             if old.get("brakes") is not None and new.get("brakes") is not None and bool(old["brakes"]) != bool(new["brakes"]):
                 out.append((True, f"brakes {'on' if new['brakes'] else 'off'}", "brakes"))
@@ -355,7 +367,7 @@ def diff_config(old, new, own=False, landing=False, want_gear=None):
 def degraded(ref, cur, landing=False, want_gear=None):
     """True while the control config is worse than the reference (axes lost, inversion / authority / deploy-dir
     changed, wheels off, gear wrong) - drives the 'fly safe' mode and the 'back to normal' line."""
-    skip = ("engine_off", "mode", "intake", "chute", "brakes", "lights", "sas", "rcs", "flow", "ag")
+    skip = ("engine_off", "mode", "thrust_limit", "intake", "chute", "brakes", "lights", "sas", "rcs", "flow", "ag")
     return any(bad and tag not in skip
                for bad, _, tag in diff_config(ref, cur, own=True, landing=landing, want_gear=want_gear))
 
@@ -687,7 +699,7 @@ class Detector:
                 bad = degraded(self.ref_cfg, cfg, landing=landing, want_gear=want_gear)
                 if ch and in_flight:
                     tags = [tag for _, _, tag in ch]
-                    axis = any(tag not in ("engine_off", "mode", "intake", "chute", "gear", "brakes",
+                    axis = any(tag not in ("engine_off", "mode", "thrust_limit", "intake", "chute", "gear", "brakes",
                                            "lights", "sas", "rcs", "flow", "ag") for tag in tags)
                     acts = (["safe", "probe"] if axis else ["level"])
                     if flying and "engine_off" in tags:
@@ -700,6 +712,15 @@ class Detector:
                     self._ev(out, "config", f"config:{t:.0f}", True, one_shot=True, changes=[c[1] for c in ch],
                              tag=ch[0][2], short="CONFIG: " + "; ".join(c[1] for c in ch)[:80],
                              actions=acts, tags=tags, ref=self.ref_cfg)
+                if (in_flight and flying and not s.get("own") and want_gear is not None and cfg.get("gear") is not None
+                        and bool(cfg["gear"]) != bool(want_gear)):
+                    gkey = "gear_wrong"
+                    if gkey not in self.active and not any(tag == "gear" for _, _, tag in ch):
+                        msg = f"gear {'down' if cfg['gear'] else 'up'} (want {'down' if want_gear else 'up'})"
+                        self._ev(out, "config", gkey, True, changes=[msg], tag="gear",
+                                 short="CONFIG: " + msg, actions=["level", "revert"], tags=["gear"], ref=self.ref_cfg)
+                elif "gear_wrong" in self.active and (not in_flight or bool(cfg.get("gear")) == bool(want_gear)):
+                    self._ev(out, "config_ok", "gear_wrong", False, quiet=True)
                 if bad and "config_bad" not in self.active and in_flight:
                     self.active["config_bad"] = "config"
                 elif not bad and "config_bad" in self.active:
@@ -1080,6 +1101,13 @@ def _apply_revert(v, ref, tags, s=None):
                     n += 1
         except Exception:  # noqa: BLE001
             pass
+    if "thrust_limit" in tags:
+        try:
+            for e, r in zip(v.parts.engines, ref.get("engines") or []):
+                if len(r) > 3 and r[3] is not None and _set_engine_thrust_limit(e, float(r[3])):
+                    n += 1
+        except Exception:  # noqa: BLE001
+            pass
     if "gear" in tags:
         want = s.get("want_gear")
         if want is None and ref.get("gear") is not None:
@@ -1311,6 +1339,54 @@ def _who():
 
 
 # ---------------------------------------------------------------- sampling (kRPC)
+_ENGINE_LIMIT_MODS = ("ModuleEngines", "ModuleEnginesFX", "ModuleEnginesFS")
+
+
+def _engine_limit_field(m):
+    try:
+        for k in m.fields:
+            lk = str(k).lower().replace(" ", "")
+            if lk == "thrustpercentage" or ("thrust" in lk and "percent" in lk):
+                return k
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _read_engine_thrust_limit(e):
+    """Engine thrust limiter 0-100 from thrustPercentage, or None if unavailable."""
+    try:
+        for m in e.part.modules:
+            if m.name not in _ENGINE_LIMIT_MODS:
+                continue
+            key = _engine_limit_field(m)
+            if not key:
+                continue
+            val = float(str(m.get_field(key)).replace(",", ".").replace("%", "").strip())
+            return max(0.0, min(100.0, val))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _set_engine_thrust_limit(e, pct):
+    try:
+        for m in e.part.modules:
+            if m.name not in _ENGINE_LIMIT_MODS:
+                continue
+            key = _engine_limit_field(m)
+            if not key:
+                continue
+            try:
+                m.set_field_float(key, float(pct))
+            except Exception:  # noqa: BLE001
+                m.set_field(key, f"{float(pct):g}")
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _surf_deploy_dir(cs):
     """True when Deploy Angle is negative (KSP's 'Deploy Direction: Inverted')."""
     try:
@@ -1341,7 +1417,8 @@ def _scan_cfg(v):
     except Exception:  # noqa: BLE001
         pass
     for attr, fn in (("wheels", lambda w: (w.part.title, bool(w.active), bool(getattr(w, "broken", False)))),
-                     ("engines", lambda e: (e.part.title, bool(e.active), str(e.mode) if e.has_modes else "")),
+                     ("engines", lambda e: (e.part.title, bool(e.active), str(e.mode) if e.has_modes else "",
+                                            _read_engine_thrust_limit(e))),
                      ("intakes", lambda i: (i.part.title, bool(i.open))),
                      ("chutes", lambda c: (c.part.title, bool(c.deployed), bool(c.armed)))):
         src = {"wheels": "reaction_wheels", "engines": "engines", "intakes": "intakes", "chutes": "parachutes"}[attr]
@@ -1390,10 +1467,15 @@ def _scan_cfg(v):
 def _phase_flags(plane_mod=None):
     """(landing, want_gear) for the active plane/heli autopilot. want_gear: True=down, False=up, None=don't enforce."""
     try:
-        from . import plane as plane_mod0, hold, lander
+        from . import plane as plane_mod0, hold, lander, heli
         plane_mod = plane_mod or plane_mod0
     except Exception:  # noqa: BLE001
         return False, False
+    try:
+        if heli.active() and str(heli.STATE.get("mode") or "") == "land":
+            return True, True
+    except Exception:  # noqa: BLE001
+        pass
     phase = ""
     try:
         if plane_mod.active():
@@ -1408,7 +1490,7 @@ def _phase_flags(plane_mod=None):
         pass
     if phase == "takeoff":
         return False, None
-    if landing or phase.startswith("rollout"):
+    if landing:
         return True, True
     try:
         if lander.active():
@@ -1699,6 +1781,26 @@ def record_lost(vid, vessel, labels):
 def vessel_changed(vid, vessel=""):
     if vid != DAMAGE["vid"]:
         DAMAGE.update(vid=vid, vessel=vessel, lost=[], inverted="")
+        _clear_vessel_bridge_context(vid, vessel)
+
+
+def _clear_vessel_bridge_context(vid, vessel=""):
+    """New active vessel: drop stale craft caches so chat/tools re-detect plane vs rotorcraft vs rocket."""
+    log.info("active vessel changed to %r (%s): clearing chat history and craft caches", vessel, vid)
+    try:
+        from . import http_server
+        http_server.clear_vessel_sessions()
+    except Exception:  # noqa: BLE001
+        log.exception("clear chat sessions on vessel switch")
+    try:
+        from . import flightplan, heli, ksp_actions, propulsion, speedcap
+        flightplan.clear_vessel_context()
+        heli.clear_vessel_cache()
+        propulsion.clear_vessel_cache()
+        ksp_actions.invalidate_craft_cache()
+        speedcap.clear_all_pending()
+    except Exception:  # noqa: BLE001
+        log.exception("clear craft caches on vessel switch")
 
 
 def damage_facts():
@@ -1853,6 +1955,9 @@ def _sample(v, scan, sc=None):
             s["temp"] = _hottest(v)
         except Exception:  # noqa: BLE001
             pass
+        # Once gear is up in flight, enforce cruise gear even if hold/plane still reports takeoff phase.
+        if sit == "flying" and s.get("want_gear") is None and s["cfg"].get("gear") is False:
+            s["want_gear"] = False
     return s
 
 
@@ -1978,7 +2083,10 @@ def build_systems(s, cfg, ref):
             rows.append(("fail" if broken else ("caution" if on < len(wh) else "ok"), "Reaction wheels",
                          f"{on}/{len(wh)} active" + (f", {broken} broken" if broken else "")))
         if cfg.get("gear") is not None:
-            rows.append(("ok", "Gear", "down" if cfg["gear"] else "up"))
+            wg = s.get("want_gear")
+            gwrong = wg is not None and bool(cfg["gear"]) != bool(wg)
+            gdet = ("down" if cfg["gear"] else "up") + (f" (want {'down' if wg else 'up'})" if gwrong else "")
+            rows.append(("fail" if gwrong else "ok", "Gear", gdet))
             rows.append(("caution" if cfg["brakes"] and flying else "ok", "Brakes", "on" if cfg["brakes"] else "off"))
         rot = cfg.get("rotors") or []
         if rot:
