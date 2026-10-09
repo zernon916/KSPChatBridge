@@ -64,7 +64,7 @@ namespace KSPChatBridge
         /// <summary>AICS menu indicators: true if the bridge reports this "ind_..." key as active.</summary>
         internal static bool Active(string key)
         {
-            if (!BridgeLauncher.AiEnabled)
+            if (!BridgeLauncher.UseBridge)
             {
                 string phase = NativeFlightController.Phase;
                 return key == "ind_holds" ? phase == "hold" || phase == "takeoff" || phase == "spool" || phase == "helicopter"
@@ -103,18 +103,18 @@ namespace KSPChatBridge
                 systemsOk = LocalVesselState.Available;
             }
             else if (master[0] != "") master = new[] { "", "0", "" };
-            if (BridgeLauncher.AiEnabled && maydayLights && Time.realtimeSinceStartup >= nextLightsPoll)
+            if (BridgeLauncher.UseBridge && maydayLights && Time.realtimeSinceStartup >= nextLightsPoll)
             {
                 nextLightsPoll = Time.realtimeSinceStartup + 2f;
                 PollBridgeMaydayLights();
             }
-            else if (!BridgeLauncher.AiEnabled) bridgeLights = true;
+            else if (!BridgeLauncher.UseBridge) bridgeLights = true;
         }
 
         // ---------------------------------------------------------------- polling (worker threads)
         static string HttpGet(string path)
         {
-            var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + path);
+            var req = BridgeHttp.Create(path);
             req.Timeout = 2500;
             req.Proxy = null;
             using (var resp = (HttpWebResponse)req.GetResponse())
@@ -322,14 +322,14 @@ namespace KSPChatBridge
                 GUILayout.Label(kv[0] + ": " + kv[1], valStyle);
             if (statusOk && rows.Count > 0)
             {
-                GUILayout.Label(BridgeLauncher.AiEnabled ? "Autopilot (bridge)" : "Autopilot (local)", keyStyle, GUILayout.Width(w));
+                GUILayout.Label(BridgeLauncher.UseBridge ? "Autopilot (bridge)" : "Autopilot (local)", keyStyle, GUILayout.Width(w));
                 foreach (string[] kv in rows)
                 {
                     if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
                     string label;
                     if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label((BridgeLauncher.AiEnabled ? "AP: " : "") + label, keyStyle, GUILayout.Width(100));
+                    GUILayout.Label((BridgeLauncher.UseBridge ? "AP: " : "") + label, keyStyle, GUILayout.Width(100));
                     GUILayout.Label(kv[1], valStyle, GUILayout.Width(w - 130));
                     GUILayout.EndHorizontal();
                 }

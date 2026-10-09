@@ -8,22 +8,9 @@ namespace KSPChatBridge
     {
         const int MaxRounds = 8;
         readonly List<Dictionary<string, object>> messages = new List<Dictionary<string, object>>();
-        static readonly string ToolsJson = @"[
-{""type"":""function"",""function"":{""name"":""get_status"",""description"":""Vessel status"",""parameters"":{""type"":""object"",""properties"":{}}}},
-{""type"":""function"",""function"":{""name"":""plane_hold"",""description"":""Engage aircraft holds"",""parameters"":{""type"":""object"",""properties"":{""engage"":{""type"":""boolean""},""altitude_m"":{""type"":""number""},""heading"":{""type"":""number""},""speed"":{""type"":""number""},""altitude_ref"":{""type"":""string""}}}}},
-{""type"":""function"",""function"":{""name"":""takeoff"",""description"":""Aircraft takeoff"",""parameters"":{""type"":""object"",""properties"":{""altitude_m"":{""type"":""number""}}}}},
-{""type"":""function"",""function"":{""name"":""land_here"",""description"":""Powered descent here"",""parameters"":{""type"":""object"",""properties"":{""touchdown_speed"":{""type"":""number""}}}}},
-{""type"":""function"",""function"":{""name"":""land_at_spot"",""description"":""Runway land"",""parameters"":{""type"":""object"",""properties"":{""name"":{""type"":""string""},""runway"":{""type"":""string""}}}}},
-{""type"":""function"",""function"":{""name"":""heli_control"",""description"":""Helicopter hover/fly/land"",""parameters"":{""type"":""object"",""properties"":{""mode"":{""type"":""string""},""altitude_m"":{""type"":""number""},""heading"":{""type"":""number""},""speed"":{""type"":""number""}}}}},
-{""type"":""function"",""function"":{""name"":""abort"",""description"":""Hard abort"",""parameters"":{""type"":""object"",""properties"":{}}}},
-{""type"":""function"",""function"":{""name"":""stop_current"",""description"":""Stop controller"",""parameters"":{""type"":""object"",""properties"":{}}}},
-{""type"":""function"",""function"":{""name"":""set_gear"",""description"":""Gear"",""parameters"":{""type"":""object"",""properties"":{""down"":{""type"":""boolean""}}}}},
-{""type"":""function"",""function"":{""name"":""set_brakes"",""description"":""Brakes"",""parameters"":{""type"":""object"",""properties"":{""on"":{""type"":""boolean""}}}}},
-{""type"":""function"",""function"":{""name"":""taxi_to"",""description"":""Taxi"",""parameters"":{""type"":""object"",""properties"":{""name"":{""type"":""string""}}}}},
-{""type"":""function"",""function"":{""name"":""save_craft_notes"",""description"":""Save trim and cruise notes for this craft"",""parameters"":{""type"":""object"",""properties"":{}}}},
-{""type"":""function"",""function"":{""name"":""get_trim_state"",""description"":""Trim state"",""parameters"":{""type"":""object"",""properties"":{}}}},
-{""type"":""function"",""function"":{""name"":""set_trim"",""description"":""Set trim axis/value"",""parameters"":{""type"":""object"",""properties"":{""axis"":{""type"":""string""},""value"":{""type"":""number""}}}}}
-]";
+        static string ToolsJson { get { return NativeToolSchemas.Json; } }   // every ported tool (generated)
+        readonly string baseSystem;
+        internal string Persona = "";
         readonly Func<OpenAiBackend.Endpoint, string, string> complete;
         internal InModChatSession() : this(null) { }
         internal InModChatSession(Func<OpenAiBackend.Endpoint, string, string> completionsOverride)
@@ -32,6 +19,7 @@ namespace KSPChatBridge
             string system = "You are AICS flying Kerbal Space Program. Use tools for game actions. Be concise.";
             string notes = PlaystyleNotes.NotesBlock();
             if (notes.Length > 0) system += "\n" + notes;
+            baseSystem = system;
             messages.Add(Msg("system", system));
         }
         static Dictionary<string, object> Msg(string role, string content)
@@ -42,6 +30,7 @@ namespace KSPChatBridge
         {
             var ep = OpenAiBackend.Resolve(provider);
             if (!ep.Ok) return ep.Error;
+            messages[0]["content"] = baseSystem + (Persona ?? "");
             messages.Add(Msg("user", userText));
             if (messages.Count > 40) messages.RemoveRange(1, messages.Count - 39);
             object tools = MiniJson.DeserializeObject(ToolsJson);

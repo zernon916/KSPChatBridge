@@ -100,6 +100,7 @@ namespace KSPChatBridge
         void Awake()
         {
             instance = this;
+            GameEvents.onPartDie.Add(OnPartDie);
             NativeCommands.StatusPathProvider = () => Path.Combine(KSPUtil.ApplicationRootPath,
                 "GameData/KSPChatBridge/PluginData/native_control.json");
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
@@ -243,6 +244,7 @@ namespace KSPChatBridge
         {
             float now = Time.realtimeSinceStartup;
             bool flying = !vessel.LandedOrSplashed;
+            try { ChatterTick(); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] crew chatter: " + ex.Message); }
             try { power.Tick(vessel, now); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local power recovery: " + ex.Message); }
             try { engines.Tick(vessel, now); }
@@ -258,7 +260,7 @@ namespace KSPChatBridge
             bool brakes = vessel.ActionGroups[KSPActionGroup.Brakes];
             bool wheels = false;
             if (!flying) foreach (Part p in vessel.parts) if (p.FindModuleImplementing<ModuleWheelBase>() != null) { wheels = true; break; }
-            string park = NativeSafety.ParkingAction(!flying, wasAirborne, parkingReleased, parkingSet, mode == "idle", wheels, brakes, prevBrakes && !brakes);
+            string park = NativeSafety.ParkingAction(!flying, wasAirborne, parkingReleased, parkingSet, NativeSafety.ParkingIdle(mode, plan != null && plan.Running), wheels, brakes, prevBrakes && !brakes);
             if (park == "rearm") { parkingSet = false; parkingReleased = false; }
             else if (park == "set") { SetGroup(vessel, KSPActionGroup.Brakes, true); parkingSet = true; brakes = true; }
             else if (park == "released") parkingReleased = true;
@@ -318,6 +320,7 @@ namespace KSPChatBridge
                 prevPitch = pitch; prevRoll = roll;
                 if (mode == "takeoff")
                 {
+                    if (NativeSafety.ReleaseForTakeoff(mode, takeoff.Phase, vessel.LandedOrSplashed, vessel.ActionGroups[KSPActionGroup.Brakes])) { parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false); }
                     directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall);
                     if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
                     if (takeoff.Phase == "climbout complete")
@@ -749,15 +752,17 @@ namespace KSPChatBridge
                     var selectedRunway = spots.Runway(destination, vessel.mainBody.bodyName, vessel.mainBody.Radius,
                         (lat, lon) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(lat, lon)) - vessel.mainBody.Radius));
                     bool savedRunway = selectedRunway != null;
-                    bool island = destination.IndexOf("Island", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var builtIn = FlightResidualPolicy.BuiltInRunway(destination, direction);
+                    bool island = builtIn != null && builtIn.Item1 == "island";
                     if (!savedRunway)
                     {
+                        if (builtIn == null) return "Unknown local runway: " + destination + " (built-in: KSC 09/27, Island 09/27; or a saved spot).";
                         if (vessel.mainBody.bodyName != "Kerbin") return "Built-in runways are on Kerbin.";
-                        if (destination.Length > 0 && !island && destination.IndexOf("Runway", StringComparison.OrdinalIgnoreCase) < 0) return "Unknown local runway: " + destination;
+                        direction = builtIn.Item2; destination = "";
                         selectedRunway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
                             : new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                     }
-                    if (!savedRunway && (island ? direction == "09" || destination.EndsWith("09") : direction == "27" || destination.EndsWith("27") || (direction == "" && destination == "" && vessel.longitude > -74.6)))
+                    if (!savedRunway && (island ? direction == "09" : direction == "27" || (direction == "" && vessel.longitude > -74.6)))
                     { double lat = selectedRunway.Lat, lon = selectedRunway.Lon; selectedRunway.Lat = selectedRunway.EndLat; selectedRunway.Lon = selectedRunway.EndLon; selectedRunway.EndLat = lat; selectedRunway.EndLon = lon; }
                     if (NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius) > 150000) return "Runway is beyond the 150 km approach limit.";
                     double approachSpeed = Num(a, "approach_speed", 0);
@@ -810,9 +815,10 @@ namespace KSPChatBridge
             }
             if (!wheels || !wings) { Stop(); return "Aircraft takeoff requires wheels and wings."; }
             engines.Cancel(); NativeEngines.Takeoff(vessel);
+            parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false);   // release the parking brake at roll start
             holdAltitude = holdHeading = holdSpeed = true; directVs = directPitch = directBank = null;
             takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); return StartRotorMode("takeoff");
         }
-        void OnDestroy() { Stop(); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
+        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
     }
 }

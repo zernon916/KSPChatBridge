@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -19,7 +19,7 @@ namespace KSPChatBridge
             if (!string.IsNullOrEmpty(where) && where.Trim().Length > 0)
             {
                 string w = where.Trim().ToLowerInvariant();
-                if (plane && (spotKnown || w.Contains("runway") || w.Contains("island") || w == "ksc")) return "spot";
+                if (plane && (spotKnown || BuiltInRunway(where, "") != null)) return "spot";
                 if (!plane && (w == "here" || w == "now")) return "vertical";
                 if (!plane) return "vertical";
             }
@@ -29,8 +29,31 @@ namespace KSPChatBridge
         /// <summary>Normalise a KSC alias to the built-in runway name the native autoland knows.</summary>
         internal static string RunwayAlias(string where)
         {
-            string w = (where ?? "").Trim();
-            return w.Equals("ksc", StringComparison.OrdinalIgnoreCase) || w.Length == 0 ? "KSC Runway" : w;
+            var r = BuiltInRunway(where, "");
+            if (r == null) return (where ?? "").Trim();
+            return (r.Item1 == "island" ? "Island Runway" : "KSC Runway") + (r.Item2.Length > 0 ? " " + r.Item2 : "");
+        }
+
+        static readonly System.Text.RegularExpressions.Regex DirRx = new System.Text.RegularExpressions.Regex(@"(?:^|[^0-9])(0?9|27)(?:[^0-9]|$)");
+        static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land" };
+
+        /// <summary>Fuzzy built-in Kerbin runway: (site "ksc"|"island", direction "09"|"27"|"") or null when the name
+        /// mentions something else (a saved spot). Accepts KSC 27, KSP 27, runway 27, rwy 27, 27, 09, island, Island Runway 09...</summary>
+        internal static Tuple<string, string> BuiltInRunway(string name, string runway)
+        {
+            string n = (name ?? "").Trim().ToLowerInvariant(), r = (runway ?? "").Trim().ToLowerInvariant();
+            string dir = "";
+            var m = DirRx.Match(r.Length > 0 ? r : n);
+            if (m.Success) dir = m.Groups[1].Value == "27" ? "27" : "09";
+            else if (r.Length > 0) { m = DirRx.Match(n); if (m.Success) dir = m.Groups[1].Value == "27" ? "27" : "09"; }
+            string rest = System.Text.RegularExpressions.Regex.Replace(System.Text.RegularExpressions.Regex.Replace(n, @"([a-z])([0-9])|([0-9])([a-z])", "$1$3 $2$4"), @"[^a-z0-9]+", " ");
+            bool island = rest.Contains("island") || rest.Contains("isle");
+            foreach (string tok in rest.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (tok == "09" || tok == "9" || tok == "27") continue;
+                if (Array.IndexOf(SiteWords, tok) < 0) return null;   // other words: not a built-in runway
+            }
+            return Tuple.Create(island ? "island" : "ksc", dir);
         }
 
         /// <summary>0..1 throttle; values above 1 are treated as percent.</summary>

@@ -471,3 +471,5 @@ Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5
 - fuel_check_return: fly home automatically when fuel equals what the return trip needs.
 - formation: AI wingman flies a second craft within KSP's ~2.5 km physics range.
 
+- tech_advisor: in the R&D tech tree, the AI first ASKS the player's plan/goal (e.g. Mun landing, better planes), then recommends the cheapest unlock path for it and highlights those nodes in the tree.
+

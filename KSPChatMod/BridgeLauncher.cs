@@ -59,6 +59,7 @@ namespace KSPChatBridge
         void Awake()
         {
             instance = this;
+            BridgeHttp.Allowed = () => UseBridge;
             DontDestroyOnLoad(this);
             LoadCfg();
             AiEnabled = Bool("ai_enabled");
@@ -72,7 +73,7 @@ namespace KSPChatBridge
 
         void Update()
         {
-            if (!AiEnabled || Switching) return;
+            if (!AiEnabled || Switching || !UseBridge) return;   // in-mod chat: never start/poll the bridge
             if (Time.realtimeSinceStartup < nextWatch || Volatile.Read(ref starting) != 0) return;
             nextWatch = Time.realtimeSinceStartup + 2;
             bool alive = false;
@@ -139,6 +140,7 @@ namespace KSPChatBridge
 
         /// <summary>True while a bridge /health answered recently — native safety services run when it does not
         /// (P5-1: emergency / sabotage / parking / power coverage when the bridge is absent).</summary>
+        internal static bool UseBridge { get { return NativeSafety.NeedsBridge(AiEnabled, NativeChat); } }
         internal static bool BridgeResponding
         {
             get { return NativeSafety.IsFresh(lastBridgeOkUtc, DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond); }
@@ -239,7 +241,7 @@ namespace KSPChatBridge
 
         static void NativePost(string path)
         {
-            var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + path);
+            var req = BridgeHttp.Create(path);
             req.Proxy = null; req.Method = "POST"; req.ContentType = "application/json";
             req.ContentLength = 2; req.Timeout = 4000; req.ReadWriteTimeout = 4000;
             using (var stream = req.GetRequestStream()) { stream.WriteByte(123); stream.WriteByte(125); }
@@ -254,7 +256,7 @@ namespace KSPChatBridge
             AiSettings.Save();
             ChatWindow.Notice(enabled
                 ? "In-mod chat enabled (HTTP providers / local model when runtime is wired)."
-                : "In-mod chat off; bridge chat unchanged when AI & Bridge is on.");
+                : "In-mod chat off; bridge chat unchanged when AI is on.");
             // TODO(InModAiHost): start/stop embedded chat host when native llama gate passes.
         }
 
@@ -283,7 +285,7 @@ namespace KSPChatBridge
                 bool prepared = false;
                 try
                 {
-                    if (!enabled && Healthy(1500))
+                    if (!enabled && UseBridge && Healthy(1500))
                     {
                         if (!startedByUs || proc == null) throw new InvalidOperationException("An externally started bridge is running; stop it before selecting AI off.");
                         NativePost("native/prepare-off"); prepared = true;
@@ -299,7 +301,7 @@ namespace KSPChatBridge
                         AiEnabled = enabled; NativeReady = !enabled;
                     }
                     if (!enabled) InModAiHost.UnloadForAiOff();
-                    ChatWindow.Notice(enabled ? "AI & bridge enabled." : "AI off. Local controls and dashboards remain available.");
+                    ChatWindow.Notice(enabled ? "AI enabled." : "AI off. Local controls and dashboards remain available.");
                 }
                 catch (Exception ex)
                 {

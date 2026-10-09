@@ -284,7 +284,7 @@ namespace KSPChatBridge
                     return bad.Count == 0 ? "No damage detected (" + vessel.parts.Count + " parts)." : "Damage: " + string.Join("; ", bad.ToArray()) + ".";
                 }
             }
-            return "Not yet ported to local control: " + name + ". Enable AI & Bridge for the existing implementation.";
+            return "Not yet ported to local control: " + name + ".";
         }
     }
 }

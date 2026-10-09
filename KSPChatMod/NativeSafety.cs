@@ -16,6 +16,21 @@ namespace KSPChatBridge
         /// <summary>Luke (Oct 9): the in-mod controller owns the controls with AI on too - the AI only issues commands
         /// to it. AI off: owned once the handoff marked native ready. AI on: owned whenever in-mod chat/tools are on
         /// (native_chat, the default), so the bridge never flies.</summary>
+        /// <summary>Only bridge chat (AI on, in-mod chat off) needs the Python bridge; menus never gate on its health otherwise.</summary>
+        internal static bool NeedsBridge(bool aiEnabled, bool nativeChat) { return aiEnabled && !nativeChat; }
+
+        /// <summary>kRPC / kRPC.MechJeb are bridge-only deps; MechJeb is optional natively (tools say "needs MechJeb").</summary>
+        internal static string MissingDeps(bool needsBridge, string missing) { return needsBridge ? missing : ""; }
+
+        /// <summary>Live bug Oct 9: takeoff never released the parking brake. Release while the takeoff roll is on the ground.</summary>
+        internal static bool ReleaseForTakeoff(string mode, string phase, bool grounded, bool brakesOn)
+        {
+            return mode == "takeoff" && grounded && brakesOn && (phase == null || phase == "roll" || phase == "rotate");
+        }
+
+        /// <summary>Parking may only touch the brakes with no command / plan running.</summary>
+        internal static bool ParkingIdle(string mode, bool commandActive) { return mode == "idle" && !commandActive; }
+
         internal static bool NativeOwns(bool aiEnabled, bool nativeReady, bool nativeChat)
         {
             return aiEnabled ? nativeChat : nativeReady;

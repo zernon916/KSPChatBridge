@@ -296,7 +296,7 @@ namespace KSPChatBridge
 
         static string PostTool(string name, string argsJson)
         {
-            var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + "tool");
+            var req = BridgeHttp.Create("tool");
             req.Method = "POST";
             req.ContentType = "application/json";
             req.Timeout = 8000;

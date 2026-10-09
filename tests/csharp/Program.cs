@@ -622,6 +622,54 @@ class Program
         foreach (var tl in new[] { "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude" })
             Check(NativeCommands.IsPorted(tl), tl + " ported in-process");
         Console.WriteLine("MechJeb planner ports: 14 behavior checks passed.");
+        // ---- Live bugs Oct 9 (bridge-free build) ----
+        Check(!NativeSafety.NeedsBridge(true, true) && NativeSafety.NeedsBridge(true, false) && !NativeSafety.NeedsBridge(false, false), "menus gate on bridge only for bridge chat");
+        Check(NativeSafety.MissingDeps(false, "kRPC, kRPC.MechJeb") == "" && NativeSafety.MissingDeps(true, "kRPC") == "kRPC", "kRPC not required natively");
+        Check(NativeSafety.ReleaseForTakeoff("takeoff", "roll", true, true) && !NativeSafety.ReleaseForTakeoff("takeoff", "roll", false, true) && !NativeSafety.ReleaseForTakeoff("hold", "roll", true, true), "takeoff releases parking brake on the roll");
+        Check(!NativeSafety.ParkingIdle("idle", true) && !NativeSafety.ParkingIdle("takeoff", false) && NativeSafety.ParkingIdle("idle", false), "parking idle only without command/plan");
+        Check(NativeSafety.ParkingAction(true, false, false, false, NativeSafety.ParkingIdle("takeoff", false), true, false, false) == "none", "parking never re-applies during takeoff");
+        Func<string, string, string> rw = (n, r) => { var x = FlightResidualPolicy.BuiltInRunway(n, r); return x == null ? "null" : x.Item1 + " " + x.Item2; };
+        Check(rw("KSC 27", "") == "ksc 27" && rw("KSP 27", "") == "ksc 27" && rw("runway 27", "") == "ksc 27" && rw("rwy 27", "") == "ksc 27" && rw("27", "") == "ksc 27", "fuzzy KSC 27 aliases");
+        Check(rw("09", "") == "ksc 09" && rw("rwy9", "") == "ksc 09" && rw("KSC Runway", "") == "ksc " && rw("", "") == "ksc " && rw("ksc", "27") == "ksc 27", "KSC 09 / no direction / runway param");
+        Check(rw("island", "") == "island " && rw("Island Runway 09", "") == "island 09" && rw("island airfield", "27") == "island 27", "island aliases");
+        Check(rw("Desert Strip", "") == "null" && rw("Mun Base Alpha", "") == "null", "other names stay saved-spot lookups");
+        Check(FlightResidualPolicy.RunwayAlias("KSP 27") == "KSC Runway 27" && FlightResidualPolicy.LandRoute("KSP 27", false, false, true, false) == "spot", "land where=KSP 27 routes to the KSC runway");
+        var crew = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Bob Kerman", "Scientist"), new KeyValuePair<string, string>("Sidry Kerman", "Pilot"), new KeyValuePair<string, string>("Jeb Kerman", "Tourist") };
+        Check(CrewVoice.Speaker(crew, "") == "Sidry" && CrewVoice.Speaker(new List<KeyValuePair<string, string>>(), "Max") == "Max" && CrewVoice.Speaker(null, "") == "AICS", "pilot voices replies");
+        Check(CrewVoice.Line("Sidry", "Gear down.") == "Sidry: Gear down, Captain." && CrewVoice.Line(null, "Gear down.") == "AICS: Gear down." && CrewVoice.Line("Sidry", "Not airborne.") == "Sidry: Not airborne.", "reply line + Captain");
+        Check(CrewVoice.Persona("Sidry Kerman", "Pilot", "calm", "Plane").Contains("You are Sidry, the pilot") && CrewVoice.Persona("", "", "", "") == "", "persona prompt");
+        {
+            string sentBody = null;
+            var vs = new InModChatSession((ep, body) => { sentBody = body; return "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"On it.\"}}]}"; });
+            vs.Persona = CrewVoice.Persona("Sidry Kerman", "Pilot", "", "Plane");
+            vs.Process("land", "groq", (n, x) => "");
+            Check(sentBody != null && sentBody.Contains("You are Sidry") && sentBody.Contains("\"land\"") && sentBody.Contains("\"transfer_to\""), "session sends persona + full ported tool list (land included)");
+        }
+        var cc = new CrewChatter(new Random(1));
+        var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);
+        Check(lines.Count == 2 && !lines.Exists(l => l.Contains("Sidry")) && lines.Exists(l => l.Contains("Bob (Sci)")), "emergency chatter: two non-pilot lines");
+        Check(cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 105).Count == 0, "emergency chatter rate-limited per member");
+        var tc = new CrewChatter(new Random(2)); int posted = 0;
+        for (int s = 0; s < 1200; s++) { var o = tc.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN); if (s < 120) Check(o.Count == 0, "no trip chatter in the first 2 min"); posted += o.Count; }
+        Check(posted > 0, "trip chatter posts on a long flight");
+        var off = new CrewChatter(new Random(2)) { Enabled = false }; int offPosted = 0;
+        for (int s = 0; s < 1200; s++) offPosted += off.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN).Count;
+        Check(offPosted == 0, "chatter off = silent");
+        int portedTools = 0; foreach (var pn in NativeCommands.Ported) if (!pn.Contains("/")) portedTools++;
+        Check(NativeToolSchemas.Count == portedTools, "tool schemas cover every ported tool (" + NativeToolSchemas.Count + "/" + portedTools + ")");
+        {
+            BridgeHttp.Allowed = () => NativeSafety.NeedsBridge(true, true);   // AI on + in-mod chat
+            int before = BridgeHttp.Blocked; bool threw = false;
+            try { BridgeHttp.Create("tool"); } catch (BridgeOffException ex) { threw = ex.Message.StartsWith("Not available in-mod yet"); }
+            Check(threw && BridgeHttp.Blocked == before + 1, "native mode: no request to 127.0.0.1:8765 is ever created");
+            BridgeHttp.Allowed = () => NativeSafety.NeedsBridge(false, false);
+            threw = false; try { BridgeHttp.Create("health"); } catch (BridgeOffException) { threw = true; }
+            Check(threw, "AI off: bridge HTTP refused too");
+            BridgeHttp.Allowed = () => false;
+        }
+        Check(EmbeddedLlm.UnloadOnScene("MAINMENU") && !EmbeddedLlm.UnloadOnScene("FLIGHT") && !EmbeddedLlm.UnloadOnScene("SPACECENTER"), "model unloads only at the main menu");
+        EmbeddedLlm.Unload(); Check(!EmbeddedLlm.Loaded, "unload with nothing loaded is safe; next chat reloads lazily");
+        Console.WriteLine("Live bug fixes (menus, brakes, runway, voice, chatter, tools): 25 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");
@@ -639,7 +687,7 @@ class Program
         Check(FlightResidualPolicy.LandRoute("", true, false, true, false) == "grounded" && FlightResidualPolicy.LandRoute("", false, true, true, false) == "heli"
             && FlightResidualPolicy.LandRoute("", false, false, true, false) == "plane" && FlightResidualPolicy.LandRoute("ksc", false, false, true, false) == "spot"
             && FlightResidualPolicy.LandRoute("", false, false, false, false) == "vertical", "land alias routes by craft/where");
-        Check(FlightResidualPolicy.RunwayAlias("ksc") == "KSC Runway" && FlightResidualPolicy.RunwayAlias("Island 09") == "Island 09", "KSC runway alias");
+        Check(FlightResidualPolicy.RunwayAlias("ksc") == "KSC Runway" && FlightResidualPolicy.RunwayAlias("Island 09") == "Island Runway 09", "KSC runway alias");
         Check(FlightResidualPolicy.Throttle(0.5) == 0.5 && FlightResidualPolicy.Throttle(75) == 0.75 && FlightResidualPolicy.Throttle(-1) == 0 && FlightResidualPolicy.Throttle(500) == 1, "throttle fraction/percent clamp");
         Check(FlightResidualPolicy.SasMode("Radial Out") == "RadialOut" && FlightResidualPolicy.SasMode("node") == "Maneuver" && FlightResidualPolicy.SasMode("sideways") == null, "SAS mode names");
         Check(FlightResidualPolicy.FlapDegrees("up") == 0 && FlightResidualPolicy.FlapDegrees("2") == 20 && FlightResidualPolicy.FlapDegrees("full") == 30 && FlightResidualPolicy.FlapDegrees("7") == -1, "flap settings");

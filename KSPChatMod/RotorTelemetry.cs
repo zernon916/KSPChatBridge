@@ -89,14 +89,14 @@ namespace KSPChatBridge
             Rows = rows; Available = true;
             try { LocalVesselState.Sample(vessel); }
             catch (Exception ex) { LocalVesselState.Clear(); Debug.LogWarning("[AICS] local telemetry: " + ex.Message); }
-            if (!BridgeLauncher.AiEnabled) return;
+            if (!BridgeLauncher.UseBridge) return;
             string payload = Serialize(rows, NativeIds.Vessel(vessel.id), RpcId(vessel, "KRPC.SpaceCenter.Services.Vessel"));
             if (Interlocked.CompareExchange(ref sending, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(_ => {
                 try
                 {
                     byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                    var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/telemetry");
+                    var req = BridgeHttp.Create("telemetry");
                     req.Proxy = null; req.Method = "POST"; req.ContentType = "application/json";
                     req.Timeout = 1200; req.ReadWriteTimeout = 1200; req.ContentLength = bytes.Length;
                     using (var stream = req.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);

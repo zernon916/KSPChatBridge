@@ -20,7 +20,7 @@ namespace KSPChatBridge
             var engines = new List<ModuleEngines>();
             foreach (Part part in vessel.parts) foreach (var engine in part.FindModulesImplementing<ModuleEngines>())
                 if (Eligible(engine, vessel)) engines.Add(engine);
-            if (restart.Schedule(engines, now)) ChatWindow.Notice("Local pilot: engine restart pending (4 seconds).");
+            if (restart.Schedule(engines, now)) { ChatWindow.Notice("Local pilot: engine restart pending (4 seconds)."); NativeFlightController.CrewEmergency("flameout", engines.Count > 0 && engines[0].part.partInfo != null ? engines[0].part.partInfo.title : "engine"); }
         }
         internal void Tick(Vessel vessel, double now)
         {

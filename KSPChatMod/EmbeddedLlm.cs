@@ -120,5 +120,8 @@ namespace KSPChatBridge
             lock (Gate) { if (llm != null) { llm.Dispose(); llm = null; loadedKey = null; } }
         }
         internal static bool Loaded { get { return llm != null; } }
+
+        /// <summary>Luke Oct 9: back at the main menu, free the model (RAM/VRAM); the next chat reloads it lazily.</summary>
+        internal static bool UnloadOnScene(string scene) { return scene == "MAINMENU"; }
     }
 }

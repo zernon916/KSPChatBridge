@@ -357,6 +357,7 @@ namespace KSPChatBridge
 
         void Tool(string name, string argsJson)
         {
+            if (!BridgeLauncher.UseBridge) { Notice("Landing: " + (NativeCommands.IsPorted(name) ? NativeFlightController.Execute(name, argsJson) : BridgeHttp.Friendly(name))); return; }
             Interlocked.Increment(ref pending);
             Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "Landing: " + reply);
         }
@@ -383,7 +384,7 @@ namespace KSPChatBridge
 
         static string HttpGet(string path, int timeoutMs)
         {
-            var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + path);
+            var req = BridgeHttp.Create(path);
             req.Timeout = timeoutMs;
             req.Proxy = null;
             using (var resp = (HttpWebResponse)req.GetResponse())
@@ -501,12 +502,17 @@ namespace KSPChatBridge
         // format(aiName, replyText); aiName comes from the bridge's X-AI-Name header (set_ai_name tool).
         static void Post(string path, string json, Func<string, string, string> format)
         {
+            if (!BridgeHttp.Allowed())
+            {
+                if (format != null) { Notice(path.StartsWith("chat") ? "This chat backend needs the bridge (ChatGPT desktop/MCP); pick another AI or turn in-mod chat off." : BridgeHttp.Friendly(path)); Interlocked.Decrement(ref pending); }
+                return;
+            }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 string line;
                 try
                 {
-                    var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + path);
+                    var req = BridgeHttp.Create(path);
                     req.Method = "POST";
                     req.ContentType = "application/json";
                     req.Timeout = 600000;
@@ -545,14 +551,14 @@ namespace KSPChatBridge
         // Science-watcher notices from the bridge (GET /events, "id<TAB>text" lines), polled off the main thread.
         void PollEvents()
         {
-            if (!BridgeLauncher.AiEnabled) return;
+            if (!BridgeLauncher.UseBridge) return;
             if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
             int since = lastEventId;
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
-                    var req = (HttpWebRequest)WebRequest.Create(BridgeUrl + "events?format=text&chat=1&cmd=1&since=" + since);
+                    var req = BridgeHttp.Create("events?format=text&chat=1&cmd=1&since=" + since);
                     req.Timeout = 3000;
                     req.Proxy = null;
                     string body;

@@ -6,6 +6,7 @@ namespace KSPChatBridge
     internal sealed class ChatRequest
     {
         internal string Id, Text, Provider, Session;
+        internal string Speaker, Persona;   // native voice: who says the reply + their system-prompt lines
         internal bool UserPriority;
         internal DateTime DeadlineUtc;
         internal Action Settled;   // exactly-once: invoked when the request runs or is dropped (releases UI pending)

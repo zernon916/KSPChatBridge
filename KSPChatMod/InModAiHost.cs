@@ -22,6 +22,7 @@ namespace KSPChatBridge
         {
             instance = this;
             DontDestroyOnLoad(this);
+            GameEvents.onGameSceneLoadRequested.Add(OnSceneRequested);
             try { string m = PluginDataMigration.Run(BridgeLauncher.PluginDataDirectory, DateTime.UtcNow); if (m != null) Debug.Log("[KSPChatBridge] " + m); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] PluginData migration skipped (data untouched): " + ex.Message); }
             Models = ModelManager.Instance;
@@ -59,7 +60,9 @@ namespace KSPChatBridge
         internal static void EnqueueChat(string text, string provider, string session)
         {
             if (instance == null) { ChatWindow.ReleasePendingChat(); ChatWindow.Notice("In-mod AI host not ready."); return; }
-            instance.Submit(text, provider, session ?? "ingame", true);
+            KeyValuePair<string, string> voice;
+            try { voice = NativeFlightController.Voice(); } catch (Exception) { voice = new KeyValuePair<string, string>("AICS", ""); }
+            instance.Submit(text, provider, session ?? "ingame", true, voice.Key, voice.Value);
         }
         /// <summary>Crew chatter: queued behind user chat (user-before-crew).</summary>
         internal static void EnqueueCrew(string text, string provider, string session)
@@ -73,10 +76,11 @@ namespace KSPChatBridge
             EmbeddedLlm.Cancel();
             return instance == null ? 0 : instance.queue.CancelAll();
         }
-        void Submit(string text, string provider, string session, bool userPriority)
+        void Submit(string text, string provider, string session, bool userPriority, string speaker = null, string persona = null)
         {
             var request = new ChatRequest
             {
+                Speaker = speaker, Persona = persona ?? "",
                 Text = text, Provider = provider, Session = session, UserPriority = userPriority,
                 DeadlineUtc = DateTime.UtcNow.AddSeconds(userPriority ? 60 : 20),
                 Settled = () => { if (userPriority) ChatWindow.ReleasePendingChat(); },
@@ -100,11 +104,12 @@ namespace KSPChatBridge
                         if (!sessions.TryGetValue(request.Session ?? "ingame", out chat))
                             sessions[request.Session ?? "ingame"] = chat = new InModChatSession();
                     }
+                    chat.Persona = request.Persona ?? "";
                     reply = chat.Process(request.Text, request.Provider, ExecuteTool);
                 }
                 catch (Exception ex) { reply = "In-mod AI failed: " + ex.Message; }
                 finally { Interlocked.Exchange(ref busy, 0); }
-                string line = (request.UserPriority ? "AICS: " : "") + reply;
+                string line = request.UserPriority ? CrewVoice.Line(request.Speaker, reply) : reply;
                 lock (main) main.Enqueue(() =>
                 {
                     if (request.Settled != null) request.Settled();
@@ -139,7 +144,7 @@ namespace KSPChatBridge
             try
             {
                 string json = "{\"name\":" + ChatWindow.JsonStr(name) + ",\"args\":" + (string.IsNullOrEmpty(argsJson) ? "{}" : argsJson) + "}";
-                var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8765/tool");
+                var req = BridgeHttp.Create("tool");
                 req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 60000; req.Proxy = null;
                 byte[] body = Encoding.UTF8.GetBytes(json);
                 req.ContentLength = body.Length;
@@ -163,6 +168,16 @@ namespace KSPChatBridge
         }
 
         /// <summary>Drop chat sessions and cancel model download when AI is turned off.</summary>
+        void OnSceneRequested(GameScenes scene)
+        {
+            if (!EmbeddedLlm.UnloadOnScene(scene.ToString())) return;
+            CancelQueued();                       // cancels the running reply + drops queued chat
+            ChatWindow.ReleasePendingChat();
+            ThreadPool.QueueUserWorkItem(_ => { try { EmbeddedLlm.Unload(); } catch (Exception) { } });   // lazy reload on next chat
+            lock (gate) sessions.Clear();
+            Debug.Log("[KSPChatBridge] main menu: in-mod model unloaded");
+        }
+        void OnDestroy() { GameEvents.onGameSceneLoadRequested.Remove(OnSceneRequested); }
         internal static void UnloadForAiOff()
         {
             if (Models != null) Models.Cancel();
