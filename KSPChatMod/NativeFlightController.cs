@@ -74,7 +74,27 @@ namespace KSPChatBridge
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
         TakeoffMission takeoff; TakeoffGround tground; bool landFloor;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
-        double LearnedStall() { return learner == null || vessel == null ? stallGuess : FlightPolicy.Clamp(StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence), 20, 200); }
+        int errorHolds;
+        /// <summary>Luke 6:10 PM: an error must never leave nose-down / idle applied. Log the full trace; airborne the first few
+        /// times fall back to a plain altitude/heading hold; otherwise release with centred controls, power kept up, SAS on.</summary>
+        void FailSoft(FlightCtrlState c, Exception ex)
+        {
+            string where = mode; ChatLog.Write("error", where + ": " + ex); Debug.LogError("[KSPChatBridge] controller error in " + where + ": " + ex);
+            c.pitch = c.yaw = c.roll = c.wheelSteer = 0; elevator = 0; pitchIntegral = vsIntegral = 0;
+            bool air = vessel != null && !vessel.LandedOrSplashed;
+            if (air && where != "hold" && errorHolds < 3)
+            {
+                errorHolds++; mode = "hold"; directPitch = directVs = directBank = null; holdAltitude = holdHeading = holdSpeed = true;
+                altitude = Math.Max(vessel.altitude, vessel.altitude - vessel.radarAltitude + 300); heading = FlightGlobals.ship_heading;
+                speed = FlightPolicy.Clamp(1.6 * (double.IsNaN(stall) || stall <= 0 ? 60 : stall), 80, 200); throttle = Math.Max(throttle, .6);
+                SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false;
+                ChatWindow.Notice("Local autopilot error during " + where + " - holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + " (details in the log).");
+                return;
+            }
+            if (air) { c.mainThrottle = vessel.ctrlState.mainThrottle = Math.Max(c.mainThrottle, .6f); SetGroup(vessel, KSPActionGroup.SAS, true); }
+            Stop(); ChatWindow.Notice("Local controller released after error (" + ex.GetType().Name + " in " + where + "): controls centred" + (air ? ", power 60%+, SAS on." : "."));
+        }
+        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; return FlightPolicy.Clamp(s0, 20, 200); }
         internal static string StallLabel { get { var i = instance; return i == null || i.learner == null || i.vessel == null ? "" : StallLearner.Label(i.stallGuess, i.learner.MeasuredStall(i.vessel.GetTotalMass() * 1000, i.liftArea), i.learner.Confidence); } }
         void SaveLearner()
         {
@@ -504,8 +524,8 @@ namespace KSPChatBridge
                         { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && (vessel.srfSpeed > runway.DesiredSpeed + 8 || (on && vessel.srfSpeed > runway.DesiredSpeed + 2)); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
                         runway.Heavy = CraftClass.Gentle(CraftCls);
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
-                        landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && runway.Ils.AboveGsM < -RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
-                        if (landFloor && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 1; ChatLog.Write("g", "approach floor: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " belowGS=" + (-runway.Ils.AboveGsM).ToString("0") + " spd=" + vessel.srfSpeed.ToString("0") + " pit=" + pitch.ToString("0")); }   // AGL floor: never sink into a hill on approach
+                        landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && RunwayMission.BelowGsM(runway.Ils) > RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
+                        if (landFloor && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 1; ChatLog.Write("g", "approach floor: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " belowGS=" + (double.IsNaN(RunwayMission.BelowGsM(runway.Ils)) ? "n/a" : RunwayMission.BelowGsM(runway.Ils).ToString("0")) + " spd=" + vessel.srfSpeed.ToString("0") + " pit=" + pitch.ToString("0")); }   // AGL floor: never sink into a hill on approach
                         if (runway.Phase == "entry" || runway.Phase == "intercept") landingGearDown = false; else if (runway.Gear && !landingGearDown) { SetGroup(vessel, KSPActionGroup.Gear, true); landingGearDown = true; ChatLog.Write("approach", "gear down on final"); }   // never fight the player on the outbound leg
                         if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
@@ -635,7 +655,7 @@ namespace KSPChatBridge
                         props.Collective((float)FlightPolicy.Clamp(Math.Atan2(vessel.srfSpeed, rpm * 2 * Math.PI / 60 * props.Radius) * 180 / Math.PI + 8, 5, 45));
                 }
             }
-            catch (Exception ex) { Stop(); ChatWindow.Notice("Local controller released after error: " + ex.Message); }
+            catch (Exception ex) { FailSoft(c, ex); }
         }
         void Stop(bool interruptPlan = true)
         {

@@ -779,12 +779,14 @@ namespace KSPChatBridge
             xte = d * Math.Sin(th); double remaining = len - d * Math.Cos(th);
             double r = speed * speed / (9.81 * Math.Tan(Math.Max(5, bankDeg) * Math.PI / 180));
             double dh = double.IsNaN(nextBrg) ? 0 : Math.Abs(FlightPolicy.Wrap(nextBrg - leg));
-            double lead = Math.Min(len, r * Math.Tan(Math.Min(150, dh) / 2 * Math.PI / 180));
+            double lead = Math.Min(len, r * Math.Tan(Math.Min(120, dh) / 2 * Math.PI / 180));   // reversal (176 deg) no longer completes a leg instantly
             advance = remaining <= Math.Max(250, lead);
             return LocalizerCourse.Heading(leg, xte, r);   // every leg is a localizer course (same capture law as the LOC intercept)
         }
 
 
+        /// <summary>Metres below the glideslope; NaN before the ILS is computed (Ils is null outside final: the 6:09 PM NRE).</summary>
+        internal static double BelowGsM(Ils.Reading r) { return r == null ? double.NaN : -r.AboveGsM; }
         internal double ArcBank; internal bool Heavy; internal const double GsMargin = 30;   // feed-forward bank on chart arcs (deg, + right)
         internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding

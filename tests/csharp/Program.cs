@@ -192,6 +192,7 @@ class Program
             Check(StallLearner.Effective(60, 50, .3) == 60 && StallLearner.Effective(50, 60, .3) == 60 && StallLearner.Effective(60, 50, .9) == 50 && StallLearner.Effective(60, double.NaN, 1) == 60, "conservative: higher estimate until confident");
             Console.WriteLine("Stall learning: 7 checks passed.");
         }
+        { var rmx = new RunwayMission(); Check(rmx.Ils == null && double.IsNaN(RunwayMission.BelowGsM(rmx.Ils)) && RunwayMission.BelowGsM(new Ils.Reading { AboveGsM = -40 }) == 40, "6:09 PM NRE: below-GS reading is safe before the ILS exists (approach entry)"); }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
