@@ -42,5 +42,5 @@
       ]
     }
   ],
-  "x_comment": "DRAFT - not submitted. The GitHub release must attach KSPChatBridge-<version>.zip (tools/package_release.ps1): one plugin DLL, no external programs; PluginData (user data, .env) is never shipped and is filtered."
+  "x_comment": "DRAFT - not submitted. NOTE: AICS is single-player only; multiplayer is not supported or tested. (Luna Multiplayer / DarkMultiPlayer are not declared as conflicts: they load fine, AICS just warns once in game.) The GitHub release must attach KSPChatBridge-<version>.zip (tools/package_release.ps1): one plugin DLL, no external programs; PluginData (user data, .env) is never shipped and is filtered."
 }

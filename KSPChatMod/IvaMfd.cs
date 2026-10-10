@@ -130,41 +130,47 @@ namespace KSPChatBridge
         }
 
         bool Mj { get { return MechJebLink.Installed; } }
-        MfdNav.Group Group { get { if (group == null || group == "chat") return null; foreach (var g in MfdNav.Groups(Mj)) if (g.Id == group) return g; return null; } }
-        string Item { get { var g = Group; if (g == null) return group == "chat" ? "chat" : null; foreach (var i in g.Items) if (i.Id == item) return item; return g.Items[0].Id; } }
+        MfdNav.Group Group { get { if (group == null) return null; foreach (var g in MfdNav.Groups(Mj)) if (g.Id == group) return g; return null; } }
+        string Item { get { var g = Group; if (g == null) return null; foreach (var i in g.Items) if (i.Id == item) return item; return g.Items[0].Id; } }
+        bool Comms { get { var g = Group; return g != null && g.Id == "comms"; } }
 
-        string[] Left() { var g = Group; var l = new string[6]; if (group == "chat") return l; if (g == null) { var h = MfdNav.HomeKeys(Mj); Array.Copy(h, l, 6); return l; } var p = MfdNav.PageItems(g, page); for (int i = 0; i < p.Count; i++) l[i] = (p[i].Id == Item ? ">" : "") + p[i].Label; return l; }
-        string[] Right() { var g = Group; if (group == "chat") return new string[6]; if (g == null) { var h = MfdNav.HomeKeys(Mj); var r = new string[6]; Array.Copy(h, 6, r, 0, 6); r[5] = r[5] ?? "CHAT"; return r; } return MfdNav.Right(Item); }
-        string[] Bottom() { var g = Group; if (group == "chat") { var b = new string[7]; b[MfdNav.BackKey] = "BACK"; return b; } return MfdNav.Bottom(g == null, Item, page, g == null ? 1 : MfdNav.Pages(g)); }
+        string[] Left() { var g = Group; var l = new string[MfdNav.Side]; if (g == null) { Array.Copy(MfdNav.HomeKeys(Mj), l, MfdNav.Side); return l; } var p = MfdNav.PageItems(g, page); for (int i = 0; i < p.Count; i++) l[i] = (p[i].Id == Item ? ">" : "") + p[i].Label; return l; }
+        string[] Right() { var g = Group; if (g == null) { var r = new string[MfdNav.Side]; Array.Copy(MfdNav.HomeKeys(Mj), MfdNav.Side, r, 0, MfdNav.Side); return r; } return MfdNav.Right(Item); }
+        string[] Bottom() { var g = Group; return MfdNav.Bottom(g == null, Item, page, g == null ? 1 : MfdNav.Pages(g)); }
 
+        void OpenGroup(string id) { foreach (var g in MfdNav.Groups(Mj)) if (g.Id == id) { group = id; item = g.Items[0].Id; page = 0; } }
         void Key(string id)
         {
             int k = id[1] - '0'; var g = Group; var gs = MfdNav.Groups(Mj);
-            if (id == "H0") { group = "chat"; return; }
-            if (group == null)
+            if (id == "H0") { OpenGroup("comms"); return; }
+            if (id == "A0") { OpenGroup("sys"); item = "alarm"; return; }
+            if (id[0] == 'T') return;   // spare top row
+            if (g == null)
             {
-                int gi = id[0] == 'L' ? k : id[0] == 'R' ? 6 + k : -1;
-                if (gi >= 0 && gi < gs.Count) { group = gs[gi].Id; item = gs[gi].Items[0].Id; page = 0; }
-                else if (id == "R5") group = "chat";
+                int gi = id[0] == 'L' ? k : id[0] == 'R' ? MfdNav.Side + k : -1;
+                if (gi >= 0 && gi < gs.Count) OpenGroup(gs[gi].Id);
                 return;
             }
-            if (id[0] == 'L') { if (g == null) return; var p = MfdNav.PageItems(g, page); if (k < p.Count) item = p[k].Id; return; }
+            if (id[0] == 'L') { var p = MfdNav.PageItems(g, page); if (k < p.Count) item = p[k].Id; return; }
             string label = id[0] == 'R' ? Right()[k] : Bottom()[k];
             if (label == null) return;
             if (id[0] == 'B' && k == MfdNav.BackKey) { group = null; item = null; page = 0; Unfocus(true); return; }
             if (id[0] == 'B' && label == "PREV") { page--; item = MfdNav.PageItems(g, page)[0].Id; return; }
             if (id[0] == 'B' && label == "NEXT") { page++; item = MfdNav.PageItems(g, page)[0].Id; return; }
             if (Item == "map" && (label == "ZOOM+" || label == "ZOOM-")) { span = MapReveal.Zoom(span, label == "ZOOM+" ? .5 : 2); return; }
+            if (Comms && label == "SEND") { focused = chatF; Submit(); return; }
+            if (Comms && label == "CLEAR") { chatF.Set(""); return; }
             AicsMenu.OnKey(Item, label);
         }
 
         // text-field rows on the screen (rows counted from the top of the screen box)
-        int Cols { get { return (int)((IvaLayout.Screen.Wd - 12) / CellW(18)); } }
-        int Rows { get { return (int)((IvaLayout.Screen.Ht - 8) / 20); } }
+        int Cols { get { return (int)((IvaLayout.Screen.Wd - 12) / CellW(TextPx)); } }
+        const int TextPx = 16;
+        int Rows { get { return (int)((IvaLayout.Screen.Ht - 8) / (TextPx + 3)); } }
         void ScreenClick(float y)
         {
-            int row = (int)((y - IvaLayout.Screen.Y - 4) / 20);
-            if (Item == "chat" && row >= Rows - 3) { Focus(chatF); return; }
+            int row = (int)((y - IvaLayout.Screen.Y - 4) / (TextPx + 3));
+            if (Comms && row >= Rows - 3) { Focus(chatF); return; }
             if (Item == "flightplan" && row >= 2 && row < Rows - 2) { Focus(planF); return; }
             if (focused != null) { if (focused == planF) AicsMenu.PlanText = planF.Text.ToString(); Unfocus(false); }
         }
@@ -176,20 +182,22 @@ namespace KSPChatBridge
             Func<string, List<string>> W = s => IvaLayout.Wrap(s, cols);
             if (group == null)
             {
-                o.Add("AICS CONTROL"); o.AddRange(W(AicsRpmPages.StatusText().Replace("AICS AUTOPILOT\n\n", "")));
+                o.AddRange(W(AicsRpmPages.StatusText().Replace("AICS AUTOPILOT\n\n", "")));
+                if (StatusWindow.AlarmLevel != "") o.AddRange(W("ALARM " + StatusWindow.AlarmText));
+                if (MultiplayerCheck.Warning != null) o.AddRange(W(MultiplayerCheck.Warning));
                 var v = FlightGlobals.ActiveVessel;
                 if (v != null) { o.Add(""); o.AddRange(W(v.vesselName)); o.Add("ALT " + Math.Round(v.altitude) + "  SPD " + Math.Round(v.srfSpeed) + "  HDG " + Math.Round(FlightGlobals.ship_heading).ToString("000")); }
-                o.Add(""); o.AddRange(W("Soft keys pick a group. CHAT: talk to the crew. BACK is always bottom-left."));
+                o.Add(""); o.AddRange(W("Soft keys pick a group. COMMS (top right): talk to the crew. BACK is always bottom-left."));
                 return o;
             }
             switch (it)
             {
-                case "chat":
+                case "intercom": case "system": case "pilot": case "all":
                 {
-                    var hist = new List<string>(); foreach (var l in ChatWindow.Recent(30)) hist.AddRange(W(l));
+                    var hist = new List<string>(); foreach (var l in ChatWindow.Recent(60)) if (MfdNav.ChatShows(it, l)) hist.AddRange(W(l));
                     string input = "> " + chatF.Text + (focused == chatF ? caret : "");
                     var inp = W(input); int keep = Math.Max(1, rows - 1 - Math.Min(2, inp.Count));
-                    o.Add("CHAT" + (focused == chatF ? "  (typing: Enter sends, Esc stops)" : "  (click the bottom line to type)"));
+                    o.Add(focused == chatF ? "(typing: Enter sends, Esc stops)" : "(click the bottom line to type)");
                     o.AddRange(hist.GetRange(Math.Max(0, hist.Count - keep + 1), Math.Min(hist.Count, keep - 1)));
                     while (o.Count < rows - Math.Min(2, inp.Count)) o.Add("");
                     o.AddRange(inp.GetRange(Math.Max(0, inp.Count - 2), Math.Min(2, inp.Count)));
@@ -207,7 +215,10 @@ namespace KSPChatBridge
                     return o;
                 }
                 case "map": o.AddRange(AicsRpmPages.MapText(cols, rows - 1, span).Split('\n')); o.Add("span " + (span / 1000).ToString("0") + " km"); return o;
-                case "ils": o.AddRange(AicsRpmPages.IlsText(cols, rows).Split('\n')); return o;
+                case "ils": o.AddRange(AicsRpmPages.IlsText(Math.Max(10, cols / 2), rows).Split('\n')); return o;   // data block right of the needles
+                case "alarm": foreach (var l in StatusWindow.AlarmLines()) o.AddRange(W(l)); return o;
+                case "systems": o.Add(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW"); foreach (var r in StatusWindow.SystemRows()) o.AddRange(W((r[0] == "fail" ? "! " : r[0] == "caution" ? "* " : "  ") + r[1] + ": " + r[2])); return o;
+                case "status": foreach (var r in StatusWindow.StatusRows()) o.AddRange(W(r[0] + ": " + r[1])); return o;
                 case "mjatt": case "mjguide": o.Add(it == "mjatt" ? "MECHJEB SMARTASS" : "MECHJEB GUIDANCE"); o.AddRange(W(NativeFlightController.MjStatusNow)); return o;
                 case "chart": o.Add("CHART"); o.AddRange(W("Active runway " + MapWindow.Title + ". Fix editing needs the mouse map: use the outside MFD (Alt+J) MAP > CHART. Here: RWY < / >, VARIANT, SAVE.")); return o;
             }
@@ -230,19 +241,47 @@ namespace KSPChatBridge
             Fill(new Rect(s.X - 3, s.Y - 3, s.Wd + 6, s.Ht + 6), new Color(.05f, .05f, .05f)); Fill(new Rect(s.X, s.Y, s.Wd, s.Ht), Color.black);
             for (float x = s.X + 40; x < s.X + s.Wd; x += 40) Fill(new Rect(x, s.Y, 1, s.Ht), Dim);
             for (float y = s.Y + 40; y < s.Y + s.Ht; y += 40) Fill(new Rect(s.X, y, s.Wd, 1), Dim);
-            var g = Group; string title = "AICS " + (group == null ? "HOME" : group == "chat" ? "CHAT" : g.Label + (Item != null ? " / " + Item.ToUpperInvariant() : ""));
-            Text(title, IvaLayout.M + 4, 6, 20, Phos);
-            string[] L = Left(), R = Right(), B = Bottom();
+            // engraved title plate
+            var g = Group; var pl = IvaLayout.Plate(IvaLayout.W, IvaLayout.H);
+            string title = "AICS " + (group == null ? "HOME" : g.Label + (Item != null ? " / " + Item.ToUpperInvariant() : ""));
+            Fill(new Rect(pl.X - 2, pl.Y - 2, pl.Wd + 4, pl.Ht + 4), new Color(.06f, .06f, .07f)); Fill(new Rect(pl.X, pl.Y, pl.Wd, pl.Ht), new Color(.56f, .57f, .59f));
+            int tp = Math.Min(18, (int)((pl.Wd - 8) / (.6f * Math.Max(1, title.Length))));
+            float tx = pl.X + (pl.Wd - CellW(tp) * title.Length) / 2, ty = pl.Y + (pl.Ht - tp) / 2;
+            Text(title, tx + 1, ty + 1, tp, new Color(.85f, .86f, .88f)); Text(title, tx, ty, tp, new Color(.13f, .13f, .14f));
+            string[] L = Left(), R = Right(), B = Bottom(); string lvl = StatusWindow.AlarmLevel; bool lamp = lvl != "" && (!StatusWindow.AlarmUnacked || (Time.realtimeSinceStartup % 1f) < .5f);
             foreach (var k in IvaLayout.Keys())
             {
-                string lab = k.Id == "H0" ? "CHAT" : k.Id[0] == 'L' ? L[k.Id[1] - '0'] : k.Id[0] == 'R' ? R[k.Id[1] - '0'] : B[k.Id[1] - '0'];
-                Fill(new Rect(k.X, k.Y, k.Wd, k.Ht), KeyEdge); Fill(new Rect(k.X + 2, k.Y + 2, k.Wd - 4, k.Ht - 4), string.IsNullOrEmpty(lab) ? Bezel : KeyC);
-                if (!string.IsNullOrEmpty(lab)) { int px = lab.Length > 9 ? 13 : 16; texts.Add(new Txt { S = lab, X = k.X, Y = k.Y + k.Ht / 2 - px * .55f, Px = px, C = Label, Center = true, Wd = k.Wd }); }
+                int n = k.Id[1] - '0';
+                string lab = k.Id == "H0" ? "COMMS" : k.Id == "A0" ? (lvl == "warning" ? "MASTER WARNING" : lvl == "caution" ? "MASTER CAUTION" : "MASTER ALARM") : k.Id[0] == 'T' ? null : k.Id[0] == 'L' ? L[n] : k.Id[0] == 'R' ? R[n] : B[n];
+                Color bg = k.Id == "A0" ? (!lamp ? new Color(.16f, .12f, .12f) : lvl == "warning" ? new Color(.85f, .1f, .08f) : new Color(.95f, .62f, .05f)) : string.IsNullOrEmpty(lab) ? Bezel : KeyC;
+                Fill(new Rect(k.X, k.Y, k.Wd, k.Ht), KeyEdge); Fill(new Rect(k.X + 2, k.Y + 2, k.Wd - 4, k.Ht - 4), bg);
+                if (string.IsNullOrEmpty(lab)) continue;
+                int px = IvaLayout.KeyFont(lab, k.Wd, k.Ht, 15); var ls = IvaLayout.KeyLines(lab, k.Wd, px);   // uniform glyphs, wrapped: never squashed
+                float y0 = k.Y + (k.Ht - ls.Count * (px + 2)) / 2;
+                for (int i = 0; i < ls.Count; i++) texts.Add(new Txt { S = ls[i], X = k.X, Y = y0 + i * (px + 2), Px = px, C = k.Id == "A0" ? (lamp ? Color.black : new Color(.45f, .35f, .35f)) : Label, Center = true, Wd = k.Wd });
             }
-            int cols = Cols, rows = Rows; var lines = ScreenLines(cols, rows);
-            for (int i = 0; i < Math.Min(rows, lines.Count); i++) Text(lines[i].Length > cols ? lines[i].Substring(0, cols) : lines[i], s.X + 6, s.Y + 4 + i * 20, 18, Phos);
+            int cols = Cols, rows = Rows; float x0 = s.X + 6;
+            if (Item == "ils") { float S = Math.Min(s.Ht - 8, s.Wd * .48f); DrawNeedles(new Rect(s.X + 4, s.Y + 4, S, S)); x0 = s.X + S + 12; cols = (int)((s.X + s.Wd - x0 - 4) / CellW(TextPx)); }
+            var lines = ScreenLines(cols, rows);
+            for (int i = 0; i < Math.Min(rows, lines.Count); i++) Text(lines[i].Length > cols ? lines[i].Substring(0, cols) : lines[i], x0, s.Y + 4 + i * (TextPx + 3), TextPx, Phos);
             if (focused != null) Fill(new Rect(s.X, s.Y + s.Ht - 3, s.Wd, 3), Phos);
             Blit();
+        }
+
+        /// <summary>ILS needles box (same deviations as the outside ILS page and the autopilot).</summary>
+        void DrawNeedles(Rect b)
+        {
+            Fill(b, new Color(.02f, .05f, .03f)); Vector2 c = b.center; float S = b.width;
+            for (int i = -2; i <= 2; i++) if (i != 0) { Fill(new Rect(c.x + i * S * .2f - 2, c.y - 2, 4, 4), Color.white); Fill(new Rect(c.x - 2, c.y + i * S * .2f - 2, 4, 4), Color.white); }
+            Fill(new Rect(c.x - 3, c.y - 3, 6, 6), Color.yellow);
+            var v = FlightGlobals.ActiveVessel; if (v == null) return;
+            var act = NativeFlightController.ActiveRunway; Ils.Reading r;
+            if (act != null && act.Coupled && act.Ils != null) r = act.Ils;
+            else if (act != null) r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM);
+            else r = Ils.Compute(v.latitude, v.longitude, v.altitude, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, v.mainBody.Radius, 350);
+            bool valid = r.Front && r.DmeM < 40000; Color nc = valid ? Color.magenta : Color.gray;
+            float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f, gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;
+            Fill(new Rect(lx - 1.5f, b.y + 8, 3, S - 16), nc); Fill(new Rect(b.x + 8, gy - 1.5f, S - 16, 3), nc);
         }
         void Fill(Rect r, Color c) { fills.Add(new KeyValuePair<Rect, Color>(r, c)); }
         void Text(string str, float x, float y, int px, Color c) { texts.Add(new Txt { S = str, X = x, Y = y, Px = px, C = c }); }
@@ -260,7 +299,6 @@ namespace KSPChatBridge
             foreach (var t in texts)
             {
                 float cw = CellW(t.Px), x = t.Center ? t.X + Mathf.Max(2, (t.Wd - cw * t.S.Length) / 2) : t.X, baseY = t.Y + t.Px * .8f;
-                if (t.Center && cw * t.S.Length > t.Wd - 4) cw = (t.Wd - 4) / t.S.Length;   // squeeze long key labels
                 GL.Color(t.C);
                 foreach (char ch in t.S)
                 {

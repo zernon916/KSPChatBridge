@@ -9,6 +9,8 @@ every command, the autopilots, the crew, and troubleshooting.
 
 ## Optional mods (work if installed)
 
+**AICS is single-player only; multiplayer is not supported or tested.** If Luna Multiplayer, DarkMultiPlayer or another multiplayer mod is loaded, AICS says so once in chat and on the MFD.
+
 Nothing here is required; each is detected at runtime (no hard dependency):
 
 - **SCANsat**: the AICS map reveals terrain from SCANsat coverage instead of only your flight path.
@@ -52,9 +54,9 @@ Upgrading from a bridge build (0.1.x): the old `Bridge/` folder and `bridge.cfg`
 ### AICS MFD
 
 One movable, resizable cockpit-style panel (drag the top bezel, resize from the bottom-right corner) replaces the old AICS
-menu bar and the Map & Charts window; the chat window stays separate (CHAT key in the header).
+menu bar and the Map & Charts window; chat is the COMMS group (INTERCOM / SYSTEM / PILOT / ALL, input line at the bottom; COMMS key top right); the separate chat window is optional. MASTER ALARM (annunciator, top left), SYSTEMS and STATUS are pages under SYS. MAP / CHART / ILS screens show only the display: every action is a bezel soft key, waypoints are picked by clicking the map or WP < / >.
 HOME soft keys: AUTOPILOT, MAP, PLAN, CREW, MECHJEB (only with MechJeb2), SYS, SETTINGS. In a group the left keys pick the
-page (PREV / NEXT on the bottom row when there are more than six), the right column and bottom keys are that page's
+page (PREV / NEXT on the bottom row when there are more than eight), the right column and bottom keys are that page's
 context keys, and **BACK is always the bottom-left key**. Examples: AUTOPILOT > TAXI > HANGAR / RWY 09 / RWY 27;
 MAP > MAP: ZOOM, CENTER, RWY, arrow keys pan; MECHJEB > SMARTASS / GUIDANCE.
 
@@ -65,7 +67,7 @@ the map). `taxi to hangar` / `taxi to runway 09` joins the nearest point ahead o
 
 An AICS MFD screen is added by ModuleManager (`AICS_IVA.cfg`) to the Mk1 cockpit and Mk2 inline cockpit (in place of the
 stock docking monitor), the Mk1-3 pod, the Mk2 cockpit and the Mk1 inline cockpit. Click its soft keys in IVA: same pages
-and navigation as the outside MFD (BACK bottom-left). HOME right-bottom key / header key = CHAT. To type, click the chat
+and navigation as the outside MFD (BACK bottom-left). COMMS key (top right) = chat. To type, click the chat
 input line (CHAT page) or the plan text (PLAN > FLIGHT PLAN): ship keys are locked while typing, Enter sends / checks
 (Shift+Enter = new line in the plan), Esc stops typing. Positions and `flipX` / `flipY` are tunable in `AICS_IVA.cfg`.
 

@@ -1692,13 +1692,14 @@ class Program
             Check(Array.IndexOf(hk, "MECHJEB") >= 0 && Array.IndexOf(hn, "MECHJEB") < 0 && Array.IndexOf(hk, "AUTOPILOT") == 0 && Array.IndexOf(hk, "SETTINGS") >= 0, "HOME groups; MECHJEB only when installed");
             var ap = MfdNav.Groups(false)[0]; int pages = MfdNav.Pages(ap);
             var b0 = MfdNav.Bottom(false, "aircraft", 0, pages); var b1 = MfdNav.Bottom(false, "orbitap", 1, pages); var bh = MfdNav.Bottom(true, null, 0, 1);
-            Check(pages == 2 && MfdNav.PageItems(ap, 1).Count == ap.Items.Count - 6 && b0[MfdNav.NextKey] == "NEXT" && b0[MfdNav.PrevKey] == null && b1[MfdNav.PrevKey] == "PREV", "groups with more items page with PREV / NEXT");
+            Check(pages == 2 && MfdNav.PageItems(ap, 1).Count == ap.Items.Count - MfdNav.Side && b0[MfdNav.NextKey] == "NEXT" && b0[MfdNav.PrevKey] == null && b1[MfdNav.PrevKey] == "PREV", "groups with more items page with PREV / NEXT");
             bool back = bh[MfdNav.BackKey] == null; foreach (var g in MfdNav.Groups(true)) foreach (var it in g.Items) back &= MfdNav.Bottom(false, it.Id, 0, MfdNav.Pages(g))[MfdNav.BackKey] == "BACK";
             Check(back, "BACK at the same key (bottom-left) on every page except HOME");
             Check(Array.IndexOf(MfdNav.Right("taxi"), "HANGAR") >= 0 && MfdNav.SmartMode("RETRO") == "RETROGRADE" && Array.IndexOf(MfdNav.Right("mjguide"), "EXEC NODE") >= 0, "context keys: taxi to hangar, MechJeb modes");
-            bool fits = true; foreach (var wh in new[] { new[] { 500f, 380f }, new[] { 900f, 700f }, new[] { 300f, 900f } }) { float S = Ils.BoxSide(wh[0], wh[1], true); fits &= S + 270 + 90 <= wh[1] + 1 || S == 90; fits &= S <= wh[0] - 30 || S == 90; }
-            Check(fits, "ILS needles shrink so the numbers stay visible at any size");
-            Console.WriteLine("AICS MFD: 6 behavior checks passed.");
+            Check(MfdNav.ChatKind("You: hi") == "pilot" && MfdNav.ChatKind("AICS: Taxi arrived") == "system" && MfdNav.ChatKind("[SYSTEM] CAUTION: x") == "system" && MfdNav.ChatKind("Jebediah: roger") == "intercom" && MfdNav.ChatShows("all", "anything"), "COMMS filter pages: PILOT / SYSTEM / INTERCOM / ALL");
+            Check(MfdNav.IsMultiplayer(new[] { "KSPChatBridge", "LmpClient" }) && MfdNav.IsMultiplayer(new[] { "DarkMultiPlayer" }) && !MfdNav.IsMultiplayer(new[] { "MechJeb2" }), "Luna Multiplayer / DMP detected -> single-player warning");
+            Check(MfdNav.RpmHidden("auto", true) && !MfdNav.RpmHidden("auto", false) && MfdNav.RpmHidden("off", false) && !MfdNav.RpmHidden("on", true), "RPM AICS pages auto/on/off: auto hides them where the native MFD is");
+            Console.WriteLine("AICS MFD: 8 behavior checks passed.");
         }
 
         {   // native IVA MFD (Phase 2, Luke 4:41 PM): typing fields, face layout / hit test, stock cockpits patched
@@ -1707,16 +1708,19 @@ class Program
             var pf = new MfdField(true); pf.Feed("takeoff", false, false); pf.Feed("\n", true, false); pf.Feed("land", false, false);
             Check(pf.Text.ToString() == "takeoff\nland" && pf.Feed("", false, true) == MfdField.Result.Cancel, "plan field: Shift+Enter new line, Esc unfocuses");
             var keys = IvaLayout.Keys(); int n = 0; bool apart = true;
-            foreach (var k in keys) { if (k.Id != "H0") n++; if (IvaLayout.Hit(k.X + k.Wd / 2, k.Y + k.Ht / 2) != k.Id) apart = false; }
+            foreach (var k in keys) { if (k.Id != "H0" && k.Id != "A0") n++; if (IvaLayout.Hit(k.X + k.Wd / 2, k.Y + k.Ht / 2) != k.Id) apart = false; }
             var sc = IvaLayout.Screen;
-            Check(n == 19 && keys.Count == 20 && apart && IvaLayout.Hit(sc.X + 50, sc.Y + 50) == "S" && IvaLayout.Hit(2, 2) == null, "IVA face: 6+6+7 soft keys + CHAT, each hit-tests to itself; screen and bezel separate");
+            Check(n == 32 && keys.Count == 34 && apart && IvaLayout.Hit(sc.X + 50, sc.Y + 50) == "S" && IvaLayout.Hit(2, 2) == null, "face: 8 keys per side + 8 bottom + 8 spare top, annunciator, COMMS; each hit-tests to itself");
             var bk = keys.Find(k => k.Id == "B0"); Check(bk.X < 20 && bk.Y > IvaLayout.H - 60, "IVA BACK key is bottom-left");
+            bool scaled = true; foreach (var wh in new[] { new[] { 560f, 490f }, new[] { 1280f, 1120f } }) { var big = IvaLayout.KeysOf(wh[0], wh[1]); var sb2 = IvaLayout.ScreenOf(wh[0], wh[1]); foreach (var k in big) scaled &= k.X >= 0 && k.Y >= 0 && k.X + k.Wd <= wh[0] + .5f && k.Y + k.Ht <= wh[1] + .5f; scaled &= sb2.Wd > 200 && sb2.Ht > 150; }
+            var kr0 = keys.Find(k => k.Id == "R0"); int kp = IvaLayout.KeyFont("MASTER WARNING", kr0.Wd, kr0.Ht, 15); var kl = IvaLayout.KeyLines("MASTER WARNING", kr0.Wd, kp);
+            Check(scaled && kp >= 8 && kl.Count <= 2 && kl.TrueForAll(x => x.Length * .6f * kp <= kr0.Wd), "layout stretches to any size; key labels keep glyph aspect and wrap (" + kp + " px, " + kl.Count + " lines)");
             Check(IvaLayout.Wrap("one two three four", 9).Count == 3 && IvaLayout.Wrap("a\nb", 9).Count == 2, "screen text wraps to the columns");
             string root2 = System.IO.Directory.GetCurrentDirectory(); while (root2 != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root2, "KSPChatMod"))) root2 = System.IO.Path.GetDirectoryName(root2);
             string iva = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "AICS_IVA.cfg"));
             bool all = true; foreach (var ii in new[] { "mk1CockpitInternal", "mk2InlineInternal", "Mk1-3", "mk2CockpitStandardInternals", "mk1InlineInternal" }) all &= iva.Contains("@INTERNAL[" + ii + "]");
             Check(all && iva.Contains("name = AicsIvaMfd") && System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "tools", "package_release.ps1")).Contains("AICS_IVA.cfg"), "AICS_MFD prop patched into 5 stock cockpits and shipped");
-            Console.WriteLine("IVA MFD: 6 behavior checks passed.");
+            Console.WriteLine("IVA MFD: 7 behavior checks passed.");
         }
 
         {   // repo checks ported from the removed Python suite (bridge removal, P5-8)

@@ -113,8 +113,6 @@ namespace KSPChatBridge
     /// (antenna at the touchdown point) deviations, DME to the threshold, cross-track and height vs the glide path.</summary>
     internal static class Ils
     {
-        /// <summary>ILS needle box side for a page size: leaves room for the numbers/status/guidance text so a resize never pushes them off (Luke 4:24 PM).</summary>
-        internal static float BoxSide(float w, float h, bool guidance) { float text = 270 + (guidance ? 90 : 0); return Math.Max(90f, Math.Min(Math.Min(w - 30, h - text), Math.Min(420f, .55f * h))); }
 
         internal const double GlideDeg = 3, LocFullScale = 2.5, GsFullScale = .7;
         internal sealed class Reading { internal double LocDeg, GsDeg, DmeM, CrossM, AboveGsM, Course; internal bool Front; }

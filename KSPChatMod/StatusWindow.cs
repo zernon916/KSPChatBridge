@@ -21,14 +21,8 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
     public class StatusWindow : MonoBehaviour
     {
-        const int StatusId = 0x4B434233, SystemsId = 0x4B434234;
-        const float MinW = 260, MinH = 140;
 
-        internal static bool StatusVisible, SystemsVisible;
         static bool maydayLights = true;
-        int systemsTab;
-        static Rect statusRect = new Rect(100, 320, 400, 300);
-        static Rect sysRect = new Rect(520, 320, 440, 440);
         static bool loaded;
         static string cfgFile;
 
@@ -47,9 +41,6 @@ namespace KSPChatBridge
             { "eta", "Distance / ETA" }, { "plan", "Flight Plan" }, { "alert", "ALERT" } };
 
         float nextPoll;
-        bool resizingStatus, resizingSys;
-        Vector2 statusScroll, sysScroll;
-        GUIStyle valStyle, keyStyle, okLight, cauLight, failLight, mWarnOn, mCauOn, mDark, mAcked;
         bool blinking, lightOrig;
         Vessel blinkVessel;
         float nextBlink;
@@ -64,8 +55,8 @@ namespace KSPChatBridge
                     : key == "ind_flightplan" && NativeFlightController.PlanRunning;
         }
 
-        internal static void ToggleStatus() { StatusVisible = !StatusVisible; Save(); }
-        internal static void ToggleSystems() { SystemsVisible = !SystemsVisible; Save(); }
+        internal static void ToggleStatus() { AicsMenu.ShowMfdItem("status"); }
+        internal static void ToggleSystems() { AicsMenu.ShowMfdItem("systems"); }
 
         void Start()
         {
@@ -82,7 +73,7 @@ namespace KSPChatBridge
             Blink();
             if (Time.realtimeSinceStartup < nextPoll) return;
             nextPoll = Time.realtimeSinceStartup + 1f;
-            if (StatusVisible || AicsMenu.Expanded) PollStatus();
+            PollStatus();
             if (HighLogic.LoadedSceneIsFlight)
             {
                 sysRows = LocalVesselState.Systems;
@@ -140,164 +131,43 @@ namespace KSPChatBridge
         }
 
         // ---------------------------------------------------------------- drawing
-        static Texture2D Tex(Color c)
+        // ---------------------------------------------------------------- MFD pages (SYS > MSTR ALARM / SYSTEMS / STATUS; no pop-up windows)
+        internal static string AlarmLevel { get { return master[0]; } }
+        internal static string AlarmText { get { return master[2]; } }
+        internal static bool AlarmUnacked { get { return Unacked(); } }
+        internal static void Ack() { if (master[0] != "") ackSeq = Seq(); }
+        internal static bool MaydayLights { get { return maydayLights; } set { maydayLights = value; Save(); } }
+        internal static bool RotorsTab;
+        internal static List<string> AlarmLines()
         {
-            var t = new Texture2D(1, 1);
-            t.SetPixel(0, 0, c);
-            t.Apply();
-            return t;
+            var o = new List<string>(); string l = master[0];
+            o.Add(l == "warning" ? "MASTER WARNING" : l == "caution" ? "MASTER CAUTION" : "NO ALARM");
+            if (l != "") { o.Add(master[2]); o.Add(Unacked() ? "ACK: acknowledge" : "(acknowledged)"); }
+            foreach (var r in sysRows) if (r[0] != "ok") o.Add((r[0] == "fail" ? "FAIL " : "CAUT ") + r[1] + ": " + r[2]);
+            o.Add(""); o.Add("MAYDAY lights " + (maydayLights ? "ON" : "OFF") + " (MAYDAY LT)");
+            return o;
         }
-
-        static GUIStyle Light(Color c)
+        /// <summary>[light, name, value] rows: overview or robotic rotors.</summary>
+        internal static List<string[]> SystemRows()
         {
-            var s = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-            s.normal.textColor = c;
-            return s;
+            var o = new List<string[]>();
+            if (!RotorsTab) { if (!systemsOk) o.Add(new[] { "caution", "Systems", "waiting for vessel state" }); o.AddRange(sysRows); return o; }
+            var vessel = FlightGlobals.ActiveVessel;
+            if (RotorTelemetry.Rows.Count == 0) o.Add(new[] { "ok", "Rotors", "none on this vessel" });
+            foreach (var r in RotorTelemetry.Rows)
+                o.Add(new[] { RotorPlacement.Status(r.Rpm, r.Limit, r.Motor, r.Brake, vessel != null && !vessel.LandedOrSplashed), r.Label + " " + r.Direction,
+                    (float.IsNaN(r.Rpm) ? "?" : r.Rpm.ToString("F0")) + "/" + r.Limit.ToString("F0") + " RPM  T " + r.Torque.ToString("F0") + "%  B " + r.Brake.ToString("F0") + "%  " + (r.Motor ? "ON" : "OFF") });
+            return o;
         }
-
-        static GUIStyle Lamp(Color bg, Color fg)
+        internal static List<string[]> StatusRows()
         {
-            var s = new GUIStyle(GUI.skin.box) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, fontSize = 12 };
-            s.normal.background = s.hover.background = s.active.background = Tex(bg);
-            s.normal.textColor = s.hover.textColor = s.active.textColor = fg;
-            return s;
-        }
-
-        void Styles()
-        {
-            if (valStyle != null) return;
-            valStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
-            keyStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold };
-            okLight = Light(new Color(0.35f, 0.95f, 0.35f));
-            cauLight = Light(new Color(1f, 0.72f, 0.1f));
-            failLight = Light(new Color(1f, 0.25f, 0.2f));
-            mWarnOn = Lamp(new Color(0.85f, 0.08f, 0.05f), Color.white);
-            mCauOn = Lamp(new Color(0.95f, 0.65f, 0.05f), Color.black);
-            mDark = Lamp(new Color(0.15f, 0.15f, 0.16f), new Color(0.45f, 0.45f, 0.47f));
-            mAcked = Lamp(new Color(0.45f, 0.12f, 0.1f), new Color(0.95f, 0.85f, 0.85f));
-        }
-
-        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
-
-        void OnGUIInner()
-        {
-            if (!StatusVisible && !SystemsVisible) return;
-            Styles();
-            Resize(ref statusRect, ref resizingStatus);
-            Resize(ref sysRect, ref resizingSys);
-            if (StatusVisible) statusRect = GUI.Window(StatusId, statusRect, DrawStatus, "AICS Status");
-            if (SystemsVisible && HighLogic.LoadedSceneIsFlight) sysRect = GUI.Window(SystemsId, sysRect, DrawSystems, "AICS Systems");
-        }
-
-        static void Resize(ref Rect r, ref bool resizing)
-        {
-            if (!resizing) return;
-            if (Input.GetMouseButton(0))
+            var o = new List<string[]>(); foreach (string[] kv in LocalVesselState.Flight) o.Add(new[] { kv[0], kv[1] });
+            if (statusOk) foreach (string[] kv in rows)
             {
-                Vector2 m = Event.current.mousePosition;
-                r.width = Mathf.Clamp(m.x - r.x + 6, MinW, Screen.width);
-                r.height = Mathf.Clamp(m.y - r.y + 6, MinH, Screen.height);
+                if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
+                string label; if (!Labels.TryGetValue(kv[0], out label)) label = kv[0]; o.Add(new[] { label, kv[1] });
             }
-            else { resizing = false; Save(); }
-        }
-
-        void Chrome(Rect r, ref bool resizing, bool status)
-        {
-            Event e = Event.current;
-            Rect grip = new Rect(r.width - 18, r.height - 18, 16, 16);
-            GUI.Label(grip, "//");
-            if (e.type == EventType.MouseDown && e.button == 0 && grip.Contains(e.mousePosition)) { resizing = true; e.Use(); }
-            if (GUI.Button(new Rect(r.width - 22, 2, 18, 16), "x"))
-            {
-                if (status) StatusVisible = false; else SystemsVisible = false;
-                Save();
-            }
-            GUI.DragWindow();
-        }
-
-        // Master caution / warning lamps: flash while unacknowledged; click = acknowledge / silence.
-        void DrawMaster(float w, bool big)
-        {
-            string lvl = master[0];
-            bool flash = (Time.realtimeSinceStartup % 1f) < 0.5f;
-            bool unacked = Unacked();
-            GUILayout.BeginHorizontal(GUILayout.Width(w));
-            GUIStyle warn = lvl == "warning" ? (unacked ? (flash ? mWarnOn : mDark) : mAcked) : mDark;
-            GUIStyle cau = lvl == "caution" ? (unacked ? (flash ? mCauOn : mDark) : mCauOn) : mDark;
-            float h = big ? 34 : 22;
-            string sep = big ? "\n" : " ";
-            if (GUILayout.Button("MASTER" + sep + "WARNING", warn, GUILayout.Width(w / 2 - 4), GUILayout.Height(h)) && lvl != "") ackSeq = Seq();
-            if (GUILayout.Button("MASTER" + sep + "CAUTION", cau, GUILayout.Width(w / 2 - 4), GUILayout.Height(h)) && lvl != "") ackSeq = Seq();
-            GUILayout.EndHorizontal();
-            if (lvl != "") GUILayout.Label(master[2] + (unacked ? "   (click a lamp to acknowledge)" : "   (acknowledged)"), valStyle, GUILayout.Width(w));
-        }
-
-        void DrawStatus(int id)
-        {
-            float w = statusRect.width - 16;
-            if (HighLogic.LoadedSceneIsFlight && master[0] != "") DrawMaster(w, false);
-            if (!statusOk) GUILayout.Label("Controller status unavailable; vessel measurements are local.", valStyle, GUILayout.Width(w));
-            statusScroll = GUILayout.BeginScrollView(statusScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
-            foreach (string[] kv in LocalVesselState.Flight)
-                GUILayout.Label(kv[0] + ": " + kv[1], valStyle);
-            if (statusOk && rows.Count > 0)
-            {
-                GUILayout.Label("Autopilot", keyStyle, GUILayout.Width(w));
-                foreach (string[] kv in rows)
-                {
-                    if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
-                    string label;
-                    if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label(label, keyStyle, GUILayout.Width(100));
-                    GUILayout.Label(kv[1], valStyle, GUILayout.Width(w - 130));
-                    GUILayout.EndHorizontal();
-                }
-            }
-            GUILayout.EndScrollView();
-            GUILayout.Space(14);
-            Chrome(statusRect, ref resizingStatus, true);
-        }
-
-        void DrawSystems(int id)
-        {
-            float w = sysRect.width - 16;
-            systemsTab = GUILayout.Toolbar(systemsTab, new[] { "Overview", "Rotors" });
-            DrawMaster(w, true);
-            if (!systemsOk) GUILayout.Label("Waiting for local vessel state.", valStyle, GUILayout.Width(w));
-            sysScroll = GUILayout.BeginScrollView(sysScroll, false, false, GUILayout.Width(w), GUILayout.ExpandHeight(true));
-            if (systemsTab == 1)
-            {
-                GUILayout.Label("Direction: viewed toward the hub along the rotor's positive spin axis.", valStyle);
-                if (RotorTelemetry.Rows.Count == 0) GUILayout.Label("No robotic rotors on this vessel.", valStyle);
-                foreach (var r in RotorTelemetry.Rows)
-                {
-                    var vessel = FlightGlobals.ActiveVessel;
-                    string status = RotorPlacement.Status(r.Rpm, r.Limit, r.Motor, r.Brake, vessel != null && !vessel.LandedOrSplashed);
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label("\u25CF", status == "fail" ? failLight : status == "caution" ? cauLight : okLight, GUILayout.Width(16));
-                    GUILayout.Label(r.Label + " / " + r.Title + "\n" + r.Direction + "  "
-                        + (float.IsNaN(r.Rpm) ? "?" : r.Rpm.ToString("F0")) + "/" + r.Limit.ToString("F0")
-                        + " RPM  Torque " + r.Torque.ToString("F0") + "%  Brake " + r.Brake.ToString("F0")
-                        + "%  Motor " + (r.Motor ? "ON" : "OFF"), valStyle);
-                    GUILayout.EndHorizontal();
-                }
-            }
-            else
-            foreach (string[] r in sysRows)
-            {
-                GUIStyle light = r[0] == "fail" ? failLight : r[0] == "caution" ? cauLight : okLight;
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("\u25CF", light, GUILayout.Width(16));
-                GUILayout.Label(r[1], keyStyle, GUILayout.Width(Mathf.Min(190, w * 0.45f)));
-                GUILayout.Label(r[2], valStyle, GUILayout.Width(w - Mathf.Min(190, w * 0.45f) - 46));
-                GUILayout.EndHorizontal();
-            }
-            GUILayout.EndScrollView();
-            bool ml = GUILayout.Toggle(maydayLights, " Blink the craft's lights during a MAYDAY (Light action group)");
-            if (ml != maydayLights) { maydayLights = ml; Save(); }
-            GUILayout.Space(14);
-            Chrome(sysRect, ref resizingSys, false);
+            return o;
         }
 
         // ---------------------------------------------------------------- settings
@@ -314,23 +184,9 @@ namespace KSPChatBridge
                     float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out f);
                     switch (kv[0].Trim())
                     {
-                        case "status": StatusVisible = kv[1].Trim() == "1"; break;
-                        case "systems": SystemsVisible = kv[1].Trim() == "1"; break;
                         case "lights": maydayLights = kv[1].Trim() != "0"; break;
-                        case "sx": statusRect.x = f; break;
-                        case "sy": statusRect.y = f; break;
-                        case "sw": statusRect.width = Mathf.Max(MinW, f); break;
-                        case "sh": statusRect.height = Mathf.Max(MinH, f); break;
-                        case "yx": sysRect.x = f; break;
-                        case "yy": sysRect.y = f; break;
-                        case "yw": sysRect.width = Mathf.Max(MinW, f); break;
-                        case "yh": sysRect.height = Mathf.Max(MinH, f); break;
                     }
                 }
-                statusRect.x = Mathf.Clamp(statusRect.x, 0, Mathf.Max(0, Screen.width - 60));
-                statusRect.y = Mathf.Clamp(statusRect.y, 0, Mathf.Max(0, Screen.height - 40));
-                sysRect.x = Mathf.Clamp(sysRect.x, 0, Mathf.Max(0, Screen.width - 60));
-                sysRect.y = Mathf.Clamp(sysRect.y, 0, Mathf.Max(0, Screen.height - 40));
             }
             catch (Exception ex) { Debug.Log("[KSPChatBridge] status window load: " + ex.Message); }
         }
@@ -341,11 +197,7 @@ namespace KSPChatBridge
             {
                 if (cfgFile == null) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(cfgFile));
-                File.WriteAllText(cfgFile, string.Format(CultureInfo.InvariantCulture,
-                    "status={0}\nsystems={1}\nlights={2}\nsx={3}\nsy={4}\nsw={5}\nsh={6}\nyx={7}\nyy={8}\nyw={9}\nyh={10}\n",
-                    StatusVisible ? 1 : 0, SystemsVisible ? 1 : 0, maydayLights ? 1 : 0,
-                    statusRect.x, statusRect.y, statusRect.width, statusRect.height,
-                    sysRect.x, sysRect.y, sysRect.width, sysRect.height));
+                File.WriteAllText(cfgFile, "lights=" + (maydayLights ? 1 : 0) + "\n");
             }
             catch (Exception ex) { Debug.Log("[KSPChatBridge] status window save: " + ex.Message); }
         }

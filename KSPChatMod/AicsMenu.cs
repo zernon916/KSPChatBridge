@@ -148,6 +148,7 @@ namespace KSPChatBridge
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             if (alt && Input.GetKeyDown(KeyCode.J)) Toggle();
             if (missingMods == null) CheckMods();
+            if (Time.timeSinceLevelLoad > 15f) MultiplayerCheck.Notify();   // one-time single-player notice (LMP / DMP)
             if (!warned && missingMods != null && Time.timeSinceLevelLoad > 20f)
             {
                 warned = true;  // once per session, in chat
@@ -796,7 +797,8 @@ namespace KSPChatBridge
             GUILayout.Label("Opacity", small, GUILayout.Width(52));
             opacity = Mathf.Round(GUILayout.HorizontalSlider(opacity, 0.2f, 1f) * 20f) / 20f;
             GUILayout.EndHorizontal();
-            if (GUILayout.Button("Reset MFD position / size")) { mfdRect = new Rect(-1, 60, 780, 600); Save(); }
+            if (GUILayout.Button("RPM AICS pages: " + AicsRpmPages.Mode + "  (auto = hidden in cockpits with the native AICS MFD)")) AicsRpmPages.Mode = AicsRpmPages.Mode == "auto" ? "on" : AicsRpmPages.Mode == "on" ? "off" : "auto";
+                if (GUILayout.Button("Reset MFD position / size")) { mfdRect = new Rect(-1, 60, 780, 600); Save(); }
         }
 
         void DrawInModAiSettings()

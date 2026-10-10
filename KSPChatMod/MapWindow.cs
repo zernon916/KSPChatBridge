@@ -53,6 +53,10 @@ namespace KSPChatBridge
         internal static void NextVariant() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return; NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, ""); string cur = ChartStore.Active(rw.Key); ChartStore.SetActive(rw.Key, vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]); m.fixesFor = ""; }
         internal static void AddWaypoint() { if (Inst != null) Inst.AddWp(); }
         internal static void RemoveWaypoint() { var m = Inst; if (m == null) return; if (m.sel >= 0 && m.sel < m.fixes.Count && m.fixes[m.sel].Role != "faf" && m.fixes[m.sel].Role != "sf") { m.fixes.RemoveAt(m.sel); m.sel = -1; } else m.note = "Select a waypoint (FAF/SF are locked)."; }
+        internal static void SelectWp(int d) { var m = Inst; if (m == null || m.fixes.Count == 0) return; m.sel = m.sel < 0 ? (d > 0 ? 0 : m.fixes.Count - 1) : (m.sel + d + m.fixes.Count) % m.fixes.Count; }
+        internal static void AltStep(double dm) { var m = Inst; if (m != null && m.sel >= 0 && m.sel < m.fixes.Count) m.fixes[m.sel].AltMsl += dm; }
+        internal static void ToggleRef() { var m = Inst; if (m != null && m.sel >= 0 && m.sel < m.fixes.Count) { var f = m.fixes[m.sel]; f.Ref = f.Ref == "agl" ? "msl" : "agl"; } }
+        internal static void ZoomCycle() { ViewSpan = ViewSpan >= 40000 ? 5000 : ViewSpan * 2; }
         internal static void ResetChart() { var m = Inst; if (m != null) { m.fixesFor = ""; m.note = "Reset to computed (SAVE to keep)."; } }
         internal static void SaveChart() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw != null) m.Save(rw); }
         internal static string Title { get { var m = Inst; var rw = m == null ? null : m.Rw(); var act = NativeFlightController.ActiveRunway; return act != null && !string.IsNullOrEmpty(act.Key) ? act.Key : rw != null ? rw.Key : ""; } }
@@ -60,9 +64,9 @@ namespace KSPChatBridge
         /// <summary>Draw the MAP / CHART / ILS page inside the MFD screen.</summary>
         internal void DrawEmbedded(Rect area, int tab)
         {
-            Tab = tab; rect.width = area.width + 20; rect.height = area.height + 40; Px = MapSide(rect.width, rect.height, Tab);
+            Tab = tab; Px = Mathf.Max(80, Mathf.Min(area.height - 2, area.width * .62f));
             GUILayout.BeginArea(area);
-            try { if (body == null) GUILayout.Label("No map in this scene."); else DrawInner(); } catch (Exception ex) { GuiGuard.Log("MapWindow.Embedded", ex); }
+            try { if (body == null) GUILayout.Label("No map in this scene."); else DrawInner(new Rect(0, 0, area.width, area.height)); } catch (Exception ex) { GuiGuard.Log("MapWindow.Embedded", ex); }
             GUILayout.EndArea();
         }
 
@@ -157,7 +161,6 @@ namespace KSPChatBridge
         }
         static bool details, guidance;
         /// <summary>Map/ILS display side for a window size: fills the width, leaves room for the rows below (pure; tested).</summary>
-        internal static float MapSide(float w, float h, int tab) { return Mathf.Max(160, Mathf.Min(w - 20, h - (tab == 1 ? 250 : tab == 2 ? 170 : 140))); }
         static GUIStyle wrap;
         static GUIStyle Wrap { get { if (wrap == null || wrap.normal.textColor != GUI.skin.label.normal.textColor) wrap = new GUIStyle(GUI.skin.label) { wordWrap = true }; return wrap; } }
         void OnGUIInner()
@@ -174,29 +177,13 @@ namespace KSPChatBridge
             for (int i = 0; i <= n; i++) { var p = Vector2.Lerp(a, b, i / (float)n); if (p.x >= 0 && p.y >= 0 && p.x <= Px && p.y <= Px) Dot(p, 2, c); }
         }
 
-        void DrawInner()
+        /// <summary>MAP / CHART: the display (map square, left) + a clean data block (right). No on-screen buttons: every action is
+        /// a bezel soft key (AicsMfd); waypoints are selected by clicking the map or with WP &lt; / WP &gt;.</summary>
+        void DrawInner(Rect area)
         {
-            if (Tab == 2) { DrawIls(); return; }
-            var rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) { rwIdx = (rwIdx + runways.Count - 1) % runways.Count; fixesFor = ""; }
-            GUILayout.Label(rw != null ? rw.Key : "no runway", GUILayout.Width(110));
-            if (GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) { rwIdx = (rwIdx + 1) % runways.Count; fixesFor = ""; }
-            if (GUILayout.Button("-", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, 2);
-            GUILayout.Label((ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km", GUILayout.Width(48));
-            if (GUILayout.Button("+", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, .5);
-            centerRunway = GUILayout.Toggle(centerRunway, "center rwy");
-            GUILayout.EndHorizontal();
-            if (Tab == 1 && rw != null)
-            {   GUILayout.BeginHorizontal();   // second row: never clipped   // chart variant selector (default = Luke's chart; e.g. "tight"); writes charts/active.json, hot-swap reloads it
-                NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, "");
-                string cur = ChartStore.Active(rw.Key);
-                if (vs.Count > 1 && GUILayout.Button("chart: " + (cur.Length == 0 ? "default" : cur), GUILayout.Width(110)))
-                { string next = vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]; ChartStore.SetActive(rw.Key, next); fixesFor = ""; }
-                details = GUILayout.Toggle(details, "details");
-                GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();
-            }
-            Rect map = GUILayoutUtility.GetRect(Px, Px, GUILayout.Width(Px), GUILayout.Height(Px));
+            if (Tab == 2) { DrawIls(area); return; }
+            var rw = Rw();
+            Rect map = new Rect(0, 0, Px, Px);
             if (tex != null) GUI.DrawTexture(map, tex);
             GUI.BeginGroup(map);
             try {
@@ -238,88 +225,83 @@ namespace KSPChatBridge
             if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
             HandleMouse(rw);
             } finally { GUI.EndGroup(); }
-            GUILayout.Label((ScanSatLink.Installed ? "Mapping: SCANsat coverage" : "Mapping: flight path (no mapping mod), " + MapReveal.Count(body.bodyName) + " tiles") + "  |  airports always shown");
-            if (Tab == 0)
-            {   // pan the view (not the window): 25% of the shown width per press; panning stops follow-craft until re-center
-                GUILayout.BeginHorizontal();
-                foreach (var pb in new[] { new KeyValuePair<string, double>("<", 270), new KeyValuePair<string, double>("^", 0), new KeyValuePair<string, double>("v", 180), new KeyValuePair<string, double>(">", 90) })
-                    if (GUILayout.Button(pb.Key, GUILayout.Width(30))) { if (follow) { fixLat = cLat; fixLon = cLon; follow = false; } MapReveal.Pan(ref fixLat, ref fixLon, pb.Value, span, body.Radius); }
-                if (GUILayout.Button(follow ? "following" : "re-center", GUILayout.Width(80))) follow = true;
-                GUILayout.EndHorizontal();
-            }
-            if (Tab != 1) return;
-            GUILayout.Label(PlaneLine(rw, NativeFlightController.ActiveRunway), Wrap);
-            if (sel >= 0 && sel < fixes.Count)
-            {
-                var f = fixes[sel]; double g = NativeFlightController.MapTerrain(body, f.Lat, f.Lon); if (double.IsNaN(g)) g = 0;
-                GUILayout.BeginHorizontal();
-                GUILayout.Label(f.Name.Split('(')[0].Trim() + ": " + Math.Round(f.Ref == "msl" ? f.AltMsl : f.AltMsl - g) + " m " + f.Ref.ToUpper() + " (gnd " + Math.Round(g) + ")", GUILayout.Width(220));
-                if (GUILayout.Button("-50")) f.AltMsl -= 50; if (GUILayout.Button("+50")) f.AltMsl += 50;
-                if (GUILayout.Button(f.Ref == "agl" ? "->MSL" : "->AGL")) f.Ref = f.Ref == "agl" ? "msl" : "agl";
-                GUILayout.EndHorizontal();
-            }
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Add waypoint")) AddWp();
-            if (GUILayout.Button("Remove")) { if (sel >= 0 && fixes[sel].Role != "faf" && fixes[sel].Role != "sf") { fixes.RemoveAt(sel); sel = -1; } else note = "Select a waypoint (FAF/SF are locked)."; }
-            if (GUILayout.Button("Reset") && rw != null) { fixesFor = ""; note = "Reset to computed (Save to keep)."; }
-            if (GUILayout.Button("Save") && rw != null) Save(rw);
-            GUILayout.EndHorizontal();
-            GUILayout.Label(note, Wrap);   // auto-height
+            GUILayout.BeginArea(new Rect(Px + 10, 0, Math.Max(60, area.width - Px - 10), area.height));
+            foreach (var line in DataBlock(rw)) GUILayout.Label(line, Wrap);
+            GUILayout.EndArea();
         }
 
-        /// <summary>Cockpit-style ILS for the active approach runway end (or the selected one); works hand flying too.</summary>
-        void DrawIls()
+        List<string> DataBlock(NativeFlightController.MapRunway rw)
         {
-            var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway;
-            NativeFlightController.MapRunway rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
+            var o = new List<string>(); var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway;
+            o.Add((Tab == 1 ? "CHART " : "MAP ") + (rw != null ? rw.Key : "no runway"));
+            o.Add("SPAN  " + (ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km  " + (follow ? (centerRunway ? "RWY CTR" : "FOLLOW") : "PANNED"));
+            if (Tab == 1 && rw != null)
+            {
+                string cur = ChartStore.Active(rw.Key); o.Add("VAR   " + (cur.Length == 0 ? "default" : cur));
+                o.Add(PlaneLine(rw, act));
+                if (sel >= 0 && sel < fixes.Count)
+                {
+                    var f = fixes[sel]; double gnd = NativeFlightController.MapTerrain(body, f.Lat, f.Lon); if (double.IsNaN(gnd)) gnd = 0;
+                    o.Add("WP    " + f.Name.Split('(')[0].Trim() + "  " + Math.Round(f.Ref == "msl" ? f.AltMsl : f.AltMsl - gnd) + " m " + f.Ref.ToUpper() + "  gnd " + Math.Round(gnd));
+                }
+                else o.Add("WP    none (click the map or WP < / >)");
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < fixes.Count; i++) sb.Append(i == sel ? "[" : " ").Append(fixes[i].Name.Split('(')[0].Trim()).Append(i == sel ? "]" : " ");
+                o.Add(sb.ToString()); if (note.Length > 0) o.Add(note);
+            }
+            else
+            {
+                if (v != null) o.Add("POS   " + v.latitude.ToString("0.000") + " " + v.longitude.ToString("0.000") + "\nALT   " + Math.Round(v.altitude) + " m\nHDG   " + Math.Round(FlightGlobals.ship_heading).ToString("000"));
+                if (act != null) o.Add("APP   " + act.Key + " " + act.Phase.ToUpperInvariant() + "  " + (act.Distance / 1000).ToString("0.0") + " km\nDECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km");
+                o.Add(ScanSatLink.Installed ? "SCANsat coverage" : "flight-path reveal, " + MapReveal.Count(body.bodyName) + " tiles");
+            }
+            return o;
+        }
+
+        /// <summary>Instrument-style ILS: needles box (left) + data block (right). Single source of truth with the autopilot.</summary>
+        void DrawIls(Rect area)
+        {
+            var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway; var rw = Rw();
             double tla, tlo, ela, elo, elev; string label;
             if (act != null) { tla = act.Lat; tlo = act.Lon; ela = act.EndLat; elo = act.EndLon; elev = act.Elevation; label = string.IsNullOrEmpty(act.Key) ? "active runway" : act.Key; }
             else if (rw != null) { tla = rw.Lat; tlo = rw.Lon; ela = rw.EndLat; elo = rw.EndLon; elev = rw.Elevation; label = rw.Key; }
-            else { GUILayout.Label("No runway on this body."); return; }
-            GUILayout.BeginHorizontal();
-            if (act == null && GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + runways.Count - 1) % runways.Count;
-            GUILayout.Label("ILS " + label + (act != null ? "  (autoland active)" : "  (selected)"));
-            if (act == null && GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + 1) % runways.Count;
-            GUILayout.EndHorizontal();
+            else { GUI.Label(area, "No runway on this body."); return; }
             if (v == null) return;
-            var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);   // single source of truth with the autopilot
-            if (act != null) GUILayout.Label(act.Coupled ? (act.GsCoupled ? "COUPLED  LOC + GS" : "COUPLED  LOC  (GS armed)") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC armed" : "not coupled");
-            float S = Ils.BoxSide(rect.width, rect.height, guidance); Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
-            var o = GUI.color; GUI.color = new Color(.05f, .05f, .08f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
+            var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);
+            float S = Mathf.Max(80, Mathf.Min(area.height - 4, area.width * .5f)); Rect box = new Rect(0, 0, S, S);
+            var o = GUI.color; GUI.color = new Color(.02f, .05f, .03f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
             Vector2 c = box.center;
             for (int i = -2; i <= 2; i++) { if (i == 0) continue; Dot(new Vector2(c.x + i * S * .2f, c.y), 5, Color.white); Dot(new Vector2(c.x, c.y + i * S * .2f), 5, Color.white); }
             Dot(c, 8, Color.yellow);
             bool valid = r.Front && r.DmeM < 40000;
-            float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f;   // needle shows where the course is: right of us -> needle right
-            float gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;    // above the slope -> GS needle below centre
+            float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f, gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;
             GUI.color = valid ? Color.magenta : Color.gray;
-            GUI.DrawTexture(new Rect(lx - 1.5f, box.y + 10, 3, S - 20), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(box.x + 10, gy - 1.5f, S - 20, 3), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(lx - 1.5f, box.y + 10, 3, S - 20), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(box.x + 10, gy - 1.5f, S - 20, 3), Texture2D.whiteTexture);
             GUI.color = o;
-            if (!valid) GUI.Label(new Rect(box.x + 8, box.y + 6, 200, 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
-            double gs = v.horizontalSrfSpeed;
-            if (act != null) GUILayout.Label("decel at " + (act.DecelStartDist / 1000).ToString("0.0") + " km (" + (double.IsNaN(act.DecelA) ? "est. " + ApproachProfile.DefaultDecel.ToString("0.0") : "measured " + act.DecelA.ToString("0.0")) + " m/s2)" + (r.DmeM > act.DecelStartDist ? "" : "  DECELERATING"));
-            GUILayout.Label("DME " + (r.DmeM / 1000).ToString("0.0") + " km to threshold   GS " + Math.Round(gs) + " m/s" + (gs > 1 ? "   ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
-            GUILayout.Label("LOC " + r.LocDeg.ToString("+0.00;-0.00") + " deg   cross-track " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "right" : "left"));
-            {   // status row + hand-flying guidance
-                bool gear = v.ActionGroups[KSPActionGroup.Gear], brk = v.ActionGroups[KSPActionGroup.Brakes]; double hat = v.altitude - elev, ias = v.indicatedAirSpeed;
-                double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);
-                var oc = GUI.contentColor; GUILayout.BeginHorizontal();
-                GUI.contentColor = !gear && r.Front && r.DmeM < 3000 ? Color.red : Color.white; GUILayout.Label("GEAR " + (gear ? "DOWN" : "UP"));
-                GUI.contentColor = Color.white; GUILayout.Label(brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : "brakes off");
-                GUILayout.Label("VS " + v.verticalSpeed.ToString("+0;-0"));
-                string band = Ils.SpeedBand(ias, tgt); GUI.contentColor = band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red;
-                GUILayout.Label("IAS " + Math.Round(ias) + "/" + Math.Round(tgt)); GUI.contentColor = Color.white;
-                GUILayout.Label("HAT " + Math.Round(hat) + " m"); GUILayout.FlexibleSpace(); GUI.contentColor = oc; GUILayout.EndHorizontal();
-                guidance = GUILayout.Toggle(guidance, "ILS guidance (hand-flying) " + (guidance ? "ON" : "OFF"));
-                if (guidance && valid)
-                {
-                    double fh = Ils.FdHeading(r, v.srfSpeed), fv = Ils.FdVs(r, v.srfSpeed), dh = FlightPolicy.Wrap(fh - FlightGlobals.ship_heading), dv = fv - v.verticalSpeed;
-                    GUILayout.Label((dh < -2 ? "<<< STEER LEFT" : dh > 2 ? "STEER RIGHT >>>" : "ON COURSE") + "   " + (dv > 2 ? "FLY UP" : dv < -2 ? "FLY DOWN" : "ON PATH") + "   HDG " + Math.Round(fh).ToString("000") + "  VS " + fv.ToString("0"), Wrap);
-                    var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) { GUI.contentColor = new Color(1, .7f, 0); GUILayout.Label(string.Join("  ", co.ToArray())); GUI.contentColor = oc; }
-                }
+            if (!valid) GUI.Label(new Rect(box.x + 8, box.y + 6, S, 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
+            bool gear = v.ActionGroups[KSPActionGroup.Gear], brk = v.ActionGroups[KSPActionGroup.Brakes]; double hat = v.altitude - elev, ias = v.indicatedAirSpeed, gs = v.horizontalSrfSpeed;
+            double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);
+            GUILayout.BeginArea(new Rect(S + 10, 0, Math.Max(60, area.width - S - 10), area.height));
+            var oc = GUI.contentColor;
+            GUILayout.Label("ILS " + label);
+            GUILayout.Label(act == null ? "AP OFF  raw ILS" : act.Coupled ? (act.GsCoupled ? "COUPLED LOC+GS" : "COUPLED LOC") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC ARMED" : "NOT COUPLED");
+            GUILayout.Label("DME  " + (r.DmeM / 1000).ToString("0.0") + " km" + (gs > 1 ? "  ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
+            GUILayout.Label("LOC  " + r.LocDeg.ToString("+0.00;-0.00") + "  XTK " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "R" : "L"));
+            GUILayout.Label("G/S  " + r.GsDeg.ToString("+0.00;-0.00") + "  " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "HIGH" : "LOW"));
+            GUILayout.Label("CRS  " + Math.Round(r.Course).ToString("000") + "   HAT " + Math.Round(hat) + " m");
+            string band = Ils.SpeedBand(ias, tgt); GUI.contentColor = band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red;
+            GUILayout.Label("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt)); GUI.contentColor = oc;
+            GUILayout.Label("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s");
+            GUI.contentColor = !gear && r.Front && r.DmeM < 3000 ? Color.red : oc; GUILayout.Label("GEAR " + (gear ? "DOWN" : "UP") + "   " + (brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : "")); GUI.contentColor = oc;
+            if (act != null) GUILayout.Label("DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km " + (double.IsNaN(act.DecelA) ? "est" : act.DecelA.ToString("0.0") + " m/s2") + (r.DmeM > act.DecelStartDist ? "" : " DECEL"));
+            if (guidance && valid)
+            {
+                double fh = Ils.FdHeading(r, v.srfSpeed), fv = Ils.FdVs(r, v.srfSpeed), dh = FlightPolicy.Wrap(fh - FlightGlobals.ship_heading), dv = fv - v.verticalSpeed;
+                GUILayout.Label("FD   " + (dh < -2 ? "<< LEFT" : dh > 2 ? "RIGHT >>" : "ON CRS") + "  " + (dv > 2 ? "UP" : dv < -2 ? "DOWN" : "ON PATH"), Wrap);
+                var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) { GUI.contentColor = new Color(1, .7f, 0); GUILayout.Label(string.Join(" ", co.ToArray()), Wrap); GUI.contentColor = oc; }
             }
-            GUILayout.Label("G/S " + r.GsDeg.ToString("+0.00;-0.00") + " deg   " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "above" : "below") + " the 3 deg path   course " + Math.Round(r.Course).ToString("000"));
+            else GUILayout.Label("FD   " + (guidance ? "no signal" : "off (GUIDE)"));
+            GUILayout.EndArea();
         }
 
         string planeLine = ""; float planeAt;

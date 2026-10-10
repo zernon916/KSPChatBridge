@@ -1,5 +1,7 @@
-// AICS MFD (Luke 4:22 / 4:29 PM): ONE movable, resizable control panel that replaces the old overhead AICS menu bar, its item
-// windows and the Map & Charts window. Procedural bezel + soft keys, green-on-black monospace screen. Navigation: MfdNav.cs.
+// AICS MFD (Luke 4:22 / 4:29 / 4:50 PM): ONE movable, resizable control panel replacing the old overhead menu bar, its item
+// windows, the Map & Charts window, the status / systems pop-ups and (optionally) the chat window. Procedural bezel with an
+// engraved title plate, MASTER ALARM annunciator, 8 keys per side + 8 bottom + a spare top row; green-on-black monospace
+// screen; everything scales uniformly with the window. Layout: IvaLayout (shared with the IVA screen), navigation: MfdNav.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,19 +12,20 @@ namespace KSPChatBridge
     public partial class AicsMenu
     {
         const int MfdId = 0x4B434D46;
-        static Rect mfdRect = new Rect(-1, 60, 780, 600);
-        const float MfdMinW = 640, MfdMinH = 480;
+        static Rect mfdRect = new Rect(-1, 60, 800, 700);
+        const float MfdMinW = 560, MfdMinH = 490;
         static string mfdGroup, mfdItem; static int mfdPage; static bool mfdResizing;
         static Vector2 mfdScroll; static string mfdNote = ""; static float mfdNoteAt;
-        static GUIStyle keyStyle, keyOff, scrHead, scrText; static GUISkin mfdSkin; static Texture2D bezelTex, screwTex, keyTex, keyHot, keyDown;
-        static Font mono;
+        static string commsText = "";
+        static GUIStyle keyStyle, keyOff, scrHead, scrText, plateStyle, plateShadow, lampStyle; static GUISkin mfdSkin; static Texture2D bezelTex, screwTex, keyTex, keyHot, keyDown, plateTex;
+        static Font mono; static float mfdScale = -1;
         static readonly Color Phos = new Color(.35f, 1f, .45f), PhosDim = new Color(.12f, .35f, .16f);
 
         static bool HasMj { get { if (mj == null) mj = AssemblyLoader.loadedAssemblies.Any(a => a.name.StartsWith("MechJeb2")); return mj.Value; } }
         static MfdNav.Group CurGroup { get { return mfdGroup == null ? null : MfdNav.Groups(HasMj).FirstOrDefault(g => g.Id == mfdGroup); } }
         static MfdNav.Item CurItem { get { var g = CurGroup; return g == null ? null : g.Items.FirstOrDefault(i => i.Id == mfdItem) ?? g.Items[0]; } }
 
-        /// <summary>Open the MFD on an item (e.g. MapWindow.ToggleMap -> "map").</summary>
+        /// <summary>Open the MFD on an item (e.g. MapWindow.ToggleMap -> "map", ToggleSystems -> "systems").</summary>
         internal static void ShowMfdItem(string item)
         {
             foreach (var g in MfdNav.Groups(HasMj)) { int i = g.Items.FindIndex(x => x.Id == item); if (i < 0) continue; mfdGroup = g.Id; mfdItem = item; mfdPage = i / MfdNav.Side; Expanded = true; Save(); return; }
@@ -30,7 +33,6 @@ namespace KSPChatBridge
         /// <summary>Localizer capture on autoland: if the MAP group is showing, switch to the ILS page (once per approach).</summary>
         internal static void AutoIls() { if (Expanded && mfdGroup == "map") mfdItem = "ils"; }
 
-        /// <summary>Panel polling flags follow the page on screen.</summary>
         static void SyncOpen()
         {
             var it = Expanded ? CurItem : null;
@@ -56,8 +58,7 @@ namespace KSPChatBridge
             for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
             {
                 float dx = x - 7.5f, dy = y - 7.5f, r = Mathf.Sqrt(dx * dx + dy * dy);
-                Color c = r > 7.5f ? Color.clear : Mathf.Abs(dx + dy) < 1.2f ? new Color(.12f, .12f, .13f) : Color.Lerp(new Color(.62f, .63f, .66f), new Color(.3f, .3f, .32f), (dy + 8) / 16f);
-                t.SetPixel(x, y, c);
+                t.SetPixel(x, y, r > 7.5f ? Color.clear : Mathf.Abs(dx + dy) < 1.2f ? new Color(.12f, .12f, .13f) : Color.Lerp(new Color(.62f, .63f, .66f), new Color(.3f, .3f, .32f), (dy + 8) / 16f));
             }
             t.Apply(); return t;
         }
@@ -69,14 +70,28 @@ namespace KSPChatBridge
             keyTex = KeyTex(new Color(.30f, .31f, .33f), new Color(.18f, .19f, .2f), new Color(.08f, .08f, .09f));
             keyHot = KeyTex(new Color(.36f, .38f, .40f), new Color(.22f, .23f, .25f), new Color(.35f, .9f, .4f));
             keyDown = KeyTex(new Color(.14f, .15f, .16f), new Color(.22f, .23f, .25f), new Color(.35f, .9f, .4f));
-            keyStyle = new GUIStyle(GUI.skin.button) { font = mono, fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true };
+            plateTex = Noise(32, new Color(.50f, .51f, .53f), new Color(.62f, .63f, .65f), 3);
+            keyStyle = new GUIStyle(GUI.skin.button) { font = mono, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true, clipping = TextClipping.Clip, padding = new RectOffset(2, 2, 2, 2) };
             keyStyle.normal.background = keyTex; keyStyle.hover.background = keyHot; keyStyle.active.background = keyDown;
             keyStyle.normal.textColor = keyStyle.hover.textColor = keyStyle.active.textColor = new Color(.85f, .9f, .85f);
             keyOff = new GUIStyle(keyStyle); keyOff.hover.background = keyOff.active.background = keyTex;
+            lampStyle = new GUIStyle(keyStyle);
+            plateStyle = new GUIStyle(GUI.skin.label) { font = mono, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Clip };
+            plateStyle.normal.textColor = new Color(.13f, .13f, .14f);
+            plateShadow = new GUIStyle(plateStyle); plateShadow.normal.textColor = new Color(.85f, .86f, .88f, .55f);   // engraved: light lower edge
             mfdSkin = UnityEngine.Object.Instantiate(skin);
             foreach (var st in new[] { mfdSkin.label, mfdSkin.button, mfdSkin.toggle, mfdSkin.textField, mfdSkin.textArea, mfdSkin.box })
-            { st.font = mono; st.fontSize = 13; st.normal.textColor = st.hover.textColor = st.onNormal.textColor = st.onHover.textColor = Phos; }
-            scrHead = new GUIStyle(mfdSkin.label) { fontStyle = FontStyle.Bold, fontSize = 15 }; scrText = new GUIStyle(mfdSkin.label) { wordWrap = true };
+            { st.font = mono; st.normal.textColor = st.hover.textColor = st.onNormal.textColor = st.onHover.textColor = Phos; }
+            scrHead = new GUIStyle(mfdSkin.label) { fontStyle = FontStyle.Bold }; scrText = new GUIStyle(mfdSkin.label) { wordWrap = true };
+            mfdScale = -1;
+        }
+
+        /// <summary>Uniform font scale with the window (no squashed text: glyphs keep their aspect, long text wraps).</summary>
+        static void ApplyScale(float k)
+        {
+            if (Mathf.Abs(k - mfdScale) < .01f) return; mfdScale = k; int f = Mathf.RoundToInt(13 * k);
+            foreach (var st in new[] { mfdSkin.label, mfdSkin.button, mfdSkin.toggle, mfdSkin.textField, mfdSkin.textArea, mfdSkin.box, scrText }) st.fontSize = f;
+            scrHead.fontSize = Mathf.RoundToInt(15 * k); plateStyle.fontSize = plateShadow.fontSize = Mathf.RoundToInt(14 * k);
         }
 
         void DrawMfdWindow()
@@ -88,51 +103,62 @@ namespace KSPChatBridge
             mfdRect = GUI.Window(MfdId, mfdRect, DrawMfd, "", GUIStyle.none);
         }
 
+        static string Title()
+        {
+            var g = CurGroup; var it = g == null ? null : CurItem;
+            return "AICS  " + (g == null ? "HOME" : g.Label + (it != null && it.Label != g.Label ? " / " + it.Label : "") + (g.Id == "map" && MapWindow.Title != "" ? "  " + MapWindow.Title : ""));
+        }
+
         void DrawMfd(int id)
         {
-            float W = mfdRect.width, H = mfdRect.height, m = 14, kw = 96, bh = 46, head = 26;
+            float W = mfdRect.width, H = mfdRect.height, k = IvaLayout.Scale(W, H); ApplyScale(k);
             GUI.color = new Color(1, 1, 1, Mathf.Max(.75f, opacity)); GUI.DrawTextureWithTexCoords(new Rect(0, 0, W, H), bezelTex, new Rect(0, 0, W / 64, H / 64)); GUI.color = Color.white;
             Frame(new Rect(0, 0, W, H), new Color(.4f, .41f, .43f), new Color(.07f, .07f, .08f));
             foreach (var p in new[] { new Vector2(5, 5), new Vector2(W - 21, 5), new Vector2(5, H - 21), new Vector2(W - 21, H - 21) }) GUI.DrawTexture(new Rect(p.x, p.y, 16, 16), screwTex);
-            Rect scr = new Rect(m + kw + 10, m + head + 6, W - 2 * (m + kw + 10), H - (m + head + 6) - (bh + m + 10));
-            // header strip on the bezel: drag handle, title, CHAT, close
-            var g = CurGroup; var it = g == null ? null : CurItem;
-            string title = "AICS  " + (g == null ? "HOME" : g.Label + (it != null && it.Label != g.Label ? " / " + it.Label : "") + (g.Id == "map" && MapWindow.Title != "" ? "  - " + MapWindow.Title : ""));
-            GUI.Label(new Rect(m + 22, m - 4, W - 2 * m - 200, head), title, scrHead);
-            bool chatOn = ChatWindow.IsVisible;
-            if (GUI.Button(new Rect(W - m - 22 - 140, m - 4, 80, head - 2), chatOn ? "CHAT \u25CF" : "CHAT", keyStyle)) ChatWindow.ToggleChat();
-            if (GUI.Button(new Rect(W - m - 22 - 52, m - 4, 50, head - 2), "\u2715", keyStyle)) { Expanded = false; Save(); }
+            // engraved title plate in the bezel housing
+            var pb = IvaLayout.Plate(W, H); Rect plate = new Rect(pb.X, pb.Y, pb.Wd, pb.Ht);
+            Frame(new Rect(plate.x - 2, plate.y - 2, plate.width + 4, plate.height + 4), new Color(.06f, .06f, .07f), new Color(.45f, .46f, .48f));
+            GUI.DrawTextureWithTexCoords(plate, plateTex, new Rect(0, 0, plate.width / 32, 1));
+            string title = Title();
+            GUI.Label(new Rect(plate.x, plate.y + 1, plate.width, plate.height), title, plateShadow); GUI.Label(plate, title, plateStyle);
             // screen
+            var sb = IvaLayout.ScreenOf(W, H); Rect scr = new Rect(sb.X, sb.Y, sb.Wd, sb.Ht);
             GUI.color = Color.black; GUI.DrawTexture(scr, Texture2D.whiteTexture); GUI.color = new Color(PhosDim.r, PhosDim.g, PhosDim.b, .35f);
-            for (float x = scr.x + 40; x < scr.xMax; x += 40) GUI.DrawTexture(new Rect(x, scr.y, 1, scr.height), Texture2D.whiteTexture);
-            for (float y = scr.y + 40; y < scr.yMax; y += 40) GUI.DrawTexture(new Rect(scr.x, y, scr.width, 1), Texture2D.whiteTexture);
+            float grid = 40 * k;
+            for (float x = scr.x + grid; x < scr.xMax; x += grid) GUI.DrawTexture(new Rect(x, scr.y, 1, scr.height), Texture2D.whiteTexture);
+            for (float y = scr.y + grid; y < scr.yMax; y += grid) GUI.DrawTexture(new Rect(scr.x, y, scr.width, 1), Texture2D.whiteTexture);
             GUI.color = Color.white; Frame(new Rect(scr.x - 3, scr.y - 3, scr.width + 6, scr.height + 6), new Color(.05f, .05f, .05f), new Color(.38f, .39f, .41f));
             var saved = GUI.skin; GUI.skin = mfdSkin; GUI.contentColor = Phos;
-            try { DrawScreen(new Rect(scr.x + 6, scr.y + 4, scr.width - 12, scr.height - 8)); }
+            try { DrawScreen(new Rect(scr.x + 6 * k, scr.y + 4 * k, scr.width - 12 * k, scr.height - 8 * k)); }
             catch (Exception ex) { GUI.Label(new Rect(scr.x + 8, scr.yMax - 24, scr.width, 20), "page error: " + ex.Message); }
             GUI.skin = saved; GUI.contentColor = Color.white;
             // soft keys
-            string[] left, right; bool home = g == null; var items = home ? null : MfdNav.PageItems(g, mfdPage);
-            if (home) { var hk = MfdNav.HomeKeys(HasMj); left = hk.Take(6).ToArray(); right = hk.Skip(6).ToArray(); }
-            else { left = new string[6]; for (int i = 0; i < items.Count; i++) left[i] = (it != null && items[i].Id == it.Id ? "\u25B8" : "") + items[i].Label + Indicator(items[i]); right = MfdNav.Right(it.Id); }
-            float kh = (scr.height - 5 * 8) / 6;
-            for (int i = 0; i < 6; i++)
-            {
-                float y = scr.y + i * (kh + 8);
-                if (Key(new Rect(m, y, kw, kh), left[i])) { if (home) OpenGroup(i); else { mfdItem = items[i].Id; mfdScroll = Vector2.zero; Save(); } }
-                if (Key(new Rect(W - m - kw, y, kw, kh), i < right.Length ? right[i] : null)) { if (home) OpenGroup(6 + i); else OnKey(it.Id, right[i]); }
-            }
+            var g = CurGroup; var it = g == null ? null : CurItem; bool home = g == null; var items = home ? null : MfdNav.PageItems(g, mfdPage);
+            string[] left = new string[MfdNav.Side], right;
+            if (home) { var hk = MfdNav.HomeKeys(HasMj); Array.Copy(hk, left, MfdNav.Side); right = hk.Skip(MfdNav.Side).ToArray(); }
+            else { for (int i = 0; i < items.Count; i++) left[i] = (items[i].Id == it.Id ? "\u25B8" : "") + items[i].Label + Indicator(items[i]); right = MfdNav.Right(it.Id); }
             var bottom = MfdNav.Bottom(home, it == null ? null : it.Id, mfdPage, home ? 1 : MfdNav.Pages(g));
-            float bw = (W - 2 * m - 6 * 8) / MfdNav.BottomCount;
-            for (int i = 0; i < MfdNav.BottomCount; i++)
+            int kf = Mathf.RoundToInt(13 * k);
+            foreach (var b in IvaLayout.KeysOf(W, H))
             {
-                if (!Key(new Rect(m + i * (bw + 8), H - m - bh, bw, bh), bottom[i])) continue;
-                if (i == MfdNav.BackKey) { mfdGroup = null; mfdItem = null; mfdPage = 0; Save(); }
-                else if (i == MfdNav.PrevKey && bottom[i] == "PREV") { mfdPage--; mfdItem = MfdNav.PageItems(g, mfdPage)[0].Id; }
-                else if (i == MfdNav.NextKey && bottom[i] == "NEXT") { mfdPage++; mfdItem = MfdNav.PageItems(g, mfdPage)[0].Id; }
-                else OnKey(it.Id, bottom[i]);
+                Rect r = new Rect(b.X, b.Y, b.Wd, b.Ht); int n = b.Id[1] - '0';
+                switch (b.Id[0])
+                {
+                    case 'A': if (Annunciator(r, kf)) ShowMfdItem("alarm"); break;
+                    case 'H': if (Key(r, "COMMS", kf)) OpenGroupId("comms"); break;
+                    case 'T': Key(r, null, kf); break;   // spare top row (to fill later)
+                    case 'L': if (Key(r, left[n], kf)) { if (home) OpenGroup(n); else { mfdItem = items[n].Id; mfdScroll = Vector2.zero; Save(); } } break;
+                    case 'R': if (Key(r, right[n], kf)) { if (home) OpenGroup(MfdNav.Side + n); else OnKey(it.Id, right[n]); } break;
+                    case 'B':
+                        if (!Key(r, bottom[n], kf)) break;
+                        if (n == MfdNav.BackKey) { mfdGroup = null; mfdItem = null; mfdPage = 0; Save(); }
+                        else if (n == MfdNav.PrevKey && bottom[n] == "PREV") { mfdPage--; mfdItem = MfdNav.PageItems(g, mfdPage)[0].Id; }
+                        else if (n == MfdNav.NextKey && bottom[n] == "NEXT") { mfdPage++; mfdItem = MfdNav.PageItems(g, mfdPage)[0].Id; }
+                        else OnKey(it.Id, bottom[n]);
+                        break;
+                }
             }
-            // resize grip (bottom-right screw corner) + drag (top bezel strip)
+            if (GUI.Button(new Rect(W - 26, 2, 22, 18), "\u2715", keyStyle)) { Expanded = false; Save(); }   // close (Alt+J reopens)
             Rect grip = new Rect(W - 22, H - 22, 22, 22); Event e = Event.current;
             if (e.type == EventType.MouseDown && grip.Contains(e.mousePosition)) { mfdResizing = true; e.Use(); }
             if (mfdResizing)
@@ -140,7 +166,7 @@ namespace KSPChatBridge
                 if (e.type == EventType.MouseDrag) { mfdRect.width = Mathf.Max(MfdMinW, e.mousePosition.x + 4); mfdRect.height = Mathf.Max(MfdMinH, e.mousePosition.y + 4); e.Use(); }
                 if (e.type == EventType.MouseUp || e.rawType == EventType.MouseUp) { mfdResizing = false; Save(); }
             }
-            GUI.DragWindow(new Rect(0, 0, W, m + head - 4));
+            GUI.DragWindow(new Rect(0, 0, W, pb.Y + pb.Ht));   // drag by the top bezel / plate
         }
 
         static void Frame(Rect r, Color hi, Color lo)
@@ -150,10 +176,21 @@ namespace KSPChatBridge
             GUI.color = lo; GUI.DrawTexture(new Rect(r.x, r.yMax - 2, r.width, 2), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(r.xMax - 2, r.y, 2, r.height), Texture2D.whiteTexture);
             GUI.color = o;
         }
-        static bool Key(Rect r, string label)
+        static bool Key(Rect r, string label, int maxFont)
         {
             if (string.IsNullOrEmpty(label)) { GUI.Box(r, "", keyOff); return false; }
+            keyStyle.fontSize = IvaLayout.KeyFont(label, r.width, r.height, maxFont);
             return GUI.Button(r, label, keyStyle);
+        }
+        /// <summary>MASTER ALARM annunciator: red (warning) / amber (caution), flashing until acknowledged; press = alarm page.</summary>
+        static bool Annunciator(Rect r, int maxFont)
+        {
+            string lvl = StatusWindow.AlarmLevel; bool on = lvl != "" && (!StatusWindow.AlarmUnacked || (Time.realtimeSinceStartup % 1f) < .5f);
+            Color bg = !on ? new Color(.16f, .12f, .12f) : lvl == "warning" ? new Color(.85f, .1f, .08f) : new Color(.95f, .62f, .05f);
+            var o = GUI.color; GUI.color = bg; GUI.DrawTexture(r, Texture2D.whiteTexture); GUI.color = o;
+            lampStyle.fontSize = IvaLayout.KeyFont("MASTER ALARM", r.width, r.height, maxFont);
+            lampStyle.normal.background = lampStyle.hover.background = null; lampStyle.normal.textColor = lampStyle.hover.textColor = on ? Color.black : new Color(.45f, .35f, .35f);
+            return GUI.Button(r, lvl == "warning" ? "MASTER WARNING" : lvl == "caution" ? "MASTER CAUTION" : "MASTER ALARM", lampStyle);
         }
         static string Indicator(MfdNav.Item it)
         {
@@ -165,26 +202,28 @@ namespace KSPChatBridge
             var gs = MfdNav.Groups(HasMj); if (i >= gs.Count) return;
             mfdGroup = gs[i].Id; mfdPage = 0; mfdItem = gs[i].Items[0].Id; mfdScroll = Vector2.zero; Save();
         }
+        static void OpenGroupId(string id) { var gs = MfdNav.Groups(HasMj); int i = gs.FindIndex(x => x.Id == id); if (i >= 0) OpenGroup(i); Expanded = true; }
         static void Note(string s) { mfdNote = s ?? ""; mfdNoteAt = Time.realtimeSinceStartup + 8; }
-        static void Tool(string name, string args) { ChatWindow.ToolFromMenu(name, args ?? "{}"); Note(name.Replace('_', ' ') + " sent (result in chat)."); }
+        static void Tool(string name, string args) { ChatWindow.ToolFromMenu(name, args ?? "{}"); Note(name.Replace('_', ' ') + " sent (result in COMMS)."); }
 
         void DrawScreen(Rect area)
         {
             var g = CurGroup; var it = CurItem;
-            if (Time.realtimeSinceStartup < mfdNoteAt && mfdNote.Length > 0) { GUI.Label(new Rect(area.x, area.yMax - 40, area.width, 40), mfdNote, scrText); area.height -= 42; }
+            if (Time.realtimeSinceStartup < mfdNoteAt && mfdNote.Length > 0) { GUI.Label(new Rect(area.x, area.yMax - 40 * mfdScale, area.width, 40 * mfdScale), mfdNote, scrText); area.height -= 42 * mfdScale; }
             if (g == null) { DrawHome(area); return; }
             if (g.Id == "map")
             {
                 if (!HighLogic.LoadedSceneIsFlight || MapWindow.Inst == null) { GUI.Label(area, "Map, charts and ILS are available in flight.", scrText); return; }
                 MapWindow.Inst.DrawEmbedded(area, it.Id == "map" ? 0 : it.Id == "chart" ? 1 : 2); return;
             }
+            if (g.Id == "comms") { DrawComms(area, it.Id); return; }
             GUILayout.BeginArea(area); mfdScroll = GUILayout.BeginScrollView(mfdScroll);
             try
             {
                 if (it.Panel >= 0)
                 {
                     bool ok = LocalOnly[it.Panel] || DepsOk; if (!ok) DepsWarning();
-                    GUI.enabled = ok; GUILayout.Label(Items[it.Panel].ToUpperInvariant(), scrHead); DrawPanel(it.Panel); GUI.enabled = true;
+                    GUI.enabled = ok; DrawPanel(it.Panel); GUI.enabled = true;
                 }
                 else DrawCustom(it.Id);
             }
@@ -194,25 +233,53 @@ namespace KSPChatBridge
         void DrawHome(Rect area)
         {
             GUILayout.BeginArea(area);
-            GUILayout.Label("AICS  CONTROL", scrHead);
             GUILayout.Label("Mode   " + NativeFlightController.Phase.ToUpperInvariant());
             var act = NativeFlightController.ActiveRunway; if (act != null) GUILayout.Label("Rwy    " + act.Key + "  " + act.Phase + "  " + (act.Distance / 1000).ToString("0.0") + " km");
-            GUILayout.Label("Plan   " + NativeFlightController.PlanStatus);
+            GUILayout.Label("Plan   " + NativeFlightController.PlanStatus, scrText);
             var v = FlightGlobals.ActiveVessel;
-            if (HighLogic.LoadedSceneIsFlight && v != null) GUILayout.Label(v.vesselName + "\nALT " + Math.Round(v.altitude) + " m   SPD " + Math.Round(v.srfSpeed) + " m/s   HDG " + Math.Round(FlightGlobals.ship_heading).ToString("000") + "\n" + v.situation);
+            if (HighLogic.LoadedSceneIsFlight && v != null) GUILayout.Label(v.vesselName + "\nALT " + Math.Round(v.altitude) + " m   SPD " + Math.Round(v.srfSpeed) + " m/s   HDG " + Math.Round(FlightGlobals.ship_heading).ToString("000") + "\n" + v.situation, scrText);
+            if (StatusWindow.AlarmLevel != "") GUILayout.Label("ALARM  " + StatusWindow.AlarmText, scrText);
+            if (MultiplayerCheck.Warning != null) GUILayout.Label(MultiplayerCheck.Warning, scrText);
             DepsWarning();
             GUILayout.FlexibleSpace();
-            GUILayout.Label("Pick a group with the soft keys.  BACK (bottom-left) returns here.  Alt+J hides the MFD; right-click the toolbar button too.", scrText);
+            GUILayout.Label("Soft keys pick a group. BACK (bottom-left) returns here. COMMS (top right) is the chat. Alt+J hides the MFD.", scrText);
             GUILayout.EndArea();
         }
+
+        /// <summary>COMMS: filtered chat log (INTERCOM / SYSTEM / PILOT / ALL) with the input line at the bottom.</summary>
+        void DrawComms(Rect area, string page)
+        {
+            float lineH = 22 * mfdScale; Event e = Event.current;
+            bool focused = GUI.GetNameOfFocusedControl() == "aics_comms";
+            if (focused && e.type == EventType.KeyDown && (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter)) { SendComms(); e.Use(); }
+            if (focused && e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape) { GUI.FocusControl(""); GUIUtility.keyboardControl = 0; e.Use(); }
+            GUILayout.BeginArea(new Rect(area.x, area.y, area.width, area.height - lineH - 6));
+            mfdScroll = GUILayout.BeginScrollView(new Vector2(0, float.MaxValue));
+            foreach (var l in ChatWindow.Recent(200)) if (MfdNav.ChatShows(page, l)) GUILayout.Label(l, scrText);
+            GUILayout.EndScrollView(); GUILayout.EndArea();
+            GUI.SetNextControlName("aics_comms");
+            commsText = GUI.TextField(new Rect(area.x, area.yMax - lineH, area.width, lineH), commsText, 500);
+        }
+        static void SendComms() { string t = (commsText ?? "").Trim(); commsText = ""; if (t.Length > 0) ChatWindow.SubmitText(t); }
 
         void DrawCustom(string id)
         {
             switch (id)
             {
-                case "trim": GUILayout.Label("Trim panel: TRIM WIN opens the trim window (pitch / roll / yaw trim, auto-trim).", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
-                case "status": GUILayout.Label("Live autopilot state window: " + (StatusWindow.StatusVisible ? "OPEN" : "closed") + ".  TOGGLE opens / closes it.", scrText); break;
-                case "systems": GUILayout.Label("Parts / emergency dashboard: " + (StatusWindow.SystemsVisible ? "OPEN" : "closed") + ".  TOGGLE opens / closes it.", scrText); break;
+                case "trim": GUILayout.Label("TRIM WIN opens the trim window (pitch / roll / yaw trim). AUTO TRIM trims now.", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
+                case "alarm": foreach (var l in StatusWindow.AlarmLines()) GUILayout.Label(l, scrText); break;
+                case "systems":
+                    GUILayout.Label(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW", scrHead);
+                    foreach (var r in StatusWindow.SystemRows())
+                    {
+                        var oc = GUI.contentColor; GUILayout.BeginHorizontal();
+                        GUI.contentColor = r[0] == "fail" ? Color.red : r[0] == "caution" ? new Color(1, .7f, 0) : Phos; GUILayout.Label("\u25CF", GUILayout.Width(16 * mfdScale)); GUI.contentColor = oc;
+                        GUILayout.Label(r[1], GUILayout.Width(Mathf.Max(80, 190 * mfdScale))); GUILayout.Label(r[2], scrText); GUILayout.EndHorizontal();
+                    }
+                    break;
+                case "status":
+                    foreach (var r in StatusWindow.StatusRows()) { GUILayout.BeginHorizontal(); GUILayout.Label(r[0], GUILayout.Width(Mathf.Max(80, 130 * mfdScale))); GUILayout.Label(r[1], scrText); GUILayout.EndHorizontal(); }
+                    break;
                 case "mjatt":
                     GUILayout.Label("MECHJEB SMARTASS", scrHead); GUILayout.Label(NativeFlightController.MjStatusNow, scrText);
                     GUILayout.Label("Right keys: prograde / retrograde / normal / radial.  Bottom: KILLROT, NODE, TARGET+, OFF.", scrText); break;
@@ -230,13 +297,20 @@ namespace KSPChatBridge
                 case "map": case "chart": case "ils":
                     switch (key)
                     {
-                        case "ZOOM+": MapWindow.ZoomIn(); break; case "ZOOM-": MapWindow.ZoomOut(); break; case "CENTER": MapWindow.Recenter(); break;
+                        case "ZOOM+": MapWindow.ZoomIn(); break; case "ZOOM-": MapWindow.ZoomOut(); break; case "ZOOM": MapWindow.ZoomCycle(); break; case "CENTER": MapWindow.Recenter(); break;
                         case "RWY <": MapWindow.RunwayStep(-1); break; case "RWY >": MapWindow.RunwayStep(1); break; case "CTR RWY": MapWindow.ToggleCenterRunway(); break;
                         case "\u2190": MapWindow.PanView(270); break; case "\u2193": MapWindow.PanView(180); break; case "\u2191": MapWindow.PanView(0); break; case "\u2192": MapWindow.PanView(90); break;
                         case "VARIANT": MapWindow.NextVariant(); break; case "ADD WP": MapWindow.AddWaypoint(); break; case "REMOVE": MapWindow.RemoveWaypoint(); break;
-                        case "SAVE": MapWindow.SaveChart(); break; case "RESET": MapWindow.ResetChart(); break; case "DETAILS": MapWindow.ToggleDetails(); break; case "GUIDE": MapWindow.ToggleGuidance(); break;
+                        case "WP <": MapWindow.SelectWp(-1); break; case "WP >": MapWindow.SelectWp(1); break;
+                        case "ALT +50": MapWindow.AltStep(50); break; case "ALT -50": MapWindow.AltStep(-50); break; case "AGL/MSL": MapWindow.ToggleRef(); break;
+                        case "SAVE": MapWindow.SaveChart(); break; case "RESET": MapWindow.ResetChart(); break; case "GUIDE": MapWindow.ToggleGuidance(); break;
                     }
                     return;
+                case "intercom": case "system": case "pilot": case "all":
+                    if (key == "SEND") SendComms(); else if (key == "CLEAR") commsText = ""; else if (key == "CHAT WIN") ChatWindow.ToggleChat();
+                    return;
+                case "alarm": if (key == "ACK") StatusWindow.Ack(); else if (key == "MAYDAY LT") StatusWindow.MaydayLights = !StatusWindow.MaydayLights; return;
+                case "systems": if (key == "MAYDAY LT") StatusWindow.MaydayLights = !StatusWindow.MaydayLights; else StatusWindow.RotorsTab = key == "ROTORS"; return;
                 case "mjatt": { string m = MfdNav.SmartMode(key); if (m != null) Tool("mj_smartass", "{\"mode\":\"" + m + "\"}"); return; }
                 case "mjguide":
                     switch (key)
@@ -254,8 +328,6 @@ namespace KSPChatBridge
                     }
                     return;
                 case "trim": if (key == "TRIM WIN") TrimWindow.ToggleTrim(); else Tool("auto_trim_now", "{}"); return;
-                case "status": StatusWindow.ToggleStatus(); return;
-                case "systems": StatusWindow.ToggleSystems(); return;
                 case "flightplan":
                     if (key == "STOP") PlanPost("flightplan/stop", "{}", true);
                     else PlanPost(key == "FLY" ? "flightplan/fly" : "flightplan/check", "{\"plan\":" + ChatWindow.JsonStr(planText) + "}", key == "FLY");
@@ -265,6 +337,23 @@ namespace KSPChatBridge
             {
                 case "TAKEOFF": Tool("takeoff", "{}"); break; case "LAND": Tool("land", "{}"); break; case "GO AROUND": Tool("go_around", "{}"); break;
                 case "ABORT": Tool("abort", "{}"); break; case "STOP": Tool("stop_current", "{}"); break; case "STATUS": Tool("autopilot_status", "{}"); break;
+            }
+        }
+    }
+
+    /// <summary>Multiplayer mods (Luna Multiplayer, DarkMultiPlayer, ...): AICS is single-player only. One-time chat notice + MFD line.</summary>
+    internal static class MultiplayerCheck
+    {
+        internal const string Text = "AICS is single-player only; multiplayer is not supported or tested.";
+        static bool? found; static bool told;
+        internal static void Notify() { if (Warning == null) return; }
+        internal static string Warning
+        {
+            get
+            {
+                if (found == null) { try { found = MfdNav.IsMultiplayer(AssemblyLoader.loadedAssemblies.Select(a => a.name)); } catch (Exception) { found = false; } }
+                if (found.Value && !told) { told = true; ChatWindow.Notice("[SYSTEM] " + Text); }
+                return found.Value ? Text : null;
             }
         }
     }

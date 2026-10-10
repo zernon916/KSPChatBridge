@@ -3,12 +3,12 @@ using System.Collections.Generic;
 
 namespace KSPChatBridge
 {
-    /// <summary>AICS MFD navigation (Luke): HOME has the group keys; each group is paged (6 item keys per page on the left, PREV /
+    /// <summary>AICS MFD navigation (Luke): HOME has the group keys; each group is paged (8 item keys per page on the left, PREV /
     /// NEXT on the bottom row when there are more); the right column and bottom keys 1-4 are the selected item's context keys;
     /// BACK is always bottom key 0 on every page except HOME. Every former menu item has a key. Pure; tested.</summary>
     internal static class MfdNav
     {
-        internal const int Side = 6, BottomCount = 7, BackKey = 0, PrevKey = 5, NextKey = 6;
+        internal const int Side = 8, BottomCount = 8, TopCount = 8, BackKey = 0, PrevKey = 6, NextKey = 7, Ctx = 5;
         internal sealed class Item
         {
             internal string Id, Label; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
@@ -24,9 +24,10 @@ namespace KSPChatBridge
                 new Item("trim", "TRIM"), new Item("abort", "ABORT/STAT", 13), new Item("orbitap", "ORBITAL AP", 7), new Item("capture", "CAPTURE", 5), new Item("docking", "DOCKING", 6), new Item("sunlock", "SUN LOCK", 8) }));
             g.Add(G("map", "MAP", false, new[] { new Item("map", "MAP"), new Item("chart", "CHART"), new Item("ils", "ILS") }));
             g.Add(G("plan", "PLAN", false, new[] { new Item("flightplan", "FLIGHT PLAN", 3), new Item("orbitplan", "ORBIT PLAN", 4) }));
+            g.Add(G("comms", "COMMS", false, new[] { new Item("intercom", "INTERCOM"), new Item("system", "SYSTEM"), new Item("pilot", "PILOT"), new Item("all", "ALL") }));
             g.Add(G("crew", "CREW", false, new[] { new Item("crew", "CREW / EVA", 11), new Item("science", "SCIENCE", 10) }));
             if (mj) g.Add(G("mj", "MECHJEB", true, new[] { new Item("mjatt", "SMARTASS"), new Item("mjguide", "GUIDANCE") }));
-            g.Add(G("sys", "SYS", false, new[] { new Item("power", "POWER", 9), new Item("status", "STATUS WIN"), new Item("systems", "SYSTEMS WIN") }));
+            g.Add(G("sys", "SYS", false, new[] { new Item("alarm", "MSTR ALARM"), new Item("systems", "SYSTEMS"), new Item("status", "STATUS"), new Item("power", "POWER", 9) }));
             g.Add(G("settings", "SETTINGS", false, new[] { new Item("settings", "SETTINGS", 14) }));
             return g;
         }
@@ -47,13 +48,15 @@ namespace KSPChatBridge
             return k;
         }
 
-        /// <summary>Right-column context keys for an item (null slots blank).</summary>
-        internal static string[] Right(string item)
+        static string[] Pad(string[] a, int n) { var r = new string[n]; Array.Copy(a, r, Math.Min(n, a.Length)); return r; }
+        /// <summary>Right-column context keys for an item (null slots blank; 8 keys, spare ones blank for later).</summary>
+        internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
+        static string[] RightKeys(string item)
         {
             switch (item)
             {
                 case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
-                case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "ADD WP", "REMOVE", "SAVE" };
+                case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", null };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
@@ -63,21 +66,24 @@ namespace KSPChatBridge
                 case "mjatt": return new[] { "PROGRADE", "RETRO", "NORMAL+", "NORMAL-", "RAD+", "RAD-" };
                 case "mjguide": return new[] { "ASCENT", "LAND", "EXEC NODE", "RENDEZV", "DOCK", "AIRCRAFT" };
                 case "flightplan": return new[] { "CHECK", "FLY", "STOP", null, null, null };
-                case "status": case "systems": return new[] { "TOGGLE", null, null, null, null, null };
+                case "alarm": return new[] { "ACK", "MAYDAY LT" };
+                case "systems": return new[] { "OVERVIEW", "ROTORS", "MAYDAY LT" };
+                case "intercom": case "system": case "pilot": case "all": return new[] { "SEND", "CLEAR", "CHAT WIN" };
                 default: return new string[Side];
             }
         }
 
-        /// <summary>Bottom keys 1-4 (context); 0 = BACK, 5/6 = PREV/NEXT are added by Bottom().</summary>
-        internal static string[] BottomContext(string item)
+        /// <summary>Bottom keys 1-5 (context); 0 = BACK, 6/7 = PREV/NEXT are added by Bottom().</summary>
+        internal static string[] BottomContext(string item) { return Pad(BottomKeys(item), Ctx); }
+        static string[] BottomKeys(string item)
         {
             switch (item)
             {
                 case "map": return new[] { "\u2190", "\u2193", "\u2191", "\u2192" };
-                case "chart": return new[] { "RESET", "DETAILS", "ZOOM+", "ZOOM-" };
+                case "chart": return new[] { "ADD WP", "REMOVE", "SAVE", "RESET", "ZOOM" };
                 case "mjatt": return new[] { "KILLROT", "NODE", "TARGET+", "OFF" };
                 case "mjguide": return new[] { "SPACEPLN", "STATUS", "ALL OFF", null };
-                default: return new string[4];
+                default: return new string[0];
             }
         }
 
@@ -85,7 +91,7 @@ namespace KSPChatBridge
         internal static string[] Bottom(bool home, string item, int page, int pages)
         {
             var b = new string[BottomCount]; if (home) return b;
-            b[BackKey] = "BACK"; var c = BottomContext(item); for (int i = 0; i < 4; i++) b[1 + i] = c[i];
+            b[BackKey] = "BACK"; var c = BottomContext(item); for (int i = 0; i < Ctx; i++) b[1 + i] = c[i];
             if (pages > 1) { b[PrevKey] = page > 0 ? "PREV" : null; b[NextKey] = page < pages - 1 ? "NEXT" : null; }
             return b;
         }
@@ -100,6 +106,22 @@ namespace KSPChatBridge
             }
             return null;
         }
+
+        /// <summary>COMMS filter pages: PILOT = what you typed, SYSTEM = AICS / tool / alarm lines, INTERCOM = the crew, ALL.</summary>
+        internal static string ChatKind(string line)
+        {
+            string l = line ?? "";
+            if (l.StartsWith("You:") || l.StartsWith("You (")) return "pilot";
+            if (l.StartsWith("AICS") || l.StartsWith("[SYSTEM]") || l.StartsWith("[") || l.StartsWith("SYSTEM") || l.StartsWith("CAUTION") || l.StartsWith("WARNING") || l.StartsWith("MAYDAY")) return "system";
+            return "intercom";
+        }
+        internal static bool ChatShows(string page, string line) { return page == "all" || ChatKind(line) == page; }
+
+        static readonly string[] MpAssemblies = { "LmpClient", "LunaMultiplayer", "LmpCommon", "DarkMultiPlayer", "DMPClient", "KMP", "KerbalMultiPlayer" };
+        /// <summary>A multiplayer mod (Luna Multiplayer, DarkMultiPlayer, ...) is loaded: AICS is single-player only.</summary>
+        internal static bool IsMultiplayer(IEnumerable<string> assemblies) { foreach (var a in assemblies) foreach (var n in MpAssemblies) if (string.Equals(a, n, StringComparison.OrdinalIgnoreCase)) return true; return false; }
+        /// <summary>Setting "RPM AICS pages" auto/on/off: auto hides ours in cockpits that have the native AICS MFD (no duplicates).</summary>
+        internal static bool RpmHidden(string mode, bool cockpitHasNativeMfd) { return mode == "off" || (mode == "auto" && cockpitHasNativeMfd); }
 
         /// <summary>Every panel index 0..14 reachable from some item (pinned by a test).</summary>
         internal static bool CoversPanels(int count, bool mj)

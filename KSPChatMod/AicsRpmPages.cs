@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -11,9 +12,23 @@ namespace KSPChatBridge
         [KSPField] public int charW = 16, charH = 32;
         internal const string Footer = "R8: ILS > MAP > AP STATUS";
         static bool logged;
-        static string Seen(string page, string text)
+        /// <summary>Setting "RPM AICS pages": auto (hide ours where the cockpit has the native AICS MFD), on, off. PluginData/rpm_pages.txt.</summary>
+        internal static string Mode
+        {
+            get { if (mode == null) { try { string p = ModePath; mode = File.Exists(p) ? File.ReadAllText(p).Trim().ToLowerInvariant() : "auto"; } catch (Exception) { mode = "auto"; } if (mode != "on" && mode != "off") mode = "auto"; } return mode; }
+            set { mode = value; try { File.WriteAllText(ModePath, value); } catch (Exception) { } }
+        }
+        static string mode;
+        static string ModePath { get { return Path.Combine(AicsCore.PluginDataDirectory, "rpm_pages.txt"); } }
+        bool NativeHere()
+        {
+            try { var m = internalProp != null ? internalProp.internalModel : null; if (m == null) return false; foreach (var p in m.props) foreach (var x in p.internalModules) if (x is AicsIvaMfd) return true; } catch (Exception) { }
+            return false;
+        }
+        string Seen(string page, string text)
         {
             if (!logged) { logged = true; UnityEngine.Debug.Log("[KSPChatBridge] RPM page handler active (" + page + ")"); }
+            if (MfdNav.RpmHidden(Mode, NativeHere())) return "AICS\n\n" + (Mode == "off" ? "AICS RPM pages are off." : "This cockpit has the native AICS MFD:\nuse that screen.") + "\n(AICS Settings: RPM AICS pages auto/on/off)";
             return text + "\n" + Footer;
         }
         int Cols(int w) { return w / Math.Max(1, charW); }
