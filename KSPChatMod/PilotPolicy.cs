@@ -7,11 +7,38 @@ using System.Text.RegularExpressions;
 namespace KSPChatBridge
 {
     /// <summary>Live test round 2 (Oct 9): pure policies for roll, throttle, engine watch, plan-from-chat and command preemption.</summary>
+    /// <summary>Smooth airborne speed hold (Luke 6:42 PM: A300 cycled 98 <-> 117 m/s). The old logic stepped 5% every 3 s, chased
+    /// vertical speed instead of airspeed, and slammed to 80-90% at 1.3 Vs. Now: target slewed at 1 m/s/s, 1.5 m/s deadband,
+    /// PI + acceleration damping, throttle rate limited to 15%/s.</summary>
+    internal sealed class SpeedHold
+    {
+        internal const double Deadband = 1.5, Kp = .035, Ki = .004, Kd = .08, Rate = .15, TargetSlew = 1.0;
+        double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN;
+        internal double Target { get { return cmd; } }
+        internal void Reset() { i = cmd = prevV = double.NaN; }
+        internal double Step(double target, double v, double dt, double thrNow)
+        {
+            if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; }
+            if (dt <= 0) return outv;
+            cmd += FlightPolicy.Clamp(target - cmd, -TargetSlew * dt, TargetSlew * dt);
+            double err = cmd - v, e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;
+            double acc = (v - prevV) / dt; prevV = v;
+            double raw = i + Kp * e - Kd * acc;
+            if (!((raw >= 1 && e > 0) || (raw <= .05 && e < 0))) i = FlightPolicy.Clamp(i + Ki * e * dt, .05, 1);   // anti-windup
+            outv += FlightPolicy.Clamp(FlightPolicy.Clamp(raw, .05, 1) - outv, -Rate * dt, Rate * dt);
+            return outv;
+        }
+        /// <summary>Airbrakes only when well fast: out above +15 m/s, in below +5.</summary>
+        internal static bool Airbrakes(bool on, double v, double target) { return on ? v > target + 5 : v > target + 15; }
+    }
+
     internal static class PilotPolicy
     {
         /// <summary>Never fly slower than this airborne (Luke 6:29 PM: A300 held 77 m/s at idle into the sea).</summary>
         internal static double MinSafeSpeed(double stall) { return 1.3 * stall; }
         /// <summary>Slow, or sinking hard close to the surface: hard minimum power, airbrakes in, climb.</summary>
+        /// <summary>With hysteresis: enters below 1.2 Vs (the 1.3 Vs speed floor is the target, not the trigger), leaves above 1.3 Vs.</summary>
+        internal static bool LowEnergy(bool was, double speed, double stall, double vs, double agl) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? MinSafeSpeed(stall) : 1.2 * stall); }
         internal static bool LowEnergy(double speed, double stall, double vs, double agl) { return speed < MinSafeSpeed(stall) || (vs < -8 && agl < 300) || (vs < -3 && agl < 120); }
         // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----
         internal const double TrimPitchMax = .15, TrimSurfaceMax = 5;

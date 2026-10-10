@@ -212,6 +212,18 @@ class Program
             ApproachProfile.JoinG = jg0;
             Check((at120 < 0 ? rc.Rebuilds : at120) <= 7 && sawFinal, "approach turned away from the runway: no rebuild churn (" + at120 + " rebuilds in 120 s, was 154), then established on final (" + ph + ", " + rc.Rebuilds + " total)");
         }
+        {   // Luke 6:42 PM: A300 cycled 98 <-> 117 m/s. Point mass, 2 s engine spool, 50 Hz, 300 s from 136 m/s to a 111 m/s target.
+            var sh = new SpeedHold(); double v = 136, thr = .3, eng = .3, dt1 = .02, maxDev = 0, minV = 999, maxV = 0; int flips = 0; double lastSign = 0, lastThr = thr, thrTravel = 0;
+            for (int s = 0; s < 15000; s++)
+            {
+                thr = sh.Step(111, v, dt1, thr); eng += (thr - eng) * dt1 / 2; thrTravel += s > 7500 ? Math.Abs(thr - lastThr) : 0; lastThr = thr;
+                v += (6 * eng - .00035 * v * v) * dt1;
+                if (s > 7500) { maxDev = Math.Max(maxDev, Math.Abs(v - 111)); minV = Math.Min(minV, v); maxV = Math.Max(maxV, v); double sg = Math.Sign(v - 111); if (Math.Abs(v - 111) > 2 && sg != lastSign) { if (lastSign != 0) flips++; lastSign = sg; } }
+            }
+            Check(maxDev < 3 && flips <= 1 && thrTravel < .3, "speed hold settles: no 98<->117 cycling (" + minV.ToString("0.0") + "-" + maxV.ToString("0.0") + " m/s, " + flips + " flips, throttle travel " + thrTravel.ToString("0.00") + ")");
+            Check(!SpeedHold.Airbrakes(false, 120, 111) && SpeedHold.Airbrakes(false, 127, 111) && SpeedHold.Airbrakes(true, 117, 111) && !SpeedHold.Airbrakes(true, 115, 111), "airbrakes only > +15 m/s, retract < +5");
+            Check(!PilotPolicy.LowEnergy(false, 92, 74, 0, 700) && PilotPolicy.LowEnergy(false, 88, 74, 0, 700) && PilotPolicy.LowEnergy(true, 95, 74, 0, 700) && !PilotPolicy.LowEnergy(true, 98, 74, 0, 700), "low-energy hysteresis: in < 1.2 Vs, out > 1.3 Vs");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

@@ -72,7 +72,7 @@ namespace KSPChatBridge
         float nextRotorPark;
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
-        TakeoffMission takeoff; TakeoffGround tground; bool landFloor, lowEnergy; float lowTraceNext;
+        TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         int errorHolds;
         /// <summary>Luke 6:10 PM: an error must never leave nose-down / idle applied. Log the full trace; airborne the first few
@@ -523,7 +523,7 @@ namespace KSPChatBridge
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
-                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && (vessel.srfSpeed > runway.DesiredSpeed + 8 || (on && vessel.srfSpeed > runway.DesiredSpeed + 2)); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
+                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && SpeedHold.Airbrakes(on, vessel.srfSpeed, runway.DesiredSpeed); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
                         runway.Heavy = CraftClass.Gentle(CraftCls);
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
                         landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && RunwayMission.BelowGsM(runway.Ils) > RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
@@ -610,7 +610,7 @@ namespace KSPChatBridge
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, stall, decel);
                 bool heavyFloor = !vessel.LandedOrSplashed && (mode == "hold" || (mode == "landing" && runway != null && runway.Phase == "entry")) && CraftClass.FloorRecover(CraftCls, vessel.radarAltitude, vessel.verticalSpeed);
                 if (heavyFloor) { bank = 0; bankCmd = CraftClass.RollStep(CraftCls, bankCmd, 0, dt); targetVs = Math.Max(targetVs, 8); if (Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "heavy floor recovery: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0")); } }   // heavy: wings level + climb early   // no tight turns while slow / bleeding speed
-                lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude);
+                lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(lowEnergy, vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude);
                 if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"))) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(stall));
                 if (lowEnergy)
                 {   // hard minimum power + climb; airbrakes in
@@ -646,16 +646,18 @@ namespace KSPChatBridge
                 else if (Math.Abs(speed - vessel.srfSpeed) > 3) targetThrottle += .05 * Math.Sign(speed - vessel.srfSpeed);
                 if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > 220) targetThrottle = throttle - .05;
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
-                throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
+                if (mode == "takeoff" || vessel.LandedOrSplashed || mode != shapedSpeedMode) { shold.Reset(); shapedSpeedMode = mode; }
+                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
+                else throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle);   // smooth PI on airspeed (pitch flies the vertical speed)
             if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt);
             bool speedLock = ApproachSpeedLocked;
-            if (speedLock && !vessel.LandedOrSplashed) { throttle = PilotPolicy.ApproachThrottle(throttle, vessel.srfSpeed, runway.DesiredSpeed, dt); speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
+            if (speedLock && !vessel.LandedOrSplashed) { speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
-                throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall);   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
+                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) throttle = 1;   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 if (holdSpeed) c.mainThrottle = (float)throttle;
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
