@@ -16,6 +16,9 @@ namespace KSPChatBridge
         [KSPField] public bool flipX = false, flipY = false, hideModel = true;
         [KSPField] public float refreshHz = 4;
         [KSPField] public string screenTransform = "FlatMon40x10Screen";
+        // Luke 6:40 PM: RPM's FlatMon40x10Screen is only the inner text rect; the visible glass opening is larger and its centre sits
+        // up/right of it. Scale + offset (offset in units of the inner rect size, + = right / up) fill the whole glass.
+        [KSPField] public float glassScaleX = 1.30f, glassScaleY = 1.12f, glassOffsetX = .10f, glassOffsetY = .07f;
         [KSPField] public bool rpmHost = false, autoOrient = false, autoSize = false;   // set on RasterPropMonitorBasicMFD by AICS_IVA.cfg
         internal bool Active { get { return built; } }
         /// <summary>Default page per screen, in prop order: MAP / ILS / AP / CHART / COMMS, then repeat.</summary>
@@ -110,7 +113,9 @@ namespace KSPChatBridge
                     face.transform.localRotation = Quaternion.LookRotation(-u, n);
                     width = Mathf.Abs(Vector3.Dot(b.size, rgt)); height = Mathf.Abs(Vector3.Dot(b.size, u));
                     float nScale = Mathf.Max(1e-4f, scr.TransformVector(n).magnitude); lift = 0;
-                    face.transform.localPosition = b.center + n * (Mathf.Abs(Vector3.Dot(b.extents, n)) + .0015f / nScale);   // 1.5 mm proud of RPM's glass
+                    Vector3 shift = -rgt * (glassOffsetX * width) + u * (glassOffsetY * height);   // texture right = face -X = -rgt
+                    width *= glassScaleX; height *= glassScaleY;
+                    face.transform.localPosition = b.center + shift + n * (Mathf.Abs(Vector3.Dot(b.extents, n)) + .0015f / nScale);   // 1.5 mm proud of RPM's glass
                     Debug.Log("[KSPChatBridge] IVA MFD flush on " + screenTransform + ": local size " + width.ToString("F4") + "x" + height.ToString("F4") + " n=" + n + " up=" + u);
                 }
                 else Debug.Log("[KSPChatBridge] IVA MFD: RPM screen transform '" + screenTransform + "' not found; using prop bounds");
