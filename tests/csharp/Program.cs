@@ -1115,7 +1115,7 @@ class Program
             Console.WriteLine("Tracking / ETA / warp / AP persistence: 5 behavior checks passed.");
             {
                 string why;
-                string good = "{\"fixes\":[{\"role\":\"faf\",\"name\":\"KAPPA\",\"lat\":-0.05,\"lon\":-74.85,\"alt\":700}],\"flare_start_m\":20,\"flare_sink_ms\":1,\"touchdown_m\":300,\"tch_m\":12}";
+                string good = "{\"alt_ref\":\"msl\",\"fixes\":[{\"role\":\"faf\",\"name\":\"KAPPA\",\"lat\":-0.05,\"lon\":-74.85,\"alt\":700}],\"flare_start_m\":20,\"flare_sink_ms\":1,\"touchdown_m\":300,\"tch_m\":12}";
                 var ov = ApproachOverride.Parse(MiniJson.Deserialize(good), -.0486, -74.7244, 69, 600000, out why);
                 Check(ov != null && ov.Fixes.Count == 1 && ov.FlareStartM == 20 && ov.TchM == 12, "approaches.json end parsed: " + why);
                 var chO = ApproachChart.Build(-.0486, -74.7244, 90.4, 69, 150, 20, 600000, null); chO.Apply(ov);
@@ -1145,9 +1145,12 @@ class Program
                 Check(ob.Fixes[0].Alt == 850, "AGL over a 250 m hill -> 850 m MSL");
                 var oc = ApproachOverride.Parse(MiniJson.Deserialize(agl), -.0486, -74.7244, 69, 600000, out why3);
                 Check(oc.Fixes[0].Alt == 669, "no terrain sampler -> runway elevation + AGL");
-                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"alt_ref\":\"ft\"}"), 0, 0, 0, 600000, out why3) == null && ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why3).AltRef == "msl", "bad alt_ref rejected; legacy file = msl");
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"alt_ref\":\"ft\"}"), 0, 0, 0, 600000, out why3) == null && ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why3).AltRef == "agl", "bad alt_ref rejected; untagged file = agl");
+                var mix = ApproachOverride.Parse(MiniJson.Deserialize("{\"alt_ref\":\"agl\",\"fixes\":[{\"role\":\"faf\",\"alt_ref\":\"msl\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700},{\"role\":\"sf\",\"lat\":-.049,\"lon\":-74.76,\"alt\":200}]}"), -.0486, -74.7244, 69, 600000, out why3, (la, lo) => 40);
+                Check(mix != null && mix.Fixes[0].Alt == 700 && mix.Fixes[0].AltRef == "msl" && mix.Fixes[1].Alt == 240 && mix.Fixes[1].AltRef == "agl", "per-fix msl overrides file agl; others use terrain: " + why3);
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"alt_ref\":\"m\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why3) == null, "bad per-fix alt_ref rejected");
             }
-            Console.WriteLine("AGL approach altitudes: 4 behavior checks passed.");
+            Console.WriteLine("AGL/MSL approach altitudes: 6 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");
