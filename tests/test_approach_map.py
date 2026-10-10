@@ -39,3 +39,15 @@ def test_generator_embeds_terrain(tmp_path):
     html = out.read_text(encoding='utf-8')
     assert '"h": [1, 2, 3, 4]' in html and 'function terr(' in html
 
+
+
+def test_gui_window_ids_unique():
+    import re
+    ids = {}
+    for f in (ROOT / 'KSPChatMod').glob('*.cs'):
+        for m in re.finditer(r'(\w+)\s*=\s*0x([0-9A-Fa-f]{8})', f.read_text(encoding='utf-8-sig')):
+            v = int(m.group(2), 16); assert v not in ids, (f.name, m.group(1), ids.get(v))
+            ids[v] = (f.name, m.group(1))
+    menu = next(v for v, n in ids.items() if n[1] == 'MenuId')
+    assert all(not (menu < v <= menu + 32) for v in ids if v != menu), 'id inside the menu panel range'
+

@@ -228,7 +228,9 @@ namespace KSPChatBridge
             if (Open[12] && taxiPts.Count == 0 && Time.realtimeSinceStartup > nextTaxiLoad) { nextTaxiLoad = Time.realtimeSinceStartup + 10f; LoadTaxi(); }
         }
 
-        void OnGUI()
+        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
+
+        void OnGUIInner()
         {
             if (!showTab && !Expanded && !Open.Any(o => o) && !picking) return;
             if (skin == null || Mathf.Abs(skinOpacity - opacity) > 0.01f) BuildSkin();

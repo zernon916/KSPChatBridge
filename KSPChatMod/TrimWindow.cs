@@ -145,7 +145,9 @@ namespace KSPChatBridge
             small = new GUIStyle(GUI.skin.label) { fontSize = 11 };
         }
 
-        void OnGUI()
+        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
+
+        void OnGUIInner()
         {
             if (!TrimVisible) return;
             var skin = AicsMenu.EnsureSkin();

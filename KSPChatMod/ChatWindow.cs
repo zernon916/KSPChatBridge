@@ -168,7 +168,9 @@ namespace KSPChatBridge
             if (!visible) SetTypingLock(false);
         }
 
-        void OnGUI()
+        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
+
+        void OnGUIInner()
         {
             if (!visible) return;
             if (msgStyle == null) msgStyle = new GUIStyle(GUI.skin.label) { wordWrap = true, richText = false };

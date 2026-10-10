@@ -24,7 +24,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class MapWindow : MonoBehaviour
     {
-        const int WindowId = 0x4B434241, N = 96; const float Px = 384;
+        const int WindowId = 0x4B434D41, N = 96; const float Px = 384;
         internal static bool MapVisible;
         static Rect rect = new Rect(420, 120, Px + 20, Px + 210);
         static readonly double[] Spans = { 10000, 30000, 80000 };
@@ -114,11 +114,14 @@ namespace KSPChatBridge
             }
         }
 
-        void OnGUI()
+        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
+
+        void OnGUIInner()
         {
             if (!MapVisible || body == null) return;
             var skin = AicsMenu.EnsureSkin(); if (skin != null) GUI.skin = skin;
-            rect = GUI.Window(WindowId, rect, Draw, "AICS Map & Charts");
+            rect.x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, Screen.width - 80)); rect.y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, Screen.height - 40));
+            rect = GUI.Window(WindowId, rect, Draw, "AICS Map & Charts  (x = close)");
         }
 
         static void Dot(Vector2 p, float s, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(new Rect(p.x - s / 2, p.y - s / 2, s, s), Texture2D.whiteTexture); GUI.color = o; }
@@ -129,6 +132,13 @@ namespace KSPChatBridge
         }
 
         void Draw(int id)
+        {
+            if (GUI.Button(new Rect(rect.width - 22, 2, 20, 16), "x")) { MapVisible = false; return; }
+            try { DrawInner(); } catch (Exception ex) { GuiGuard.Log("MapWindow.Draw", ex); }
+            GUI.DragWindow();
+        }
+
+        void DrawInner()
         {
             var rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
             GUILayout.BeginHorizontal();
@@ -141,6 +151,7 @@ namespace KSPChatBridge
             Rect map = GUILayoutUtility.GetRect(Px, Px, GUILayout.Width(Px), GUILayout.Height(Px));
             if (tex != null) GUI.DrawTexture(map, tex);
             GUI.BeginGroup(map);
+            try {
             foreach (var r in runways) Line(Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
             foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) GUI.Label(new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
             // chart legs: each side's join list, then FAF -> SF -> threshold
@@ -165,7 +176,7 @@ namespace KSPChatBridge
             var v = FlightGlobals.ActiveVessel;
             if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
             HandleMouse(rw);
-            GUI.EndGroup();
+            } finally { GUI.EndGroup(); }
             GUILayout.Label((ScanSatLink.Installed ? "Mapping: SCANsat coverage" : "Mapping: flight path (no mapping mod), " + MapReveal.Count(body.bodyName) + " tiles") + "  |  airports always shown");
             if (sel >= 0 && sel < fixes.Count)
             {
@@ -183,7 +194,6 @@ namespace KSPChatBridge
             if (GUILayout.Button("Save") && rw != null) Save(rw);
             GUILayout.EndHorizontal();
             GUILayout.Label(note);
-            GUI.DragWindow();
         }
 
         void HandleMouse(NativeFlightController.MapRunway rw)

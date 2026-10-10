@@ -259,7 +259,9 @@ namespace KSPChatBridge
             mAcked = Lamp(new Color(0.45f, 0.12f, 0.1f), new Color(0.95f, 0.85f, 0.85f));
         }
 
-        void OnGUI()
+        void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
+
+        void OnGUIInner()
         {
             if (!StatusVisible && !SystemsVisible) return;
             Styles();
