@@ -220,6 +220,53 @@ namespace KSPChatBridge
             if (outp.Count > 0) RouteFixAlt = outp[outp.Count - 1].Alt;
             return outp;
         }
+        /// <summary>Mod-side waypoint maths (Luke's fixes untouched): every turn after the first fix is replaced by a fly-by arc of
+        /// radius r = v^2/(g tan bank) tangent to both legs (entry/exit tangent points + arc points, the fix keeps its name at the arc
+        /// midpoint). If two neighbouring turns need more leg than exists, both leads shrink proportionally and the turn is logged tight.</summary>
+        internal static List<Wp> Smooth(List<Wp> route, double course, double thrLat, double thrLon, double speed, double bankDeg, double radius, out string log)
+        {
+            log = ""; if (route == null || route.Count < 2) return route;
+            double r = speed * speed / (9.81 * Math.Tan(Math.Max(5, bankDeg) * Math.PI / 180));
+            int n = route.Count; var brgIn = new double[n]; var lenIn = new double[n + 1]; var lead = new double[n]; var dth = new double[n];
+            for (int i = 1; i < n; i++) { brgIn[i] = NavigationMath.Bearing(route[i - 1].Lat, route[i - 1].Lon, route[i].Lat, route[i].Lon); lenIn[i] = NavigationMath.Distance(route[i - 1].Lat, route[i - 1].Lon, route[i].Lat, route[i].Lon, radius); }
+            lenIn[n] = NavigationMath.Distance(route[n - 1].Lat, route[n - 1].Lon, thrLat, thrLon, radius);
+            for (int i = 1; i < n; i++)
+            {
+                double outB = i + 1 < n ? brgIn[i + 1] : course;
+                dth[i] = FlightPolicy.Wrap(outB - brgIn[i]);
+                lead[i] = Math.Abs(dth[i]) < 2 ? 0 : r * Math.Tan(Math.Min(170, Math.Abs(dth[i])) / 2 * Math.PI / 180);
+            }
+            var tight = new List<string>();
+            for (int i = 1; i < n; i++)
+            {
+                double before = (i == 1 ? lenIn[i] : lenIn[i] - lead[i - 1]), after = lenIn[i + 1] - (i + 1 < n ? lead[i + 1] : 0);
+                double room = Math.Max(0, Math.Min(before, after) - 100);
+                if (lead[i] > room) { tight.Add(route[i].Name + " (" + Math.Round(Math.Abs(dth[i])) + " deg, needs " + Math.Round(lead[i]) + " m, has " + Math.Round(room) + " m)"); lead[i] = room; }
+            }
+            var outp = new List<Wp> { route[0] }; int arcs = 0;
+            for (int i = 1; i < n; i++)
+            {
+                var f = route[i];
+                if (lead[i] < 50) { outp.Add(f); continue; }
+                double outB = i + 1 < n ? brgIn[i + 1] : course, ea, eo, xa, xo;
+                NavigationMath.Offset(f.Lat, f.Lon, brgIn[i] + 180, lead[i], radius, out ea, out eo);
+                NavigationMath.Offset(f.Lat, f.Lon, outB, lead[i], radius, out xa, out xo);
+                double rr = lead[i] / Math.Tan(Math.Abs(dth[i]) / 2 * Math.PI / 180), side = dth[i] > 0 ? 90 : -90, ca, co;
+                NavigationMath.Offset(ea, eo, brgIn[i] + side, rr, radius, out ca, out co);   // arc centre
+                int k = Math.Max(2, (int)Math.Ceiling(Math.Abs(dth[i]) / 15));
+                outp.Add(new Wp { Name = f.Name + " lead", Lat = ea, Lon = eo, Alt = f.Alt });
+                for (int j = 1; j < k; j++)
+                {
+                    double a = brgIn[i] - side + dth[i] * j / k, pa, po; NavigationMath.Offset(ca, co, a, rr, radius, out pa, out po);
+                    outp.Add(new Wp { Name = j == k / 2 ? f.Name : f.Name + " arc", Lat = pa, Lon = po, Alt = f.Alt });
+                }
+                if (k / 2 == 0 || k == 1) outp.Add(new Wp { Name = f.Name, Lat = f.Lat, Lon = f.Lon, Alt = f.Alt });
+                outp.Add(new Wp { Name = f.Name + " exit", Lat = xa, Lon = xo, Alt = f.Alt }); arcs++;
+            }
+            log = "smoothed " + arcs + " turn(s) at " + Math.Round(speed) + " m/s, r=" + Math.Round(r) + " m" + (tight.Count > 0 ? "; TIGHT (shrunk): " + string.Join(", ", tight.ToArray()) : "");
+            return outp;
+        }
+
         internal string Describe(List<Wp> route)
         {
             var parts = new List<string>(); foreach (var w in route) parts.Add(w.Name + " " + w.Alt.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " m");
@@ -232,6 +279,18 @@ namespace KSPChatBridge
     internal sealed class RunwayMission
     {
         /// <summary>Cross-track error predicted tau s ahead (+ = right of course): damps the centerline intercept.</summary>
+        internal const double Kp = 1, Ki = .001, Tau = 2, Lv = 3, Lmin = 50, IntBand = 3, CrabTau = 5;
+        /// <summary>Luke: centerline within ~1 m, no swinging. Desired TRACK from a cross-track PID (P on cross, D via the track
+        /// angle Tau s ahead, I per metre flown inside +-3 m), then crab-compensated: heading = track - (measured track - heading),
+        /// low-passed over CrabTau s, so wind/sideslip/trim offsets are cancelled instead of integrated (no PI limit cycle).</summary>
+        internal static double CenterlineHeading(double cross, double track, double course, double speed, ref double crossI, double ds, double heading, ref double crab)
+        {
+            if (!double.IsNaN(track) && !double.IsNaN(heading)) crab += FlightPolicy.Clamp(ds / (Math.Max(1, speed) * CrabTau), 0, 1) * (FlightPolicy.Wrap(track - heading) - crab);
+            crab = FlightPolicy.Clamp(crab, -20, 20);
+            if (Math.Abs(cross) < IntBand) crossI = FlightPolicy.Clamp(crossI + cross * ds, -5000, 5000);
+            double u = Kp * PredictCross(cross, speed, track, course, Tau) + Ki * crossI;
+            return course - FlightPolicy.Clamp(Math.Atan2(u, Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, -15, 15) - crab;
+        }
         internal static double PredictCross(double cross, double speed, double track, double course, double tau)
         { return double.IsNaN(track) ? cross : cross + tau * speed * Math.Sin(FlightPolicy.Wrap(track - course) * Math.PI / 180); }
         internal double Lat, Lon, EndLat, EndLon, Elevation;
@@ -245,9 +304,10 @@ namespace KSPChatBridge
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
         internal ApproachOverride Override; internal string Key = "";
         internal ApproachChart Chart; internal List<ApproachChart.Wp> Route; internal int RouteIndex; internal string RouteLog = "";
-        internal double RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
+        internal string SmoothLog = "";
+        internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
-        internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; lastAlong = double.NaN; }
+        internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal const double JoinSpeed = 130;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
@@ -269,7 +329,7 @@ namespace KSPChatBridge
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
         /// and go around if not aligned within 40 m / 6 deg by 1 km out. track = ground track (NaN = unknown).</summary>
-        internal void Step(double lat, double lon, double altitude, double agl, double speed, bool grounded, double radius, double stall, double track = double.NaN)
+        internal void Step(double lat, double lon, double altitude, double agl, double speed, bool grounded, double radius, double stall, double track = double.NaN, double heading = double.NaN)
         {
             double course = NavigationMath.Bearing(Lat, Lon, EndLat, EndLon);
             double d = NavigationMath.Distance(Lat, Lon, lat, lon, radius);
@@ -285,6 +345,7 @@ namespace KSPChatBridge
                 {
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
+                    string sm; Route = ApproachChart.Smooth(Route, course, Lat, Lon, JoinSpeed, BankDeg, radius, out sm); SmoothLog = sm;
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
                 // Luke: ~130 m/s from the IAF onward (tighter turns), never below 1.5x stall
@@ -321,8 +382,7 @@ namespace KSPChatBridge
             {
                 // Proportional + integral (per metre flown) centerline tracking: removes steady offsets (sideslip/wind/trim) to < 5 m
                 double ds = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along;
-                CrossI = FlightPolicy.Clamp(CrossI + cross * ds, -40000, 40000);
-                DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 6) + .002 * CrossI, Math.Max(500, 4 * speed)) * 180 / Math.PI, -15, 15);
+                DesiredHeading = CenterlineHeading(cross, track, course, speed, ref CrossI, ds, heading, ref Crab);
                 DesiredAltitude = Chart != null ? Chart.GlideAlt(-along + (Override != null ? Override.TouchdownM : 350)) : Elevation + Math.Max(3, (350 - along) * Math.Tan(3 * Math.PI / 180));
                 DesiredSpeed = (agl < 30 ? 1.15 : 1.3) * stall;
                 double ff = Chart != null && agl > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
@@ -336,7 +396,7 @@ namespace KSPChatBridge
                 if (!grounded && along > length - 200 && agl > 3) Phase = "go around";
                 if (grounded) Phase = "rollout";
             }
-            if (Phase == "rollout") { DesiredHeading = course; DesiredSpeed = 0; Gear = Brakes = true; if (speed < 1) Phase = "stopped"; }
+            if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); DesiredSpeed = 0; Gear = Brakes = true; if (speed < 1) Phase = "stopped"; }
         }
     }
 }

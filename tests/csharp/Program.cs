@@ -1212,7 +1212,7 @@ class Program
                     for (int i = 0; i < 400; i++)
                     {
                         double tr = hh + bias;
-                        rf.Step(fla, flo, rf.Elevation + 300, 300, 75, false, 600000, 45, tr);
+                        rf.Step(fla, flo, rf.Elevation + 300, 300, 75, false, 600000, 45, tr, hh);
                         if (rf.Phase != "final") { ph = rf.Phase + " " + rf.Why; break; }
                         hh += FlightPolicy.Clamp(FlightPolicy.Wrap(rf.DesiredHeading - hh), -3, 3);
                         NavigationMath.Offset(fla, flo, tr, 75, 600000, out fla, out flo);
@@ -1225,6 +1225,42 @@ class Program
                 Check(g.Phase == "entry" && g.Route == null && g.Kind == "long", "go-around rebuilds a fresh route (no 4x go-around in one frame)");
             }
             Console.WriteLine("Centerline integral + go-around reset: 3 behavior checks passed.");
+            {   // Luke: +-1 m from the short final (4 km) to touchdown, no back-and-forth. 0.25 s sim: heading controller with 1.5 s
+                // turn-rate lag, 3 deg/s limit, steady crab bias (wind/sideslip), 0.2 deg track noise; 60 m off at 12 km.
+                foreach (var cse in new double[][] { new double[] { 1.5, 75, 60 }, new double[] { -1.5, 75, 60 }, new double[] { 0, 75, 60 }, new double[] { 4, 75, 60 }, new double[] { 1.5, 130, 60 }, new double[] { 2, 40, 3 } })
+                {
+                    double bias = cse[0], v = cse[1], x = cse[2], crs = 90.4, hdg = crs, rate = 0, ci = 0, crab = 0, dt = .25, worst = 0, along = -12000, maxAfter = 0; bool onLine = false;
+                    var rnd = new Random(1);
+                    while (along < -100)
+                    {
+                        double tr = hdg + bias, meas = tr + .2 * Math.Sqrt(-2 * Math.Log(1 - rnd.NextDouble())) * Math.Cos(2 * Math.PI * rnd.NextDouble());
+                        double want = RunwayMission.CenterlineHeading(x, meas, crs, v, ref ci, v * dt, hdg, ref crab);
+                        double cmd = FlightPolicy.Clamp(FlightPolicy.Wrap(want - hdg) * .5, -3, 3); rate += (cmd - rate) * dt / 1.5; hdg += rate * dt;
+                        x += v * dt * Math.Sin((tr - crs) * Math.PI / 180); along += v * dt * Math.Cos((tr - crs) * Math.PI / 180);
+                        if (along > -4000) worst = Math.Max(worst, Math.Abs(x));
+                        if (along > -4000) { if (Math.Abs(x) < 1) onLine = true; else if (onLine) maxAfter = Math.Max(maxAfter, Math.Abs(x)); }
+                    }
+                    Check(worst < 1 && maxAfter < 1, "centerline within 1 m from 4 km to touchdown, no swinging (bias " + bias + ", " + v + " m/s, worst " + worst.ToString("0.00") + ", after " + maxAfter.ToString("0.00") + ")");
+                }
+                // Luke's KSC 09 left join at 130 m/s: smoothed arcs, fixes kept, then flown with LegSteer
+                var rt = new List<ApproachChart.Wp>();
+                foreach (var q in new[] { new[] { 1.6686, -74.63502 }, new[] { 1.69373, -75.89779 }, new[] { 1.58064, -76.60771 }, new[] { 1.30422, -76.88414 }, new[] { .86445, -76.95953 }, new[] { .31159, -76.95953 }, new[] { .10427, -76.86529 }, new[] { -.03419, -76.7839 } })
+                    rt.Add(new ApproachChart.Wp { Name = "F" + rt.Count, Lat = q[0], Lon = q[1], Alt = 700 });
+                string slog; var sm = ApproachChart.Smooth(rt, 90.4, -.0485997, -74.724375, 130, 20, 600000, out slog);
+                bool allKept = true; foreach (var w in rt) if (!sm.Exists(z => z.Name == w.Name)) allKept = false;
+                Check(sm.Count > rt.Count && allKept && slog.Contains("smoothed"), "smoothing inserts arc points and keeps every fix name: " + slog);
+                double la = rt[0].Lat, lo = rt[0].Lon, h = 270, worstX = 0; int leg = 1, st = 0;
+                while (leg < sm.Count && st++ < 20000)
+                {
+                    double nb = leg + 1 < sm.Count ? NavigationMath.Bearing(sm[leg].Lat, sm[leg].Lon, sm[leg + 1].Lat, sm[leg + 1].Lon) : 90.4; bool adv; double xt;
+                    double want = RunwayMission.LegSteer(la, lo, sm[leg - 1].Lat, sm[leg - 1].Lon, sm[leg].Lat, sm[leg].Lon, nb, 130, 20, 600000, out adv, out xt);
+                    if (st > 100) worstX = Math.Max(worstX, Math.Abs(xt));
+                    if (adv) { leg++; continue; }
+                    h += FlightPolicy.Clamp(FlightPolicy.Wrap(want - h), -2.1 * .5, 2.1 * .5); NavigationMath.Offset(la, lo, h, 65, 600000, out la, out lo);
+                }
+                Check(leg == sm.Count && worstX < 350, "smoothed join flown within 350 m of the adjusted route (worst " + Math.Round(worstX) + " m)"); Console.WriteLine("  join: " + slog + "; worst " + Math.Round(worstX) + " m");
+            }
+            Console.WriteLine("Tight lateral control: 8 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {

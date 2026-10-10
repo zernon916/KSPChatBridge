@@ -175,7 +175,12 @@ namespace KSPChatBridge
                 }
             }
             var act = NativeFlightController.ActiveRunway;
-            if (act != null && act.Route != null) for (int i = Math.Max(0, act.RouteIndex); i < act.Route.Count; i++) Dot(Proj(act.Route[i].Lat, act.Route[i].Lon), 5, Color.green);
+            if (act != null && act.Route != null)
+                for (int i = Math.Max(0, act.RouteIndex); i < act.Route.Count; i++)
+                {   // the mod-adjusted (smoothed) route actually flown
+                    var p = Proj(act.Route[i].Lat, act.Route[i].Lon); Dot(p, 5, Color.green);
+                    if (i > 0) Line(Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
+                }
             var v = FlightGlobals.ActiveVessel;
             if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
             HandleMouse(rw);
