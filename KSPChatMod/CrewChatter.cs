@@ -54,6 +54,7 @@ namespace KSPChatBridge
     /// the fallback on timeout / busy model / unusable output. AllowedNumbers != null = reject invented numbers.</summary>
     internal sealed class CrewLine
     {
+        internal double Delay;
         internal string Name, Trait, Canned, Prompt;
         internal HashSet<string> AllowedNumbers;
         internal string Format(string text) { return IntercomTalk.Fmt(Name, Trait, string.IsNullOrEmpty(text) ? Canned : text); }
@@ -160,7 +161,7 @@ namespace KSPChatBridge
         }
         internal static readonly Dictionary<string, string> Facts = new Dictionary<string, string>
         {
-            { "parts", "the ship just lost the {what}" }, { "flameout", "an engine ({what}) just flamed out" },
+            { "parts", "the ship just lost the {what}" }, { "alarm", "a ship alarm just went off: {what}" }, { "landing", "the landing approach went wrong: {what}" }, { "tamper", "someone just changed the {what} settings mid-flight and you are putting them back" }, { "flameout", "an engine ({what}) just flamed out" },
             { "power", "the batteries are almost flat" }, { "overheat", "the {what} is overheating" },
         };
         internal static string FactsFor(string kind, string what, double g)
@@ -216,8 +217,8 @@ namespace KSPChatBridge
         internal const double MemberGapS = 10, TripMinFlightS = 120, ShortTripS = 300, ShortTripP = 0.35,
             GapMinS = 180, GapMaxS = 360, FirstMinS = 90, CalmAfterEmergencyS = 60, PilotReplyP = 0.5,
             DadJokeP = 0.35, DadJokeGapS = 900, TalkGapMinS = 480, TalkGapMaxS = 900, TalkFirstMinS = 240, TalkFirstMaxS = 600, TalkShortP = 0.2;
-        internal const int MaxPerEvent = 2, TalkLinesMin = 4, TalkLinesMax = 6;
-        static readonly HashSet<string> Mech = new HashSet<string> { "parts", "flameout", "overheat", "prop_out", "rotor_brake", "rotor_torque", "heli_rpm", "heli_tail", "reverse" };
+        internal const int MaxPerEvent = 8, TalkLinesMin = 4, TalkLinesMax = 6;
+        static readonly HashSet<string> Mech = new HashSet<string> { "parts", "flameout", "overheat", "prop_out", "rotor_brake", "rotor_torque", "heli_rpm", "heli_tail", "reverse", "tamper" };
         internal static readonly Dictionary<string, string[]> Lines = new Dictionary<string, string[]>
         {
             { "scientist", new[] { "WHAT IS GOING ON?!", "These readings are off the charts! Is that GOOD?!", "I'm logging everything! For science! AAAH!",
@@ -277,31 +278,32 @@ namespace KSPChatBridge
             lastEmerg = now; due = null; talkDue = null;
             if (!Enabled) return outp;
             bool mech = Mech.Contains(kind ?? "");
-            var order = mech ? new Dictionary<string, int> { { "engineer", 0 }, { "scientist", 1 }, { "tourist", 2 } } : new Dictionary<string, int> { { "tourist", 0 }, { "scientist", 1 }, { "engineer", 2 } };
-            var others = Others(crew, pilot);
-            var keyed = new List<Tuple<int, double, KeyValuePair<string, string>>>();
-            foreach (var o in others) { int r; keyed.Add(Tuple.Create(order.TryGetValue(o.Value, out r) ? r : 3, rng.NextDouble(), o)); }
-            keyed.Sort((a, b) => a.Item1 != b.Item1 ? a.Item1.CompareTo(b.Item1) : a.Item2.CompareTo(b.Item2));
-            var seen = new HashSet<string>();
             string p = string.IsNullOrEmpty(part) ? "part" : part, pthe = string.IsNullOrEmpty(part) ? "a part" : "the " + part;
             string facts = CrewPrompts.FactsFor(kind, part, g);
-            foreach (var k in keyed)
-            {
-                if (outp.Count >= MaxPerEvent) break;
-                string name = k.Item3.Key, tr = k.Item3.Value; double l;
-                if ((tr != "engineer" && tr != "scientist" && tr != "tourist") || (last.TryGetValue(name, out l) && now - l < MemberGapS)) continue;
-                if (seen.Contains(tr) && others.Count > seen.Count + 1) continue;
-                string[] pool = mech && Lines.ContainsKey(tr + "_mech") && kind != "reverse" ? Lines[tr + "_mech"] : Lines[tr];
-                string text = pool[rng.Next(pool.Length)].Replace("{part}", p).Replace("{part_the}", pthe).Replace("{g}", g.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
-                outp.Add(new CrewLine { Name = name, Trait = tr, Canned = char.ToUpperInvariant(text[0]) + text.Substring(1), Prompt = CrewPrompts.Emergency(Who(name), facts) });
-                last[name] = now; seen.Add(tr);
-            }
-            if (outp.Count == 0 && others.Count == 0 && !string.IsNullOrEmpty(pilot) && (!last.ContainsKey(pilot) || now - last[pilot] >= MemberGapS))   // solo flight: the pilot reacts
+            double l;
+            // Luke: every problem goes to the pilot first, then every other named kerbal aboard, each in their own voice.
+            if (!string.IsNullOrEmpty(pilot) && (!last.TryGetValue(pilot, out l) || now - l >= MemberGapS))
             {
                 string[] pool = PilotLines.ContainsKey(kind ?? "") ? PilotLines[kind] : PilotLines["any"];
                 string text = pool[rng.Next(pool.Length)].Replace("{part}", p).Replace("{part_the}", pthe);
                 outp.Add(new CrewLine { Name = pilot, Trait = "pilot", Canned = text, Prompt = CrewPrompts.Emergency(Who(pilot), facts) });
                 last[pilot] = now;
+            }
+            var order = mech ? new Dictionary<string, int> { { "engineer", 0 }, { "scientist", 1 }, { "tourist", 2 } } : new Dictionary<string, int> { { "tourist", 0 }, { "scientist", 1 }, { "engineer", 2 } };
+            var keyed = new List<Tuple<int, double, KeyValuePair<string, string>>>();
+            foreach (var o in Others(crew, pilot)) { int r; keyed.Add(Tuple.Create(order.TryGetValue(o.Value, out r) ? r : 3, rng.NextDouble(), o)); }
+            keyed.Sort((a, b) => a.Item1 != b.Item1 ? a.Item1.CompareTo(b.Item1) : a.Item2.CompareTo(b.Item2));
+            foreach (var k in keyed)
+            {
+                if (outp.Count >= MaxPerEvent) break;
+                string name = k.Item3.Key, tr = k.Item3.Value;
+                if (last.TryGetValue(name, out l) && now - l < MemberGapS) continue;
+                string key = Lines.ContainsKey(tr) ? tr : "tourist";
+                string[] pool = mech && Lines.ContainsKey(key + "_mech") && kind != "reverse" ? Lines[key + "_mech"] : Lines[key];
+                string text = pool[rng.Next(pool.Length)].Replace("{part}", p).Replace("{part_the}", pthe).Replace("{g}", g.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+                outp.Add(new CrewLine { Name = name, Trait = tr, Canned = char.ToUpperInvariant(text[0]) + text.Substring(1), Prompt = CrewPrompts.Emergency(Who(name), facts),
+                    Delay = outp.Count == 0 ? 0 : 2 + rng.NextDouble() * 3 });
+                last[name] = now;
             }
             return outp;
         }
@@ -331,23 +333,31 @@ namespace KSPChatBridge
         static readonly Dictionary<string, string[]> PilotLines = new Dictionary<string, string[]>
         {
             { "flameout", new[] { "Engine out! Hang on, relighting {part_the}...", "Lost {part_the}! Working the restart.", "Flameout! Give me a second, Captain." } },
+            { "alarm", new[] { "Alarm - {part}. I'm on it, Captain.", "Got a warning light: {part}. Watching it closely." } },
+            { "landing", new[] { "Not happy with that approach - {part}. Going around.", "Missed it - {part}. Bringing her around again." } },
+            { "tamper", new[] { "Hey - who flipped {part_the}? Hang on, setting it back...", "Huh, {part_the} just changed on its own. Fixing it, give me a sec." } },
             { "parts", new[] { "We just lost {part_the}! Holding her steady.", "Something tore off - {part_the}. Still flying." } },
             { "overheat", new[] { "{part} is running hot, easing off.", "Temperature warning on {part_the}!" } },
             { "any", new[] { "Whoa - that wasn't good. On it, Captain.", "Problem with {part_the}! I've got it." } },
         };
-        internal const double SoloMinS = 240, SoloMaxS = 480;
+        internal const double SoloMinS = 120, SoloMaxS = 360;
+        internal string LastSkip = "";
         double? soloDue;
         static readonly string[] SoloCanned = { "Smooth air up here, Captain.", "She's flying nicely today.", "Nice view of the coast from here.", "All gauges green. Enjoying this one.", "Wind's calm. Couldn't ask for better." };
         /// <summary>Solo pilot idle remark every 4-8 min of calm flight (no passengers to chat with).</summary>
         internal CrewLine SoloTick(double now, bool flying, IList<KeyValuePair<string, string>> crew, string pilot, string facts)
         {
-            if (!Enabled || !flying || string.IsNullOrEmpty(pilot) || Others(crew, pilot).Count > 0) { soloDue = null; return null; }
-            if (now - lastEmerg < CalmAfterEmergencyS) return null;
+            if (!Enabled || !flying || string.IsNullOrEmpty(pilot)) { soloDue = null; LastSkip = !Enabled ? "chatter off" : !flying ? "not flying" : "no pilot"; return null; }
+            if (now - lastEmerg < CalmAfterEmergencyS) { LastSkip = "calm after emergency"; return null; }
+            var all = new List<KeyValuePair<string, string>>(crew); if (all.Count == 0) all.Add(new KeyValuePair<string, string>(pilot, "pilot"));
             if (soloDue == null) { soloDue = now + SoloMinS + rng.NextDouble() * (SoloMaxS - SoloMinS); return null; }
             if (now < soloDue.Value) return null;
             soloDue = now + SoloMinS + rng.NextDouble() * (SoloMaxS - SoloMinS);
+            var who = all[rng.Next(all.Count)]; LastSkip = "";   // randomized ambient line: any named kerbal aboard
+            if (who.Key != pilot) return new CrewLine { Name = who.Key, Trait = who.Value, Canned = SoloCanned[rng.Next(SoloCanned.Length)], AllowedNumbers = CrewLine.Numbers(facts),
+                Prompt = "Say one short, in-character remark to the crew about the flight. Facts: " + facts + ". Use no other numbers." };
             return new CrewLine { Name = pilot, Trait = "pilot", Canned = SoloCanned[rng.Next(SoloCanned.Length)], AllowedNumbers = CrewLine.Numbers(facts),
-                Prompt = "You are flying alone. Say one short, in-character remark to the Captain about the flight. Facts: " + facts + ". Use no other numbers." };
+                Prompt = (all.Count > 1 ? "" : "You are flying alone. ") + " Say one short, in-character remark to the Captain about the flight. Facts: " + facts + ". Use no other numbers." };
         }
 
         bool Eligible(double now, string vesselId, bool flying, bool tripActive, bool emergency)

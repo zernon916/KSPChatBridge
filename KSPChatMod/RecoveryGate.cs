@@ -19,13 +19,18 @@ namespace KSPChatBridge
     }
     internal sealed class RecoveryGate
     {
-        double? changedAt;
+        double? changedAt; double fumble = 3;
+        static readonly System.Random Rng = new System.Random();
+        /// <summary>True on the tick the change is first noticed (pilot callout moment).</summary>
+        internal bool JustNoticed;
         internal bool Tick(bool changed, double now)
         {
+            JustNoticed = false;
             if (!changed) { changedAt = null; return false; }
-            if (!changedAt.HasValue || now < changedAt.Value) changedAt = now;
-            return now - changedAt.Value >= 3;
+            if (!changedAt.HasValue || now < changedAt.Value) { changedAt = now; JustNoticed = true; lock (Rng) fumble = 2 + 2 * Rng.NextDouble(); }
+            return now - changedAt.Value >= fumble;
         }
+        internal double Fumble { get { return fumble; } }
         internal void Reset() { changedAt = null; }
     }
 }

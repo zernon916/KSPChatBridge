@@ -101,7 +101,7 @@ namespace KSPChatBridge
             };
             if (instance == null || instance.vessel == null) return rows;
             foreach (var p in instance.spots.Points(instance.vessel.mainBody.bodyName))
-                { string md = "V"; try { var row = instance.spots.Find(p.Name, instance.vessel.mainBody.bodyName); object mv; if (row != null && row.TryGetValue("mode", out mv) && mv != null) md = mv.ToString(); } catch (ArgumentException) { }
+                { if (FlightResidualPolicy.DuplicatesBuiltIn(p.Lat, p.Lon)) continue; string md = "V"; try { var row = instance.spots.Find(p.Name, instance.vessel.mainBody.bodyName); object mv; if (row != null && row.TryGetValue("mode", out mv) && mv != null) md = mv.ToString(); } catch (ArgumentException) { }
                 rows.Add(new[] { p.Name, md, p.Lat.ToString("0.0000", CultureInfo.InvariantCulture), p.Lon.ToString("0.0000", CultureInfo.InvariantCulture), "0", "" }); }
             return rows;
         }

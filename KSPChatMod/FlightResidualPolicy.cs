@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -38,6 +39,21 @@ namespace KSPChatBridge
         static readonly System.Text.RegularExpressions.Regex DirRx = new System.Text.RegularExpressions.Regex(@"(?:^|[^0-9])(0?9|27)(?:[^0-9]|$)");
         static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land", "nearest", "closest", "near", "program", "port", "airport", "spaceport", "please", "a", "runways", "short", "final", "shortfinal", "with", "for", "approach" };
 
+        /// <summary>An explicit KSC/Island built-in beats a saved spot unless the player typed that spot's exact name.</summary>
+        internal static bool PreferBuiltIn(string destination, IEnumerable<string> spotNames)
+        {
+            var b = BuiltInRunway(destination, ""); if (b == null || b.Item1 == "nearest") return false;
+            string d = Regex.Replace((destination ?? "").ToLowerInvariant(), @"\s+short\s*final\b|\s+", " ").Trim();
+            foreach (string n in spotNames) if (string.Equals(Regex.Replace(n.ToLowerInvariant(), @"\s+", " ").Trim(), d)) return false;
+            return true;
+        }
+        /// <summary>Saved spot sitting on a built-in runway threshold (duplicate row in the landing list).</summary>
+        internal static bool DuplicatesBuiltIn(double lat, double lon)
+        {
+            foreach (var t in new[] { new[] { -.0486, -74.7244 }, new[] { -.0502, -74.4903 }, new[] { -1.5161, -71.8567 }, new[] { -1.5148, -71.9618 } })
+                if (Math.Abs(lat - t[0]) < .005 && Math.Abs(lon - t[1]) < .005) return true;
+            return false;
+        }
         /// <summary>Fuzzy built-in Kerbin runway: (site "ksc"|"island", direction "09"|"27"|"") or null when the name
         /// mentions something else (a saved spot). Accepts KSC 27, KSP 27, runway 27, rwy 27, 27, 09, island, Island Runway 09...</summary>
         internal static Tuple<string, string> BuiltInRunway(string name, string runway)

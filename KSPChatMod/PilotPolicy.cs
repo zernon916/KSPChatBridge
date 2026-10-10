@@ -12,9 +12,9 @@ namespace KSPChatBridge
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         // ---- commands that must preempt an active plan/mission (they used to be acked while the plan kept control) ----
-        static readonly HashSet<string> Preempt = new HashSet<string> { "plane_hold", "set_heading", "set_altitude", "set_speed", "turn", "fly_to", "fly_to_place",
+        static readonly HashSet<string> Preempt = new HashSet<string> { "plane_hold", "set_heading", "turn", "fly_to", "fly_to_place",
             "circle_here", "land", "land_plane", "land_at_spot", "land_at_ksc", "go_around", "takeoff", "stop_current", "level_off", "roll", "plane_pitch",
-            "set_throttle", "hold_pattern", "make_flight_plan", "taxi_to", "touch_and_go", "heli_control", "autopilot", "set_brakes" };
+            "hold_pattern", "make_flight_plan", "taxi_to", "touch_and_go", "heli_control", "autopilot", "set_brakes" };
         internal static bool PreemptsPlan(string tool) { return Preempt.Contains(tool ?? ""); }
 
         // ---- roll / bank ----
@@ -40,6 +40,13 @@ namespace KSPChatBridge
         /// <summary>Upside down, the elevator works the other way round relative to the horizon.</summary>
         internal static double PitchCommand(double pitchOut, double roll) { return Math.Abs(roll) > 90 ? -pitchOut : pitchOut; }
 
+        /// <summary>Plan 'pitch N' / 'pitch up N' / 'max pitch N' sets the climb pitch limit; 'pitch down N' the descent limit.
+        /// Luke's normal climb cap is 15 deg; a plan step is explicit so up to 25 is honored, never beyond.</summary>
+        internal static void ApplyPitchStep(double pitch, ref double climbMax, ref double descentMin)
+        {
+            if (double.IsNaN(pitch) || pitch == 0) return;
+            if (pitch > 0) climbMax = FlightPolicy.Clamp(pitch, 3, 25); else descentMin = -FlightPolicy.Clamp(-pitch, 1, 15);
+        }
         // ---- circle bank requests ("increase bank to 25") ----
         internal static double CircleBank(string direction, double bank, double speed, bool overrideLimit)
         {
@@ -118,7 +125,19 @@ namespace KSPChatBridge
                     if (rw != null && Regex.IsMatch(rw, @"\d")) runway = rw;
                     continue;
                 }
-                if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bu-?turn\b|\breverse course\b")) { lines.Add("turn around"); continue; }
+                var bn = Regex.Match(p, @"(\d{1,2})\s*(?:deg\w*\s+)?bank|bank(?:\s+(?:angle\s+)?(?:of|at|to))?\s+(\d{1,2})");
+                string bside = Regex.IsMatch(p, @"\bleft\b") ? " left" : Regex.IsMatch(p, @"\bright\b") ? " right" : "";
+                string bnum = bn.Success ? (bn.Groups[1].Success ? bn.Groups[1].Value : bn.Groups[2].Value) : null;
+                if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bu-?turn\b|\breverse course\b")) { lines.Add("turn around" + (bnum != null ? " bank " + bnum + bside : "")); continue; }
+                var pm = Regex.Match(p, @"\b(max(?:imum)?\s+)?pitch(?:\s+(?:angle\s+)?(?:of|at|to))?(?:\s+(up|down))?\s+(\d{1,2})|\b(\d{1,2})\s*(?:deg\w*\s+)?pitch(?:\s+(up|down))?");
+                if (pm.Success)
+                {
+                    string dir = pm.Groups[2].Success ? pm.Groups[2].Value : pm.Groups[5].Value;
+                    lines.Add((pm.Groups[1].Success ? "max " : "") + "pitch " + (dir == "down" ? "down " : dir == "up" ? "up " : "") + (pm.Groups[3].Success ? pm.Groups[3].Value : pm.Groups[4].Value));
+                    continue;
+                }
+                if (bnum != null && !Regex.IsMatch(p, @"\bcircle|loiter")) { lines.Add((p.Contains("max") ? "max " : "") + "bank " + bnum + bside); continue; }
+
                 if (Regex.IsMatch(p, @"\b(fly|cruise|go|head)\b") && Regex.IsMatch(p, @"\d") && Regex.IsMatch(p, @"\bmin"))
                 { lines.Add("cruise for " + AltitudeM(p).ToString("0", Inv) + " min"); continue; }
                 if (Regex.IsMatch(p, @"\b(fly|cruise|go|head)\b") && Regex.IsMatch(p, @"\d"))
@@ -169,6 +188,56 @@ namespace KSPChatBridge
             cut = false;
             if (altitude >= CapAltitude || ias <= CapSpeed || sinceLastCut < 1) return throttle;
             cut = true; return Math.Max(.05, throttle - (ias > CapSpeed + 30 ? .3 : .15));
+        }
+        /// <summary>Stall/approach margin: the speed below which we never cut power and never turn hard.</summary>
+        internal static double SafeSpeed(double stall) { return Math.Max(60, 1.4 * stall); }
+        /// <summary>Luke: never trade airspeed away. Below the target band power comes back up; below the safe speed it is
+        /// at least 80% (full if near the stall). Over-cap cuts stop once inside the band.</summary>
+        internal static double ThrottleFloor(double throttle, double ias, double target, double stall)
+        {
+            double safe = SafeSpeed(stall);
+            if (ias < 1.15 * stall) return 1;
+            if (ias < safe) return Math.Max(throttle, .8);
+            if (ias < target - 15) return Math.Max(throttle, .35);
+            return throttle;
+        }
+        /// <summary>No hard turns while slow or decelerating hard (that is how the tight low-speed circle happened).</summary>
+        internal static double SafeBank(double bank, double ias, double stall, double decel)
+        {
+            double safe = SafeSpeed(stall), lim = 180;
+            if (ias < safe) lim = 5; else if (ias < safe + 20 || decel > 4) lim = 10;
+            return FlightPolicy.Clamp(bank, -lim, lim);
+        }
+        /// <summary>Level-flight max speed from measured drag (kN) and dynamic pressure (kPa) and available thrust (kN), port of
+        /// kspchat/maxspeed.py (0.9 safety factor). NaN when unknown (ground, slow, thin air).</summary>
+        internal static double VMax(double dragKn, double qKpa, double rho, double thrustKn, double speed)
+        {
+            if (!(dragKn > 0 && qKpa > .3 && rho > 0 && speed > 40)) return double.NaN;
+            double cda = dragKn / qKpa; if (thrustKn <= 0) return 0;
+            return Math.Max(speed * .98, .9 * Math.Sqrt(2 * thrustKn * 1000 / (rho * cda)));
+        }
+        /// <summary>set_speed resolution. 'max'/'full' is an explicit request for the vehicle max (cap lifted, mentioned as a note);
+        /// numbers are clamped to the vehicle max and, low down, to Luke's 220 cap unless overridden. Reply states the real target.</summary>
+        internal static double ResolveSpeed(object request, double vmax, double altitude, bool overrideCap, out bool capLifted, out string reply)
+        {
+            string s = (request == null ? "" : Convert.ToString(request, Inv)).Trim().ToLowerInvariant();
+            bool max = s == "max" || s == "maximum" || s == "full" || s == "full speed" || s == "max speed";
+            double asked; bool num = double.TryParse(s, NumberStyles.Float, Inv, out asked);
+            bool known = !double.IsNaN(vmax) && vmax > 0; bool low = altitude < CapAltitude;
+            capLifted = false;
+            if (max)
+            {
+                double t = known ? vmax : 400; capLifted = low && t > CapSpeed;
+                reply = "Target " + t.ToString("0", Inv) + " m/s (" + (known ? "estimated max level speed" : "no max estimate yet - full power, watching it") + ")"
+                    + (capLifted ? "; note: above the 220 m/s low-altitude cap because you asked for max." : ".");
+                return t;
+            }
+            if (!num) { reply = "Speed not understood: " + s + " (give m/s or say max)."; return double.NaN; }
+            double target = Math.Max(25, asked); var notes = new List<string>();
+            if (known && target > vmax) { target = vmax; notes.Add("best estimate max here is ~" + vmax.ToString("0", Inv) + " m/s; you asked " + asked.ToString("0", Inv)); }
+            if (low && target > CapSpeed) { if (overrideCap) capLifted = true; else { target = CapSpeed; notes.Add("low-altitude cap; say override for more"); } }
+            reply = "Target " + target.ToString("0", Inv) + " m/s" + (notes.Count > 0 ? " (" + string.Join("; ", notes.ToArray()) + ")." : ".");
+            return target;
         }
         /// <summary>Hold the higher of the target and the terrain floor as the altitude target (no fighting VS overrides = no porpoise).</summary>
         internal static double EffectiveAltitude(double target, double terrainFloor)
@@ -225,6 +294,6 @@ namespace KSPChatBridge
             return best;
         }
 
-        internal const string ToolRules = "\nRULES: To change anything in the game you MUST call a tool (<tool_call>). Never say you did something unless a tool result says so; if a tool fails, say what failed. If no listed tool fits, call find_tool. Answer in one short sentence.";
+        internal const string ToolRules = "\nRULES: To change anything in the game you MUST call a tool (<tool_call>). Never say you did something unless a tool result says so; only state numbers (times, distances, speeds) that appear in a tool result or the status - never compute or invent them; if a tool fails, say what failed. If no listed tool fits, call find_tool. Answer in one short sentence.";
     }
 }

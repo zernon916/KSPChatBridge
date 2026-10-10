@@ -143,8 +143,8 @@ class Program
         Console.WriteLine("Engine restart: 10 behavior checks passed.");
         var recovery = new RecoveryGate();
         Check(!recovery.Tick(false, 0), "unchanged configuration");
-        Check(!recovery.Tick(true, 1) && !recovery.Tick(true, 3.9), "recovery delay");
-        Check(recovery.Tick(true, 4), "stable mismatch restores");
+        Check(!recovery.Tick(true, 1) && !recovery.Tick(true, 2.9), "recovery delay (fumble >= 2 s)");
+        Check(recovery.Tick(true, 5.01), "stable mismatch restores (fumble <= 4 s)");
         recovery.Reset(); Check(!recovery.Tick(true, 5), "authorized change resets delay");
         Check(!recovery.Tick(false, 6) && !recovery.Tick(true, 8), "self corrected mismatch cancels");
         Check(!recovery.Tick(true, 0), "clock reset restarts delay");
@@ -164,7 +164,8 @@ class Program
         surface.deployInvert = true; surface.ignorePitch = true; intake.intakeEnabled = false;
         engine.thrustPercentage = 0; multi.runningPrimary = false;
         Check(safeguards.Tick(vessel, 0, true) == 0 && !safeguards.CanTrim(surface), "pending recovery blocks baseline adoption");
-        Check(safeguards.Tick(vessel, 3, true) == 4, "restore changed modules by identity");
+        Check(safeguards.Noticed.Count == 4, "each tampered module noticed once (pilot callout)");
+        Check(safeguards.Tick(vessel, 4.01, true) == 4 && safeguards.Noticed.Count == 0, "restore changed modules by identity");
         Check(!surface.deployInvert && !surface.ignorePitch && intake.intakeEnabled && engine.thrustPercentage == 100 && multi.runningPrimary, "configuration actually restored");
         surface.deployAngle = 3; safeguards.AcceptSurface(surface);
         Check(safeguards.Tick(vessel, 7, true) == 0 && safeguards.CanTrim(surface), "authorized trim retained");
@@ -183,7 +184,8 @@ class Program
         var reversers = new NativeReversers(vessel);
         Check(reversers.Set(vessel, true) && !multi.runningPrimary && forwardEvent.active, "named and multimode reverse");
         Check(reversers.Recover(vessel, 0, true) == 0, "reverse recovery delay");
-        Check(reversers.Recover(vessel, 3, true) == 2 && multi.runningPrimary && reverseEvent.active, "forward recovery confirmed");
+        Check(reversers.Noticed.Count == 2, "reverser tampering noticed (callout)");
+        Check(reversers.Recover(vessel, 4.01, true) == 2 && multi.runningPrimary && reverseEvent.active, "forward recovery confirmed");
         Check(ReversePolicy.EventDirection("Toggle Thrust Reverser") == null, "unknown toggle never guessed");
         Check(ReversePolicy.EventDirection("Forward Thrust") == false, "forward event identified");
         Check(ReversePolicy.EventDirection("Reverse Thrust") == true, "reverse event identified");
@@ -206,7 +208,7 @@ class Program
         vessel.ActionGroups.SetGroup(KSPActionGroup.Custom01, true);
         vessel.ActionGroups.SetGroup(KSPActionGroup.Stage, true); resource.flowState = false;
         safeguards.Tick(vessel, 0, true);
-        Check(safeguards.Tick(vessel, 3, true) == 3 && resource.flowState, "flow and group configuration restored");
+        Check(safeguards.Tick(vessel, 4.01, true) == 3 && resource.flowState, "flow and group configuration restored");
         Check(!vessel.ActionGroups[KSPActionGroup.Light] && !vessel.ActionGroups[KSPActionGroup.Custom01] && vessel.ActionGroups[KSPActionGroup.Stage], "staging is never replayed");
         vessel.ActionGroups.SetGroup(KSPActionGroup.Gear, true); safeguards.AcceptGroup(vessel, KSPActionGroup.Gear, true);
         Check(safeguards.Tick(vessel, 7, true) == 0 && vessel.ActionGroups[KSPActionGroup.Gear], "own gear command preserved");
@@ -655,7 +657,7 @@ class Program
         }
         var cc = new CrewChatter(new Random(1));
         var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);
-        Check(lines.Count == 2 && !lines.Exists(l => l.ToString().Contains("Sidry")) && lines.Exists(l => l.ToString().Contains("Bob (Sci)")), "emergency chatter: two non-pilot lines");
+        Check(lines.Count == crew.Count && lines[0].Name == "Sidry Kerman" && lines.Exists(l => l.ToString().Contains("Bob (Sci)")), "emergency: pilot first, then every named kerbal (Luke)");
         Check(cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 105).Count == 0, "emergency chatter rate-limited per member");
         var tc = new CrewChatter(new Random(2)); int posted = 0;
         for (int s = 0; s < 1200; s++) { var o = tc.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN); if (s < 120) Check(o.Count == 0, "no trip chatter in the first 2 min"); posted += o.Count; }
@@ -696,7 +698,7 @@ class Program
             Check(ChatterPolicy.Content("{\"choices\":[{\"message\":{\"content\":\"Hi!\"}}]}") == "Hi!" && ChatterPolicy.Content("garbage") == null, "reply content parse");
             var em = new CrewChatter(new Random(3)) { Describe = n => "a nervous scientist" };
             var el = em.Emergency("flameout", "Juno", crew, "Sidry Kerman", 50);
-            Check(el.Count > 0 && el[0].Prompt.Contains("an engine (Juno) just flamed out") && el[0].Prompt.Contains("Bob, a nervous scientist") || el[0].Prompt.Contains("Jeb"), "emergency prompt carries facts + personality");
+            Check(el.Count > 1 && el[0].Prompt.Contains("an engine (Juno) just flamed out") && el.Exists(x => x.Prompt.Contains("Bob, a nervous scientist")), "emergency prompt carries facts + personality");
             Check(em.Command("chatter off") == "Crew intercom chatter off." && !em.Enabled && em.TripTick(1000, "v", true, crew, "Sidry Kerman", true, false, double.NaN).Count == 0, "/crew chatter off silences");
             Check(em.Command("on") == "Crew intercom chatter on." && em.Enabled && em.Command("").Contains("is on"), "/crew chatter on + status");
             var tk = new CrewChatter(new Random(5)); CrewTalk talk = null;
@@ -865,7 +867,7 @@ class Program
             Check(D("Turn off autopilot") == "autopilot {\"on\":false}" && D("turn back on the autopilot") == "autopilot {\"on\":true}", "autopilot off AND back on");
             Check(D("land at nearest runway") == "land {\"where\":\"nearest runway\"}" && D("Land and Circle Runway").StartsWith("make_flight_plan") && D("circle runway") == "circle_here {}", "land nearest; 'land and circle runway' = circle then land");
             Check(D("make a flight plan fly 100km out, turn around, fly back, land at 27 ksp").StartsWith("make_flight_plan"), "plan request -> make_flight_plan");
-            foreach (string cmd in new[] { "circle_here", "set_throttle", "land", "land_plane", "fly_to", "roll", "autopilot", "stop_current", "set_altitude" })
+            foreach (string cmd in new[] { "circle_here", "land", "land_plane", "fly_to", "roll", "autopilot", "stop_current", "set_heading" })
                 Check(PilotPolicy.PreemptsPlan(cmd), "active mission is preempted by " + cmd);
             Check(!PilotPolicy.PreemptsPlan("get_status") && !PilotPolicy.PreemptsPlan("flightplan/status"), "status reads don't stop the mission");
             bool ov; double rt = PilotPolicy.RollTarget("right", 45, false, false, false, 150, out ov);
@@ -958,6 +960,71 @@ class Program
             Check(PilotPolicy.StatusLine("hold", "Aeris 3A", null, double.NaN, 900, 150, 273, 0).Contains("NOT landing") && PilotPolicy.StatusLine("landing", "Aeris 3A", "intercept", 8000, 900, 150, 273, 0).Contains("LANDING (intercept, 8.0 km"), "status says plainly whether we're landing");
         }
         Console.WriteLine("Round-3 confirm / chatter / passed-KSP / status: 13 behavior checks passed.");
+            // ---- Round 4: plan pitch/bank steps, turn-around bank, sabotage notice + fumble + model context ----
+            {
+                Func<string, NativePlan.Step> one = l => NativePlan.Parse(l).Steps[0];
+                Check(one("pitch 10").Op == "pitch" && one("pitch 10").Pitch == 10 && one("pitch 10 degrees").Pitch == 10, "pitch 10 / pitch 10 degrees");
+                Check(one("pitch up 10").Pitch == 10 && one("pitch down 5").Pitch == -5 && one("max pitch 15").Pitch == 15, "pitch up/down/max");
+                bool badP = false; try { NativePlan.Parse("pitch 70"); } catch (ArgumentException) { badP = true; } Check(badP, "absurd pitch rejected");
+                double cmax = 15, dmin = -5;
+                PilotPolicy.ApplyPitchStep(10, ref cmax, ref dmin); Check(cmax == 10 && dmin == -5, "pitch 10 sets climb limit");
+                PilotPolicy.ApplyPitchStep(-8, ref cmax, ref dmin); Check(dmin == -8 && cmax == 10, "pitch down sets descent limit");
+                PilotPolicy.ApplyPitchStep(29, ref cmax, ref dmin); Check(cmax == 25, "explicit pitch capped at 25");
+                Check(one("turn around bank 25").Op == "turnaround" && one("turn around bank 25").Bank == 25, "turn around bank 25");
+                Check(one("turn around bank 25 left").Bank == -25 && one("turn around bank 25 degrees left").Bank == -25, "turn around bank 25 left");
+                Check(one("turn around").Bank == 0, "plain turn around keeps normal bank");
+                Check(one("bank 25").Op == "bank" && one("bank 25").Bank == 25 && one("bank 25 degrees").Bank == 25 && one("max bank 25").Bank == 25 && one("bank 25 left").Bank == -25, "bank step forms");
+                string pl; List<string> un, nt;
+                Check(PilotPolicy.TryPlan("take off, climb to 2k, use a 25 degree bank to turn around, land at 27 ksp", true, out pl, out un, out nt) && pl.Contains("turn around bank 25"), "chat: '25 degree bank to turn around' keeps bank: " + pl);
+                Check(PilotPolicy.TryPlan("take off, pitch up 10, climb to 2k, land at 27", true, out pl, out un, out nt) && pl.Contains("pitch up 10"), "chat: pitch up 10");
+                Check(PilotPolicy.TryPlan("take off, max pitch 15, climb to 2k, pitch down 5, land at 27", true, out pl, out un, out nt) && pl.Contains("max pitch 15") && pl.Contains("pitch down 5"), "chat: max pitch / pitch down");
+                Check(PilotPolicy.TryPlan("take off, climb to 2k, max bank 25, land at 27", true, out pl, out un, out nt) && pl.Contains("max bank 25"), "chat: max bank 25");
+                foreach (string l in pl.Split('\n')) NativePlan.Parse(l);
+                var g = new RecoveryGate();
+                Check(!g.Tick(true, 100) && g.JustNoticed && g.Fumble >= 2 && g.Fumble <= 4, "sabotage noticed at once, fumble 2-4 s");
+                Check(!g.Tick(true, 101) && !g.JustNoticed, "callout fires once");
+                Check(g.Tick(true, 104.1), "restored after the fumble");
+                PilotEvents.Clear(); PilotEvents.Add("Wheesley settings were changed in flight; pilot is restoring them", 10);
+                Check(PilotEvents.Context(20).Contains("Wheesley") && PilotEvents.Context(10 + PilotEvents.KeepS + 1) == "", "sabotage injected into model context, then ages out");
+                var cc4 = new CrewChatter(new Random(3));
+                var crew1 = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Sidry Kerman", "pilot") };
+                var em = cc4.Emergency("tamper", "Wheesley", crew1, "Sidry Kerman", 50);
+                Check(em.Count == 1 && em[0].Name == "Sidry Kerman", "pilot calls out the tampering");
+            }
+            Console.WriteLine("Round-4 plan pitch/bank / sabotage callout: 19 behavior checks passed.");
+            // ---- Round 4b: tight-circle fix, max speed, runway priority, turn-around alias, all-crew reactions ----
+            {
+                Check(PilotPolicy.ThrottleFloor(.05, 50, 150, 45) == 1 && PilotPolicy.ThrottleFloor(.05, 57, 150, 45) >= .8 && PilotPolicy.ThrottleFloor(.05, 60, 150, 45) >= .8 && PilotPolicy.ThrottleFloor(.05, 120, 150, 45) >= .35 && PilotPolicy.ThrottleFloor(.2, 150, 150, 45) == .2, "never trade airspeed: power back below band/stall margin");
+                bool cut4; Check(PilotPolicy.SpeedCapThrottle(.5, 215, 1000, 5, out cut4) == .5 && !cut4, "over-cap cut stops inside the band");
+                Check(Math.Abs(PilotPolicy.SafeBank(-20, 57, 45, 0)) <= 5 && Math.Abs(PilotPolicy.SafeBank(-20, 200, 45, 6)) <= 10 && PilotPolicy.SafeBank(-20, 200, 45, 0) == -20, "no tight turns slow or decelerating");
+                var rm = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 69 };
+                rm.Step(-.05, -72.0, 1500, 1400, 330, false, 600000, 45, 90);
+                
+                Check(rm.DesiredSpeed <= 150 && rm.DesiredSpeed >= 60, "approach speed in band");
+                double hdgErr = Math.Abs(FlightPolicy.Wrap(rm.DesiredHeading - 270));
+                Check(hdgErr < 60, "entry fix near the runway at 330 m/s (was ~86 km away): hdg err " + hdgErr.ToString("0") + " des " + rm.DesiredHeading.ToString("0") + " " + rm.Phase + " " + rm.Kind + " along " + rm.Along.ToString("0") + " cross " + rm.Cross.ToString("0"));
+                bool lifted; string rep;
+                double vt = PilotPolicy.ResolveSpeed("max", 310, 1000, false, out lifted, out rep);
+                Check(vt == 310 && lifted && rep.Contains("310") && rep.Contains("220"), "max = vehicle max, cap only a note: " + rep);
+                vt = PilotPolicy.ResolveSpeed(2800, 310, 1000, false, out lifted, out rep);
+                Check(vt == 220 && !lifted && rep.Contains("220") && rep.Contains("310") && !rep.Contains("updated"), "2800 clamped, real target stated: " + rep);
+                vt = PilotPolicy.ResolveSpeed(2800, 310, 9000, false, out lifted, out rep); Check(vt == 310, "high up: clamped to vehicle max");
+                Check(!double.IsNaN(PilotPolicy.VMax(10, 20, 1.0, 100, 150)) && double.IsNaN(PilotPolicy.VMax(10, 20, 1, 100, 10)), "vmax estimate (unknown when slow)");
+                Check(!PilotPolicy.PreemptsPlan("set_speed") && !PilotPolicy.PreemptsPlan("set_altitude") && !PilotPolicy.PreemptsPlan("set_throttle") && PilotPolicy.PreemptsPlan("land"), "tweaks modify the plan, land replaces");
+                Check(ToolRouter.Direct("max speed", "plane").Value.Key == "set_speed" && ToolRouter.Direct("set speed to max", "plane").Value.Value.Contains("max"), "max speed alias");
+                Check(ToolRouter.Direct("turn around", "plane").Value.Key == "set_heading" && ToolRouter.Direct("turn around", "plane").Value.Value.Contains("180"), "turn around -> turn 180");
+                Check(FlightResidualPolicy.PreferBuiltIn("KSC 27 short final", new[] { "Island 27" }) && !FlightResidualPolicy.PreferBuiltIn("Island 27", new[] { "Island 27" }) && FlightResidualPolicy.PreferBuiltIn("27", new[] { "Island 27" }), "explicit KSC/built-in beats saved 'Island 27' spot");
+                Check(FlightResidualPolicy.DuplicatesBuiltIn(-1.5161, -71.8567) && !FlightResidualPolicy.DuplicatesBuiltIn(-1.0, -70), "duplicate Island spot hidden");
+                Check(PilotPolicy.ToolRules.Contains("never compute or invent"), "prompt: numbers only from tool results");
+                var cc5 = new CrewChatter(new Random(5));
+                var crew3 = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Sidry Kerman", "pilot"), new KeyValuePair<string, string>("Bob Kerman", "scientist"), new KeyValuePair<string, string>("Val Kerman", "pilot") };
+                var ev = cc5.Emergency("tamper", "Wheesley", crew3, "Sidry Kerman", 10);
+                Check(ev.Count == 3 && ev[0].Name == "Sidry Kerman" && ev[1].Delay >= 2 && ev[2].Delay >= 2, "problem -> pilot first, then every named kerbal, staggered");
+                Check(cc5.Emergency("alarm", "low fuel", crew3, "Sidry Kerman", 12).Count == 0, "rate-limited per member");
+                CrewLine amb = null; for (int s2 = 0; s2 < 2000 && amb == null; s2 += 5) amb = cc5.SoloTick(500 + s2, true, crew3, "Sidry Kerman", "altitude 900 m");
+                Check(amb != null, "randomized ambient chatter with a full crew (2-6 min)");
+            }
+            Console.WriteLine("Round-4b circle/maxspeed/runway/crew: 19 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

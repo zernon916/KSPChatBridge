@@ -295,3 +295,9 @@ Brakes: the takeoff tick held brakes until the 5%-stepped throttle reached 60%; 
 **Changed:** RunwayMission decides the approach once at entry. Track within 20 deg of runway heading and >5 km out -> short final (4 km fix, 2 km reposition gate); otherwise long final (12 km fix with the base-point turn). 'short final' in chat/plans (land ... short final, short_final arg) forces short when within 60 deg and far enough out, else long. A failed short final repositions as long. 'nearest' picks the closest of KSC, Island and saved runway spots (mode H), then the end best aligned with the current heading (also for a bare 'KSC' with no end given; it used to go by longitude). Luke's sentence now ends 'land KSC 27 short final'.
 **Tests run:** C# 'Approach rules: 8' (head-on and 90 deg sims); pytest 494; Release 0 errors.
 **Still needs live check:** short-final energy (4 km from 800 m) on Aeris 3A.
+
+## Live round 4 (2026-10-09)
+Problem: silent sabotage reverts, plan pitch/bank/turn-around bank, set_speed max/pausing plans, tight low-speed circle at landing entry (5% throttle, 86 km fix), KSC 27 resolving to saved Island 27 spot, invented numbers, quiet chatter.
+Changed: 2-4 s fumble + pilot callout + [SYSTEM] + model context (PilotEvents); plan steps pitch/bank/turn around bank N; ResolveSpeed/VMax (max = vehicle max, cap note); tweaks no longer preempt plans; ThrottleFloor/SafeBank; approach turn radius from approach speed; built-in beats fuzzy spot, duplicate spot hidden; prompt number rule; 'turn around'/'max speed' aliases; problem events -> pilot then every kerbal, staggered; randomized ambient chatter 2-6 min with [chatter] skip logs.
+Tests run: pytest 494, C# suite green (Round-4 19 + Round-4b 19), Release build.
+Still needs live check: all of the above.

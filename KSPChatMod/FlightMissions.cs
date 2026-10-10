@@ -77,7 +77,7 @@ namespace KSPChatBridge
             if (Phase == "entry")
             {
                 if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
-                double fixLat, fixLon, turnR = Math.Max(800, speed * speed / (9.81 * Math.Tan(20 * Math.PI / 180)));
+                double vA = Math.Min(speed, 150), fixLat, fixLon, turnR = Math.Max(800, vA * vA / (9.81 * Math.Tan(20 * Math.PI / 180)));   // approach-speed radius: 330 m/s must not put the fix 60 km out
                 NavigationMath.Offset(Lat, Lon, course + 180, FixDistance, radius, out fixLat, out fixLon);
                 // Outbound (heading away from the runway) or abeam: aim for a base point 2 turn radii to our side of the fix,
                 // so the 180 deg turn back rolls out on the centerline instead of overshooting it.
@@ -94,7 +94,7 @@ namespace KSPChatBridge
             }
             if (Phase == "intercept")
             {
-                double lead = Math.Max(2500, 1.2 * speed * speed / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
+                double lead = Math.Max(2500, 1.2 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(cross, lead) * 180 / Math.PI, -40, 40);
                 DesiredAltitude = Elevation + 800; DesiredSpeed = Math.Max(1.4 * stall, Math.Min(140, speed));
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -6, 10);

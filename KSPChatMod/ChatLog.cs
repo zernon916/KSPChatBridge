@@ -50,3 +50,26 @@ namespace KSPChatBridge
         }
     }
 }
+
+namespace KSPChatBridge
+{
+    /// <summary>Recent flight events injected into the model's context (sabotage reverts etc.).</summary>
+    internal static class PilotEvents
+    {
+        static readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<double, string>> Items = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<double, string>>();
+        internal const double KeepS = 300;
+        internal static double Now { get { return System.Diagnostics.Stopwatch.GetTimestamp() / (double)System.Diagnostics.Stopwatch.Frequency; } }
+        internal static void Add(string text, double now) { lock (Items) { Items.Add(new System.Collections.Generic.KeyValuePair<double, string>(now, text)); if (Items.Count > 8) Items.RemoveAt(0); } }
+        internal static string Context(double now)
+        {
+            lock (Items)
+            {
+                Items.RemoveAll(i => now - i.Key > KeepS || now < i.Key);
+                if (Items.Count == 0) return "";
+                var parts = new System.Collections.Generic.List<string>(); foreach (var i in Items) parts.Add(i.Value);
+                return " Recent events: " + string.Join("; ", parts.ToArray()) + ".";
+            }
+        }
+        internal static void Clear() { lock (Items) Items.Clear(); }
+    }
+}

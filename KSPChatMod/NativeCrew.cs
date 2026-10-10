@@ -88,17 +88,22 @@ namespace KSPChatBridge
         {
             if (lines == null || i >= lines.Count) { if (after != null) after(); return; }
             var line = lines[i];
-            Action<string> post = text => { ChatLog.Write("chatter", line.Format(text) + (text == null ? " (canned)" : " (model)")); ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup); SpeakAll(lines, i + 1, after); };
+            Action<string> post = text => { ChatLog.Write("chatter", line.Format(text) + (text == null ? " (canned)" : " (model)")); ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup);
+                if (i + 1 < lines.Count && lines[i + 1].Delay > 0) StartCoroutine(After((float)lines[i + 1].Delay, () => SpeakAll(lines, i + 1, after))); else SpeakAll(lines, i + 1, after); };
             string system = CrewPrompts.SystemFor(AicsCrewScenario.For(line.Name, line.Trait));
             if (!InModAiHost.TryCrewLine(system, line.Prompt, txt => post(line.Accept(txt)))) post(null);
         }
 
-        /// <summary>Emergency intercom reactions (crew.py speak): pilot excluded.</summary>
+        System.Collections.IEnumerator After(float seconds, Action act) { yield return new WaitForSeconds(seconds); act(); }
+
+        /// <summary>Problem events: pilot first, then every named kerbal aboard, staggered, rate-limited, canned fallback.</summary>
         internal static void CrewEmergency(string kind, string part)
         {
             if (instance == null || !ChatterOn || instance.vessel == null) return;
             instance.InitChatter();
             var crew = CrewOf(instance.vessel); var p = CrewVoice.Pilot(crew);
+            ChatLog.Write("chatter", "event " + kind + " (" + part + ")");
+            PilotEvents.Add(kind + ": " + part, PilotEvents.Now);
             instance.SpeakAll(instance.chatter.Emergency(kind, part, crew, p == null ? "" : p.Value.Key, Time.realtimeSinceStartup, instance.vessel.geeForce));
         }
 
@@ -114,8 +119,10 @@ namespace KSPChatBridge
             if (talk != null) { StartCoroutine(Converse(talk)); return; }
             var trip = chatter.TripTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);
             if (trip != null && trip.Count > 0) { SpeakAll(trip); return; }
+            string skip0 = chatter.LastSkip;
             var solo = chatter.SoloTick(now, flying, crew, pilot, "altitude " + vessel.altitude.ToString("0") + " m, speed " + vessel.srfSpeed.ToString("0") + " m/s");
-            if (solo != null) SpeakAll(new List<CrewLine> { solo });
+            if (solo != null) { ChatLog.Write("chatter", "ambient line for " + solo.Name + (InModAiHost.Busy ? " (model busy -> canned)" : "")); SpeakAll(new List<CrewLine> { solo }); }
+            else if (chatter.LastSkip != skip0 && chatter.LastSkip.Length > 0) ChatLog.Write("chatter", "skip: " + chatter.LastSkip);
         }
 
         System.Collections.IEnumerator Converse(CrewTalk talk)

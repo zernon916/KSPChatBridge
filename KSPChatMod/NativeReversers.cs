@@ -69,14 +69,17 @@ namespace KSPChatBridge
             if (reverse && !all) Set(vessel, false);
             return any && (!reverse || all);
         }
+        internal readonly List<string> Noticed = new List<string>();
         internal int Recover(Vessel vessel, double now, bool enabled)
         {
-            int count = 0;
+            int count = 0; Noticed.Clear();
             foreach (var item in items)
             {
                 if (item.Module == null || item.Module.part.vessel != vessel) continue;
                 if (!enabled) { item.Gate.Reset(); continue; }
-                if (item.Gate.Tick(item.Read() == true, now) && item.Set(false)) { count++; item.Gate.Reset(); }
+                bool due = item.Gate.Tick(item.Read() == true, now);
+                if (item.Gate.JustNoticed) Noticed.Add(item.Module.part.partInfo != null ? item.Module.part.partInfo.title + " thrust reverser" : "thrust reverser");
+                if (due && item.Set(false)) { count++; item.Gate.Reset(); }
             }
             return count;
         }

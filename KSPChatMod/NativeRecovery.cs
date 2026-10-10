@@ -78,15 +78,19 @@ namespace KSPChatBridge
                     surface.deployInvert = invert; surface.partDeployInvert = partInvert;
                     surface.ignorePitch = pitch; surface.ignoreRoll = roll; surface.ignoreYaw = yaw; } };
         }
+        internal readonly List<string> Noticed = new List<string>();
         internal int Tick(Vessel vessel, double now, bool enabled)
         {
+            Noticed.Clear();
             int restored = 0;
             foreach (var pair in new List<KeyValuePair<object, Entry>>(entries))
             {
                 var entry = pair.Value;
                 if (entry.Alive != null ? !entry.Alive() : entry.Module == null || entry.Module.part.vessel != vessel) { entries.Remove(pair.Key); continue; }
                 if (!enabled) { entry.Gate.Reset(); continue; }
-                if (entry.Gate.Tick(entry.Changed(), now)) { entry.Restore(); entry.Gate.Reset(); restored++; }
+                bool due = entry.Gate.Tick(entry.Changed(), now);
+                if (entry.Gate.JustNoticed) Noticed.Add(entry.Module != null && entry.Module.part != null && entry.Module.part.partInfo != null ? entry.Module.part.partInfo.title : pair.Key.ToString());
+                if (due) { entry.Restore(); entry.Gate.Reset(); restored++; }
             }
             return restored;
         }

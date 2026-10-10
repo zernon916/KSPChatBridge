@@ -12,6 +12,7 @@ namespace KSPChatBridge
     public class InModAiHost : MonoBehaviour
     {
         static InModAiHost instance;
+        internal static bool Busy { get { return instance != null && Volatile.Read(ref instance.busy) != 0; } }
         readonly object gate = new object();
         readonly Queue<Action> main = new Queue<Action>();
         readonly Dictionary<string, InModChatSession> sessions = new Dictionary<string, InModChatSession>();
@@ -185,7 +186,7 @@ namespace KSPChatBridge
                         if (!sessions.TryGetValue(request.Session ?? "ingame", out chat))
                             sessions[request.Session ?? "ingame"] = chat = new InModChatSession();
                     }
-                    chat.Persona = request.Persona ?? ""; chat.Craft = request.Craft ?? "";
+                    chat.Persona = (request.Persona ?? "") + PilotEvents.Context(PilotEvents.Now); chat.Craft = request.Craft ?? "";
                     reply = chat.Process(request.Text, request.Provider, ExecuteTool);
                     }
                 }

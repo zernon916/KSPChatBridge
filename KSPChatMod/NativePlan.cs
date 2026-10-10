@@ -11,7 +11,7 @@ namespace KSPChatBridge
         {
             internal string Op, Text, Reference = "agl", Destination = "";
             internal double Altitude = -1, Heading = -1, Speed = -1, Seconds = 120, Laps = 1, Bank = 15;
-            internal double VerticalSpeed = -999, Distance = -1;
+            internal double VerticalSpeed = -999, Distance = -1, Pitch = double.NaN;
         }
         internal List<Step> Steps = new List<Step>();
         internal int Index;
@@ -45,7 +45,9 @@ namespace KSPChatBridge
                 else if (Regex.IsMatch(low, @"^cruise\b")) step.Op = "cruise";
                 else if (Regex.IsMatch(low, @"^circle\b")) step.Op = "circle";
                 else if (Regex.IsMatch(low, @"^wait\b")) step.Op = "wait";
-                else if (Regex.IsMatch(low, @"^turn\s+(around|back)$")) step.Op = "turnaround";
+                else if (Regex.IsMatch(low, @"^turn\s+(around|back)\b")) step.Op = "turnaround";
+                else if (Regex.IsMatch(low, @"^(?:max\s+)?pitch\b")) step.Op = "pitch";
+                else if (Regex.IsMatch(low, @"^(?:max\s+)?bank\b")) step.Op = "bank";
                 else if (Regex.IsMatch(low, @"^head\b")) { step.Op = "head"; step.Destination = Regex.Match(low, @"^head\s+(?:to\s+)?([a-z0-9]+)").Groups[1].Value; }
                 else if (Regex.IsMatch(low, @"^taxi\s+to\s+")) { step.Op = "taxi"; step.Destination = line.Substring(8).Trim(); }
                 else if (Regex.IsMatch(low, @"^land\b")) { step.Op = "land"; step.Destination = line.Substring(4).Trim(); }
@@ -55,7 +57,9 @@ namespace KSPChatBridge
                 string holdOptions = @"(?:\s+(?:(?:hdg|heading|speed|vs)\s+" + number + @"|alt(?:itude)?\s+" + number + @"\s*(?:km|m|ft|feet)?(?:\s+(?:agl|msl))?))*";
                 string duration = number + @"\s*(?:s|sec(?:ond)?s?|min(?:ute)?s?)?";
                 string grammar = step.Op == "takeoff" ? @"take\s?off"
-                    : step.Op == "turnaround" ? @"turn\s+(?:around|back)"
+                    : step.Op == "turnaround" ? @"turn\s+(?:around|back)(?:\s+(?:max\s+)?bank\s+" + number + @"(?:\s*deg\w*)?)?(?:\s+(?:to\s+the\s+)?(?:left|right))?"
+                    : step.Op == "pitch" ? @"(?:max\s+)?pitch(?:\s+(?:up|down))?\s+" + number + @"(?:\s*deg\w*)?"
+                    : step.Op == "bank" ? @"(?:max\s+)?bank\s+" + number + @"(?:\s*deg\w*)?(?:\s+(?:to\s+the\s+)?(?:left|right))?"
                     : step.Op == "head" ? @"head\s+(?:to\s+)?(?:ksc|ksp|home|base|island)(?:\s+bank\s+" + number + @")?(?:\s+(?:left|right))?"
                     : step.Op == "climb" ? @"(?:climb|descend)\s+" + altitudeOption + holdOptions
                     : step.Op == "cruise" ? "cruise" + holdOptions + @"(?:\s+for\s+(?:" + duration + "|" + number + @"\s*km))?"
@@ -84,6 +88,17 @@ namespace KSPChatBridge
                 step.Laps = Read(low, @"circle\s+(\d+(?:\.\d+)?)", 1);
                 step.Bank = FlightPolicy.Clamp(Read(low, @"bank\s+(\d+(?:\.\d+)?)", 15), 5, step.Op == "head" ? 45 : 20) * (low.Contains("left") ? -1 : 1);
                 if (step.Op == "head" && !low.Contains("left") && !low.Contains("right")) step.Bank = 0;   // 0 = normal heading turn
+                if (step.Op == "turnaround" || step.Op == "bank")   // explicit plan bank: up to 45, carried by the step
+                {
+                    double b = Read(low, @"bank\s+(\d+(?:\.\d+)?)", 0);
+                    step.Bank = b <= 0 ? 0 : FlightPolicy.Clamp(b, 5, 45) * (Regex.IsMatch(low, @"\bleft\b") ? -1 : 1);
+                }
+                if (step.Op == "pitch")
+                {
+                    double v = Read(low, @"(\d+(?:\.\d+)?)", 0);
+                    if (v <= 0 || v > 30) throw new ArgumentException("Pitch must be 1-30 degrees: " + line);
+                    step.Pitch = low.Contains("down") ? -v : v;
+                }
                 if (step.Op == "climb" && step.Altitude < 0) throw new ArgumentException("Climb/descend requires altitude");
                 if (step.Seconds <= 0 || step.Seconds > 86400 || step.Laps <= 0 || step.Laps > 100 || step.Heading > 360 || step.Speed > 200
                     || (step.VerticalSpeed != -999 && Math.Abs(step.VerticalSpeed) > 90) || step.Distance == 0)

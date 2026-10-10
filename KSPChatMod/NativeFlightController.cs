@@ -40,6 +40,8 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1;
+        double planBank, prevSpd = -1; bool capLifted;
+        double climbPitchMax = 15, descentPitchMin = -5;
         double? directVs, directPitch, directBank, pendingCircle; bool bankOverride; string loggedMode = ""; float nextTelemetry;
         float elevator;
         NativePropulsion props;
@@ -254,7 +256,7 @@ namespace KSPChatBridge
             if (LocalVesselState.AlarmSequence != lastAlarmSeq)   // round 3: system alerts reach the chat again (bridge parity)
             {
                 lastAlarmSeq = LocalVesselState.AlarmSequence;
-                if (LocalVesselState.Alarm.Length > 0) { string al = "[SYSTEM] " + LocalVesselState.Level.ToUpperInvariant() + ": " + LocalVesselState.Alarm; ChatWindow.Notice(al); ChatLog.Write("alert", al); }
+                if (LocalVesselState.Alarm.Length > 0) { string al = "[SYSTEM] " + LocalVesselState.Level.ToUpperInvariant() + ": " + LocalVesselState.Alarm; ChatWindow.Notice(al); ChatLog.Write("alert", al); CrewEmergency("alarm", LocalVesselState.Alarm); }
             }
             try { EngineWatchTick(now, flying); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] engine watch: " + ex.Message); }
             try { engines.Tick(vessel, now); }
@@ -264,7 +266,14 @@ namespace KSPChatBridge
                 bool revert = NativeSafety.ShouldRevert(!nativeMode && safetyNet, nativeMode && Active, flying);
                 int restored = recovery.Tick(vessel, now, revert);
                 restored += reversers.Recover(vessel, now, revert);
-                if (restored > 0) ChatWindow.Notice("Local pilot: restored configuration on " + restored + " module(s).");
+                var noticed = new List<string>(recovery.Noticed); noticed.AddRange(reversers.Noticed);
+                foreach (string what in noticed)
+                {
+                    string al = "[SYSTEM] WARNING: " + what + " configuration changed in flight - pilot reverting";
+                    ChatWindow.Notice(al); ChatLog.Write("alert", al); PilotEvents.Add(what + " settings were changed in flight; pilot is restoring them", PilotEvents.Now);
+                    CrewEmergency("tamper", what);
+                }
+                if (restored > 0) { ChatWindow.Notice("Local pilot: restored configuration on " + restored + " module(s)."); PilotEvents.Add("restored " + restored + " tampered module(s)", PilotEvents.Now); }
             }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local configuration recovery: " + ex.Message); }
             bool brakes = vessel.ActionGroups[KSPActionGroup.Brakes];
@@ -292,7 +301,7 @@ namespace KSPChatBridge
             if (!lease.Acquire(NativeIds.Vessel(vessel.id), "native")) throw new InvalidOperationException("Another controller owns this vessel");
             mode = "hold"; throttle = vessel.ctrlState.mainThrottle; prevPitch = Pitch(); prevRoll = Roll();
             elevator = vessel.ctrlState.pitch; lastThrottle = Planetarium.GetUniversalTime() - 3;
-            pitchIntegral = vsIntegral = 0; capture = null; trimSuspended = false;
+            pitchIntegral = vsIntegral = 0; capLifted = false; prevSpd = -1; capture = null; trimSuspended = false;
             SetGroup(vessel, KSPActionGroup.SAS, false);
             ApplyCraftNotes();
             if (!props.HasLift(vessel)) engines.Request(vessel, Time.realtimeSinceStartup);
@@ -384,7 +393,7 @@ namespace KSPChatBridge
                 if (mode == "landing" && (stallStudy == null || stallStudy.Finished))
                 {
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, stall, Track());
-                    if (runway.Phase == "go around" && goArounds < 3) { goArounds++; runway.Phase = "entry"; ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
+                    if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.Phase = "entry"; ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
                 if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "."); ChatLog.Write("approach", "go around: " + runway.Why); }
                     else if (runway.Phase == "stopped") { c.mainThrottle = 0; Stop(false); return; }
                     else
@@ -456,9 +465,11 @@ namespace KSPChatBridge
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
                 double bank = directBank ?? FlightPolicy.Clamp(.5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -FlightPolicy.BankLimit(vessel.srfSpeed), FlightPolicy.BankLimit(vessel.srfSpeed));
                 bank = PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
+                double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
+                if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, stall, decel);   // no tight turns while slow / bleeding speed
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
-                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kin * (targetVs - vessel.verticalSpeed) + vsIntegral, targetVs < -1 ? -5 : -2, 15);
-                if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, 5, 15);
+                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kin * (targetVs - vessel.verticalSpeed) + vsIntegral, targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
+                if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
                 pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
                 double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .012 * q + pitchIntegral, -1, 1);
                 elevator = Mathf.MoveTowards(elevator, (float)PilotPolicy.PitchCommand(pitchOut, roll), (float)(.35 * dt));
@@ -472,7 +483,9 @@ namespace KSPChatBridge
                 throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = 1;   // full power for the roll
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
-              if (cut && mode != "takeoff") { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }   // Luke: 200 target / 220 cap low down, cut fast when over
+              if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
+            if (mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
+                throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall);   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 if (holdSpeed) c.mainThrottle = (float)throttle;
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
@@ -525,16 +538,19 @@ namespace KSPChatBridge
                     args["heading"] = step.Heading; args["altitude_m"] = -1; args["speed"] = -1; result = Command("plane_hold", args);
                     if (step.Bank != 0) { directBank = step.Bank; bankOverride = Math.Abs(step.Bank) > FlightPolicy.BankLimit(vessel.srfSpeed); }
                 }
-                else if (step.Op == "turnaround") { step.Heading = FlightPolicy.Wrap(FlightGlobals.ship_heading + 180) + 180; step.Heading = (FlightGlobals.ship_heading + 180) % 360; args["heading"] = step.Heading; args["altitude_m"] = -1; args["speed"] = -1; result = Command("plane_hold", args); }
+                else if (step.Op == "turnaround") { step.Heading = FlightPolicy.Wrap(FlightGlobals.ship_heading + 180) + 180; step.Heading = (FlightGlobals.ship_heading + 180) % 360; args["heading"] = step.Heading; args["altitude_m"] = -1; args["speed"] = -1; result = Command("plane_hold", args);
+                    if (step.Bank != 0) { directBank = step.Bank; bankOverride = Math.Abs(step.Bank) > FlightPolicy.BankLimit(vessel.srfSpeed); } }
+                else if (step.Op == "pitch") { PilotPolicy.ApplyPitchStep(step.Pitch, ref climbPitchMax, ref descentPitchMin); result = "ok"; }
+                else if (step.Op == "bank") { planBank = step.Bank; result = "ok"; }
                 else if (step.Op != "wait" && step.Op != "turnaround" && step.Op != "head")
                 {
                     args["altitude_m"] = step.Altitude; args["altitude_ref"] = step.Reference;
                     args["heading"] = step.Heading; args["speed"] = step.Speed;
                     args["vertical_speed"] = step.VerticalSpeed;
                     result = Command("plane_hold", args);
-                    if (step.Op == "circle") { directBank = step.Bank; planTurn = 0; planLastHeading = FlightGlobals.ship_heading; }
+                    if (step.Op == "circle") { directBank = planBank != 0 ? Math.Sign(step.Bank) * Math.Abs(planBank) : step.Bank; bankOverride = Math.Abs(directBank.Value) > FlightPolicy.BankLimit(vessel.srfSpeed); planTurn = 0; planLastHeading = FlightGlobals.ship_heading; }
                 }
-                bool accepted = step.Op == "wait" || result == "Local aircraft holds engaged."
+                bool accepted = step.Op == "wait" || step.Op == "pitch" || step.Op == "bank" || result == "Local aircraft holds engaged."
                     || result == "Local taxi started: straight lines; no obstacle avoidance."
                     || result == "Local autoland: takeoff then approach entry."
                     || result == "Local takeoff engaged." || result == "Local rotor spool started; waiting for measured RPM."
@@ -549,7 +565,8 @@ namespace KSPChatBridge
             else if (step.Op == "taxi") complete = taxi != null && taxi.Result != null && taxi.Result.Contains("arrived");
             else if (step.Op == "takeoff") complete = mode == "hold" && vessel.radarAltitude >= 100;
             else if (step.Op == "head") { complete = Math.Abs(FlightPolicy.Wrap(step.Heading - FlightGlobals.ship_heading)) < 12; if (complete) { directBank = null; bankOverride = false; holdHeading = true; heading = step.Heading; } }
-            else if (step.Op == "turnaround") complete = Math.Abs(FlightPolicy.Wrap(step.Heading - FlightGlobals.ship_heading)) < 15;
+            else if (step.Op == "turnaround") { complete = Math.Abs(FlightPolicy.Wrap(step.Heading - FlightGlobals.ship_heading)) < 15; if (complete && step.Bank != 0) { directBank = null; bankOverride = false; holdHeading = true; heading = step.Heading; } }
+            else if (step.Op == "pitch" || step.Op == "bank") complete = true;
             else if (step.Op == "climb") complete = Math.Abs(vessel.altitude - altitude) <= band;
             else if (step.Op == "land") complete = vessel.LandedOrSplashed && vessel.srfSpeed < 1;
             else if (step.Op == "circle")
@@ -721,7 +738,7 @@ namespace KSPChatBridge
                 case "flightplan/status": return PlanStatus;
                 case "flightplan/fly":
                     string text = Str(a, "plan", "");
-                    if (plan == null || plan.Text != text || !plan.Paused) plan = ParsePlan(text);
+                    if (plan == null || plan.Text != text || !plan.Paused) { plan = ParsePlan(text); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan " + plan.Status;
                 case "get_status": case "autopilot_status": return PilotPolicy.StatusLine(mode, vessel.vesselName, mode == "landing" && runway != null ? runway.Phase : null, mode == "landing" && runway != null ? runway.Distance : double.NaN, vessel.altitude, vessel.srfSpeed, FlightGlobals.ship_heading, plan != null && plan.Running ? plan.Index + 1 : 0);
                 case "set_gear": SetGroup(vessel, KSPActionGroup.Gear, Bool(a, "down", true)); return "Gear set.";
@@ -793,6 +810,11 @@ namespace KSPChatBridge
                         (lat, lon) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(lat, lon)) - vessel.mainBody.Radius));
                     bool savedRunway = selectedRunway != null;
                     var builtIn = FlightResidualPolicy.BuiltInRunway(destination, direction);
+                    if (savedRunway && builtIn != null)   // explicit KSC/Island prefix + built-ins beat a fuzzy saved-spot match
+                    {
+                        var spotNames = new List<string>(); foreach (var pt in spots.Points(vessel.mainBody.bodyName)) spotNames.Add(pt.Name);
+                        if (FlightResidualPolicy.PreferBuiltIn(destination, spotNames)) { selectedRunway = null; savedRunway = false; }
+                    }
                     if (destination.Trim().Equals("target", StringComparison.OrdinalIgnoreCase) && !savedRunway)
                 {
                     var tgt = FlightGlobals.fetch == null ? null : FlightGlobals.fetch.VesselTarget;
@@ -867,10 +889,38 @@ namespace KSPChatBridge
                     lastHeliHeading = FlightGlobals.ship_heading; sideIntegral = 0; rotorYawBias = FlightPolicy.Clamp(savedYawBias, -8, 8); nextRotorTrim = Time.realtimeSinceStartup + 8;
                     if (helicopterVerticalOnly) SetGroup(vessel, KSPActionGroup.SAS, true);
                     return StartRotorMode("helicopter");
-                case "set_heading": heading = Num(a, "heading", FlightGlobals.ship_heading); return Active ? "Heading updated." : "Engage local holds first.";
-                case "set_speed": speed = FlightPolicy.Clamp(Num(a, "speed", 150), 25, 200); return Active ? "Speed updated." : "Engage local holds first.";
+                case "set_heading":
+                {
+                    double rel = Num(a, "relative", double.NaN);
+                    heading = double.IsNaN(rel) ? Num(a, "heading", FlightGlobals.ship_heading) : (FlightGlobals.ship_heading + rel + 360) % 360;
+                    if (!Active) { var h = new Dictionary<string, object> { { "heading", heading }, { "altitude_m", -1.0 }, { "speed", -1.0 } }; string r0 = Command("plane_hold", h); if (!Active) return r0; }
+                    holdHeading = true; directBank = null;
+                    return (double.IsNaN(rel) ? "Heading " : "Turning " + rel.ToString("0", CultureInfo.InvariantCulture) + " deg to heading ") + heading.ToString("000", CultureInfo.InvariantCulture) + ".";
+                }
+                case "set_speed":
+                {
+                    object req; if (!a.TryGetValue("speed", out req)) req = Bool(a, "max", false) ? "max" : null;
+                    string reply; bool lifted;
+                    double t = PilotPolicy.ResolveSpeed(req, EstimateVMax(), vessel.altitude, Bool(a, "override", false), out lifted, out reply);
+                    if (double.IsNaN(t)) return reply;
+                    if (!Active) return "Engage local holds first. (" + reply + ")";
+                    speed = t; capLifted = lifted; holdSpeed = true; return reply;
+                }
                 default: return ResidualCommand(name, a);
             }
+        }
+        /// <summary>Vehicle max level speed estimate (maxspeed.py port): measured drag area + available thrust.</summary>
+        double EstimateVMax()
+        {
+            if (vessel == null || vessel.LandedOrSplashed) return double.NaN;
+            double drag = 0, thrust = 0;
+            foreach (Part part in vessel.parts)
+            {
+                drag += part.dragScalar;
+                foreach (var e in part.FindModulesImplementing<ModuleEngines>())
+                    if (e.isOperational && e.EngineIgnited) thrust += e.finalThrust / Math.Max(.1, e.currentThrottle);
+            }
+            return PilotPolicy.VMax(drag, vessel.dynamicPressurekPa, vessel.atmDensity, thrust, vessel.srfSpeed);
         }
         string StartTakeoff()
         {
