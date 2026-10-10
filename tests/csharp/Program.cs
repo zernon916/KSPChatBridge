@@ -194,6 +194,9 @@ class Program
         }
         { var rmx = new RunwayMission(); Check(rmx.Ils == null && double.IsNaN(RunwayMission.BelowGsM(rmx.Ils)) && RunwayMission.BelowGsM(new Ils.Reading { AboveGsM = -40 }) == 40, "6:09 PM NRE: below-GS reading is safe before the ILS exists (approach entry)"); }
         Check(MfdNav.DefaultPage(0) == "map" && MfdNav.DefaultPage(1) == "ils" && MfdNav.DefaultPage(2) == "aircraft" && MfdNav.DefaultPage(3) == "chart" && MfdNav.DefaultPage(4) == "all" && MfdNav.DefaultPage(5) == "map", "IVA screens get MAP/ILS/AP/CHART/COMMS defaults");
+        { double a = ApproachProfile.EstimateStall(12000, 10), b = ApproachProfile.EstimateStall(48000, 10); Check(Math.Abs(b / a - 2) < .01, "stall scales with sqrt(mass) (" + a.ToString("0") + " -> " + b.ToString("0") + ")"); }
+        Check(ApproachProfile.HeavyStallFloor(48.8) > 69 && CraftClass.ConservativeStall(45, 94) >= 75 && CraftClass.ConservativeStall(60, double.NaN) == 60, "heavy floor + liftoff-proven stall (A300: 45 -> >=75)");
+        Check(PilotPolicy.LowEnergy(77, 75 / 1.0, -2, 240) && !PilotPolicy.LowEnergy(120, 70, -2, 240) && PilotPolicy.LowEnergy(120, 70, -23, 230) && PilotPolicy.MinSafeSpeed(75) > 97, "low energy: slow or sinking near the sea -> power + climb; never below 1.3 Vs");
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
@@ -1350,7 +1353,7 @@ class Program
                 Check(tightCount(30, 20) < tightCount(80, 20), "heavier craft has more tight turns on the same chart (" + tightCount(30, 20) + " vs " + tightCount(80, 20) + ")");
                 Check(ApproachProfile.Bank(20, 300) == 10 && ApproachProfile.Bank(45, 300) == 45 && ApproachProfile.Bank(20, 100) == 20, "usable bank: 10 deg above 250 m/s, explicit bank wins");
                 Check(Math.Abs(ApproachProfile.StallAt(45, 10, 7.5) - 45 * Math.Sqrt(.75)) < 1e-9, "stall scales with sqrt(mass) (fuel burn)");
-                Check(Math.Abs(ApproachProfile.EstimateStall(6000, 6) - 45) < 1 && ApproachProfile.EstimateStall(20000, 6) > 80, "wing-loading stall estimate");
+                Check(Math.Abs(ApproachProfile.EstimateStall(6000, 6) - 53.4) < 1 && ApproachProfile.EstimateStall(20000, 6) > 90, "wing-loading stall estimate (CLmax 1.6, S = 3.52 m2/coeff)");
                 Check(!ApproachProfile.NeedsReplan(67.5, 70) && ApproachProfile.NeedsReplan(67.5, ApproachProfile.Speed(ApproachProfile.StallAt(45, 10, 8))), "replan only on a significant speed/mass change");
                 // replan keeps the current target
                 var rm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };

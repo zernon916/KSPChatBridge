@@ -50,6 +50,8 @@ namespace KSPChatBridge
         internal static string Classify(double massT, double spanM, int parts) { return massT >= 40 || spanM >= 30 || parts >= 150 ? "heavy" : "light"; }
         internal static string Effective(string auto, string overrideMode) { return overrideMode == "gentle" ? "heavy" : overrideMode == "fighter" ? "light" : auto; }
         internal static bool Gentle(string cls) { return cls == "heavy"; }
+        /// <summary>Stall estimate never below what liftoff proved: a craft that lifted off at Vlo has Vs >= Vlo/1.25.</summary>
+        internal static double ConservativeStall(double est, double liftoff) { return double.IsNaN(liftoff) || liftoff <= 0 ? est : Math.Max(est, liftoff / 1.25); }
         internal const double HeavyBank = 25, HeavyRollRate = 6, HeavyG = 1.15, HeavyPitchG = 1.4;
         internal static double MaxBank(string cls, double limit) { return Gentle(cls) ? Math.Min(limit, HeavyBank) : limit; }
         internal static double JoinG(string cls, double g) { return Gentle(cls) ? Math.Min(g, HeavyG) : g; }
@@ -264,7 +266,12 @@ namespace KSPChatBridge
         /// <summary>Stall at current mass from a reference stall (Vs ~ sqrt(mass)).</summary>
         internal static double StallAt(double stallRef, double massRef, double massNow) { return massRef > 0 && massNow > 0 ? stallRef * Math.Sqrt(massNow / massRef) : stallRef; }
         /// <summary>Wing-loading estimate when the craft has no measured stall: Vs = sqrt(2 m g / (rho0 * K * sum(lift coeff))), K calibrated to stock (6 t, 6 lift -> ~45 m/s).</summary>
-        internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? UnmeasuredStallFloor : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (1.225 * 7.9 * liftCoeffSum)), UnmeasuredStallFloor, 200); }   // Luke 13:33: unfloored estimate gave 31 m/s -> 46 m/s joins, 586 m arcs flown at 70-260 m/s
+        /// <summary>Vs = sqrt(2 m g / (rho S CLmax)). Stock: 1 deflectionLiftCoeff = 3.52 m^2 of wing. Luke 6:31 PM: the old 7.9 factor meant
+        /// CLmax 2.25 (far too optimistic: a 48.8 t A300 got Vs 45 and lifted off at 94). Now CLmax 1.6 (stock wings ~1.5-1.8 at max-lift AoA), sea-level rho; heavies also get a sqrt(mass) floor and the liftoff bound.</summary>
+        internal const double AreaPerCoeff = 3.52, ClMaxConservative = 1.6, RhoSea = 1.225;
+        internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? UnmeasuredStallFloor : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (RhoSea * AreaPerCoeff * liftCoeffSum * ClMaxConservative)), UnmeasuredStallFloor, 200); }
+        /// <summary>Heavy-class floor that scales with sqrt(mass): 10 m/s * sqrt(t) (48.8 t -> 70 m/s).</summary>
+        internal static double HeavyStallFloor(double massT) { return 10 * Math.Sqrt(Math.Max(0, massT)); }   // Luke 13:33: unfloored estimate gave 31 m/s -> 46 m/s joins, 586 m arcs flown at 70-260 m/s
         internal static double Speed(double stall) { return FlightPolicy.Clamp(JoinFactor * stall, MinSpeed, MaxSpeed); }
         /// <summary>Stall estimate sanity floor for the approach schedule (live 15:4x: ~33 m/s gave a 43 m/s final from 20 km).</summary>
         internal static double SaneStall(double stall) { return FlightPolicy.Clamp(double.IsNaN(stall) ? UnmeasuredStallFloor : stall, 40, 120); }

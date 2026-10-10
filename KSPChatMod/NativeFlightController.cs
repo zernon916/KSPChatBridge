@@ -72,7 +72,7 @@ namespace KSPChatBridge
         float nextRotorPark;
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
-        TakeoffMission takeoff; TakeoffGround tground; bool landFloor;
+        TakeoffMission takeoff; TakeoffGround tground; bool landFloor, lowEnergy; float lowTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         int errorHolds;
         /// <summary>Luke 6:10 PM: an error must never leave nose-down / idle applied. Log the full trace; airborne the first few
@@ -94,7 +94,7 @@ namespace KSPChatBridge
             if (air) { c.mainThrottle = vessel.ctrlState.mainThrottle = Math.Max(c.mainThrottle, .6f); SetGroup(vessel, KSPActionGroup.SAS, true); }
             Stop(); ChatWindow.Notice("Local controller released after error (" + ex.GetType().Name + " in " + where + "): controls centred" + (air ? ", power 60%+, SAS on." : "."));
         }
-        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; return FlightPolicy.Clamp(s0, 20, 200); }
+        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, liftoffSpeed); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); return FlightPolicy.Clamp(s0, 20, 200); }
         internal static string StallLabel { get { var i = instance; return i == null || i.learner == null || i.vessel == null ? "" : StallLearner.Label(i.stallGuess, i.learner.MeasuredStall(i.vessel.GetTotalMass() * 1000, i.liftArea), i.learner.Confidence); } }
         void SaveLearner()
         {
@@ -122,7 +122,7 @@ namespace KSPChatBridge
         {
             object o; var cache = settingsData.TryGetValue("liftoff_speeds", out o) ? o as Dictionary<string, object> : null;
             if (cache == null) settingsData["liftoff_speeds"] = cache = new Dictionary<string, object>();
-            cache[vessel.vesselName] = Math.Round(v, 1); liftoffSpeed = v; try { Save(); } catch (Exception) { }
+            cache[vessel.vesselName] = Math.Round(v, 1); liftoffSpeed = v; stall = LearnedStall(); try { Save(); } catch (Exception) { }
         }
         NativePlan plan;
         double planTurn, planLastHeading, planLastTime;
@@ -209,12 +209,14 @@ namespace KSPChatBridge
             double estStall = ApproachProfile.EstimateStall(vessel.totalMass * 1000, liftSum);
             ApproachProfile.JoinG = FlightPolicy.Clamp(Num(settingsData, "approach_join_g", 4.0), 1.1, ApproachProfile.GCap); ApproachProfile.CrewG = FlightPolicy.Clamp(Num(settingsData, "crew_g_limit", 6.0), 1.5, ApproachProfile.GCap);
             { var tol = new List<double>(); foreach (Part tp in vessel.parts) tol.Add(tp.gTolerance); ApproachProfile.StructG = ApproachProfile.StructuralG(tol); ApproachProfile.Backoff = 1; } ApproachProfile.FinalG = FlightPolicy.Clamp(Num(settingsData, "approach_final_g", 1.5), 1.05, ApproachProfile.GCap);
-            try { stall = stallCache == null ? estStall : FlightPolicy.Clamp(Num(stallCache, vessel.vesselName, estStall), 20, 200); }
+            try { stall = stallCache == null ? estStall : Math.Max(estStall, FlightPolicy.Clamp(Num(stallCache, vessel.vesselName, estStall), 20, 200)); }   // a stale low cache never undercuts the estimate
             catch (Exception) { stall = 45; ChatWindow.Notice("Invalid saved stall speed ignored for this craft."); }
             { object lo; var lc = settingsData.TryGetValue("liftoff_speeds", out lo) ? lo as Dictionary<string, object> : null; liftoffSpeed = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); }
             partCount = vessel.parts.Count;
             stallGuess = stall; liftArea = liftSum;
             { object so; var sc = settingsData.TryGetValue("stall_learn", out so) ? so as Dictionary<string, object> : null; object lo2 = null; if (sc != null) sc.TryGetValue(vessel.vesselName, out lo2); learner = StallLearner.Load(lo2 as Dictionary<string, object>); }
+            ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "stall inputs: m={0:0.0} t, liftCoeff={1:0.00} -> S={2:0.0} m2, rho={3}, CLmax={4}, Vs est={5:0.0} m/s, heavy floor={6:0}, liftoff={7:0}",
+                vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
             stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.CoM, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
@@ -608,16 +610,24 @@ namespace KSPChatBridge
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, stall, decel);
                 bool heavyFloor = !vessel.LandedOrSplashed && (mode == "hold" || (mode == "landing" && runway != null && runway.Phase == "entry")) && CraftClass.FloorRecover(CraftCls, vessel.radarAltitude, vessel.verticalSpeed);
                 if (heavyFloor) { bank = 0; bankCmd = CraftClass.RollStep(CraftCls, bankCmd, 0, dt); targetVs = Math.Max(targetVs, 8); if (Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "heavy floor recovery: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0")); } }   // heavy: wings level + climb early   // no tight turns while slow / bleeding speed
+                lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude);
+                if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"))) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(stall));
+                if (lowEnergy)
+                {   // hard minimum power + climb; airbrakes in
+                    bank = FlightPolicy.Clamp(bank, -15, 15); if (vessel.radarAltitude < 300) targetVs = Math.Max(targetVs, 4);
+                    if (vessel.ActionGroups[KSPActionGroup.Brakes] && AirbrakesByAutopilot) { SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; }
+                    if (Time.realtimeSinceStartup >= lowTraceNext) { lowTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "low energy: spd=" + vessel.srfSpeed.ToString("0") + " min=" + PilotPolicy.MinSafeSpeed(stall).ToString("0") + " stall=" + stall.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0") + " -> power 90%+, climb"); }
+                }
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double kinH = kin * CraftClass.GainScale(CraftCls);
                 double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kinH * (targetVs - vessel.verticalSpeed) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
-                if (landFloor && !directPitch.HasValue) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
+                if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
                 if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare") ? Math.Max(1.2, ApproachProfile.FinalG) : 3;   // gentler once established inbound   // joins maneuver to the dynamic limit; final/flare stay gentle
             if (!(mode == "landing" && runway != null && runway.Phase == "entry") && mode != "takeoff") gLim = Math.Min(gLim, 3);
-            gLim = PitchShaper.Limit(gLim, bankCmd); if (CraftClass.Gentle(CraftCls) && mode != "takeoff") gLim = Math.Min(gLim, CraftClass.HeavyPitchG);   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
+            gLim = PitchShaper.Limit(gLim, bankCmd); if (CraftClass.Gentle(CraftCls) && mode != "takeoff") gLim = Math.Min(gLim, CraftClass.HeavyPitchG); if (landFloor || lowEnergy || heavyFloor) gLim = Math.Max(gLim, 2);   // sink arrest needs real pitch authority   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
@@ -637,7 +647,7 @@ namespace KSPChatBridge
                 if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > 220) targetThrottle = throttle - .05;
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
-            if (landFloor && mode == "landing" && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
+            if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt);
             bool speedLock = ApproachSpeedLocked;

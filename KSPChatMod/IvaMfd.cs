@@ -15,6 +15,7 @@ namespace KSPChatBridge
         [KSPField] public float width = .20f, height = .1625f, lift = .008f;
         [KSPField] public bool flipX = false, flipY = false, hideModel = true;
         [KSPField] public float refreshHz = 4;
+        [KSPField] public string screenTransform = "FlatMon40x10Screen";
         [KSPField] public bool rpmHost = false, autoOrient = false, autoSize = false;   // set on RasterPropMonitorBasicMFD by AICS_IVA.cfg
         internal bool Active { get { return built; } }
         /// <summary>Default page per screen, in prop order: MAP / ILS / AP / CHART / COMMS, then repeat.</summary>
@@ -61,7 +62,7 @@ namespace KSPChatBridge
             {   // runtime hide of RPM's screen: renderers + colliders off, RPM modules stopped (Luke 6:17 PM)
                 foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
                 foreach (var cl in internalProp.GetComponentsInChildren<Collider>(true)) cl.enabled = false;
-                foreach (var m in internalProp.internalModules) if (!(m is AicsIvaMfd) && !(m is AicsRpmPages)) m.enabled = false;
+                foreach (var m in new List<InternalModule>(internalProp.internalModules)) if (!(m is AicsIvaMfd) && !(m is AicsRpmPages)) { m.enabled = false; internalProp.internalModules.Remove(m); Destroy(m); }   // RPM's modules gone: KSP calls OnUpdate even when disabled
             }
             else if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
             if (rpmHost || autoOrient)
@@ -93,6 +94,26 @@ namespace KSPChatBridge
                 Vector3 rL = Vector3.Cross(nL, uL); float w = Mathf.Abs(Vector3.Dot(hb.size, rL)), h = Mathf.Abs(Vector3.Dot(hb.size, uL));
                 if (w > .02f && h > .02f) { width = w * .92f; height = h * .92f; }
                 face.transform.localPosition = hb.center + nL * (Mathf.Abs(Vector3.Dot(hb.extents, nL)) - lift * .5f);
+            }
+            if (rpmHost)
+            {   // Luke 6:29 PM: sit FLUSH on RPM's own screen surface (its screenTransform mesh), not on the prop's bounds
+                Transform scr = FindDeep(internalProp.transform, screenTransform); MeshFilter mf = scr != null ? scr.GetComponent<MeshFilter>() : null;
+                if (mf != null && mf.sharedMesh != null && seat0 != null)
+                {
+                    var b = mf.sharedMesh.bounds; var axes = new[] { Vector3.right, Vector3.up, Vector3.forward }; int ni = 0;
+                    for (int i = 1; i < 3; i++) if (Mathf.Abs(Vector3.Dot(b.size, axes[i])) < Mathf.Abs(Vector3.Dot(b.size, axes[ni]))) ni = i;
+                    Vector3 n = axes[ni]; if (Vector3.Dot(scr.TransformDirection(n), seat0.position - scr.TransformPoint(b.center)) < 0) n = -n;
+                    Vector3 u = Vector3.zero; float best = -2;
+                    for (int i = 0; i < 3; i++) { if (i == ni) continue; foreach (var sg in new[] { 1f, -1f }) { float d = Vector3.Dot(scr.TransformDirection(axes[i] * sg), seat0.up); if (d > best) { best = d; u = axes[i] * sg; } } }
+                    Vector3 rgt = Vector3.Cross(u, n);
+                    face.transform.SetParent(scr, false);
+                    face.transform.localRotation = Quaternion.LookRotation(-u, n);
+                    width = Mathf.Abs(Vector3.Dot(b.size, rgt)); height = Mathf.Abs(Vector3.Dot(b.size, u));
+                    float nScale = Mathf.Max(1e-4f, scr.TransformVector(n).magnitude); lift = 0;
+                    face.transform.localPosition = b.center + n * (Mathf.Abs(Vector3.Dot(b.extents, n)) + .0015f / nScale);   // 1.5 mm proud of RPM's glass
+                    Debug.Log("[KSPChatBridge] IVA MFD flush on " + screenTransform + ": local size " + width.ToString("F4") + "x" + height.ToString("F4") + " n=" + n + " up=" + u);
+                }
+                else Debug.Log("[KSPChatBridge] IVA MFD: RPM screen transform '" + screenTransform + "' not found; using prop bounds");
             }
             var mesh = new Mesh(); float sx = flipX ? 1 : -1;   // prop face normal = local +Y; texture right = local -X, up = local -Z
             var v = new List<Vector3>(); var uv = new List<Vector2>();
@@ -128,6 +149,14 @@ namespace KSPChatBridge
 
         static bool InIva { get { var cm = CameraManager.Instance; return cm != null && (cm.currentCameraMode == CameraManager.CameraMode.IVA || cm.currentCameraMode == CameraManager.CameraMode.Internal); } }
 
+        static Transform FindDeep(Transform t, string name) { if (t.name == name) return t; foreach (Transform k in t) { var r = FindDeep(k, name); if (r != null) return r; } return null; }
+        float nextHide;
+        /// <summary>RPM keeps re-enabling its screen renderer; keep every host renderer except ours off.</summary>
+        void LateUpdate()
+        {
+            if (!built || !rpmHost || Time.realtimeSinceStartup < nextHide) return; nextHide = Time.realtimeSinceStartup + .5f;
+            foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true)) if (face == null || r.gameObject != face) r.enabled = false;
+        }
         void Update()
         {
             if (releaseFrame >= 0 && Time.frameCount >= releaseFrame && !Input.GetKey(KeyCode.Escape)) { InputLockManager.RemoveControlLock(LockId); releaseFrame = -1; }

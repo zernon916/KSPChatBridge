@@ -9,6 +9,10 @@ namespace KSPChatBridge
     /// <summary>Live test round 2 (Oct 9): pure policies for roll, throttle, engine watch, plan-from-chat and command preemption.</summary>
     internal static class PilotPolicy
     {
+        /// <summary>Never fly slower than this airborne (Luke 6:29 PM: A300 held 77 m/s at idle into the sea).</summary>
+        internal static double MinSafeSpeed(double stall) { return 1.3 * stall; }
+        /// <summary>Slow, or sinking hard close to the surface: hard minimum power, airbrakes in, climb.</summary>
+        internal static bool LowEnergy(double speed, double stall, double vs, double agl) { return speed < MinSafeSpeed(stall) || (vs < -8 && agl < 300) || (vs < -3 && agl < 120); }
         // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----
         internal const double TrimPitchMax = .15, TrimSurfaceMax = 5;
         /// <summary>Auto-trim only in steady level flight well after takeoff: never on the ground / rotation / climb-out.</summary>
