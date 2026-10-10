@@ -9,6 +9,31 @@ namespace KSPChatBridge
     /// <summary>Live test round 2 (Oct 9): pure policies for roll, throttle, engine watch, plan-from-chat and command preemption.</summary>
     internal static class PilotPolicy
     {
+        // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----
+        internal const double TrimPitchMax = .15, TrimSurfaceMax = 5;
+        /// <summary>Auto-trim only in steady level flight well after takeoff: never on the ground / rotation / climb-out.</summary>
+        internal static bool TrimAllowed(bool landed, double agl, double sinceHandoff, double vs, double roll) { return !landed && agl > 150 && sinceHandoff > 20 && Math.Abs(vs) < 1 && Math.Abs(roll) < 5; }
+        /// <summary>Bounded, rate-limited pitch-trim step with anti-windup: no nose-up trim while nose-high or at the bound.</summary>
+        internal static double TrimStep(double trim, double input, double pitchDeg)
+        {
+            if (input > 0 && pitchDeg > 8) return trim;
+            return Math.Max(-TrimPitchMax, Math.Min(TrimPitchMax, trim + Math.Sign(input) * Math.Min(.01, Math.Abs(input) * .05)));
+        }
+        /// <summary>Altitude hold wins over trim: while the elevator is pushed hard against it, bleed the trim off (0.05/s).</summary>
+        internal static double TrimBleed(double trim, double elevator, double dt)
+        {
+            if (elevator < -.3 && trim > 0) return Math.Max(0, trim - .05 * dt);
+            if (elevator > .3 && trim < 0) return Math.Min(0, trim + .05 * dt);
+            return trim;
+        }
+        /// <summary>Resource alarms only for resources something on board uses (engines / RCS / EC), not for ones that were already
+        /// near empty when the craft loaded, and not while landed unless it is engine fuel.</summary>
+        internal static string ResourceLevel(double fraction, double cap, bool consumed, bool engineFuel, bool landed, double startFraction)
+        {
+            if (cap <= 0 || !consumed || (landed && !engineFuel) || startFraction < .05) return "ok";
+            return fraction < .05 ? "fail" : fraction < .25 ? "caution" : "ok";
+        }
+
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         // ---- commands that must preempt an active plan/mission (they used to be acked while the plan kept control) ----

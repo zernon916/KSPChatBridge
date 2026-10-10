@@ -31,7 +31,8 @@ namespace KSPChatBridge
             bool flying = !v.LandedOrSplashed;
             var amounts = new Dictionary<string, double>();
             var capacities = new Dictionary<string, double>();
-            double hot = 0; string hottest = "";
+            double hot = 0; string hottest = ""; var engineFuel = new HashSet<string>(); var used = new HashSet<string> { "ElectricCharge" };
+            if (vesselId != v.id.ToString()) startFraction.Clear();
             foreach (Part p in v.parts)
             {
                 double ratio = Math.Max(p.temperature / Math.Max(1, p.maxTemp), p.skinTemperature / Math.Max(1, p.skinMaxTemp));
@@ -43,6 +44,8 @@ namespace KSPChatBridge
                 }
                 foreach (PartModule m in p.Modules)
                 {
+                    var eng = m as ModuleEngines; if (eng != null) foreach (var pr in eng.propellants) { engineFuel.Add(pr.name); used.Add(pr.name); }
+                    var rcs = m as ModuleRCS; if (rcs != null) foreach (var pr in rcs.propellants) used.Add(pr.name);
                     var engine = m as ModuleEngines;
                     if (engine != null) rows.Add(new[] { engine.flameout && engine.EngineIgnited ? "fail" : "ok", p.partInfo.title,
                         engine.EngineIgnited ? F(engine.finalThrust) + " kN" + (engine.flameout ? " FLAMEOUT" : "") : "Engine off" });
@@ -62,7 +65,8 @@ namespace KSPChatBridge
             {
                 double cap = capacities[pair.Key];
                 double fraction = cap > 0 ? pair.Value / cap : 0;
-                rows.Add(new[] { cap <= 0 ? "ok" : fraction < .05 ? "fail" : fraction < .25 ? "caution" : "ok", pair.Key,
+                double f0; if (!startFraction.TryGetValue(pair.Key, out f0)) startFraction[pair.Key] = f0 = cap > 0 ? fraction : 1;
+                rows.Add(new[] { PilotPolicy.ResourceLevel(fraction, cap, used.Contains(pair.Key), engineFuel.Contains(pair.Key), !flying, f0), pair.Key,
                     F(pair.Value) + " / " + F(cap) + (cap > 0 ? " (" + F(100 * fraction) + "%)" : "") });
                 if (resources.Length > 1) resources.Append(',');
                 resources.Append(ChatWindow.JsonStr(pair.Key)).Append(':').Append(cap > 0 ? N(fraction) : "null");
@@ -97,6 +101,6 @@ namespace KSPChatBridge
                 + ",\"vs\":" + N(v.verticalSpeed) + ",\"g\":" + N(v.geeForce) + "}";
             Available = true;
         }
-        static string alarmIdentity = "";
+        static string alarmIdentity = ""; static readonly Dictionary<string, double> startFraction = new Dictionary<string, double>();
     }
 }

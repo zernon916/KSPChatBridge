@@ -78,7 +78,24 @@ class Program
         Check(takeoff.Step(4, 45, 10, false, 45) == 1, "airborne stall margin");
         takeoff.Step(6, 80, 110, false, 45); Check(takeoff.Phase == "climbout complete", "climbout handoff");
         takeoff = new TakeoffMission(0); takeoff.Step(121, 20, 0, true, 45); Check(takeoff.Phase == "takeoff timeout", "bounded takeoff");
-        Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
+        {   // Luke 5:15 PM new plane: rotate near 1.15 x stall with progressive back-pressure (heavier craft, stall 70 m/s)
+            var tk = new TakeoffMission(0); double v = 0, t = 0, firstPull = double.NaN, lift = double.NaN; bool ground = true;
+            while (t < 120 && ground) { t += .1; v += .25; double p = tk.Step(t, v, 0, true, 70); if (p > 0 && double.IsNaN(firstPull)) firstPull = v; if (p >= 8.5 && v >= 1.1 * 70) { ground = false; lift = v; } }
+            Check(!double.IsNaN(firstPull) && firstPull < 1.15 * 70 && firstPull > .9 * 70, "back-pressure starts near Vr, not at the runway end (" + firstPull.ToString("0") + ")");
+            Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
+            Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
+            Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+            var tk2 = new TakeoffMission(0); tk2.Step(1, 82, 5, false, 70); Check(Math.Abs(tk2.LiftoffSpeed - 82) < 1e-9, "liftoff speed is measured");
+            Check(!PilotPolicy.TrimAllowed(true, 0, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 80, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 500, 5, 0, 0) && PilotPolicy.TrimAllowed(false, 500, 30, .5, 1), "auto-trim never on ground / rotation / just after takeoff");
+            double tr = 0; for (int i = 0; i < 200; i++) tr = PilotPolicy.TrimStep(tr, .8, 3); Check(Math.Abs(tr - PilotPolicy.TrimPitchMax) < 1e-9, "trim bounded");
+            Check(PilotPolicy.TrimStep(.05, .8, 12) == .05, "anti-windup: no nose-up trim while nose-high");
+            // level-off sim: nose-up trim + climb; hold pushes the elevator, trim bleeds, pitch comes down
+            double trim = .15, pitch = 15, elev = 0; for (int i = 0; i < 100; i++) { double want = -2; elev = Math.Max(-1, Math.Min(1, .05 * (want - pitch))); trim = PilotPolicy.TrimBleed(trim, elev, .1); pitch += (elev * 6 + trim * 10) * .1; }
+            Check(trim < .12 && pitch < 2, "altitude hold levels off despite nose-up trim (pitch " + pitch.ToString("0.0") + ")");
+            Check(PilotPolicy.ResourceLevel(0, 7.5, false, false, true, 0) == "ok" && PilotPolicy.ResourceLevel(0, 7.5, true, false, true, 1) == "ok", "no MonoPropellant alarm without RCS or on the runway");
+            Check(PilotPolicy.ResourceLevel(.02, 100, true, true, true, 1) == "fail" && PilotPolicy.ResourceLevel(.02, 100, true, true, false, .02) == "ok", "engine fuel still alarms on the ground; started-empty tanks don't");
+            Console.WriteLine("Takeoff rotation / auto-trim / resource alarms: 12 checks passed.");
+        }        Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);

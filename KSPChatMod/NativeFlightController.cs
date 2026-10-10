@@ -77,7 +77,13 @@ namespace KSPChatBridge
         NativeVerticalLanding verticalLanding;
         TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
-        double stall = 45;
+        double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
+        void RememberLiftoff(double v)
+        {
+            object o; var cache = settingsData.TryGetValue("liftoff_speeds", out o) ? o as Dictionary<string, object> : null;
+            if (cache == null) settingsData["liftoff_speeds"] = cache = new Dictionary<string, object>();
+            cache[vessel.vesselName] = Math.Round(v, 1); liftoffSpeed = v; try { Save(); } catch (Exception) { }
+        }
         NativePlan plan;
         double planTurn, planLastHeading, planLastTime;
         internal static string PlanStatus { get { return instance == null || instance.plan == null ? "No local plan" : instance.plan.Status; } }
@@ -164,6 +170,7 @@ namespace KSPChatBridge
             { var tol = new List<double>(); foreach (Part tp in vessel.parts) tol.Add(tp.gTolerance); ApproachProfile.StructG = ApproachProfile.StructuralG(tol); ApproachProfile.Backoff = 1; } ApproachProfile.FinalG = FlightPolicy.Clamp(Num(settingsData, "approach_final_g", 1.5), 1.05, ApproachProfile.GCap);
             try { stall = stallCache == null ? estStall : FlightPolicy.Clamp(Num(stallCache, vessel.vesselName, estStall), 20, 200); }
             catch (Exception) { stall = 45; ChatWindow.Notice("Invalid saved stall speed ignored for this craft."); }
+            { object lo; var lc = settingsData.TryGetValue("liftoff_speeds", out lo) ? lo as Dictionary<string, object> : null; liftoffSpeed = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); }
             partCount = vessel.parts.Count;
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
@@ -278,7 +285,7 @@ namespace KSPChatBridge
             if (mode == "hold" && auto["master"] && !trimSuspended && Time.realtimeSinceStartup >= nextTrim)
             {
                 nextTrim = Time.realtimeSinceStartup + 8;
-                if (Math.Abs(vessel.verticalSpeed) < 1 && Math.Abs(Roll()) < 5 && vessel.srfSpeed > 25 && !directPitch.HasValue) NudgeTrim(false);
+                if (PilotPolicy.TrimAllowed(vessel.LandedOrSplashed, vessel.radarAltitude, Time.realtimeSinceStartup - trimHandoffAt, vessel.verticalSpeed, Roll()) && vessel.srfSpeed > 25 && !directPitch.HasValue) NudgeTrim(false);
             }
             if (watchTrimUntil > Time.realtimeSinceStartup && (Math.Abs(vessel.verticalSpeed) > Math.Abs(trimBaselineVs) + 2 || Math.Abs(Pitch() - trimBaselinePitch) > 3))
             { trimSuspended = true; watchTrimUntil = 0; ChatWindow.Notice("Auto-trim paused: flight drifted from level. Reset restores surfaces."); }
@@ -381,13 +388,15 @@ namespace KSPChatBridge
                 if (mode == "takeoff")
                 {
                     if (NativeSafety.ReleaseForTakeoff(mode, takeoff.Phase, vessel.LandedOrSplashed, vessel.ActionGroups[KSPActionGroup.Brakes])) { parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false); }
-                    directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall);
+                    directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed);
                     if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
                     if (takeoff.Phase == "climbout complete")
                     {
                         mode = landingAfterTakeoff ? "landing" : "hold";
                         landingAfterTakeoff = false; directPitch = null; directBank = pendingCircle;
-                        throttle = PilotPolicy.HandoffThrottle(throttle); speed = Math.Min(speed, 200);   // never hand off at full power
+                        throttle = PilotPolicy.HandoffThrottle(throttle); speed = FlightPolicy.Clamp(1.8 * stall, 80, 200);   // never hand off at full power
+                        c.pitchTrim = vessel.ctrlState.pitchTrim = 0; trimHandoffAt = Time.realtimeSinceStartup; trimSuspended = false;   // trim starts clean after takeoff
+                        if (!double.IsNaN(takeoff.LiftoffSpeed)) { RememberLiftoff(takeoff.LiftoffSpeed); ChatLog.Write("takeoff", "liftoff at " + takeoff.LiftoffSpeed.ToString("0") + " m/s (Vr " + takeoff.Vr.ToString("0") + ", stall est " + stall.ToString("0") + ")"); }
                         if (pendingCircle.HasValue) ChatWindow.Notice("Climbing out; circling now at " + Math.Abs(pendingCircle.Value).ToString("0") + " deg bank.");
                         pendingCircle = null;
                     }
@@ -532,15 +541,19 @@ namespace KSPChatBridge
             if (!(mode == "landing" && runway != null && runway.Phase == "entry") && mode != "takeoff") gLim = Math.Min(gLim, 3);
             gLim = PitchShaper.Limit(gLim, bankCmd);   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
+                if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
+                if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
                 pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
                 double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral + PitchShaper.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
                 if (holdAltitude || directVs.HasValue || directPitch.HasValue) c.pitch = elevator;
+                if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
                 if (holdHeading || directBank.HasValue) c.roll = (float)FlightPolicy.Clamp(.014 * (bank - roll) - .01 * p, -1, 1);
                 double targetThrottle = throttle;
-                if (targetVs > 3) targetThrottle += .05 * Math.Sign(targetVs - vessel.verticalSpeed);
+                if (mode == "hold" && holdAltitude && vessel.altitude > altitude + 30 && vessel.verticalSpeed > 3) targetThrottle -= .05;   // above the target and still climbing: power off
+                else if (targetVs > 3) targetThrottle += .05 * Math.Sign(targetVs - vessel.verticalSpeed);
                 else if (Math.Abs(speed - vessel.srfSpeed) > 3) targetThrottle += .05 * Math.Sign(speed - vessel.srfSpeed);
                 if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > 220) targetThrottle = throttle - .05;
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
@@ -670,11 +683,12 @@ namespace KSPChatBridge
                 if (!recovery.CanTrim(s)) continue; // do not adopt a pending sabotage change as a trim baseline
                 double forward = Vector3.Dot(s.part.transform.position - vessel.CoM, vessel.ReferenceTransform.up);
                 double sign = FlightPolicy.SurfaceSign(forward, s.partDeployInvert, s.deployInvert);
-                s.deployAngle = (float)FlightPolicy.Clamp(s.deployAngle + Math.Sign(input) * sign * Math.Min(.35, Math.Abs(input) * 3), -12, 12);
+                if (input > 0 && Pitch() > 8) continue;   // anti-windup: no nose-up surface trim while nose-high
+                s.deployAngle = (float)FlightPolicy.Clamp(s.deployAngle + Math.Sign(input) * sign * Math.Min(.2, Math.Abs(input) * 2), -PilotPolicy.TrimSurfaceMax, PilotPolicy.TrimSurfaceMax);
                 s.deploy = Math.Abs(s.deployAngle) > .05;
                 recovery.AcceptSurface(s);
             }
-            vessel.ctrlState.pitchTrim = (float)FlightPolicy.Clamp(vessel.ctrlState.pitchTrim + Math.Sign(input) * Math.Min(.015, Math.Abs(input) * .05), -1, 1);
+            vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimStep(vessel.ctrlState.pitchTrim, input, Pitch());
             SyncTrim();
             trimBaselineVs = vessel.verticalSpeed; trimBaselinePitch = Pitch(); watchTrimUntil = Time.realtimeSinceStartup + 8;
         }
@@ -1053,6 +1067,7 @@ namespace KSPChatBridge
             engines.Cancel(); NativeEngines.Takeoff(vessel);
             parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false);   // release the parking brake at roll start
             holdAltitude = holdHeading = holdSpeed = true; directVs = directPitch = directBank = null;
+            vessel.ctrlState.pitchTrim = 0; SyncTrim();   // no leftover nose-up trim on the roll
             takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); return StartRotorMode("takeoff");
         }
         void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }

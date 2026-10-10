@@ -37,18 +37,30 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>Takeoff (Luke 5:15 PM: a new plane ran to the runway end before rotating). Rotate speed Vr = 1.15 x stall, or just
+    /// under this craft's measured liftoff speed once known. Progressive back-pressure from 0.85 Vr (2 -> 9 deg pitch target at
+    /// Vr), more (12 deg) if it is still on the ground at 1.3 Vr; never waits for the approach speed or a fixed m/s. Pure; tested.</summary>
     internal sealed class TakeoffMission
     {
         readonly double start;
         internal string Phase = "roll";
+        internal double LiftoffSpeed = double.NaN, Vr;
         internal TakeoffMission(double now) { start = now; }
-        internal double Step(double now, double speed, double agl, bool grounded, double stall)
+        internal static double RotateSpeed(double stall, double liftoff)
         {
+            double vr = 1.15 * FlightPolicy.Clamp(stall, 15, 200);
+            return double.IsNaN(liftoff) || liftoff < 10 ? vr : FlightPolicy.Clamp(.97 * liftoff, .8 * vr, 1.2 * vr);
+        }
+        internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN)
+        {
+            Vr = RotateSpeed(stall, liftoff);
+            if (!grounded && double.IsNaN(LiftoffSpeed) && agl > 3) LiftoffSpeed = speed;
             if (agl >= 100 && !grounded) { Phase = "climbout complete"; return 9; }
             if (grounded && now - start > 120) { Phase = "takeoff timeout"; return 0; }
-            if (grounded && speed < 1.25 * stall) { Phase = "roll"; return 0; }
-            Phase = grounded ? "rotate" : "climbout";
-            return !grounded && speed < 1.15 * stall ? 1 : 9;
+            if (grounded && speed < .85 * Vr) { Phase = "roll"; return 0; }
+            if (grounded) { Phase = "rotate"; return speed > 1.3 * Vr ? 12 : 2 + 7 * FlightPolicy.Clamp((speed - .85 * Vr) / (.15 * Vr), 0, 1); }
+            Phase = "climbout";
+            return speed < Vr ? 1 : 9;
         }
     }
 
