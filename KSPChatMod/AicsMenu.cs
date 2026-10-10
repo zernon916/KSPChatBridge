@@ -1028,6 +1028,8 @@ namespace KSPChatBridge
             if (ai != BridgeLauncher.AiEnabled) BridgeLauncher.SetAiEnabled(ai);
             if (BridgeLauncher.Switching) GUILayout.Label("Switching mode after controller handoff...");
             if (!BridgeLauncher.AiEnabled) GUILayout.Label("AI off: local controls available; unported commands are disabled.");
+            if (GUILayout.Button(TerrainExporter.Running ? TerrainExporter.Status : "Export terrain for charts") && !TerrainExporter.Running) TerrainExporter.Requested = true;
+            if (!TerrainExporter.Running && TerrainExporter.Status.Length > 0) GUILayout.Label(TerrainExporter.Status);
             DrawInModAiSettings();
             if (!BridgeLauncher.AiEnabled) return;
             // AI backend dropdown (IMGUI has none: a button that unfolds the option list inline).

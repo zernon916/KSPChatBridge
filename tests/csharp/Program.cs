@@ -1151,6 +1151,15 @@ class Program
                 Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"alt_ref\":\"m\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why3) == null, "bad per-fix alt_ref rejected");
             }
             Console.WriteLine("AGL/MSL approach altitudes: 6 behavior checks passed.");
+            {
+                var tg = TerrainGrid.Make("KSC", -.0494, -74.6074);
+                double la0, lo0, la1, lo1; TerrainGrid.Point(tg, 0, out la0, out lo0); TerrainGrid.Point(tg, tg.H.Length - 1, out la1, out lo1);
+                Check(tg.N == 176 && Math.Abs((la1 - la0) * Math.PI / 180 * 600000 - 70000) < 1 && Math.Abs((la0 + la1) / 2 + .0494) < 1e-9, "terrain grid covers +-35 km at 400 m");
+                tg.H[1] = 87; var tj = MiniJson.Deserialize(TerrainGrid.Json(new List<TerrainGrid.Site> { tg }, "Kerbin")) as Dictionary<string, object>;
+                var site = (Dictionary<string, object>)((System.Collections.IList)tj["sites"])[0];
+                Check(Convert.ToInt32(site["n"]) == 176 && Convert.ToInt32(((System.Collections.IList)site["h"])[1]) == 87 && ((System.Collections.IList)site["h"]).Count == 176 * 176, "terrain json round-trips");
+            }
+            Console.WriteLine("Terrain export grid: 2 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

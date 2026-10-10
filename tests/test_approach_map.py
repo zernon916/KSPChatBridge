@@ -29,3 +29,13 @@ def test_turn_audit_flags_short_leg_before_big_turn():
     a2, _ = am.turn_audit([('A', 0.0, -76.0), ('B', 0.0, -75.5), ('THR', 0.0, -74.7)], 150)
     assert not a2[0]['tight']
 
+
+
+def test_generator_embeds_terrain(tmp_path):
+    import json, subprocess, sys
+    t = tmp_path / 'terrain_kerbin.json'; t.write_text(json.dumps({'body': 'Kerbin', 'sites': [{'name': 'KSC', 'lat0': 0, 'lon0': 0, 'dlat': .01, 'dlon': .01, 'n': 2, 'h': [1, 2, 3, 4]}]}))
+    out = tmp_path / 'm.html'
+    subprocess.run([sys.executable, str(ROOT / 'tools' / 'approach_map.py'), str(tmp_path), str(out), str(t)], check=True)
+    html = out.read_text(encoding='utf-8')
+    assert '"h": [1, 2, 3, 4]' in html and 'function terr(' in html
+

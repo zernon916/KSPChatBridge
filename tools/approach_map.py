@@ -49,10 +49,12 @@ def track(logdir):
 def main():
     logdir = sys.argv[1] if len(sys.argv) > 1 else r"C:\Steam\steamapps\common\Kerbal Space Program\GameData\KSPChatBridge\PluginData\logs"
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "approach_map.html")
-    data = {"ends": ends(), "track": track(logdir), "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
+    terr = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(logdir), "terrain_kerbin.json")
+    terrain = json.load(open(terr, encoding="utf-8-sig")) if os.path.exists(terr) else None
+    data = {"ends": ends(), "track": track(logdir), "terrain": terrain, "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
     tpl = open(os.path.join(os.path.dirname(__file__), "approach_map_template.html"), encoding="utf-8").read()
     open(out, "w", encoding="utf-8").write(tpl.replace("/*DATA*/null", json.dumps(data)))
-    print(out, len(data["track"]), "track points")
+    print(out, len(data["track"]), "track points,", "terrain embedded" if terrain else "no terrain file")
 
 def turn_audit(points, speed, bank=20.0):
     """points: [(name, lat, lon)] ending at the threshold. For each interior fix: heading change, turn lead

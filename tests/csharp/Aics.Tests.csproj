@@ -25,6 +25,7 @@
     <Compile Include="../../KSPChatMod/OpenAiBackend.cs"/>
     <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
     <Compile Include="../../KSPChatMod/MiniJson.cs"/>
+    <Compile Include="../../KSPChatMod/TerrainGrid.cs"/>
     <Compile Include="../../KSPChatMod/KerbalPersonality.cs"/>
     <Compile Include="../../KSPChatMod/IntercomTalk.cs"/>
     <Compile Include="../../KSPChatMod/NativeSafety.cs"/>
