@@ -307,3 +307,8 @@ Problem (chat log): set_sas refused while autopilot active; turn 180 used stale 
 Changed: SAS releases local control when asked; turn relative to ship heading; AlertGate (30 s per kind, escalation passes); router override phrase; notices logged; [T] lat/lon + runway dist/brg; multi-line crew scene (one model call, Name: lines, 2-3 s stagger, canned fallback).
 Tests run: pytest, C# suite (11 new), Release build.
 Still needs live check: all.
+
+## Approach charts + morning bugs (2026-10-10)
+Changed: ApproachChart per runway end (12/4 km fixes, L/R downwind+base for r=v^2/(g tan bank), fix alts AGL 2500/1500 m as at-or-below settings approach_long_agl/approach_short_agl, terrain-raised legs + glide), waypoint flying, AGL floor, steep-path feed-forward; speed override follow-up + last speed; bank N land; status alias; reply guard vs tool results; notice de-dupe; 3 g pitch limit; gear sabotage (autopilot on); atomic status file; AP window summary + persistence.
+Tests: pytest 494, C# green (+21).
+Still needs live check: all.

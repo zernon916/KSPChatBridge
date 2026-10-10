@@ -21,7 +21,7 @@ namespace KSPChatBridge
         internal NativeRecovery(Vessel vessel)
         {
             foreach (KSPActionGroup group in Enum.GetValues(typeof(KSPActionGroup)))
-                if (group == KSPActionGroup.Light || group == KSPActionGroup.Gear || group == KSPActionGroup.Brakes
+                if (group == KSPActionGroup.Light || group == KSPActionGroup.Brakes
                     || group == KSPActionGroup.SAS || group == KSPActionGroup.RCS || group.ToString().StartsWith("Custom"))
                     AcceptGroup(vessel, group, vessel.ActionGroups[group]);
             foreach (Part part in vessel.parts) foreach (PartResource resource in part.Resources)

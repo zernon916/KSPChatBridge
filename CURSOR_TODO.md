@@ -473,3 +473,5 @@ Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5
 
 - tech_advisor **DONE (tests; needs live check)**: in the R&D tech tree, the AI first ASKS the player's plan/goal (e.g. Mun landing, better planes), then recommends the cheapest unlock path for it and highlights those nodes in the tree.
 
+## IDEAS (later)
+- Camera mod support (e.g. Hullcam VDS) for a scanner/crew camera view.

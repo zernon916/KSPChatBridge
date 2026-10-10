@@ -46,7 +46,7 @@ namespace KSPChatBridge
                 string path = StatusPath;
                 string dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(path, "{\"busy\":" + (busy ? "true" : "false")
+                AtomicFile.Write(path, "{\"busy\":" + (busy ? "true" : "false")
                     + ",\"mode\":\"" + (mode ?? "idle").Replace("\\", "\\\\").Replace("\"", "\\\"")
                     + "\",\"vessel\":\"" + (vesselId ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"")
                     + "\",\"owner\":\"native\"}");
@@ -55,7 +55,7 @@ namespace KSPChatBridge
         }
         internal static void ClearStatus()
         {
-            try { if (File.Exists(StatusPath)) File.WriteAllText(StatusPath, "{\"busy\":false,\"mode\":\"idle\",\"owner\":null}"); }
+            try { if (File.Exists(StatusPath)) AtomicFile.Write(StatusPath, "{\"busy\":false,\"mode\":\"idle\",\"owner\":null}"); }
             catch (Exception) { }
         }
     }

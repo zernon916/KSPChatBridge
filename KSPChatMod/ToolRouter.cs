@@ -94,6 +94,9 @@ namespace KSPChatBridge
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize(message.Trim()) + "}");
             if (Regex.IsMatch(m, @"^(land and circle|circle and land|circle (the )?runway (and|then) land)") && m.Length <= 80)   // circle first, then land
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize("circle 1 lap, land at KSC") + "}");
+            if (Regex.IsMatch(m, @"^(current job|what('?s| is) (the |our )?(current )?(job|status|plan)|status( report)?|sitrep)\??$")) return R("get_status", "{}");
+            var bl = Regex.Match(m, @"^bank (\d{1,2})(?: deg\w*)?,? (?:and |then )?land(?: at)? (?:the )?(.+)$");
+            if (bl.Success) return R("land_plane", "{\"name\":" + MiniJson.Serialize(bl.Groups[2].Value.Trim()) + ",\"bank\":" + bl.Groups[1].Value + "}");
             if (m.Length == 0 || m.Length > 60 || m.StartsWith("/") || m.Contains("?") || m.Contains(" and ") || m.Contains(" then ")) return null;
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
@@ -103,6 +106,8 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^sas (on|off)$")) return R("set_sas", "{\"enabled\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^rcs (on|off)$")) return R("set_rcs", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^(take ?off|takeoff)( now)?$")) return R("takeoff", "{}");
+            if (Regex.IsMatch(m, @"^(i )?(overr?ide|authori[sz]e[ds]?)( (it|that|the cap|authori[sz]ed|override|granted|ok))?$")) return R("set_speed", "{\"speed\":\"last\",\"override\":true}");
+            if (Regex.IsMatch(m, @"^(i )?authori[sz]e[ds]? (max|full|maximum) speed$")) return R("set_speed", "{\"speed\":\"max\"}");
             var so = Regex.Match(m, @"^set (?:the )?speed (?:to )?(\d{2,4})\b.*\b(authori[sz]e[ds]?|override)\b");
             if (so.Success) return R("set_speed", "{\"speed\":" + so.Groups[1].Value + ",\"override\":true}");
             if (Regex.IsMatch(m, @"^(set )?(speed )?(to )?(max(imum)?|full) speed$|^(set )?speed (to )?(max(imum)?|full)$|^(go )?flat out$")) return R("set_speed", "{\"speed\":\"max\"}");

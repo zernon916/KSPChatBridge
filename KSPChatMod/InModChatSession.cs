@@ -132,7 +132,7 @@ namespace KSPChatBridge
         /// <summary>The pilot's reply always carries the real tool results (no more "ok" when the command failed).</summary>
         internal static string Final(string text, List<string> results)
         {
-            text = (text ?? "").Trim();
+            text = PilotPolicy.GuardReply((text ?? "").Trim(), results);
             var sb = new System.Text.StringBuilder(text.Length == 0 && results.Count == 0 ? "(no reply)" : text);
             foreach (string r in results)
             {

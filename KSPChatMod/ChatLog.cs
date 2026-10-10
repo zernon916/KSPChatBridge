@@ -18,7 +18,7 @@ namespace KSPChatBridge
         internal static string PathFor(DateTime t) { return Dir == null ? null : System.IO.Path.Combine(Dir, "chat_" + t.ToString("yyyyMMdd") + ".log"); }
 
         internal static void Write(string kind, string text)
-        {
+        { if (kind == "player" || kind == "router") PlayerIntent.Note(text, PilotEvents.Now);
             if (Dir == null) return;
             try
             {
@@ -133,5 +133,49 @@ namespace KSPChatBridge
             return outp;
         }
         internal static double Gap(System.Random rng) { return 2 + rng.NextDouble(); }
+    }
+}
+
+namespace KSPChatBridge
+{
+    /// <summary>Recent player intent (speed override said in a separate message: "override authorized").</summary>
+    internal static class PlayerIntent
+    {
+        static double overrideAt = double.NegativeInfinity;
+        internal const double WindowS = 120;
+        internal static void Note(string text, double now)
+        {
+            if (text != null && System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(overr?ide|authori[sz])", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) overrideAt = now;
+        }
+        internal static bool OverrideRecent(double now) { return now - overrideAt <= WindowS && now >= overrideAt; }
+        internal static void Clear() { overrideAt = double.NegativeInfinity; }
+    }
+    /// <summary>Power-loss safe write: temp file + replace (a cut mid-write left native_control.json as 93 NUL bytes).</summary>
+    internal static class AtomicFile
+    {
+        internal static void Write(string path, string text)
+        {
+            string tmp = path + ".tmp";
+            System.IO.File.WriteAllText(tmp, text);
+            if (System.IO.File.Exists(path)) System.IO.File.Replace(tmp, path, null); else System.IO.File.Move(tmp, path);
+        }
+        /// <summary>True when a file is empty / NUL-filled (torn write) and should be ignored.</summary>
+        internal static bool Torn(string text) { return string.IsNullOrEmpty(text) || text.Trim('\0', ' ', '\r', '\n', '\t').Length == 0; }
+    }
+    /// <summary>Gear intent while the autopilot flies: down on final/flare/rollout, up in flight (above 150 m AGL) otherwise.
+    /// Raising gear in flight is never sabotage; lowering it against an up-intent, or raising it on final, is.</summary>
+    internal static class GearPolicy
+    {
+        internal static bool? Intent(string mode, string phase, double agl)
+        {
+            if (mode == "landing" && (phase == "final" || phase == "flare" || phase == "rollout" || phase == "stopped")) return phase == "final" && agl > 80 ? (bool?)null : true;
+            if ((mode == "hold" || mode == "landing" || mode == "circle") && agl > 150) return false;
+            return null;
+        }
+        internal static bool Violation(bool? intentDown, bool actualDown, bool playerSaid)
+        {
+            if (playerSaid || intentDown == null) return false;
+            return intentDown.Value != actualDown;
+        }
     }
 }

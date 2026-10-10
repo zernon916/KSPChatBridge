@@ -189,6 +189,37 @@ namespace KSPChatBridge
             if (altitude >= CapAltitude || ias <= CapSpeed || sinceLastCut < 1) return throttle;
             cut = true; return Math.Max(.05, throttle - (ias > CapSpeed + 30 ? .3 : .15));
         }
+        internal static string ApLine(string job, string step, double alt, double spd, double hdg, double bankLim, bool active)
+        {
+            return "Job: " + job + (active ? "" : " (autopilot off)") + "\nPlan: " + step + "\nTarget: alt " + alt.ToString("0", Inv) + " m, speed " + spd.ToString("0", Inv)
+                + " m/s, heading " + ((hdg % 360 + 360) % 360).ToString("000", Inv) + ", bank limit " + bankLim.ToString("0", Inv) + " deg";
+        }
+        /// <summary>The model may not contradict tool results: a reply quoting numbers that appear in no tool result is replaced
+        /// by the tool result itself (it said "Overriding to 400" while the tool said "Target 220").</summary>
+        internal static string GuardReply(string text, List<string> results)
+        {
+            if (string.IsNullOrEmpty(text) || results == null || results.Count == 0) return text;
+            string all = string.Join(" ", results.ToArray());
+            if (!Regex.IsMatch(all, @"\d")) return text;
+            foreach (Match m in Regex.Matches(text, @"\d+(?:\.\d+)?"))
+            {
+                if (m.Value.Length < 2) continue;
+                if (!Regex.IsMatch(all, @"(?<![\d.])" + Regex.Escape(m.Value) + @"(?![\d])")) return results[results.Count - 1].Trim();
+            }
+            return text;
+        }
+        /// <summary>G limit (Luke: no violent maneuvering): max pitch-attitude rate for a load factor limit at this speed.</summary>
+        internal static double MaxPitchRate(double speed, double gLimit = 3) { return (gLimit - 1) * 9.81 / Math.Max(30, speed) * 180 / Math.PI; }
+        internal static double GScale(double g, double gLimit = 3) { return g > gLimit ? Math.Max(.2, gLimit / g) : 1; }
+        /// <summary>Approach AGL floor: before the last 2.5 km of final, climb if below 150 m AGL or below the terrain-ahead floor.</summary>
+        internal static double ApproachFloorVs(string phase, double distance, double agl, double altitude, double terrainFloor, double vs)
+        {
+            bool early = phase == "entry" || phase == "intercept" || (phase == "final" && distance > 2500);
+            if (!early) return vs;
+            if (agl < 150) vs = Math.Max(vs, FlightPolicy.Clamp((150 - agl) * .1, 3, 15));
+            if (!double.IsNaN(terrainFloor) && (phase != "final") && altitude < terrainFloor) vs = Math.Max(vs, FlightPolicy.Clamp((terrainFloor - altitude) * .05, 2, 15));
+            return vs;
+        }
         /// <summary>Stall/approach margin: the speed below which we never cut power and never turn hard.</summary>
         internal static double SafeSpeed(double stall) { return Math.Max(60, 1.4 * stall); }
         /// <summary>Luke: never trade airspeed away. Below the target band power comes back up; below the safe speed it is

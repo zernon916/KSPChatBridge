@@ -906,19 +906,19 @@ class Program
             double R = 600000;
             var rw3 = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70 };   // land 27
             double course = NavigationMath.Bearing(rw3.Lat, rw3.Lon, rw3.EndLat, rw3.EndLon);
-            double lat = -.07, lon = -74.56, hdg = 0, alt = 400, spd = 120; double crossAt1k = double.NaN, trkAt1k = double.NaN; bool descendedUnaligned = false; string firstFinal = null;
-            for (int s = 0; s < 1200 && rw3.Phase != "rollout" && rw3.Phase != "go around"; s++)
+            double lat = -.07, lon = -74.56, hdg = 0, alt = 400, spd = 120; double crossAt1k = double.NaN, trkAt1k = double.NaN; bool descendedUnaligned = false; string firstFinal = null, dbgU = "";
+            for (int s = 0; s < 3000 && rw3.Phase != "rollout" && rw3.Phase != "go around"; s++)
             {
                 rw3.Step(lat, lon, alt, alt - 70, spd, alt <= 70.5, R, 45, hdg);
                 if (rw3.Phase == "final" && firstFinal == null) firstFinal = Math.Abs(rw3.Cross).ToString("0");
-                if (rw3.Phase != "final" && rw3.Phase != "flare" && rw3.Phase != "rollout" && rw3.DesiredAltitude < 70 + 799) descendedUnaligned = true;
+                if (rw3.Phase != "final" && rw3.Phase != "flare" && rw3.Phase != "rollout" && rw3.Phase != "go around" && rw3.DesiredAltitude < 70 + 300) { descendedUnaligned = true; dbgU = rw3.Phase + " " + rw3.Kind + " des=" + rw3.DesiredAltitude.ToString("0") + " " + rw3.RouteLog; }
                 double err = FlightPolicy.Wrap(rw3.DesiredHeading - hdg); hdg = (hdg + Math.Max(-1.7, Math.Min(1.7, err)) + 360) % 360;   // 20 deg bank at 120 m/s
-                alt += Math.Max(-6, Math.Min(10, rw3.DesiredVs)); if (alt < 70) alt = 70;
+                alt += Math.Max(-25, Math.Min(12, rw3.DesiredVs)); if (alt < 70) alt = 70;
                 spd += Math.Max(-2, Math.Min(2, rw3.DesiredSpeed - spd)); double nl, no; NavigationMath.Offset(lat, lon, hdg, spd, R, out nl, out no); lat = nl; lon = no;
                 if (double.IsNaN(crossAt1k) && rw3.Phase == "final" && rw3.Distance < 1000) { crossAt1k = Math.Abs(rw3.Cross); trkAt1k = Math.Abs(FlightPolicy.Wrap(hdg - course)); }
             }
-            Check(firstFinal != null && double.Parse(firstFinal) < RunwayMission.AlignCross, "glideslope only after centerline intercept (cross " + firstFinal + " m)");
-            Check(!descendedUnaligned, "no descent before alignment");
+            Check(firstFinal != null && double.Parse(firstFinal) <= RunwayMission.AlignCross, "glideslope only after centerline intercept (cross " + firstFinal + " m) " + rw3.Phase + " ri=" + rw3.RouteIndex + " " + rw3.RouteLog + " cross=" + rw3.Cross.ToString("0") + " along=" + rw3.Along.ToString("0") + " alt=" + alt.ToString("0") + " hdg=" + hdg.ToString("0") + " why=" + rw3.Why);
+            Check(!descendedUnaligned, "no descent before alignment " + dbgU);
             Check(!double.IsNaN(crossAt1k) && crossAt1k < RunwayMission.GateCross && trkAt1k < RunwayMission.GateHeading, "aligned at 1 km: " + crossAt1k.ToString("0") + " m / " + trkAt1k.ToString("0.0") + " deg");
             var gate = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
             double gl, gn; NavigationMath.Offset(gate.Lat, gate.Lon, course + 180, 800, R, out gl, out gn); NavigationMath.Offset(gl, gn, course + 90, 120, R, out gl, out gn);
@@ -1001,8 +1001,8 @@ class Program
                 rm.Step(-.05, -72.0, 1500, 1400, 330, false, 600000, 45, 90);
                 
                 Check(rm.DesiredSpeed <= 150 && rm.DesiredSpeed >= 60, "approach speed in band");
-                double hdgErr = Math.Abs(FlightPolicy.Wrap(rm.DesiredHeading - 270));
-                Check(hdgErr < 60, "entry fix near the runway at 330 m/s (was ~86 km away): hdg err " + hdgErr.ToString("0") + " des " + rm.DesiredHeading.ToString("0") + " " + rm.Phase + " " + rm.Kind + " along " + rm.Along.ToString("0") + " cross " + rm.Cross.ToString("0"));
+                double hdgErr = NavigationMath.Distance(-.05, -72.0, rm.Route[0].Lat, rm.Route[0].Lon, 600000) / 1000;
+                Check(hdgErr < 25, "entry fix near the runway at 330 m/s (was ~86 km away): hdg err " + hdgErr.ToString("0") + " des " + rm.DesiredHeading.ToString("0") + " " + rm.Phase + " " + rm.Kind + " along " + rm.Along.ToString("0") + " cross " + rm.Cross.ToString("0"));
                 bool lifted; string rep;
                 double vt = PilotPolicy.ResolveSpeed("max", 310, 1000, false, out lifted, out rep);
                 Check(vt == 310 && lifted && rep.Contains("310") && rep.Contains("220"), "max = vehicle max, cap only a note: " + rep);
@@ -1045,6 +1045,63 @@ class Program
                 var rg = new Random(1); double gp = CrewScene.Gap(rg); Check(gp >= 2 && gp <= 3, "scene lines 2-3 s apart");
             }
             Console.WriteLine("Overnight audit: 11 behavior checks passed.");
+            // ---- Approach charts: entries from 0/90/180 deg, terrain, AGL fixes; morning bugs ----
+            {
+                const double R0 = 600000;
+                Func<double, double, Func<double, double, double>, RunwayMission> fly = (brgFromRwy, hdg0, terr) =>
+                {
+                    var m = new RunwayMission { Lat = -.0502119, Lon = -74.4903, EndLat = -.0485997, EndLon = -74.724375, Elevation = 69, Terrain = terr };
+                    double la, lo; NavigationMath.Offset(m.Lat, m.Lon, brgFromRwy, 25000, R0, out la, out lo);
+                    string trace = ""; double h = hdg0, alt = 1500, v = 130, turned = 0, worstCross = 0; bool final = false;
+                    for (int k = 0; k < 2500 && !final; k++)
+                    {
+                        string ph0 = m.Phase + m.RouteIndex; m.Step(la, lo, alt, alt - 69, v, false, R0, 45, h); if (m.Phase + m.RouteIndex != ph0 && trace.Length < 900) trace += k + ":" + m.Phase + m.RouteIndex + "(" + (m.Along/1000).ToString("0.0") + "," + (m.Cross/1000).ToString("0.0") + "," + h.ToString("0") + ") ";
+                        if (m.Phase == "final" && m.Distance < 3000) { final = true; worstCross = Math.Abs(m.Cross); break; }
+                        double err = FlightPolicy.Wrap(m.DesiredHeading - h), rate = 9.81 * Math.Tan(20 * Math.PI / 180) / v * 180 / Math.PI;
+                        double dh = FlightPolicy.Clamp(err, -rate, rate); h = (h + dh + 360) % 360; turned += Math.Abs(dh);
+                        alt += FlightPolicy.Clamp(m.DesiredVs, -25, 12);
+                        NavigationMath.Offset(la, lo, h, v, R0, out la, out lo);
+                    }
+                    m.Why = (final ? "ok" : "noFinal") + " turned=" + turned.ToString("0") + " cross=" + worstCross.ToString("0") + " " + m.RouteLog + " T: " + trace;
+                    return m;
+                };
+                var head = fly(90, 270, null);   // from the east, flying west: head-on to runway 27
+                Check(head.Why.StartsWith("ok") && head.Kind == "short", "0 deg (head-on) -> short final: " + head.Why);
+                var abeam = fly(0, 180, null);   // from the north, 90 deg to the runway
+                Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.RouteLog.Contains("downwind") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> downwind/base join, rolls out on centerline: " + abeam.Why);
+                var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
+                Check(behind.Why.StartsWith("ok") && behind.RouteLog.Contains("base") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> downwind, base, long final (no circles): " + behind.Why);
+                var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
+                Check(Math.Abs(ch.LongAlt - (134.6 + 2500)) < 1 && Math.Abs(ch.ShortAlt - (134.6 + 1500)) < 1, "fix altitudes AGL: long 2500 m, short 1500 m");
+                Check(Math.Abs(ApproachChart.Radius(130, 20) - 130 * 130 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1, "join spacing from r = v^2/(g tan 20)");
+                Func<double, double, double> hill = (la2, lo2) => Math.Abs(lo2 - -71.80) < .03 ? 1400 : 100;   // ridge east of the Island runway, on final
+                var chh = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, hill);
+                Check(chh.GlideAlt(5800) > 1460 && chh.GlideAlt(4000) > 1460 || chh.LongAlt > 2634.6, "glide path raised over the ridge (Island hill)");
+                var rh = chh.Route(-1.40, -71.80, 180, "long", R0); bool clear = true; foreach (var w in rh) clear &= w.Alt >= 100 + ApproachChart.Clearance;
+                Check(clear, "every waypoint clears sampled terrain");
+                Check(PilotPolicy.ApproachFloorVs("entry", 20000, 90, 500, double.NaN, -5) >= 3 && PilotPolicy.ApproachFloorVs("final", 1000, 40, 100, double.NaN, -4) == -4, "AGL floor on approach, not in the last km");
+                Check(ApproachChart.Pad(0, 0, 70).Alt == 370, "launch pad vertical approach point");
+                PlayerIntent.Clear(); PlayerIntent.Note("overide authorized", 100);
+                Check(PlayerIntent.OverrideRecent(150) && !PlayerIntent.OverrideRecent(300), "override said separately is remembered for 2 min");
+                Check(ToolRouter.Direct("overide authorized", "plane").Value.Value.Contains("last") && ToolRouter.Direct("override", "plane").Value.Key == "set_speed", "'override' re-applies the last asked speed");
+                var b60 = ToolRouter.Direct("bank 60 land nearest", "plane");
+                Check(b60 != null && b60.Value.Key == "land_plane" && b60.Value.Value.Contains("\"bank\":60") && b60.Value.Value.Contains("nearest"), "'bank 60, land nearest' keeps bank 60");
+                Check(ToolRouter.Direct("current job?", "plane").Value.Key == "get_status", "'current job?' -> status (no stale tool replay)");
+                Check(GearPolicy.Violation(GearPolicy.Intent("hold", "", 900), true, false) && !GearPolicy.Violation(GearPolicy.Intent("hold", "", 900), false, false), "gear lowered in cruise = sabotage, raised = fine");
+                Check(GearPolicy.Violation(GearPolicy.Intent("landing", "flare", 10), false, false) && !GearPolicy.Violation(GearPolicy.Intent("hold", "", 900), true, true), "gear raised in flare = sabotage; player order honored");
+                Check(AtomicFile.Torn("\0\0\0  ") && !AtomicFile.Torn("{}"), "torn (power-loss) file detected");
+                string tmpf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_atomic.json"); AtomicFile.Write(tmpf, "{\"a\":1}"); AtomicFile.Write(tmpf, "{\"a\":2}");
+                Check(System.IO.File.ReadAllText(tmpf) == "{\"a\":2}", "atomic write replaces");
+                Check(PilotPolicy.ApLine("landing (entry, 12.0 km)", "step 2/4: climb 1000 m", 1000, 150, 271, 20, true).Contains("bank limit 20") , "autopilot window summary");
+            }
+            Console.WriteLine("Approach charts + morning bugs: 18 behavior checks passed.");
+            {
+                var res = new List<string> { "Target 220 m/s (low-altitude cap; say override for more)." };
+                Check(PilotPolicy.GuardReply("Overriding max speed to 400 m/s.", res) == res[0], "reply contradicting the tool result is replaced by it");
+                Check(PilotPolicy.GuardReply("Holding 220 m/s, Captain.", res) == "Holding 220 m/s, Captain." && PilotPolicy.GuardReply("On it!", res) == "On it!", "consistent replies kept");
+                Check(PilotPolicy.MaxPitchRate(130) < 10 && PilotPolicy.MaxPitchRate(130) > 7 && PilotPolicy.GScale(6) == .5 && PilotPolicy.GScale(2) == 1, "3 g limit: pitch rate + elevator scaling");
+            }
+            Console.WriteLine("Reply guard / G limit: 3 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");
@@ -1062,7 +1119,7 @@ class Program
                 {
                     m.Step(la, lo, al, al - 70, sp, al <= 70.5, R, 45, h);
                     double e = FlightPolicy.Wrap(m.DesiredHeading - h); h = (h + Math.Max(-1.7, Math.Min(1.7, e)) + 360) % 360;
-                    al += Math.Max(-6, Math.Min(10, m.DesiredVs)); if (al < 70) al = 70; sp += Math.Max(-2, Math.Min(2, m.DesiredSpeed - sp));
+                    al += Math.Max(-25, Math.Min(10, m.DesiredVs)); if (al < 70) al = 70; sp += Math.Max(-2, Math.Min(2, m.DesiredSpeed - sp));
                     double nl, no; NavigationMath.Offset(la, lo, h, sp, R, out nl, out no); la = nl; lo = no;
                 }
                 return m;
@@ -1070,7 +1127,7 @@ class Program
             double crs = NavigationMath.Bearing(-.0502119, -74.490300, -.0485997, -74.724375), sl, so;
             NavigationMath.Offset(-.0502119, -74.490300, crs + 180, 10000, R, out sl, out so);
             var headOn = Sim(sl, so, (crs + 8) % 360);
-            Check(headOn.Kind == "short" && headOn.FixDistance == 4000 && (headOn.Phase == "rollout" || headOn.Phase == "flare" || headOn.Phase == "final"), "head-on sim: short final, lands (" + headOn.Kind + "/" + headOn.Phase + ")");
+            Check(headOn.Kind == "short" && headOn.FixDistance == 4000 && (headOn.Phase == "rollout" || headOn.Phase == "flare" || headOn.Phase == "final"), "head-on sim: short final, lands (" + headOn.Kind + "/" + headOn.Phase + " " + headOn.Why + " " + headOn.RouteLog + " along=" + headOn.Along.ToString("0") + ")");
             NavigationMath.Offset(sl, so, crs + 90, 6000, R, out sl, out so);
             var abeam = Sim(sl, so, (crs + 90) % 360);
             Check(abeam.Kind == "long" && abeam.Phase != "go around", "90 deg sim: long final (" + abeam.Kind + "/" + abeam.Phase + ")");

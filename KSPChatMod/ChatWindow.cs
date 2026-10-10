@@ -63,9 +63,11 @@ namespace KSPChatBridge
         Vector2 spotScroll;
 
         /// <summary>Thread-safe: show a line in the chat history (used by BridgeLauncher).</summary>
+        static string lastNotice; static DateTime lastNoticeAt;
         public static void Notice(string line)
         {
             Debug.Log("[KSPChatBridge] " + line);
+            lock (Sync) { if (line == lastNotice && (DateTime.UtcNow - lastNoticeAt).TotalSeconds < 2) return; lastNotice = line; lastNoticeAt = DateTime.UtcNow; }   // same line twice within ms = one post
             if (line != null && !line.StartsWith("[SYSTEM]") && !line.StartsWith("[INTERCOM]")) ChatLog.Write("notice", line);   // audit: every pilot notice (releases, pauses) reaches the chat log
             lock (Sync) Incoming.Enqueue(line);
         }

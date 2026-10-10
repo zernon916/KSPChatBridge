@@ -94,6 +94,16 @@ namespace KSPChatBridge
         }
 
         /// <summary>Landing panel rows (name, mode, lat, lon, builtin, runways) without the bridge.</summary>
+        /// <summary>Autopilot window summary: job, plan step, targets, bank limit.</summary>
+        internal static string ApSummary()
+        {
+            var f = instance; if (f == null || f.vessel == null) return "Job: none (no vessel)";
+            string job = f.mode + (f.mode == "landing" && f.runway != null ? " (" + f.runway.Phase + ", " + (f.runway.Distance / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " km)" : "");
+            string step = f.plan != null && f.plan.Running && f.plan.Index < f.plan.Steps.Count ? "step " + (f.plan.Index + 1) + "/" + f.plan.Steps.Count + ": " + f.plan.Steps[f.plan.Index].Text : "no plan running";
+            double lim = f.mode == "landing" && f.runway != null && f.runway.BankDeg > 20 ? f.runway.BankDeg : f.bankOverride ? 180 : FlightPolicy.BankLimit(f.vessel.srfSpeed);
+            return PilotPolicy.ApLine(job, step, f.altitude, f.speed, f.heading, lim, Active);
+        }
+
         internal static List<string[]> SpotRows()
         {
             var rows = new List<string[]>

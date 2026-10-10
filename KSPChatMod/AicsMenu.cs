@@ -375,6 +375,8 @@ namespace KSPChatBridge
         // ---------- panels ----------
         void Aircraft()
         {
+            if (!apLoaded) { apLoaded = true; ApLoad(); }
+            GUILayout.Label(NativeFlightController.ApSummary(), small);
             Hold(ref apAlt, "Altitude", ref apAltT, "m");
             GUILayout.BeginHorizontal(); GUILayout.Space(20); apAgl = GUILayout.Toggle(apAgl, apAgl ? "AGL (above ground / runway)" : "MSL (sea level)"); GUILayout.EndHorizontal();
             Hold(ref apVs, "Vertical speed", ref apVsT, "m/s");
@@ -383,7 +385,7 @@ namespace KSPChatBridge
             Hold(ref apSpd, "Speed (actual)", ref apSpdT, "m/s");
             GUILayout.Label("Throttle drives V/S and speed; pitch never trades altitude for speed. Bank cap 20° / 10° fast.", small);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(apEngaged ? "Update holds" : "Engage")) { EngageHolds(); apEngaged = true; }
+            if (GUILayout.Button(apEngaged ? "Update holds" : "Engage")) { EngageHolds(); apEngaged = true; ApSave(); }
             if (GUILayout.Button("Disengage")) { ChatWindow.ToolFromMenu("plane_hold", "{\"engage\":false}"); apEngaged = false; }
             if (GUILayout.Button("Status", GUILayout.Width(52))) ChatWindow.ToolFromMenu("autopilot_status", "{}");
             GUILayout.EndHorizontal();
@@ -396,6 +398,23 @@ namespace KSPChatBridge
             return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d.ToString(CultureInfo.InvariantCulture) : fallback;
         }
 
+        static bool apLoaded;
+        static string ApPath { get { return System.IO.Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/autopilot_window.txt"); } }
+        static void ApSave()
+        {
+            try { AtomicFile.Write(ApPath, string.Join("|", new[] { apAltT, apVsT, apHdgT, apRollT, apSpdT, apAlt ? "1" : "0", apVs ? "1" : "0", apHdg ? "1" : "0", apRoll ? "1" : "0", apSpd ? "1" : "0", apAgl ? "1" : "0" })); } catch (Exception) { }
+        }
+        static void ApLoad()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(ApPath)) return; string t = System.IO.File.ReadAllText(ApPath); if (AtomicFile.Torn(t)) return;
+                var p = t.Trim().Split('|'); if (p.Length < 11) return;
+                apAltT = p[0]; apVsT = p[1]; apHdgT = p[2]; apRollT = p[3]; apSpdT = p[4];
+                apAlt = p[5] == "1"; apVs = p[6] == "1"; apHdg = p[7] == "1"; apRoll = p[8] == "1"; apSpd = p[9] == "1"; apAgl = p[10] == "1";
+            }
+            catch (Exception) { }
+        }
         void EngageHolds()
         {
             var off = new List<string>();
