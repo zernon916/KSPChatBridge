@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -52,6 +52,9 @@ namespace KSPChatBridge
             {
                 try
                 {
+                    var ex0 = ResearchAndDevelopment.GetExperiment(e.experimentID); bool sci = false; foreach (var cm in vessel.GetVesselCrew()) sci |= cm.trait == "Scientist";
+                    if (!SciencePolicy.CanRun(e.usageReqMaskInternal, vessel.GetCrewCount(), e.part.protoModuleCrew.Count, sci, vessel.IsControllable, ex0 != null && ex0.requireAtmosphere, vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth))
+                    { Debug.Log("[KSPChatBridge] science skip (requirements): " + e.experimentID + " on " + e.part.partInfo.title); continue; }
                     if (!SciencePolicy.Eligible(e.Inoperable, e.GetScienceCount() > 0, Available(e), SubjectDone(e), e.rerunnable, onlyRerunnable)) continue;
                     e.DeployExperiment(); ran.Add(e.part.partInfo.title);
                 }

@@ -106,6 +106,9 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^lights? (on|off)$")) return R("set_lights", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^sas (on|off)$")) return R("set_sas", "{\"enabled\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^rcs (on|off)$")) return R("set_rcs", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
+            if (Regex.IsMatch(m, @"^(fly gentle|gentle mode|airliner mode|heavy mode)$")) return R("craft_class", "{\"mode\":\"gentle\"}");
+            if (Regex.IsMatch(m, @"^(fighter mode|fly fighter|fly aggressive)$")) return R("craft_class", "{\"mode\":\"fighter\"}");
+            if (Regex.IsMatch(m, @"^(auto class|craft class auto|normal mode)$")) return R("craft_class", "{\"mode\":\"auto\"}");
             if (Regex.IsMatch(m, @"^(take ?off|takeoff)( now)?$")) return R("takeoff", "{}");
             var tx = Regex.Match(m, @"^taxi (?:back )?(?:to )?(?:the )?(hangar|sph|spaceplane hangar|runway ?(09|27|9)|(09|27))$");
             if (tx.Success) { string d = tx.Groups[1].Value; return R("taxi_route", "{\"dest\":" + MiniJson.Serialize(d.Contains("hangar") || d == "sph" ? "hangar" : d.Contains("27") ? "runway 27" : "runway 09") + "}"); }

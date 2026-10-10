@@ -95,6 +95,80 @@ class Program
             Check(PilotPolicy.ResourceLevel(0, 7.5, false, false, true, 0) == "ok" && PilotPolicy.ResourceLevel(0, 7.5, true, false, true, 1) == "ok", "no MonoPropellant alarm without RCS or on the runway");
             Check(PilotPolicy.ResourceLevel(.02, 100, true, true, true, 1) == "fail" && PilotPolicy.ResourceLevel(.02, 100, true, true, false, .02) == "ok", "engine fuel still alarms on the ground; started-empty tanks don't");
             Console.WriteLine("Takeoff rotation / auto-trim / resource alarms: 12 checks passed.");
+        }        {   // Luke 5:36 PM: no throttle / steering jolt at brake release
+            var gr = new TakeoffGround(-0.0486, -74.7245, 90);
+            Check(gr.Throttle(0) == 0 && gr.Release(10) && !gr.Release(11), "release recorded once");
+            Check(gr.Throttle(10) == 0 && Math.Abs(gr.Throttle(12) - .5) < 1e-9 && gr.Throttle(15) == 1, "throttle ramps 25%/s after release");
+            Check(TakeoffGround.Elevator(15, 60) == -.05 && double.IsNaN(TakeoffGround.Elevator(55, 60)), "elevator slightly nose-down below rotate");
+            double maxStep = 0, prev = 0; for (int i = 0; i < 50; i++) { gr.Steer(18, 15, .02); maxStep = Math.Max(maxStep, Math.Abs(gr.Wheel - prev)); prev = gr.Wheel; }
+            Check(maxStep <= .02 + 1e-9 && Math.Abs(gr.Yaw) <= .3, "steering and rudder rate-limited");
+            var g2 = new TakeoffGround(0, 0, 90); g2.Release(0); for (int i = 0; i < 500; i++) g2.Steer(18, 5, .02);
+            var g3 = new TakeoffGround(0, 0, 90); g3.Release(0); for (int i = 0; i < 500; i++) g3.Steer(18, 15, .02);
+            Check(Math.Abs(g2.Wheel) < Math.Abs(g3.Wheel) && Math.Abs(g2.Yaw) < Math.Abs(g3.Yaw), "low-speed steering gains scaled down");
+            double south = gr.CrossTrack(-0.0486 - 100 / (Math.PI / 180 * 600000), -74.7245, 600000);
+            Check(Math.Abs(south - 100) < 1 && Math.Abs(gr.HeadingError(90, 100) + 5) < 1e-9 && Math.Abs(gr.HeadingError(90, 2) + .6) < 1e-9, "gentle bounded centerline correction (" + south.ToString("0.0") + ")");
+            Check(!SciencePolicy.CanRun(4, 1, 0, false, true, false, true) && SciencePolicy.CanRun(4, 1, 1, false, true, false, true) && !SciencePolicy.CanRun(0, 1, 1, false, true, true, false), "science: skip crew-in-part / atmosphere experiments that can't run");
+            Check(CraftClass.Classify(120, 60, 300) == "heavy" && CraftClass.Classify(8, 9, 25) == "light" && CraftClass.Effective("heavy", "fighter") == "light" && CraftClass.Effective("light", "gentle") == "heavy", "craft class + override");
+            Check(CraftClass.MaxBank("heavy", 75) == 25 && CraftClass.MaxBank("light", 75) == 75 && CraftClass.JoinG("heavy", 4) == CraftClass.HeavyG && CraftClass.JoinG("light", 4) == 4, "airliner bank/g limits; fighters keep 4 g");
+            double bc = 0; for (int i = 0; i < 10; i++) bc = CraftClass.RollStep("heavy", bc, 30, .1); Check(Math.Abs(bc - 6) < 1e-9 && CraftClass.RollStep("light", 0, 30, .1) == 30, "heavy roll rate 6 deg/s");
+            Check(DirectOrNull("fly gentle") == "craft_class" && ToolRouter.Direct("fighter mode", "plane").Value.Value.Contains("fighter"), "chat override routes");
+            Console.WriteLine("Takeoff ground roll, science reqs, craft class: 11 checks passed.");
+        }        {   // heavy craft in a 25 deg turn holds altitude within 50 m (pitch lead + inertia-lagged plant)
+            string cls = "heavy"; double alt = 0, vs = 0, pitch = 2, integ = 0, bank = 0, worst = 0;
+            for (int i = 0; i < 1200; i++)
+            {
+                double dt = .1; bank = CraftClass.RollStep(cls, bank, CraftClass.MaxBank(cls, 75), dt);
+                double tvs = Math.Max(-15, Math.Min(15, -.15 * CraftClass.VsScale(cls) * alt)); integ = Math.Max(-5, Math.Min(5, integ + (tvs - vs) * dt * .25 * .7));
+                double cmd = Math.Max(-5, Math.Min(15, 1 + .8 * .7 * (tvs - vs) + integ + CraftClass.PitchLead(cls, bank)));
+                pitch += (cmd - pitch) * dt / 2.5;   // heavy: slow pitch response
+                double nz = 1 + .12 * (pitch - 1); vs += 9.81 * (nz * Math.Cos(bank * Math.PI / 180) - 1) * dt; alt += vs * dt; worst = Math.Max(worst, Math.Abs(alt));
+            }
+            Check(worst < 50 && Math.Abs(bank - 25) < 1e-6, "heavy turn holds altitude within 50 m (worst " + worst.ToString("0") + " m)");
+            Check(CraftClass.FloorRecover("heavy", 140, 0) && CraftClass.FloorRecover("heavy", 300, -40) && !CraftClass.FloorRecover("heavy", 300, -10) && !CraftClass.FloorRecover("light", 100, -40), "heavy AGL floor: max(150 m, 10 s of sink)");
+            Console.WriteLine("Heavy craft altitude: 2 checks passed.");
+        }        {   // Luke 5:44 PM: asymptotic localizer-style leg intercept, no crossing > 2% of the turn radius
+            double v = 120, bankD = 25, R = v * v / (9.81 * Math.Tan(bankD * Math.PI / 180)), wmax = 9.81 * Math.Tan(bankD * Math.PI / 180) / v * 180 / Math.PI;
+            double worstCross = 0, lastX = 0;
+            foreach (double start in new[] { 0.0, -45, -90, 30 })   // relative heading at start (course = 90; plane 4 turn radii right of the line)
+            {
+                double x = 4 * R, psi = 90 + start, crossMax = 0, rollC = 0;
+                for (int i = 0; i < 12000; i++)
+                {
+                    double dt = .05, cmd = LocalizerCourse.Heading(90, x, R), err = FlightPolicy.Wrap(cmd - psi);
+                    double wantRate = Math.Max(-wmax, Math.Min(wmax, .5 * err)); rollC += Math.Max(-8 * dt * wmax / 25, Math.Min(8 * dt * wmax / 25, wantRate - rollC));   // ~8 deg/s roll onset
+                    psi += rollC * dt; x += v * Math.Sin((psi - 90) * Math.PI / 180) * dt * -1 * -1;
+                    // x = metres right of course: heading right of course increases x
+                    if (x < 0) crossMax = Math.Max(crossMax, -x);
+                }
+                worstCross = Math.Max(worstCross, crossMax / R); lastX = Math.Max(lastX, Math.Abs(x));
+            }
+            Check(worstCross < .02, "leg intercept: no crossing > 2% of the turn radius (worst " + (100 * worstCross).ToString("0.0") + "% of R)");
+            Check(lastX < 20, "leg intercept: rolls out on the line (" + lastX.ToString("0") + " m)");
+            Check(LocalizerCourse.InterceptAngle(5000, R) == 45 && LocalizerCourse.InterceptAngle(0, R) == 0 && LocalizerCourse.InterceptAngle(.1 * R, R) < 45, "intercept angle shrinks with cross-track");
+            Console.WriteLine("Localizer-style leg intercept: 3 checks passed.");
+        }        {   // Luke 5:46 PM: arcs tracked on the centre, not the outside edge (curvature feed-forward + 1.5 s look-ahead)
+            double v = 120, Ra = 5000, bmax = 30, Rt = v * v / (9.81 * Math.Tan(bmax * Math.PI / 180));
+            var pts = new List<double[]>(); for (int i = 0; i <= 10; i++) pts.Add(new[] { -3000 + 300.0 * i, 0.0 });
+            for (int i = 1; i <= 40; i++) { double a = i * 3.0 * Math.PI / 180; pts.Add(new[] { Ra * Math.Sin(a), -Ra + Ra * Math.Cos(a) }); }   // right turn, centre (0,-Ra)
+            Func<int, double> brg = j => Math.Atan2(pts[j + 1][0] - pts[j][0], pts[j + 1][1] - pts[j][1]) * 180 / Math.PI;
+            Func<int, double> len = j => Math.Sqrt(Math.Pow(pts[j + 1][0] - pts[j][0], 2) + Math.Pow(pts[j + 1][1] - pts[j][1], 2));
+            double e = -3000, n = 0, psi = 90, bank = 0, sum = 0, sumAbs = 0; int seg = 0, cnt = 0;
+            for (int s = 0; s < 40000 && seg < pts.Count - 2; s++)
+            {
+                double dt = .05, b = brg(seg) * Math.PI / 180, de = e - pts[seg][0], dn = n - pts[seg][1];
+                double along = de * Math.Sin(b) + dn * Math.Cos(b), xte = de * Math.Cos(b) - dn * Math.Sin(b), rem = len(seg) - along;
+                if (rem <= 0) { seg++; continue; }
+                double kB = seg > 0 ? PathCurvature.AtVertex(brg(seg - 1), brg(seg), len(seg - 1), len(seg)) : 0, kN = PathCurvature.AtVertex(brg(seg), brg(seg + 1), len(seg), len(seg + 1));
+                double cmd = LocalizerCourse.Heading(brg(seg), xte, Rt), ff = PathCurvature.Bank(v, PathCurvature.Ahead(kB, kN, rem, v), bmax);
+                double want = Math.Max(-bmax, Math.Min(bmax, ff + .5 * FlightPolicy.Wrap(cmd - psi)));
+                bank += Math.Max(-8 * dt, Math.Min(8 * dt, want - bank));
+                psi += 9.81 * Math.Tan(bank * Math.PI / 180) / v * 180 / Math.PI * dt;
+                e += v * Math.Sin(psi * Math.PI / 180) * dt; n += v * Math.Cos(psi * Math.PI / 180) * dt;
+                if (seg > 18 && seg < pts.Count - 4) { double rad = Math.Sqrt(e * e + (n + Ra) * (n + Ra)) - Ra; sum += rad; sumAbs += Math.Abs(rad); cnt++; }
+            }
+            Check(cnt > 0 && Math.Abs(sum / cnt) < 10 && sumAbs / cnt < 10, "arc: mean cross-track < 10 m, no outside bias (bias " + (sum / Math.Max(1, cnt)).ToString("0.0") + " m, mean |e| " + (sumAbs / Math.Max(1, cnt)).ToString("0.0") + " m)");
+            Check(PathCurvature.AtVertex(90, 180, 5000, 5000) == 0 && PathCurvature.Ahead(0, .001, 100, 120) == .001 && PathCurvature.Ahead(0, .001, 1000, 120) == 0, "corners between long legs aren't arcs; 1.5 s look-ahead");
+            Console.WriteLine("Arc feed-forward: 2 checks passed.");
         }        Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

@@ -150,7 +150,7 @@ namespace KSPChatBridge
             int k = id[1] - '0'; var g = Group; var gs = MfdNav.Groups(Mj);
             if (id == "H0") { OpenGroup("comms"); return; }
             if (id == "A0") { OpenGroup("sys"); item = "alarm"; return; }
-            if (id[0] == 'T') return;   // spare top row
+            if (id[0] == 'T') { if (g != null) { var tl = MfdNav.Top(Item); if (k < tl.Length && tl[k] != null) AicsMenu.OnKey(Item, tl[k]); } return; }
             if (g == null)
             {
                 int gi = id[0] == 'L' ? k : id[0] == 'R' ? MfdNav.Side + k : -1;
@@ -258,7 +258,7 @@ namespace KSPChatBridge
             foreach (var k in IvaLayout.Keys())
             {
                 int n = k.Id[1] - '0';
-                string lab = k.Id == "H0" ? "COMMS" : k.Id == "A0" ? (lvl == "warning" ? "MASTER WARNING" : lvl == "caution" ? "MASTER CAUTION" : "MASTER ALARM") : k.Id[0] == 'T' ? null : k.Id[0] == 'L' ? L[n] : k.Id[0] == 'R' ? R[n] : B[n];
+                string lab = k.Id == "H0" ? "COMMS" : k.Id == "A0" ? (lvl == "warning" ? "MASTER WARNING" : lvl == "caution" ? "MASTER CAUTION" : "MASTER ALARM") : k.Id[0] == 'T' ? (Group == null ? null : MfdNav.Top(Item)[n]) : k.Id[0] == 'L' ? L[n] : k.Id[0] == 'R' ? R[n] : B[n];
                 Color bg = k.Id == "A0" ? (!lamp ? new Color(.16f, .12f, .12f) : lvl == "warning" ? new Color(.85f, .1f, .08f) : new Color(.95f, .62f, .05f)) : string.IsNullOrEmpty(lab) ? Bezel : KeyC;
                 Fill(new Rect(k.X, k.Y, k.Wd, k.Ht), KeyEdge); Fill(new Rect(k.X + 2, k.Y + 2, k.Wd - 4, k.Ht - 4), bg);
                 if (string.IsNullOrEmpty(lab)) continue;

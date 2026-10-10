@@ -20,7 +20,8 @@ namespace KSPChatBridge
             return ChatTelemetry.Line(vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, FlightGlobals.ship_heading, Roll(), Pitch(), vessel.ctrlState.mainThrottle,
                 vessel.verticalSpeed, vessel.ActionGroups[KSPActionGroup.Brakes], vessel.ActionGroups[KSPActionGroup.Gear], ap,
                 TelemetryPos.Part(vessel.latitude, vessel.longitude, runway == null ? double.NaN : NavigationMath.Distance(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon, vessel.mainBody.Radius) / 1000,
-                    runway == null ? 0 : NavigationMath.Bearing(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon)) + " g=" + vessel.geeForce.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+                    runway == null ? 0 : NavigationMath.Bearing(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon)) + " g=" + vessel.geeForce.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
+                + " name=\"" + vessel.vesselName + "\" m=" + vessel.GetTotalMass().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "t");
         }
 
         static string NearestBuiltIn(double lat, double lon)

@@ -50,6 +50,12 @@ namespace KSPChatBridge
 
         static string[] Pad(string[] a, int n) { var r = new string[n]; Array.Copy(a, r, Math.Min(n, a.Length)); return r; }
         /// <summary>Right-column context keys for an item (null slots blank; 8 keys, spare ones blank for later).</summary>
+        /// <summary>Top row (8 keys): pan / center / zoom on MAP and CHART; blank elsewhere.</summary>
+        internal static string[] Top(string item)
+        {
+            if (item == "map" || item == "chart") return Pad(new[] { "\u2190", "\u2193", "\u2191", "\u2192", "CENTER", "ZOOM+", "ZOOM-" }, TopCount);
+            return new string[TopCount];
+        }
         internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
         static string[] RightKeys(string item)
         {

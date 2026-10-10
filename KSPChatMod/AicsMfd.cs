@@ -146,7 +146,7 @@ namespace KSPChatBridge
                 {
                     case 'A': if (Annunciator(r, kf)) ShowMfdItem("alarm"); break;
                     case 'H': if (Key(r, "COMMS", kf)) OpenGroupId("comms"); break;
-                    case 'T': Key(r, null, kf); break;   // spare top row (to fill later)
+                    case 'T': { var tl = home || it == null ? new string[MfdNav.TopCount] : MfdNav.Top(it.Id); if (Key(r, n < tl.Length ? tl[n] : null, kf) && n < tl.Length && tl[n] != null) OnKey(it.Id, tl[n]); } break;   // pan/zoom on MAP+CHART
                     case 'L': if (Key(r, left[n], kf)) { if (home) OpenGroup(n); else { mfdItem = items[n].Id; mfdScroll = Vector2.zero; Save(); } } break;
                     case 'R': if (Key(r, right[n], kf)) { if (home) OpenGroup(MfdNav.Side + n); else OnKey(it.Id, right[n]); } break;
                     case 'B':

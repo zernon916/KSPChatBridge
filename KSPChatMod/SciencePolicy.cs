@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -23,6 +23,17 @@ namespace KSPChatBridge
 
         internal static double EcPct(double amount, double max) { return max > 0 ? 100.0 * amount / max : 0; }
 
+        /// <summary>Experiment requirements (ExperimentUsageReqs: 1 control, 2 crew in vessel, 4 crew in part, 8 scientist) and
+        /// atmosphere; unrunnable ones are skipped silently (no "cab needs to be manned" spam).</summary>
+        internal static bool CanRun(int usageMask, int vesselCrew, int partCrew, bool scientist, bool controllable, bool needAtmo, bool inAtmo)
+        {
+            if (needAtmo && !inAtmo) return false;
+            if ((usageMask & 1) != 0 && !controllable) return false;
+            if ((usageMask & 2) != 0 && vesselCrew <= 0) return false;
+            if ((usageMask & 4) != 0 && partCrew <= 0) return false;
+            if ((usageMask & 8) != 0 && !scientist) return false;
+            return true;
+        }
         internal static bool Eligible(bool inoperable, bool hasData, bool available, bool subjectDone, bool rerunnable, bool onlyRerunnable)
         {
             if (inoperable || hasData || !available || subjectDone) return false;

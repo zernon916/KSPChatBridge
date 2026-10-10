@@ -40,6 +40,91 @@ namespace KSPChatBridge
     /// <summary>Takeoff (Luke 5:15 PM: a new plane ran to the runway end before rotating). Rotate speed Vr = 1.15 x stall, or just
     /// under this craft's measured liftoff speed once known. Progressive back-pressure from 0.85 Vr (2 -> 9 deg pitch target at
     /// Vr), more (12 deg) if it is still on the ground at 1.3 Vr; never waits for the approach speed or a fixed m/s. Pure; tested.</summary>
+    /// <summary>Ground roll after brake release (Luke 5:36 PM: nose jumped and the plane yawed 18 deg / 13 g within 2 s of release).
+    /// Throttle ramps 25%/s, elevator slightly nose-down below rotate, wheel steering and rudder gains low at low speed with rate limits,
+    /// heading = takeoff line + gentle cross-track correction (0.3 deg/m, max 5 deg). Pure; tested.</summary>
+    /// <summary>Craft class from mass / wingspan / part count: heavy transports fly an airliner profile (30 deg bank, matching
+    /// 1.15 g level-turn joins, 6 deg/s roll, gentle pitch); light/fighter keep the full 4 g rating. Override: auto / gentle / fighter.</summary>
+    internal static class CraftClass
+    {
+        internal static string Classify(double massT, double spanM, int parts) { return massT >= 40 || spanM >= 30 || parts >= 150 ? "heavy" : "light"; }
+        internal static string Effective(string auto, string overrideMode) { return overrideMode == "gentle" ? "heavy" : overrideMode == "fighter" ? "light" : auto; }
+        internal static bool Gentle(string cls) { return cls == "heavy"; }
+        internal const double HeavyBank = 25, HeavyRollRate = 6, HeavyG = 1.15, HeavyPitchG = 1.4;
+        internal static double MaxBank(string cls, double limit) { return Gentle(cls) ? Math.Min(limit, HeavyBank) : limit; }
+        internal static double JoinG(string cls, double g) { return Gentle(cls) ? Math.Min(g, HeavyG) : g; }
+        internal static double RollStep(string cls, double cmd, double want, double dt) { if (!Gentle(cls)) return want; double d = HeavyRollRate * dt; return Math.Abs(want - cmd) <= d ? want : cmd + Math.Sign(want - cmd) * d; }
+        /// <summary>Heavy: extra nose-up lead in a bank (lift lost to bank, anticipated not chased).</summary>
+        internal static double PitchLead(string cls, double bankDeg) { if (!Gentle(cls)) return 0; double c = Math.Cos(Math.Min(60, Math.Abs(bankDeg)) * Math.PI / 180); return 8 * (1 / c - 1); }
+        /// <summary>Heavy: start recovering (wings level + climb) when AGL is below max(150 m, 10 s of sink).</summary>
+        internal static bool FloorRecover(string cls, double agl, double vs) { return Gentle(cls) && agl < Math.Max(150, 10 * Math.Max(0, -vs)); }
+        /// <summary>Heavy: slower, smaller pitch corrections (inertia).</summary>
+        internal static double GainScale(string cls) { return Gentle(cls) ? .7 : 1; }
+        /// <summary>Heavy: softer altitude-to-VS correction (a 0.15/s loop oscillates with airliner pitch inertia; 0.08/s does not).</summary>
+        internal static double VsScale(string cls) { return Gentle(cls) ? .55 : 1; }
+        internal static string Label(string cls, string overrideMode) { return (Gentle(cls) ? "HEAVY (gentle)" : "LIGHT/FIGHTER") + (overrideMode == "auto" ? "" : " [" + overrideMode + "]"); }
+    }
+
+    /// <summary>Luke 5:44 PM: one localizer-style lateral law for every route leg and the LOC intercept. Course = leg bearing,
+    /// deviation = cross-track (m, + = right). Asymptotic capture: the intercept angle follows the tangent-arc geometry
+    /// xte = R(1 - cos a), i.e. a = acos(1 - |xte|/R), capped at 45 deg, with R = 1.25 x the turn radius, so the turn onto the
+    /// line starts early by the lead R(1 - cos a) and rolls out ON the line instead of crossing it. Pure; tested.</summary>
+    internal static class LocalizerCourse
+    {
+        internal const double MaxIntercept = 45, Margin = 1.0;
+        internal static double InterceptAngle(double xte, double turnRadius)
+        {
+            double r = Math.Max(50, Margin * turnRadius), x = Math.Abs(xte);
+            // angle = clamp(k * xte, 0, 45 deg) with k = 1 / (2 R): the demanded turn rate k v sin(a) stays below the craft's v / R,
+            // so the decay onto the line is exponential (asymptotic) and the turn starts early by about the lead R(1 - cos a).
+            return Math.Min(MaxIntercept, x / (2 * r) * 180 / Math.PI);
+        }
+        internal static double Heading(double course, double xte, double turnRadius) { double h = (course - Math.Sign(xte) * InterceptAngle(xte, turnRadius)) % 360; return h < 0 ? h + 360 : h; }
+    }
+
+    /// <summary>Luke 5:46 PM: arcs were flown on the outside edge (pure cross-track law, no curvature). Feed-forward bank for the
+    /// path curvature at the upcoming vertex: bank = atan(v^2 kappa / g), kappa = turn / mean segment length, sign = turn
+    /// direction; looked up ~1.5 s ahead so the roll starts before arc entry. Cross-track / integral stay as trims. Pure; tested.</summary>
+    internal static class PathCurvature
+    {
+        internal const double LookAheadS = 1.5, MaxArcSeg = 1500;
+        /// <summary>Signed curvature (rad/m, + = right turn) at a vertex between an inbound and outbound segment.</summary>
+        internal static double AtVertex(double brgIn, double brgOut, double lenIn, double lenOut)
+        {
+            if (lenIn > MaxArcSeg || lenOut > MaxArcSeg || lenIn + lenOut < 1) return 0;   // a real corner between long legs: no arc
+            return FlightPolicy.Wrap(brgOut - brgIn) * Math.PI / 180 / ((lenIn + lenOut) / 2);
+        }
+        internal static double Bank(double speed, double kappa, double maxBank) { return FlightPolicy.Clamp(Math.Atan(speed * speed * kappa / 9.81) * 180 / Math.PI, -maxBank, maxBank); }
+        /// <summary>Curvature to use now: the current leg's (vertex behind) until within the look-ahead of the next vertex.</summary>
+        internal static double Ahead(double kBehind, double kNext, double remaining, double speed) { return remaining <= LookAheadS * speed ? kNext : kBehind; }
+    }
+
+    internal sealed class TakeoffGround
+    {
+        internal double Lat0, Lon0, Hdg0, Wheel, Yaw; double released = double.NaN;
+        internal TakeoffGround(double lat, double lon, double hdg) { Lat0 = lat; Lon0 = lon; Hdg0 = hdg; }
+        internal bool Released { get { return !double.IsNaN(released); } }
+        internal bool Release(double t) { if (Released) return false; released = t; Wheel = Yaw = 0; return true; }
+        internal double Since(double t) { return Released ? t - released : -1; }
+        internal double Throttle(double t) { return Released ? FlightPolicy.Clamp(.25 * (t - released), 0, 1) : 0; }
+        internal static double Elevator(double speed, double vr) { return speed < .85 * vr ? -.05 : double.NaN; }
+        /// <summary>Metres right of the takeoff line (flat approximation, fine over a runway).</summary>
+        internal double CrossTrack(double lat, double lon, double radius)
+        {
+            double k = Math.PI / 180 * radius, dn = (lat - Lat0) * k, de = (lon - Lon0) * k * Math.Cos(Lat0 * Math.PI / 180), h = Hdg0 * Math.PI / 180;
+            return de * Math.Cos(h) - dn * Math.Sin(h);
+        }
+        /// <summary>Heading error (deg, + = turn right) toward the takeoff line.</summary>
+        internal double HeadingError(double hdg, double xte) { return FlightPolicy.Wrap(Hdg0 - hdg) - FlightPolicy.Clamp(.3 * xte, -5, 5); }
+        internal void Steer(double err, double v, double dt)
+        {
+            double gain = .04 * FlightPolicy.Clamp(v / 15, .25, 1), lim = FlightPolicy.Clamp(.5 * 25 / Math.Max(v, 25), .1, .5);
+            Wheel = MoveTowards(Wheel, FlightPolicy.Clamp(-gain * err, -lim, lim), 1 * dt);
+            Yaw = MoveTowards(Yaw, FlightPolicy.Clamp(.02 * err * FlightPolicy.Clamp(v / 40, 0, 1), -.3, .3), .5 * dt);
+        }
+        static double MoveTowards(double a, double b, double d) { return Math.Abs(b - a) <= d ? b : a + Math.Sign(b - a) * d; }
+    }
+
     internal sealed class TakeoffMission
     {
         readonly double start;
@@ -626,10 +711,11 @@ namespace KSPChatBridge
             double dh = double.IsNaN(nextBrg) ? 0 : Math.Abs(FlightPolicy.Wrap(nextBrg - leg));
             double lead = Math.Min(len, r * Math.Tan(Math.Min(150, dh) / 2 * Math.PI / 180));
             advance = remaining <= Math.Max(250, lead);
-            return leg - FlightPolicy.Clamp(Math.Atan2(xte, Math.Max(1500, 10 * speed)) * 180 / Math.PI, -30, 30);
+            return LocalizerCourse.Heading(leg, xte, r);   // every leg is a localizer course (same capture law as the LOC intercept)
         }
 
 
+        internal double ArcBank;   // feed-forward bank on chart arcs (deg, + right)
         internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
@@ -680,18 +766,25 @@ namespace KSPChatBridge
                     bool leadTurn = false;
                     DesiredHeading = NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300 ? NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon)
                         : LegSteer(lat, lon, pLat, pLon, wp.Lat, wp.Lon, nextBrg, speed, TurnBank, radius, out leadTurn, out LegXte);
+                    {   // arc feed-forward bank (curvature of the densified chart line), 1.5 s look-ahead
+                        double legBrg = NavigationMath.Bearing(pLat, pLon, wp.Lat, wp.Lon), legLen = NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius);
+                        double kB = 0, kN = 0;
+                        if (RouteIndex > 1) { var a = Route[RouteIndex - 2]; kB = PathCurvature.AtVertex(NavigationMath.Bearing(a.Lat, a.Lon, pLat, pLon), legBrg, NavigationMath.Distance(a.Lat, a.Lon, pLat, pLon, radius), legLen); }
+                        if (RouteIndex + 1 < Route.Count) { var n = Route[RouteIndex + 1]; kN = PathCurvature.AtVertex(legBrg, nextBrg, legLen, NavigationMath.Distance(wp.Lat, wp.Lon, n.Lat, n.Lon, radius)); }
+                        ArcBank = PathCurvature.Bank(speed, PathCurvature.Ahead(kB, kN, dw, speed), TurnBank > 0 ? TurnBank : 30);
+                    }
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = wp.Alt;
                     DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     if (leadTurn || dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
                 }
-                if (RouteIndex >= Route.Count) Phase = "intercept";
+                if (RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }
             }
             if (Phase == "intercept")
             {
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
-                DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
+                DesiredHeading = LocalizerCourse.Heading(course, cross, speed * speed / (9.81 * Math.Tan(Math.Max(5, TurnBank > 0 ? TurnBank : 25) * Math.PI / 180)));   // shared localizer capture law (legs + LOC)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.Speed(stall), ApproachProfile.FinalSchedule(Distance, stall, DecelA));   // intercept: join speed, never above the final schedule
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);

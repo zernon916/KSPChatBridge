@@ -308,7 +308,7 @@ namespace KSPChatBridge
         /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
         string PlaneLine(NativeFlightController.MapRunway rw, RunwayMission act)
         {
-            if (act != null && act.PlanSpeed > 0) return "Plane " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km" + (details ? "\ncrew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g, bank now " + Math.Round(act.TurnBank) + "\n" + act.JoinLog + "\n" + act.SmoothLog : "");
+            if (act != null && act.PlanSpeed > 0) return "Plane " + NativeFlightController.CraftLabel + " " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km" + (details ? "\ncrew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g, bank now " + Math.Round(act.TurnBank) + "\n" + act.JoinLog + "\n" + act.SmoothLog : "");
             if (rw == null || Time.realtimeSinceStartup < planeAt) return planeLine;
             planeAt = Time.realtimeSinceStartup + 1;
             double v = ApproachProfile.Speed(NativeFlightController.MapStall), gN = ApproachProfile.LoadFactor(ApproachProfile.JoinG, v, NativeFlightController.MapStall), b = ApproachProfile.BankForG(gN), crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
@@ -321,21 +321,31 @@ namespace KSPChatBridge
                 string lg; ApproachChart.Smooth(seq, crs, rw.Lat, rw.Lon, v, b, body.Radius, out lg);
                 int t = lg.IndexOf("TIGHT"); if (t >= 0) tight += side[0] + ": " + lg.Substring(t + 15) + " ";
             }
-            planeLine = "Plane " + Math.Round(v) + " m/s, " + gN.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(b) + ", r " + (ApproachProfile.Radius(v, b) / 1000).ToString("0.0") + " km, " + (tight.Length > 0 ? "TIGHT" + (details ? ": " + tight : " (details)") : "turns fit") + (details ? "\n1.5 x stall " + Math.Round(NativeFlightController.MapStall) + " m/s" : "");
+            planeLine = "Plane " + NativeFlightController.CraftLabel + " " + Math.Round(v) + " m/s, " + gN.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(b) + ", r " + (ApproachProfile.Radius(v, b) / 1000).ToString("0.0") + " km, " + (tight.Length > 0 ? "TIGHT" + (details ? ": " + tight : " (details)") : "turns fit") + (details ? "\n1.5 x stall " + Math.Round(NativeFlightController.MapStall) + " m/s" : "");
             return planeLine;
         }
 
+        bool panning; Vector2 panFrom;
         void HandleMouse(NativeFlightController.MapRunway rw)
         {
             var e = Event.current;
             if (e.type == EventType.ScrollWheel && e.mousePosition.x <= Px && e.mousePosition.y <= Px) { ViewSpan = Zoom(ViewSpan, e.delta.y > 0 ? 1.25 : 0.8); e.Use(); return; }
-            if (rw == null || Tab != 1) return;
-            if (e.type == EventType.MouseDown && e.button == 0 && e.mousePosition.x <= Px && e.mousePosition.y <= Px)
+            // click-drag on empty map area pans (MAP and CHART); on a waypoint (CHART) it moves the waypoint
+            if (e.type == EventType.MouseDown && e.button == 0 && e.mousePosition.x <= Px && e.mousePosition.y <= Px && Tab <= 1)
             {
                 sel = -1; float best = 12;
-                for (int i = 0; i < fixes.Count; i++) { float d = Vector2.Distance(Proj(fixes[i].Lat, fixes[i].Lon), e.mousePosition); if (d < best) { best = d; sel = i; } }
-                dragging = sel >= 0; e.Use();
+                if (rw != null && Tab == 1) for (int i = 0; i < fixes.Count; i++) { float d = Vector2.Distance(Proj(fixes[i].Lat, fixes[i].Lon), e.mousePosition); if (d < best) { best = d; sel = i; } }
+                dragging = sel >= 0; panning = !dragging; panFrom = e.mousePosition;
+                if (panning && follow) { fixLat = cLat; fixLon = cLon; follow = false; }
+                e.Use(); return;
             }
+            if (e.type == EventType.MouseDrag && panning)
+            {
+                double la0, lo0, la1, lo1; Unproj(cLat, cLon, span, panFrom.x, panFrom.y, out la0, out lo0); Unproj(cLat, cLon, span, e.mousePosition.x, e.mousePosition.y, out la1, out lo1);
+                fixLat -= la1 - la0; fixLon -= lo1 - lo0; cLat = fixLat; cLon = fixLon; panFrom = e.mousePosition; e.Use(); return;
+            }
+            if (e.type == EventType.MouseUp && panning) { panning = false; e.Use(); return; }
+            if (rw == null || Tab != 1) return;
             else if (e.type == EventType.MouseDrag && dragging && sel >= 0)
             {
                 double la, lo; Unproj(cLat, cLon, span, e.mousePosition.x, e.mousePosition.y, out la, out lo);
