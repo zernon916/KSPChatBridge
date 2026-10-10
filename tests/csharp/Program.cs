@@ -1648,7 +1648,15 @@ class Program
                 var co = Ils.Callouts(rr, 50, false, 80, 60); Check(co.Contains("GEAR") && co.Contains("TOO FAST") && co.Contains("MINIMUMS"), "callouts: " + string.Join(",", co.ToArray()));
                 Check(Ils.SpeedBand(62, 60) == "green" && Ils.SpeedBand(68, 60) == "amber" && Ils.SpeedBand(75, 60) == "red", "IAS band colours");
             }
-            Console.WriteLine("Airbrakes/dedupe/ILS zone: 7 behavior checks passed.");
+            {   // IVA MFD text pages (RasterPropMonitor)
+                double pLa, pLo; NavigationMath.Offset(tLa, tLo, crs + 180, 5000, 600000, out pLa, out pLo);
+                var ri = Ils.Compute(pLa, pLo, 69 + 280, tLa, tLo, -.0502119, -74.4903, 69, 600000, 350);
+                string ip = MfdText.IlsPage(ri, "KSC 09", "COUPLED LOC+GS", false, false, 80, 60, 280, -4, 40, 20);
+                Check(ip.StartsWith("AICS ILS KSC 09") && ip.Contains("COUPLED") && ip.Contains("TOO FAST") && Array.TrueForAll(ip.TrimEnd('\n').Split('\n'), l => l.Length <= 40), "ILS MFD page fits 40 cols, coupling + callouts");
+                string mp = MfdText.MapPage(pLa, pLo, 600000, 20000, new List<double[]> { new[] { tLa, tLo }, new[] { -.0502119, -74.4903 } }, null, null, 40, 20);
+                Check(mp.Contains("^") && mp.Contains("=") && mp.Split('\n').Length >= 20, "MAP MFD page: plane and runway drawn");
+            }
+            Console.WriteLine("Airbrakes/dedupe/ILS zone/MFD: 9 behavior checks passed.");
         }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));

@@ -148,6 +148,47 @@ namespace KSPChatBridge
         internal static double Needle(double dev, double fullScale) { return FlightPolicy.Clamp(dev / fullScale, -1, 1); }
     }
 
+    /// <summary>Text pages for IVA MFDs (RasterPropMonitor PAGEHANDLER; pure, tested). Fixed-width characters, cols x rows.</summary>
+    internal static class MfdText
+    {
+        static string Bar(double needle, int width, char mark)
+        {
+            int w = Math.Max(5, width), mid = w / 2, at = (int)Math.Round(mid + needle * mid); var c = new char[w];
+            for (int i = 0; i < w; i++) c[i] = i == mid ? '|' : (i % Math.Max(1, w / 8) == 0 ? '.' : ' ');
+            c[Math.Max(0, Math.Min(w - 1, at))] = mark; return new string(c);
+        }
+        internal static string IlsPage(Ils.Reading r, string label, string couple, bool gear, bool brakes, double ias, double target, double hat, double vs, int cols, int rows)
+        {
+            var sb = new StringBuilder(); cols = Math.Max(20, cols);
+            Action<string> L = s => sb.Append(s.Length > cols ? s.Substring(0, cols) : s).Append('\n');
+            L("AICS ILS " + label); L(couple);
+            L("DME " + (r.DmeM / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " km  CRS " + Math.Round(r.Course).ToString("000"));
+            L("LOC " + Bar(-Ils.Needle(r.LocDeg, Ils.LocFullScale), cols - 4, '#'));
+            L("G/S " + Bar(Ils.Needle(r.GsDeg, Ils.GsFullScale), cols - 4, '#'));
+            L("X-TRK " + Math.Abs(r.CrossM).ToString("0", CultureInfo.InvariantCulture) + " m " + (r.CrossM > 0 ? "R" : "L") + "  GS " + Math.Abs(r.AboveGsM).ToString("0", CultureInfo.InvariantCulture) + " m " + (r.AboveGsM > 0 ? "HI" : "LO"));
+            L("IAS " + Math.Round(ias) + "/" + Math.Round(target) + " " + Ils.SpeedBand(ias, target).ToUpperInvariant() + "  VS " + vs.ToString("+0;-0", CultureInfo.InvariantCulture));
+            L("GEAR " + (gear ? "DN" : "UP") + "  " + (brakes ? "BRK" : "   ") + "  HAT " + Math.Round(hat) + " m");
+            var co = Ils.Callouts(r, hat, gear, ias, target); if (co.Count > 0) L(string.Join(" ", co.ToArray()));
+            if (!r.Front) L("BEHIND THE RUNWAY");
+            return sb.ToString();
+        }
+        /// <summary>Plane-up north-up ASCII map: '^' plane, '=' runway, '*' route fixes, 'J' join point. span = metres across.</summary>
+        internal static string MapPage(double lat, double lon, double radius, double span, IList<double[]> runway, IList<double[]> route, double[] join, int cols, int rows)
+        {
+            cols = Math.Max(20, cols); rows = Math.Max(8, rows); int h = rows - 1; var g = new char[h, cols];
+            for (int y = 0; y < h; y++) for (int x = 0; x < cols; x++) g[y, x] = ' ';
+            double mx = span / cols, my = span / h * .5, k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180);   // chars ~2:1 tall
+            Action<double, double, char> put = (la, lo, ch) => { int x = (int)Math.Round(cols / 2.0 + (lo - lon) * k * cl / mx), y = (int)Math.Round(h / 2.0 - (la - lat) * k / (my * 2)); if (x >= 0 && y >= 0 && x < cols && y < h) g[y, x] = ch; };
+            if (runway != null && runway.Count == 2) for (int i = 0; i <= 20; i++) put(runway[0][0] + (runway[1][0] - runway[0][0]) * i / 20, runway[0][1] + (runway[1][1] - runway[0][1]) * i / 20, '=');
+            if (route != null) foreach (var p in route) put(p[0], p[1], '*');
+            if (join != null) put(join[0], join[1], 'J');
+            put(lat, lon, '^');
+            var sb = new StringBuilder("AICS MAP " + (span / 1000).ToString("0", CultureInfo.InvariantCulture) + " km\n");
+            for (int y = 0; y < h; y++) { for (int x = 0; x < cols; x++) sb.Append(g[y, x]); sb.Append('\n'); }
+            return sb.ToString();
+        }
+    }
+
     /// <summary>approaches.json read/merge for the in-game chart editor (pure; tested).</summary>
     internal static class ApproachFile
     {

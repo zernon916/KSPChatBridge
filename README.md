@@ -7,6 +7,14 @@
 **New here? Start with the [wiki](https://github.com/zernon916/KSPChatBridge/wiki)**: installation, a five-minute quick start,
 every command, the autopilots, the crew, and troubleshooting.
 
+## Optional mods (work if installed)
+
+Nothing here is required; each is detected at runtime (no hard dependency):
+
+- **SCANsat**: the AICS map reveals terrain from SCANsat coverage instead of only your flight path.
+- **MechJeb2**: orbital tools (transfers, plane matching, course corrections) use MechJeb's planners.
+- **RasterPropMonitor** (FirstPersonKSP, KSP 1.12): adds **AICS ILS** and **AICS MAP** pages to IVA MFDs (needle bars, coupling, IAS band, callouts; ASCII map with runway, route and join point).
+
 ## Found a bug?
 
 Report it at **https://github.com/zernon916/KSPChatBridge/issues** and attach:

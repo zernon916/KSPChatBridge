@@ -11,4 +11,5 @@ if (Get-Process KSP_x64 -ErrorAction SilentlyContinue) { "KSP is running - quit 
 Push-Location "$root\KSPChatMod"
 dotnet build -c Release -nologo -v q "-p:KSPDir=$ksp"
 Pop-Location
+Copy-Item "$root\KSPChatMod\AICS_RPM.cfg" "$ksp\GameData\KSPChatBridge\" -Force   # optional RasterPropMonitor pages (inert without RPM)
 "installed: " + (Get-Item "$ksp\GameData\KSPChatBridge\Plugins\KSPChatBridge.dll").LastWriteTime

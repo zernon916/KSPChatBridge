@@ -39,5 +39,13 @@
       ]
     }
   ],
-  "x_comment": "DRAFT - not submitted. The GitHub release must attach KSPChatBridge-<version>.zip (tools/package_release.ps1). Since 0.1.1 the zip also carries the bridge as GameData/KSPChatBridge/Bridge/AICSBridge.exe (Windows); PluginData (user data, .env) is never shipped and is filtered."
+  "x_comment": "DRAFT - not submitted. The GitHub release must attach KSPChatBridge-<version>.zip (tools/package_release.ps1). Since 0.1.1 the zip also carries the bridge as GameData/KSPChatBridge/Bridge/AICSBridge.exe (Windows); PluginData (user data, .env) is never shipped and is filtered.",
+  "suggests": [
+    {
+      "name": "SCANsat"
+    },
+    {
+      "name": "RasterPropMonitor"
+    }
+  ]
 }
