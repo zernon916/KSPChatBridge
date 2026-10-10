@@ -74,6 +74,31 @@ namespace KSPChatBridge
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
         TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
+        void ConfigureInertia()
+        {
+            double thrust = 0, spool = 0; int n = 0;
+            foreach (Part ep in vessel.parts) foreach (PartModule pm in ep.Modules) { var en = pm as ModuleEngines; if (en == null) continue; thrust += en.maxThrust; n++; if (en.useEngineResponseTime && en.engineAccelerationSpeed > 0) spool = Math.Max(spool, 1 / en.engineAccelerationSpeed); }
+            double twr = n == 0 ? double.NaN : thrust / (vessel.totalMass * 9.81);
+            shold.Configure(vessel.totalMass, twr, spool);
+            { object lo; var lc = settingsData.TryGetValue("throttle_lag", out lo) ? lo as Dictionary<string, object> : null; double ml = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); if (!double.IsNaN(ml)) shold.SetLag(ml); lagMeasured = !double.IsNaN(ml); }
+            lagMeter = new SpeedHold.LagMeter();
+            ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "inertia modifier {0:0.00} (m={1:0.0} t, TWR={2:0.00}, spool={3:0.0} s): throttle gains /{0:0.00}, lag {6:0.0} s {7}, decel {4:0.00} m/s2 {5}",
+                shold.K, vessel.totalMass, twr, spool, double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? ApproachProfile.MassDecel(vessel.totalMass) : Decel.Estimate(vessel.vesselName, 150, 100, true), double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? "(mass estimate)" : "(measured)", shold.Lag, lagMeasured ? "(measured)" : "(estimate)"));
+        }
+        SpeedHold.LagMeter lagMeter; bool lagMeasured; float lagAccPrevT; double lagPrevV = double.NaN, lagAcc;
+        void MeasureLag(double dt)
+        {
+            if (lagMeter == null || vessel.LandedOrSplashed || dt <= 0) return;
+            double v = vessel.srfSpeed; if (!double.IsNaN(lagPrevV)) lagAcc += ((v - lagPrevV) / dt - lagAcc) * Math.Min(1, dt / .5); lagPrevV = v;
+            if (Math.Abs(vessel.verticalSpeed) > 8) return;   // level-ish only: pitch changes also move speed
+            double lag = lagMeter.Observe(Planetarium.GetUniversalTime(), vessel.ctrlState.mainThrottle, lagAcc, shold.Sens);
+            if (double.IsNaN(lag)) return;
+            double blended = lagMeasured ? .7 * shold.Lag + .3 * lag : lag; shold.SetLag(blended); lagMeasured = true;
+            object o; var cache = settingsData.TryGetValue("throttle_lag", out o) ? o as Dictionary<string, object> : null;
+            if (cache == null) settingsData["throttle_lag"] = cache = new Dictionary<string, object>();
+            cache[vessel.vesselName] = Math.Round(shold.Lag, 2); try { Save(); } catch (Exception) { }
+            ChatLog.Write("speed", "throttle->speed lag measured " + lag.ToString("0.0") + " s -> " + shold.Lag.ToString("0.0") + " s saved for " + vessel.vesselName);
+        }
         int errorHolds;
         /// <summary>Luke 6:10 PM: an error must never leave nose-down / idle applied. Log the full trace; airborne the first few
         /// times fall back to a plain altitude/heading hold; otherwise release with centred controls, power kept up, SAS on.</summary>
@@ -217,6 +242,7 @@ namespace KSPChatBridge
             { object so; var sc = settingsData.TryGetValue("stall_learn", out so) ? so as Dictionary<string, object> : null; object lo2 = null; if (sc != null) sc.TryGetValue(vessel.vesselName, out lo2); learner = StallLearner.Load(lo2 as Dictionary<string, object>); }
             ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "stall inputs: m={0:0.0} t, liftCoeff={1:0.00} -> S={2:0.0} m2, rho={3}, CLmax={4}, Vs est={5:0.0} m/s, heavy floor={6:0}, liftoff={7:0}",
                 vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
+            ConfigureInertia();
             stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.CoM, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
@@ -513,7 +539,7 @@ namespace KSPChatBridge
                 if (mode == "landing" && (stallStudy == null || stallStudy.Finished))
                 {
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
-                    if (landMass0 > 0) runway.DecelA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true);   // measured decel (NaN = conservative default)
+                    if (landMass0 > 0) { runway.DecelA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true); if (double.IsNaN(runway.DecelA)) runway.DecelA = ApproachProfile.MassDecel(vessel.totalMass); runway.DecelA /= Math.Sqrt(shold.K); }   // heavies start slowing earlier (reaction time)   // measured decel (NaN = conservative default)
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(landStall0, landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
                 if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
@@ -651,7 +677,7 @@ namespace KSPChatBridge
                 else throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle);   // smooth PI on airspeed (pitch flies the vertical speed)
             if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
-            LearnDecel(dt);
+            LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
             if (speedLock && !vessel.LandedOrSplashed) { speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);

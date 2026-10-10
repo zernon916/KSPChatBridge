@@ -282,6 +282,8 @@ namespace KSPChatBridge
         /// <summary>Distance needed to slow from v1 to v2 at a m/s^2: (v1^2 - v2^2) / 2a, plus margin.</summary>
         internal static double DecelStartM(double v1, double v2, double a) { return Math.Max(0, v1 * v1 - v2 * v2) / (2 * Math.Max(.3, double.IsNaN(a) ? DefaultDecel : a)) + DecelMargin; }
         /// <summary>Distance to the threshold where the decel from the long-final speed starts (ends at 2 km).</summary>
+        /// <summary>No measured profile: decel scales down with mass (1.0 m/s^2 at 10 t, 0.45 at 50 t, floor 0.3).</summary>
+        internal static double MassDecel(double massT) { return FlightPolicy.Clamp(1.0 * Math.Sqrt(10 / Math.Max(1, massT)), .3, 1.0); }
         internal static double DecelStartDist(double stall, double a) { return DecelEnd + DecelStartM(HiSpeed(stall), AppSpeed(stall), a); }
         internal static double FinalSchedule(double distToThreshold, double stall, double decelA = double.NaN)
         {

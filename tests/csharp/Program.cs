@@ -224,6 +224,24 @@ class Program
             Check(!SpeedHold.Airbrakes(false, 120, 111) && SpeedHold.Airbrakes(false, 127, 111) && SpeedHold.Airbrakes(true, 117, 111) && !SpeedHold.Airbrakes(true, 115, 111), "airbrakes only > +15 m/s, retract < +5");
             Check(!PilotPolicy.LowEnergy(false, 92, 74, 0, 700) && PilotPolicy.LowEnergy(false, 88, 74, 0, 700) && PilotPolicy.LowEnergy(true, 95, 74, 0, 700) && !PilotPolicy.LowEnergy(true, 98, 74, 0, 700), "low-energy hysteresis: in < 1.2 Vs, out > 1.3 Vs");
         }
+        {   // Luke 6:52 PM: weight modifier. Heavy (49 t, TWR .45, 3 s spool) vs light (6 t, TWR .9, 1 s).
+            double kh = SpeedHold.Inertia(48.8, .45, 3), kl = SpeedHold.Inertia(6, .9, 1);
+            Check(kh > 2 && kh <= 4 && kl < 1.4 && ApproachProfile.MassDecel(48.8) < .5 && ApproachProfile.MassDecel(6) == 1.0
+                && ApproachProfile.DecelStartDist(74, ApproachProfile.MassDecel(48.8)) > ApproachProfile.DecelStartDist(74, 1.0) + 3000, "inertia modifier: heavy " + kh.ToString("0.00") + " / light " + kl.ToString("0.00") + "; heavy decel starts earlier");
+            // heavy point mass with 3 s spool and weak engines: the configured hold settles without overshoot past 4 m/s
+            var hs = new SpeedHold(); hs.Configure(48.8, .45, 3); double v = 140, thr = .3, eng = .3, dt1 = .02, minV = 999, maxV = 0;
+            for (int s = 0; s < 30000; s++) { double tgt = s < 2500 ? 140 : 105; thr = hs.Step(tgt, v, dt1, thr); eng += (thr - eng) * dt1 / 3; v += (2.6 * eng - .00016 * v * v) * dt1; if (s > 2500) { minV = Math.Min(minV, v); } if (s > 20000) maxV = Math.Max(maxV, Math.Abs(v - 105)); }
+            Check(minV > 101 && maxV < 3, "heavy speed change 140 -> 105: anticipates, no undershoot (min " + minV.ToString("0.0") + ", settled within " + maxV.ToString("0.0") + " m/s)");
+        }
+        {   // Luke 6:53 PM: throttle->speed lag. Meter on a 4 s first-order response; predictor stops overcorrection on a 6 s-lag heavy.
+            var lm = new SpeedHold.LagMeter(); double eng2 = .3, thr2 = .3, accm = 0, got = double.NaN;
+            for (int s = 0; s < 2000 && double.IsNaN(got); s++) { double tt = s * .02; if (s == 100) thr2 = .9; eng2 += (thr2 - eng2) * .02 / 4; double a2 = 3 * (eng2 - .3); accm += (a2 - accm) * .02 / .5; got = lm.Observe(tt, thr2, accm, 3); }
+            Check(got > .8 && got < 3, "throttle->speed lag measured on a step (" + got.ToString("0.0") + " s)");
+            Func<bool, double> run = useLag => { var h = new SpeedHold(); h.Configure(48.8, .45, 3); if (useLag) h.SetLag(6); else h.SetLag(.3); double v = 105, th = .5, en = .5, mx = 0, dly = 0; var q = new Queue<double>();
+                for (int s = 0; s < 40000; s++) { double tg = s < 1000 ? 105 : 125; th = h.Step(tg, v, .02, th); q.Enqueue(th); dly = q.Count > 150 ? q.Dequeue() : .5; en += (dly - en) * .02 / 3; v += (2.6 * en - .00016 * v * v - .00016 * 105 * 105 * 0 ) * .02 + (2.6 * .5 - .00016 * 105 * 105) * 0; if (s > 1000) mx = Math.Max(mx, v - 125); } return mx; };
+            double withLag = run(true), noLag = run(false);
+            Check(withLag < 4 && withLag <= noLag + .5, "lag-aware speed hold: overshoot " + withLag.ToString("0.0") + " m/s (without lag model " + noLag.ToString("0.0") + ")");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

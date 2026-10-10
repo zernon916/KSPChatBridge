@@ -12,17 +12,58 @@ namespace KSPChatBridge
     /// PI + acceleration damping, throttle rate limited to 15%/s.</summary>
     internal sealed class SpeedHold
     {
-        internal const double Deadband = 1.5, Kp = .035, Ki = .004, Kd = .08, Rate = .15, TargetSlew = 1.0;
-        double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN;
+        internal const double Deadband = 1.5, Kp0 = .035, Ki0 = .004, Kd0 = .08, Rate0 = .15, Slew0 = 1.0;
+        double Kp = Kp0, Ki = Ki0, Kd = Kd0, Rate = Rate0, TargetSlew = Slew0, Lead;
+        double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN, accF;
+        /// <summary>Weight modifier (Luke 6:52 PM): >= 1. sqrt(mass / 10 t), x sqrt(0.5 / TWR) for weak engines, x (1 + spool/4).</summary>
+        /// <summary>Per-craft throttle->speed lag measurement: after a throttle step of >= 15% (held), the time until the filtered
+        /// acceleration has moved by 30% of the expected change (Sens x step). Returns the lag once, else NaN.</summary>
+        internal sealed class LagMeter
+        {
+            double t0 = double.NaN, thr0, acc0, step; double lastThr = double.NaN, lastT;
+            internal double Observe(double t, double thr, double accF, double sens)
+            {
+                if (double.IsNaN(lastThr)) { lastThr = thr; lastT = t; return double.NaN; }
+                double d = thr - lastThr;
+                if (double.IsNaN(t0) && Math.Abs(d) >= .15 && t - lastT <= 2) { t0 = t; thr0 = lastThr; acc0 = accF; step = d; }
+                if (Math.Abs(d) < .01 || t - lastT > 2) { lastThr = thr; lastT = t; }
+                if (double.IsNaN(t0)) return double.NaN;
+                if (t - t0 > 20) { t0 = double.NaN; return double.NaN; }
+                if (Math.Sign(accF - acc0) == Math.Sign(step) && Math.Abs(accF - acc0) >= .3 * Math.Abs(step) * sens) { double lag = t - t0; t0 = double.NaN; lastThr = thr; lastT = t; return lag; }
+                return double.NaN;
+            }
+        }
+        internal static double Inertia(double massT, double twr, double spoolS)
+        {
+            double m = Math.Sqrt(Math.Max(1, massT) / 10), t = double.IsNaN(twr) || twr <= 0 ? 1.5 : Math.Sqrt(.5 / Math.Max(.1, twr)), s = 1 + Math.Max(0, double.IsNaN(spoolS) ? 0 : spoolS) / 4;
+            return FlightPolicy.Clamp(Math.Max(1, m) * FlightPolicy.Clamp(t, 1, 2) * s, 1, 4);
+        }
+        internal double K { get; private set; } = 1;
+        /// <summary>Throttle -> speed response lag (s) and acceleration per unit throttle (m/s^2), for the Smith-style prediction.</summary>
+        internal double Lag { get; private set; } = 1; internal double Sens = 3;
+        double model = double.NaN;
+        internal void SetLag(double lagS) { if (!double.IsNaN(lagS) && lagS > 0) Lag = FlightPolicy.Clamp(lagS, .3, 15); }
+        /// <summary>No measurement yet: 0.8 s x inertia + spool.</summary>
+        internal static double EstimateLag(double k, double spoolS) { return FlightPolicy.Clamp(.8 * k + (double.IsNaN(spoolS) ? 0 : spoolS), .3, 15); }
+        /// <summary>Heavier / weaker / slower-spooling: softer gains, slower throttle and target slew, more derivative lead
+        /// (predict speed 1.5 s + spool time ahead).</summary>
+        internal void Configure(double massT, double twr, double spoolS)
+        {
+            K = Inertia(massT, twr, spoolS); Kp = Kp0 / K; Ki = Ki0 / K; Kd = Kd0 * Math.Sqrt(K); Rate = Rate0 / Math.Sqrt(K); TargetSlew = Slew0 / K;
+            Lead = 1.5 * (K - 1) + Math.Max(0, double.IsNaN(spoolS) ? 0 : spoolS);
+            Sens = double.IsNaN(twr) || twr <= 0 ? 3 : FlightPolicy.Clamp(9.81 * twr * .8, .5, 15); Lag = EstimateLag(K, spoolS);
+        }
         internal double Target { get { return cmd; } }
         internal void Reset() { i = cmd = prevV = double.NaN; }
         internal double Step(double target, double v, double dt, double thrNow)
         {
-            if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; }
+            if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; model = outv; }
             if (dt <= 0) return outv;
             cmd += FlightPolicy.Clamp(target - cmd, -TargetSlew * dt, TargetSlew * dt);
-            double err = cmd - v, e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;
-            double acc = (v - prevV) / dt; prevV = v;
+            double acc = (v - prevV) / dt; prevV = v; accF += (acc - accF) * Math.Min(1, dt / .5);
+            model += (outv - model) * Math.Min(1, dt / Lag);   // throttle already commanded but not felt yet (lag model)
+            double pending = Sens * (outv - model) * Lag;        // Smith-style: speed change still on its way from earlier throttle moves
+            double err = cmd - (v + accF * Lead + pending), e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;   // anticipate: act on the speed we'll have
             double raw = i + Kp * e - Kd * acc;
             if (!((raw >= 1 && e > 0) || (raw <= .05 && e < 0))) i = FlightPolicy.Clamp(i + Ki * e * dt, .05, 1);   // anti-windup
             outv += FlightPolicy.Clamp(FlightPolicy.Clamp(raw, .05, 1) - outv, -Rate * dt, Rate * dt);
