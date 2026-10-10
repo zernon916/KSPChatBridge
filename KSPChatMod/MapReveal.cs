@@ -24,6 +24,9 @@ namespace KSPChatBridge
         internal const double MinSpan = 2000, MaxSpan = 300000;
         /// <summary>Map zoom (+/- buttons x0.5/x2, wheel x0.8/x1.25), clamped 2-300 km across.</summary>
         internal static double Zoom(double span, double factor) { return Math.Max(MinSpan, Math.Min(MaxSpan, span * factor)); }
+        /// <summary>Pan the map centre by 25% of the shown width; heading 0/90/180/270 = up/right/down/left.</summary>
+        internal static void Pan(ref double lat, ref double lon, double heading, double span, double radius)
+        { double la, lo; NavigationMath.Offset(lat, lon, heading, .25 * span, radius, out la, out lo); lat = la; lon = lo; }
         internal static double RadiusFor(double agl) { return Math.Max(MinM, Math.Min(MaxM, MinM + 0.5 * Math.Max(0, agl))); }
         static long Key(int row, int col) { return ((long)row << 20) | (uint)col; }
         static int Row(double lat) { return (int)Math.Floor((lat + 90) / TileDeg); }
@@ -104,6 +107,28 @@ namespace KSPChatBridge
             catch (FormatException) { }
             lock (Gate) Tiles[body] = set;
         }
+    }
+
+    /// <summary>ILS-style raw data for a runway end (pure; tested): localizer (antenna at the far end) and 3 deg glideslope
+    /// (antenna at the touchdown point) deviations, DME to the threshold, cross-track and height vs the glide path.</summary>
+    internal static class Ils
+    {
+        internal const double GlideDeg = 3, LocFullScale = 2.5, GsFullScale = .7;
+        internal sealed class Reading { internal double LocDeg, GsDeg, DmeM, CrossM, AboveGsM, Course; internal bool Front; }
+        internal static Reading Compute(double lat, double lon, double alt, double thrLat, double thrLon, double endLat, double endLon, double elevation, double radius, double touchdownM = 300)
+        {
+            double crs = NavigationMath.Bearing(thrLat, thrLon, endLat, endLon), len = NavigationMath.Distance(thrLat, thrLon, endLat, endLon, radius);
+            double d = NavigationMath.Distance(thrLat, thrLon, lat, lon, radius), th = FlightPolicy.Wrap(NavigationMath.Bearing(thrLat, thrLon, lat, lon) - crs) * Math.PI / 180;
+            double along = d * Math.Cos(th), cross = d * Math.Sin(th);   // along < 0 = before the threshold; cross > 0 = right of centerline
+            var r = new Reading { Course = crs, DmeM = d, CrossM = cross, Front = along < len };
+            r.LocDeg = Math.Atan2(cross, len - along) * 180 / Math.PI;                       // + = right of the localizer course (fly left)
+            double toGs = touchdownM - along, path = elevation + Math.Max(0, toGs) * Math.Tan(GlideDeg * Math.PI / 180);
+            r.AboveGsM = alt - path;
+            r.GsDeg = Math.Atan2(alt - elevation, Math.Max(1, toGs)) * 180 / Math.PI - GlideDeg; // + = above the glideslope (fly down)
+            return r;
+        }
+        /// <summary>Needle position -1..1 (full-scale deflection), sign as the deviation.</summary>
+        internal static double Needle(double dev, double fullScale) { return FlightPolicy.Clamp(dev / fullScale, -1, 1); }
     }
 
     /// <summary>approaches.json read/merge for the in-game chart editor (pure; tested).</summary>

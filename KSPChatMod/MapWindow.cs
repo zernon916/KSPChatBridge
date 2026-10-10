@@ -25,11 +25,11 @@ namespace KSPChatBridge
     public class MapWindow : MonoBehaviour
     {
         const int WindowId = 0x4B434D41, N = 96; const float Px = 384;
-        internal static bool MapVisible;
+        internal static bool MapVisible; internal static int Tab; static readonly string[] Tabs = { "Maps", "Charts", "ILS" };
         static Rect rect = new Rect(420, 120, Px + 20, Px + 210);
         internal static double ViewSpan = 30000;
         static double Zoom(double span, double factor) { return MapReveal.Zoom(span, factor); }
-        static int rwIdx; static bool centerRunway;
+        static int rwIdx; static bool centerRunway, follow = true; static double fixLat, fixLon;
         Texture2D tex; Color[] px = new Color[N * N]; int buildRow = -1; double bLat, bLon, bSpan; float nextRebuild;
         List<NativeFlightController.MapRunway> runways = new List<NativeFlightController.MapRunway>();
         List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int sel = -1; bool dragging; string note = "";
@@ -51,7 +51,7 @@ namespace KSPChatBridge
             var rw = runways.Count > 0 ? runways[rwIdx] : null;
             if (rw != null && fixesFor != rw.Key) LoadFixes(rw);
             span = ViewSpan;
-            if (centerRunway && rw != null) { cLat = rw.Lat; cLon = rw.Lon; } else { cLat = v.latitude; cLon = v.longitude; }
+            if (!follow) { cLat = fixLat; cLon = fixLon; } else if (centerRunway && rw != null) { cLat = rw.Lat; cLon = rw.Lon; } else { cLat = v.latitude; cLon = v.longitude; }
             double moved = NavigationMath.Distance(cLat, cLon, bLat, bLon, body.Radius);
             if (buildRow < 0 && (bSpan != span || moved > span * .15 || Time.realtimeSinceStartup > nextRebuild)) { bLat = cLat; bLon = cLon; bSpan = span; buildRow = 0; nextRebuild = Time.realtimeSinceStartup + 15; }
             if (buildRow >= 0) BuildRows(12);
@@ -141,6 +141,8 @@ namespace KSPChatBridge
 
         void DrawInner()
         {
+            Tab = GUILayout.Toolbar(Tab, Tabs);
+            if (Tab == 2) { DrawIls(); return; }
             var rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) { rwIdx = (rwIdx + runways.Count - 1) % runways.Count; fixesFor = ""; }
@@ -158,7 +160,7 @@ namespace KSPChatBridge
             foreach (var r in runways) Line(Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
             foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) GUI.Label(new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
             // chart legs: each side's join list, then FAF -> SF -> threshold
-            if (rw != null && fixes.Count > 0)
+            if (Tab == 1 && rw != null && fixes.Count > 0)
             {
                 var faf = fixes.Find(f => f.Role == "faf"); var sf = fixes.Find(f => f.Role == "sf");
                 foreach (var side in new[] { "left", "right" })
@@ -186,6 +188,15 @@ namespace KSPChatBridge
             HandleMouse(rw);
             } finally { GUI.EndGroup(); }
             GUILayout.Label((ScanSatLink.Installed ? "Mapping: SCANsat coverage" : "Mapping: flight path (no mapping mod), " + MapReveal.Count(body.bodyName) + " tiles") + "  |  airports always shown");
+            if (Tab == 0)
+            {   // pan the view (not the window): 25% of the shown width per press; panning stops follow-craft until re-center
+                GUILayout.BeginHorizontal();
+                foreach (var pb in new[] { new KeyValuePair<string, double>("<", 270), new KeyValuePair<string, double>("^", 0), new KeyValuePair<string, double>("v", 180), new KeyValuePair<string, double>(">", 90) })
+                    if (GUILayout.Button(pb.Key, GUILayout.Width(30))) { if (follow) { fixLat = cLat; fixLon = cLon; follow = false; } MapReveal.Pan(ref fixLat, ref fixLon, pb.Value, span, body.Radius); }
+                if (GUILayout.Button(follow ? "following" : "re-center", GUILayout.Width(80))) follow = true;
+                GUILayout.EndHorizontal();
+            }
+            if (Tab != 1) return;
             GUILayout.Label(PlaneLine(rw, NativeFlightController.ActiveRunway));
             if (sel >= 0 && sel < fixes.Count)
             {
@@ -203,6 +214,41 @@ namespace KSPChatBridge
             if (GUILayout.Button("Save") && rw != null) Save(rw);
             GUILayout.EndHorizontal();
             GUILayout.Label(note);
+        }
+
+        /// <summary>Cockpit-style ILS for the active approach runway end (or the selected one); works hand flying too.</summary>
+        void DrawIls()
+        {
+            var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway;
+            NativeFlightController.MapRunway rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
+            double tla, tlo, ela, elo, elev; string label;
+            if (act != null) { tla = act.Lat; tlo = act.Lon; ela = act.EndLat; elo = act.EndLon; elev = act.Elevation; label = string.IsNullOrEmpty(act.Key) ? "active runway" : act.Key; }
+            else if (rw != null) { tla = rw.Lat; tlo = rw.Lon; ela = rw.EndLat; elo = rw.EndLon; elev = rw.Elevation; label = rw.Key; }
+            else { GUILayout.Label("No runway on this body."); return; }
+            GUILayout.BeginHorizontal();
+            if (act == null && GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + runways.Count - 1) % runways.Count;
+            GUILayout.Label("ILS " + label + (act != null ? "  (autoland active)" : "  (selected)"), GUILayout.Width(250));
+            if (act == null && GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + 1) % runways.Count;
+            GUILayout.EndHorizontal();
+            if (v == null) return;
+            var r = Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius);
+            const float S = 260; Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
+            var o = GUI.color; GUI.color = new Color(.05f, .05f, .08f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
+            Vector2 c = box.center;
+            for (int i = -2; i <= 2; i++) { if (i == 0) continue; Dot(new Vector2(c.x + i * S * .2f, c.y), 5, Color.white); Dot(new Vector2(c.x, c.y + i * S * .2f), 5, Color.white); }
+            Dot(c, 8, Color.yellow);
+            bool valid = r.Front && r.DmeM < 40000;
+            float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f;   // needle shows where the course is: right of us -> needle right
+            float gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;    // above the slope -> GS needle below centre
+            GUI.color = valid ? Color.magenta : Color.gray;
+            GUI.DrawTexture(new Rect(lx - 1.5f, box.y + 10, 3, S - 20), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(box.x + 10, gy - 1.5f, S - 20, 3), Texture2D.whiteTexture);
+            GUI.color = o;
+            if (!valid) GUI.Label(new Rect(box.x + 8, box.y + 6, 200, 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
+            double gs = v.horizontalSrfSpeed;
+            GUILayout.Label("DME " + (r.DmeM / 1000).ToString("0.0") + " km to threshold   GS " + Math.Round(gs) + " m/s" + (gs > 1 ? "   ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
+            GUILayout.Label("LOC " + r.LocDeg.ToString("+0.00;-0.00") + " deg   cross-track " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "right" : "left"));
+            GUILayout.Label("G/S " + r.GsDeg.ToString("+0.00;-0.00") + " deg   " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "above" : "below") + " the 3 deg path   course " + Math.Round(r.Course).ToString("000"));
         }
 
         string planeLine = ""; float planeAt;
@@ -230,7 +276,7 @@ namespace KSPChatBridge
         {
             var e = Event.current;
             if (e.type == EventType.ScrollWheel && e.mousePosition.x <= Px && e.mousePosition.y <= Px) { ViewSpan = Zoom(ViewSpan, e.delta.y > 0 ? 1.25 : 0.8); e.Use(); return; }
-            if (rw == null) return;
+            if (rw == null || Tab != 1) return;
             if (e.type == EventType.MouseDown && e.button == 0 && e.mousePosition.x <= Px && e.mousePosition.y <= Px)
             {
                 sel = -1; float best = 12;

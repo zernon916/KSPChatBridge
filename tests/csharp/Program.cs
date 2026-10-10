@@ -1301,6 +1301,16 @@ class Program
                 Check(rmj.JoinLog.StartsWith("joined") && rmj.RawRoute != null && rmj.RawRoute[0].Name != rmj.Chart.DownLeftA.Name, "approach start uses the best join: " + rmj.JoinLog);
             }
             Console.WriteLine("Nearest safe join: 7 behavior checks passed.");
+            {
+                var ir = Ils.Compute(-.0485997, -74.724375 - 5000 / (600000 * Math.PI / 180), 69 + 300 * Math.Tan(3 * Math.PI / 180) + 5000 * Math.Tan(3 * Math.PI / 180), -.0485997, -74.724375, -.0502119, -74.490300, 69, 600000);
+                Check(Math.Abs(ir.DmeM - 5000) < 5 && Math.Abs(ir.CrossM) < 40 && Math.Abs(ir.AboveGsM) < 1 && Math.Abs(ir.GsDeg) < .02 && ir.Front, "ILS: on the 3 deg path 5 km out: DME 5 km, G/S centred (" + ir.AboveGsM.ToString("0.0") + " m, cross " + ir.CrossM.ToString("0") + " m)");
+                double ola, olo; NavigationMath.Offset(-.0485997, -74.724375, 270.4, 5000, 600000, out ola, out olo); NavigationMath.Offset(ola, olo, 0.4, 100, 600000, out ola, out olo);
+                var il = Ils.Compute(ola, olo, 2000, -.0485997, -74.724375, -.0502119, -74.490300, 69, 600000);
+                Check(il.CrossM < -95 && il.LocDeg < 0 && il.GsDeg > .7 && Ils.Needle(il.GsDeg, Ils.GsFullScale) == 1 && il.AboveGsM > 1000, "ILS: 100 m left and high -> LOC negative, G/S pegged high");
+                double pla = 0, plo = 0; MapReveal.Pan(ref pla, ref plo, 90, 40000, 600000); MapReveal.Pan(ref pla, ref plo, 0, 40000, 600000);
+                Check(Math.Abs(NavigationMath.Distance(0, 0, 0, plo, 600000) - 10000) < 1 && Math.Abs(NavigationMath.Distance(0, plo, pla, plo, 600000) - 10000) < 1, "map pan moves 25% of the shown width per press");
+            }
+            Console.WriteLine("ILS + map pan: 3 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
