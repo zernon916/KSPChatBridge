@@ -62,7 +62,7 @@ function draw(){const e=ends[cur],svg=document.getElementById('plan');svg.innerH
  // fixes (draggable)
  e.fixes.forEach((f,i)=>{const p=proj(e,f.lat,f.lon);const g=el('g',{style:'cursor:move'},svg);
   el('path',{d:`M${p[0]} ${p[1]-7} L${p[0]+7} ${p[1]+5} L${p[0]-7} ${p[1]+5} Z`,fill:i==selIdx?'#ffd400':FINAL(f.role)?'#cde':'#fff',stroke:i==selIdx?'#d00':'#111','stroke-width':i==selIdx?3:1.5},g);
-  el('text',{x:p[0]+9,y:p[1]-2,'font-weight':'bold'},g,f.name.split(' (')[0]);el('text',{x:p[0]+9,y:p[1]+11,fill:tightSet.has(f)?'#d00':'#555'},g,f.alt+' m '+f.ref.toUpperCase()+(tightSet.has(f)?' TIGHT':''));
+  el('text',{x:p[0]+9,y:p[1]-2,'font-weight':'bold'},g,f.name.split(' (')[0]);el('text',{x:p[0]+9,y:p[1]+11,fill:tightSet.has(f)?'#d00':'#555'},g,f.alt+' m '+(f.ref||'agl').toUpperCase()+(tightSet.has(f)?' TIGHT':''));
   g.onmousedown=ev=>{ev.preventDefault();selIdx=i;draw();const r=svg.getBoundingClientRect();const mv=m=>{const ll=unproj(e,m.clientX-r.left,m.clientY-r.top);if(FINAL(f.role))onLine(e,f,ll[0],ll[1]);else{f.lat=+ll[0].toFixed(5);f.lon=+ll[1].toFixed(5);}persist();draw();};
    const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);};window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);};});
  el('text',{x:8,y:18,'font-size':'14px','font-weight':'bold'},svg,'PLAN VIEW  '+cur+'  course '+e.course.toFixed(0)+'\u00b0  elev '+e.elev+' m  turn r '+(e.radius_m/1000).toFixed(1)+' km');
@@ -96,7 +96,7 @@ document.getElementById('save').onclick=()=>{const out={};for(const k in ends){c
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,1)],{type:'application/json'}));a.download='approaches.json';a.click();};
 document.getElementById('add').onclick=()=>{const e=ends[cur],fx=e.fixes;let at=selIdx>=0&&!FINAL(fx[selIdx].role)?selIdx+1:fx.findIndex(x=>FINAL(x.role));if(at<0)at=fx.length;
  const prev=fx[at-1]||fx.find(x=>x.role=='faf'),next=fx[at];const a=prev,b=next&&!FINAL(next.role)?next:fx.find(x=>x.role=='faf');
- const n=fx.filter(x=>x.role=='wp').length+1;const w={role:'wp',side:prev&&!FINAL(prev.role)?prev.side:'both',name:'WP'+n,lat:+((a.lat+b.lat)/2+(a===b?.02:0)).toFixed(5),lon:+((a.lon+b.lon)/2).toFixed(5),alt:a.alt};
+ const n=fx.filter(x=>x.role=='wp').length+1;const w={role:'wp',ref:(a&&a.ref)||'agl',side:prev&&!FINAL(prev.role)?prev.side:'both',name:'WP'+n,lat:+((a.lat+b.lat)/2+(a===b?.02:0)).toFixed(5),lon:+((a.lon+b.lon)/2).toFixed(5),alt:a.alt};
  if(fx.length>=16){alert('max 16 fixes');return;}fx.splice(at,0,w);selIdx=at;persist();draw();};
 document.getElementById('del').onclick=()=>{const fx=ends[cur].fixes;if(selIdx<0)return alert('click a waypoint first');if(FINAL(fx[selIdx].role))return alert('FAF/SF are locked and cannot be removed');fx.splice(selIdx,1);selIdx=-1;persist();draw();};
 document.getElementById('reset').onclick=()=>{ends[cur]=JSON.parse(JSON.stringify(DATA.ends[cur]));{const e=ends[cur];e.fixes.forEach(f=>f.alt=Math.max(0,Math.round(f.alt-e.elev)));e.alt_ref='agl';}persist();draw();};
