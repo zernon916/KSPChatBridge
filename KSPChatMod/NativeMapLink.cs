@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -9,6 +9,7 @@ namespace KSPChatBridge
     {
         internal sealed class MapRunway { internal string Key; internal double Lat, Lon, EndLat, EndLon, Elevation; }
 
+        internal static double MapStall { get { return instance != null && instance.vessel != null ? instance.stall : 45; } }
         internal static RunwayMission ActiveRunway { get { return instance != null && instance.mode == "landing" ? instance.runway : null; } }
 
         internal static List<MapRunway> MapRunways(CelestialBody body)

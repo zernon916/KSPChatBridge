@@ -1199,7 +1199,7 @@ class Program
                 Check(!a1 && Math.Abs(x1) < 1, "straight leg: no early switch");
                 bool a2; RunwayMission.LegSteer(0, -.5, 0, -1, 0, 0, 180, 130, 20, R, out a2, out x1); RunwayMission.LegSteer(0, -.4, 0, -1, 0, 0, 180, 130, 20, R, out a1, out x1);
                 Check(a1 && !a2, "90 deg turn starts ~r (4.8 km) before the fix at 130 m/s");
-                Check(RunwayMission.JoinSpeed == 130, "join speed 130 m/s from the IAF");
+                Check(ApproachProfile.Speed(45) == 67.5, "join speed = 1.5 x stall");
             }
             Console.WriteLine("Lead turns / leg tracking: 4 behavior checks passed.");
             {   // Luke 13:13: settled 20-60 m right of 09 then went around 4x in one frame. Sim with a 1.5 deg steady track bias.
@@ -1261,6 +1261,25 @@ class Program
                 Check(leg == sm.Count && worstX < 350, "smoothed join flown within 350 m of the adjusted route (worst " + Math.Round(worstX) + " m)"); Console.WriteLine("  join: " + slog + "; worst " + Math.Round(worstX) + " m");
             }
             Console.WriteLine("Tight lateral control: 8 behavior checks passed.");
+            {   // Luke: arcs depend on the plane. Profiles: light trainer, the Aeris-class default, heavy cargo, fast jet, explicit bank 45.
+                var luke = new List<ApproachChart.Wp>();
+                foreach (var q in new[] { new[] { 1.6686, -74.63502 }, new[] { 1.69373, -75.89779 }, new[] { 1.58064, -76.60771 }, new[] { 1.30422, -76.88414 }, new[] { .86445, -76.95953 }, new[] { .31159, -76.95953 }, new[] { .10427, -76.86529 }, new[] { -.03419, -76.7839 } })
+                    luke.Add(new ApproachChart.Wp { Name = "F" + luke.Count, Lat = q[0], Lon = q[1], Alt = 700 });
+                Func<double, double, int> tightCount = (stallV, chartBank) => { double v = ApproachProfile.Speed(stallV); string lg; ApproachChart.Smooth(luke, 90.4, -.0485997, -74.724375, v, ApproachProfile.Bank(chartBank, v), 600000, out lg); int t = lg.IndexOf("TIGHT"); return t < 0 ? 0 : lg.Substring(t).Split(new[] { " deg" }, StringSplitOptions.None).Length - 1; };
+                double rLight = ApproachProfile.Radius(ApproachProfile.Speed(30), ApproachProfile.Bank(20, 45)), rHeavy = ApproachProfile.Radius(ApproachProfile.Speed(80), ApproachProfile.Bank(20, 120));
+                Check(Math.Abs(rLight - 2.025 / .364 * 1000 / 9.81 * 0 - 45 * 45 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1 && rHeavy > 4 * rLight, "radius grows with v^2: trainer " + Math.Round(rLight) + " m vs cargo " + Math.Round(rHeavy) + " m");
+                Check(tightCount(30, 20) < tightCount(80, 20), "heavier craft has more tight turns on the same chart (" + tightCount(30, 20) + " vs " + tightCount(80, 20) + ")");
+                Check(ApproachProfile.Bank(20, 300) == 10 && ApproachProfile.Bank(45, 300) == 45 && ApproachProfile.Bank(20, 100) == 20, "usable bank: 10 deg above 250 m/s, explicit bank wins");
+                Check(Math.Abs(ApproachProfile.StallAt(45, 10, 7.5) - 45 * Math.Sqrt(.75)) < 1e-9, "stall scales with sqrt(mass) (fuel burn)");
+                Check(Math.Abs(ApproachProfile.EstimateStall(6000, 6) - 45) < 1 && ApproachProfile.EstimateStall(20000, 6) > 80, "wing-loading stall estimate");
+                Check(!ApproachProfile.NeedsReplan(67.5, 70) && ApproachProfile.NeedsReplan(67.5, ApproachProfile.Speed(ApproachProfile.StallAt(45, 10, 8))), "replan only on a significant speed/mass change");
+                // replan keeps the current target
+                var rm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                rm.RawRoute = luke; rm.Plan(90.4, 600000, ApproachProfile.Speed(60), -1); int n1 = rm.Route.Count; rm.RouteIndex = n1 / 2; var tgt = rm.Route[rm.RouteIndex];
+                rm.Plan(90.4, 600000, ApproachProfile.Speed(40), rm.RouteIndex);
+                Check(rm.PlanSpeed == 60 && rm.SmoothLog.StartsWith("replanned") && NavigationMath.Distance(tgt.Lat, tgt.Lon, rm.Route[rm.RouteIndex].Lat, rm.Route[rm.RouteIndex].Lon, 600000) < 6000, "replan after fuel burn: new arcs, target kept nearby");
+            }
+            Console.WriteLine("Per-craft approach profile: 7 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {

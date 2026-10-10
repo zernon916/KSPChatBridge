@@ -107,6 +107,21 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>Per-craft approach profile (Luke: arcs depend on the plane). Join speed 1.5 x the stall speed at current mass,
+    /// usable bank = chart bank capped by the speed bank rule, radius = v^2/(g tan bank).</summary>
+    internal static class ApproachProfile
+    {
+        internal const double JoinFactor = 1.5, MinSpeed = 40, MaxSpeed = 200, Replan = .08;
+        /// <summary>Stall at current mass from a reference stall (Vs ~ sqrt(mass)).</summary>
+        internal static double StallAt(double stallRef, double massRef, double massNow) { return massRef > 0 && massNow > 0 ? stallRef * Math.Sqrt(massNow / massRef) : stallRef; }
+        /// <summary>Wing-loading estimate when the craft has no measured stall: Vs = sqrt(2 m g / (rho0 * K * sum(lift coeff))), K calibrated to stock (6 t, 6 lift -> ~45 m/s).</summary>
+        internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? 45 : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (1.225 * 7.9 * liftCoeffSum)), 20, 200); }
+        internal static double Speed(double stall) { return FlightPolicy.Clamp(JoinFactor * stall, MinSpeed, MaxSpeed); }
+        internal static double Bank(double chartBank, double speed) { return chartBank > 20 ? chartBank : Math.Min(Math.Max(5, chartBank), FlightPolicy.BankLimit(speed)); }   // explicit "bank 60" wins
+        internal static double Radius(double speed, double bank) { return speed * speed / (9.81 * Math.Tan(bank * Math.PI / 180)); }
+        internal static bool NeedsReplan(double planned, double now) { return planned > 0 && Math.Abs(now - planned) / planned > Replan; }
+    }
+
     internal sealed class ApproachChart
     {
         internal sealed class Wp { internal string Name; internal double Lat, Lon, Alt; }
@@ -308,10 +323,25 @@ namespace KSPChatBridge
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
         internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
-        internal const double JoinSpeed = 130;
+        internal double PlanSpeed, PlanBank, PlanRadius; internal List<ApproachChart.Wp> RawRoute;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
         /// r*tan(dHdg/2) before the fix, r from the actual speed and bank. Returns the desired heading; advance = time to switch legs.</summary>
+        /// <summary>(Re)build the flown route from the raw chart fixes for a join speed; keeps the current target when replanning.</summary>
+        internal void Plan(double course, double radius, double speed, int keepIndex)
+        {
+            PlanSpeed = speed; PlanBank = ApproachProfile.Bank(BankDeg, speed); PlanRadius = ApproachProfile.Radius(speed, PlanBank);
+            ApproachChart.Wp target = keepIndex >= 0 && Route != null && keepIndex < Route.Count ? Route[keepIndex] : null;
+            string sm; Route = ApproachChart.Smooth(RawRoute, course, Lat, Lon, speed, PlanBank, radius, out sm);
+            SmoothLog = (keepIndex >= 0 ? "replanned (mass/speed change): " : "") + sm;
+            if (target != null)
+            {
+                int best = 0; double bd = double.MaxValue;
+                for (int i = 0; i < Route.Count; i++) { double d = NavigationMath.Distance(target.Lat, target.Lon, Route[i].Lat, Route[i].Lon, radius); if (d < bd) { bd = d; best = i; } }
+                RouteIndex = best;
+            }
+        }
+
         internal static double LegSteer(double lat, double lon, double pLat, double pLon, double fLat, double fLon, double nextBrg, double speed, double bankDeg, double radius, out bool advance, out double xte)
         {
             double leg = NavigationMath.Bearing(pLat, pLon, fLat, fLon), len = NavigationMath.Distance(pLat, pLon, fLat, fLon, radius);
@@ -345,12 +375,14 @@ namespace KSPChatBridge
                 {
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
-                    string sm; Route = ApproachChart.Smooth(Route, course, Lat, Lon, JoinSpeed, BankDeg, radius, out sm); SmoothLog = sm;
+                    RawRoute = Route; Plan(course, radius, ApproachProfile.Speed(stall), -1);
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
-                // Luke: ~130 m/s from the IAF onward (tighter turns), never below 1.5x stall
+                // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
+                if (RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, ApproachProfile.Speed(stall))) Plan(course, radius, ApproachProfile.Speed(stall), RouteIndex);
+                // join speed from the IAF onward = this craft's 1.5 x stall (Luke), so the planned arcs are what it flies
                 bool joined = RouteIndex > 0 || (Route.Count > 0 && NavigationMath.Distance(lat, lon, Route[0].Lat, Route[0].Lon, radius) < 2 * speed * speed / (9.81 * Math.Tan(BankDeg * Math.PI / 180)));
-                DesiredSpeed = Math.Max(1.5 * stall, joined ? JoinSpeed : Math.Min(150, speed));
+                DesiredSpeed = joined ? PlanSpeed : Math.Max(PlanSpeed, Math.Min(150, speed));
                 if (RouteIndex < Route.Count)
                 {
                     var wp = Route[RouteIndex];
@@ -373,7 +405,7 @@ namespace KSPChatBridge
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
-                DesiredSpeed = Math.Max(1.5 * stall, JoinSpeed);
+                DesiredSpeed = PlanSpeed > 0 ? PlanSpeed : ApproachProfile.Speed(stall);
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned

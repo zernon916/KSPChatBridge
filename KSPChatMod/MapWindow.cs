@@ -186,6 +186,7 @@ namespace KSPChatBridge
             HandleMouse(rw);
             } finally { GUI.EndGroup(); }
             GUILayout.Label((ScanSatLink.Installed ? "Mapping: SCANsat coverage" : "Mapping: flight path (no mapping mod), " + MapReveal.Count(body.bodyName) + " tiles") + "  |  airports always shown");
+            GUILayout.Label(PlaneLine(rw, NativeFlightController.ActiveRunway));
             if (sel >= 0 && sel < fixes.Count)
             {
                 var f = fixes[sel]; double g = NativeFlightController.MapTerrain(body, f.Lat, f.Lon); if (double.IsNaN(g)) g = 0;
@@ -202,6 +203,27 @@ namespace KSPChatBridge
             if (GUILayout.Button("Save") && rw != null) Save(rw);
             GUILayout.EndHorizontal();
             GUILayout.Label(note);
+        }
+
+        string planeLine = ""; float planeAt;
+        /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
+        string PlaneLine(NativeFlightController.MapRunway rw, RunwayMission act)
+        {
+            if (act != null && act.PlanSpeed > 0) return "This plane: " + Math.Round(act.PlanSpeed) + " m/s, bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km | " + act.SmoothLog;
+            if (rw == null || Time.realtimeSinceStartup < planeAt) return planeLine;
+            planeAt = Time.realtimeSinceStartup + 1;
+            double v = ApproachProfile.Speed(NativeFlightController.MapStall), b = ApproachProfile.Bank(20, v), crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
+            var faf = fixes.Find(f => f.Role == "faf"); string tight = "";
+            foreach (var side in new[] { "left", "right" })
+            {
+                var seq = new List<ApproachChart.Wp>();
+                foreach (var f in fixes) if (f.Role != "faf" && f.Role != "sf" && (f.Side == side || f.Side == "both")) seq.Add(new ApproachChart.Wp { Name = f.Name.Split('(')[0].Trim(), Lat = f.Lat, Lon = f.Lon, Alt = f.AltMsl });
+                if (faf != null) seq.Add(new ApproachChart.Wp { Name = "FAF", Lat = faf.Lat, Lon = faf.Lon, Alt = faf.AltMsl });
+                string lg; ApproachChart.Smooth(seq, crs, rw.Lat, rw.Lon, v, b, body.Radius, out lg);
+                int t = lg.IndexOf("TIGHT"); if (t >= 0) tight += side[0] + ": " + lg.Substring(t + 15) + " ";
+            }
+            planeLine = "This plane: " + Math.Round(v) + " m/s (1.5 x stall " + Math.Round(NativeFlightController.MapStall) + "), bank " + Math.Round(b) + ", r " + (ApproachProfile.Radius(v, b) / 1000).ToString("0.0") + " km | " + (tight.Length > 0 ? "TIGHT " + tight : "all turns fit");
+            return planeLine;
         }
 
         void HandleMouse(NativeFlightController.MapRunway rw)
