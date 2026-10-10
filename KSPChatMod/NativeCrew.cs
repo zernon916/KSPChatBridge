@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -88,7 +88,7 @@ namespace KSPChatBridge
         {
             if (lines == null || i >= lines.Count) { if (after != null) after(); return; }
             var line = lines[i];
-            Action<string> post = text => { ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup); SpeakAll(lines, i + 1, after); };
+            Action<string> post = text => { ChatLog.Write("chatter", line.Format(text) + (text == null ? " (canned)" : " (model)")); ChatWindow.Notice(line.Format(text)); chatter.Spoke(line.Name, Time.realtimeSinceStartup); SpeakAll(lines, i + 1, after); };
             string system = CrewPrompts.SystemFor(AicsCrewScenario.For(line.Name, line.Trait));
             if (!InModAiHost.TryCrewLine(system, line.Prompt, txt => post(line.Accept(txt)))) post(null);
         }
@@ -112,7 +112,10 @@ namespace KSPChatBridge
             float now = Time.realtimeSinceStartup;
             var talk = chatter.TalkTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);
             if (talk != null) { StartCoroutine(Converse(talk)); return; }
-            SpeakAll(chatter.TripTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN));
+            var trip = chatter.TripTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);
+            if (trip != null && trip.Count > 0) { SpeakAll(trip); return; }
+            var solo = chatter.SoloTick(now, flying, crew, pilot, "altitude " + vessel.altitude.ToString("0") + " m, speed " + vessel.srfSpeed.ToString("0") + " m/s");
+            if (solo != null) SpeakAll(new List<CrewLine> { solo });
         }
 
         System.Collections.IEnumerator Converse(CrewTalk talk)

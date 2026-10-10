@@ -876,13 +876,88 @@ class Program
             Check(PilotPolicy.EngineWatch(true, false, false, true, false, true) == "restart" && PilotPolicy.EngineWatch(true, false, false, true, true, true) == "none" && PilotPolicy.EngineWatch(true, false, false, false, false, true) == "none", "engine watch: shut down in flight -> relight; ours/grounded -> no");
             var rng = new Random(1); double f = PilotPolicy.FumbleSeconds(rng); Check(f >= 2 && f <= 4, "pilot fumbles 2-4 s");
             string planTxt = PilotPolicy.PlanFromText("make a flight plan fly 100km out, turn around, fly back, land at 27 ksp", true);
-            Check(planTxt == "takeoff\nclimb 1000 m agl\ncruise for 100 km\nturn around\ncruise for 88 km\nland 27 ksp", "planTxt from chat: " + planTxt.Replace("\n", " | "));
+            Check(planTxt == "takeoff\nclimb 1000 m agl\ncruise for 100 km\nturn around\ncruise for 88 km\nland KSC 27", "planTxt from chat: " + planTxt.Replace("\n", " | "));
             var np = NativePlan.Parse(planTxt, name => false, route => false);
             Check(np.Steps.Count == 6 && np.Steps[3].Op == "turnaround" && np.Steps[5].Op == "land", "native plan accepts turn around + fuzzy built-in runway");
-            Check(PilotPolicy.PlanFromText("circle 1 lap, land at KSC", false) == "circle 1 laps left bank 15\nland ksc", "circle then land");
+            Check(PilotPolicy.PlanFromText("circle 1 lap, land at KSC", false) == "circle 1 laps left bank 15\nland KSC", "circle then land");
             Check(FlightResidualPolicy.BuiltInRunway("27 ksp", "").Item2 == "27" && FlightResidualPolicy.BuiltInRunway("nearest runway", "").Item1 == "nearest" && FlightResidualPolicy.RunwayAlias("land at the nearest runway") == "nearest runway", "runway: word order + nearest");
         }
         Console.WriteLine("Round-2 mission preemption / router / roll / plans / engines: 24 behavior checks passed.");
+        // ---- Live round 3: Luke's plan sentence, speed cap, porpoise, telemetry cadence, approach lineup ----
+        {
+            string lp; List<string> uns, nts;
+            bool ok3 = PilotPolicy.TryPlan("Make a flight plan, Take off and climb to 2k, then bank at 25 degrees to the left back to KSP and set for a shortfinal on runway 27, and land.", true, out lp, out uns, out nts);
+            Check(ok3 && lp == "takeoff\nclimb 2000 m msl\nhead KSC bank 25 left\nland KSC 27", "Luke's sentence -> " + lp.Replace("\n", " | ") + " unsure=" + string.Join(",", uns.ToArray()));
+            Check(nts.Exists(n => n.Contains("short final")), "short final reported, not silently dropped");
+            var lpp = NativePlan.Parse(lp, n => false, r => false);
+            Check(lpp.Steps[2].Op == "head" && lpp.Steps[2].Bank == -25 && lpp.Steps[3].Op == "land", "plan grammar: head KSC bank 25 left");
+            Check(PilotPolicy.AltitudeM("2k") == 2000 && PilotPolicy.AltitudeM("2 km") == 2000 && Math.Abs(PilotPolicy.AltitudeM("6500 ft") - 1981.2) < .1 && PilotPolicy.AltitudeM("1500 m") == 1500, "units: k/km/ft/m");
+            Check(!PilotPolicy.TryPlan("make a flight plan, climb to 2, then do a barrel roll over the mun", true, out lp, out uns, out nts) && uns.Count == 2, "unsure -> ask (" + string.Join(" / ", uns.ToArray()) + ")");
+            Check(ToolRouter.Direct("make a flight plan, climb to 2, then do a barrel roll", "plane") == null, "unsure plan goes to the model, not straight to fly");
+            PilotPolicy.TryPlan("plan: takeoff, climb 200 m, land", true, out lp, out uns, out nts);
+            Check(nts.Exists(n => n.Contains("300 m")), "below-floor climb is reported");
+            bool cut3; double th = PilotPolicy.SpeedCapThrottle(.9, 336, 300, 2, out cut3);
+            Check(cut3 && Math.Abs(th - .6) < 1e-9 && PilotPolicy.SpeedCapThrottle(.9, 230, 300, 2, out cut3) == .75 && PilotPolicy.SpeedCapThrottle(.9, 230, 300, .5, out cut3) == .9 && PilotPolicy.SpeedCapThrottle(.9, 300, 7000, 2, out cut3) == .9, "over 220 low down: cut3 15-30% per second");
+            Check(PilotPolicy.HandoffThrottle(1) == .65 && PilotPolicy.EffectiveAltitude(2, 300) == 300 && PilotPolicy.EffectiveAltitude(2000, 300) == 2000, "no full-power handoff; floor becomes the target (no porpoise)");
+            Check(!PilotPolicy.LogsTelemetry("flightplan/status") && !PilotPolicy.LogsTelemetry("get_status") && PilotPolicy.LogsTelemetry("set_throttle"), "telemetry only on real commands (+30 s)");
+            // approach sim: start over KSC buildings, crossing the runway at 70 deg, like Luke's screenshot
+            double R = 600000;
+            var rw3 = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70 };   // land 27
+            double course = NavigationMath.Bearing(rw3.Lat, rw3.Lon, rw3.EndLat, rw3.EndLon);
+            double lat = -.07, lon = -74.56, hdg = 0, alt = 400, spd = 120; double crossAt1k = double.NaN, trkAt1k = double.NaN; bool descendedUnaligned = false; string firstFinal = null;
+            for (int s = 0; s < 1200 && rw3.Phase != "rollout" && rw3.Phase != "go around"; s++)
+            {
+                rw3.Step(lat, lon, alt, alt - 70, spd, alt <= 70.5, R, 45, hdg);
+                if (rw3.Phase == "final" && firstFinal == null) firstFinal = Math.Abs(rw3.Cross).ToString("0");
+                if (rw3.Phase != "final" && rw3.Phase != "flare" && rw3.Phase != "rollout" && rw3.DesiredAltitude < 70 + 799) descendedUnaligned = true;
+                double err = FlightPolicy.Wrap(rw3.DesiredHeading - hdg); hdg = (hdg + Math.Max(-1.7, Math.Min(1.7, err)) + 360) % 360;   // 20 deg bank at 120 m/s
+                alt += Math.Max(-6, Math.Min(10, rw3.DesiredVs)); if (alt < 70) alt = 70;
+                spd += Math.Max(-2, Math.Min(2, rw3.DesiredSpeed - spd)); double nl, no; NavigationMath.Offset(lat, lon, hdg, spd, R, out nl, out no); lat = nl; lon = no;
+                if (double.IsNaN(crossAt1k) && rw3.Phase == "final" && rw3.Distance < 1000) { crossAt1k = Math.Abs(rw3.Cross); trkAt1k = Math.Abs(FlightPolicy.Wrap(hdg - course)); }
+            }
+            Check(firstFinal != null && double.Parse(firstFinal) < RunwayMission.AlignCross, "glideslope only after centerline intercept (cross " + firstFinal + " m)");
+            Check(!descendedUnaligned, "no descent before alignment");
+            Check(!double.IsNaN(crossAt1k) && crossAt1k < RunwayMission.GateCross && trkAt1k < RunwayMission.GateHeading, "aligned at 1 km: " + crossAt1k.ToString("0") + " m / " + trkAt1k.ToString("0.0") + " deg");
+            var gate = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
+            double gl, gn; NavigationMath.Offset(gate.Lat, gate.Lon, course + 180, 800, R, out gl, out gn); NavigationMath.Offset(gl, gn, course + 90, 120, R, out gl, out gn);
+            gate.Step(gl, gn, 120, 50, 70, false, R, 45, course + 20);
+            Check(gate.Phase == "go around" && gate.Why.Contains("not lined up"), "misaligned at 1 km -> go around (" + gate.Why + ")");
+        }
+        {
+            double R = 600000; var g = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
+            double c = NavigationMath.Bearing(g.Lat, g.Lon, g.EndLat, g.EndLon), la, lo;
+            NavigationMath.Offset(g.Lat, g.Lon, c + 180, 6000, R, out la, out lo); g.Step(la, lo, 400, 330, 70, false, R, 45, c);
+            bool far = g.Gear;
+            NavigationMath.Offset(g.Lat, g.Lon, c + 180, 2000, R, out la, out lo); g.Step(la, lo, 180, 110, 60, false, R, 45, c);
+            var o = new RunwayMission { Lat = g.Lat, Lon = g.Lon, EndLat = g.EndLat, EndLon = g.EndLon, Elevation = 70 };
+            NavigationMath.Offset(g.Lat, g.Lon, c + 180, 3000, R, out la, out lo); o.Step(la, lo, 600, 530, 120, false, R, 45, c + 180);
+            Check(!far && g.Gear && !o.Gear && o.Phase == "entry", "gear only on an aligned final inside 3 km, never on the outbound leg");
+        }
+        Console.WriteLine("Round-3 plan parser / speed cap / porpoise / telemetry / approach: 16 behavior checks passed.");
+        // ---- Round 3 (end of session): eject confirm, chatter/alerts, "we passed KSP", status honesty ----
+        {
+            Check(DestructiveConfirm.Needs("eject_kerbal") && DestructiveConfirm.Needs("stage") && DestructiveConfirm.Needs("cut_engines") && !DestructiveConfirm.Needs("set_gear"), "destructive set");
+            string q = DestructiveConfirm.Request("eject_kerbal", "{\"confirmed\":true}", 100);
+            Check(q.StartsWith("NOT DONE") && q.Contains("yes"), "model path: eject held for a yes (even when the model sets confirmed itself)");
+            string rep; Check(DestructiveConfirm.Answer("land at 27", 105, out rep) == null && rep == null && DestructiveConfirm.Pending == "eject_kerbal", "other chat doesn't confirm");
+            var yes = DestructiveConfirm.Answer("Yes", 110, out rep);
+            Check(yes != null && yes.Value.Key == "eject_kerbal" && yes.Value.Value.Contains("\"confirmed\":true") && DestructiveConfirm.Pending == null, "explicit yes runs it once");
+            DestructiveConfirm.Request("stage", "{}", 200);
+            Check(DestructiveConfirm.Answer("no", 205, out rep) == null && rep.StartsWith("Cancelled") && DestructiveConfirm.Pending == null, "no cancels");
+            DestructiveConfirm.Request("stage", "{}", 300);
+            Check(DestructiveConfirm.Answer("yes", 300 + DestructiveConfirm.WindowS + 1, out rep) == null, "a stale yes (after 60 s) does nothing");
+            Check(ToolRouter.Direct("EJECT", "plane") == null && ToolRouter.Direct("eject", "") == null, "router never runs eject directly");
+            var solo = new CrewChatter(new Random(2));
+            var crew1 = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Sidry Kerman", "pilot") };
+            var em = solo.Emergency("flameout", "Wheesley", crew1, "Sidry Kerman", 50);
+            Check(em.Count == 1 && em[0].Name == "Sidry Kerman" && em[0].Trait == "pilot", "solo pilot reacts to emergencies (was silent)");
+            CrewLine sl = null; for (int s = 0; s < 2000 && sl == null; s += 5) sl = solo.SoloTick(400 + s, true, crew1, "Sidry Kerman", "altitude 900 m, speed 150 m/s");
+            Check(sl != null && sl.Name == "Sidry Kerman" && sl.AllowedNumbers.Contains("900"), "solo idle chatter every 4-8 min");
+            Check(ToolRouter.Direct("we are flying away from ksp", "plane").Value.Key == "land", "'we are flying away from ksp' -> resume landing");
+            Check(ToolRouter.Direct("we passed the runway", "plane").Value.Key == "land", "'we passed the runway' -> land");
+            Check(PilotPolicy.StatusLine("hold", "Aeris 3A", null, double.NaN, 900, 150, 273, 0).Contains("NOT landing") && PilotPolicy.StatusLine("landing", "Aeris 3A", "intercept", 8000, 900, 150, 273, 0).Contains("LANDING (intercept, 8.0 km"), "status says plainly whether we're landing");
+        }
+        Console.WriteLine("Round-3 confirm / chatter / passed-KSP / status: 13 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

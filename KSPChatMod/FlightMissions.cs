@@ -58,22 +58,45 @@ namespace KSPChatBridge
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
         internal bool Gear, Brakes;
         internal double Distance;
-        internal void Step(double lat, double lon, double altitude, double agl, double speed, bool grounded, double radius, double stall)
+        internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
+        internal double Cross, Along;
+        internal string Why = "";
+        /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
+        /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
+        /// and go around if not aligned within 40 m / 6 deg by 1 km out. track = ground track (NaN = unknown).</summary>
+        internal void Step(double lat, double lon, double altitude, double agl, double speed, bool grounded, double radius, double stall, double track = double.NaN)
         {
             double course = NavigationMath.Bearing(Lat, Lon, EndLat, EndLon);
             double d = NavigationMath.Distance(Lat, Lon, lat, lon, radius);
             double theta = FlightPolicy.Wrap(NavigationMath.Bearing(Lat, Lon, lat, lon) - course) * Math.PI / 180;
             double along = d * Math.Cos(theta), cross = d * Math.Sin(theta);
+            Cross = cross; Along = along;
             Distance = Math.Max(0, -along);
+            double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
             if (Phase == "entry")
             {
-                double entryLat, entryLon;
-                NavigationMath.Offset(Lat, Lon, course + 180, 11000, radius, out entryLat, out entryLon);
-                double entryDistance = NavigationMath.Distance(lat, lon, entryLat, entryLon, radius);
-                DesiredHeading = NavigationMath.Bearing(lat, lon, entryLat, entryLon);
+                double fixLat, fixLon, turnR = Math.Max(800, speed * speed / (9.81 * Math.Tan(20 * Math.PI / 180)));
+                NavigationMath.Offset(Lat, Lon, course + 180, IfDistance, radius, out fixLat, out fixLon);
+                // Outbound (heading away from the runway) or abeam: aim for a base point 2 turn radii to our side of the fix,
+                // so the 180 deg turn back rolls out on the centerline instead of overshooting it.
+                bool outbound = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(track - course)) > 90;
+                if (outbound || -along < IfDistance - 2000) NavigationMath.Offset(fixLat, fixLon, course + (cross >= 0 ? 90 : -90), 2 * turnR, radius, out fixLat, out fixLon);
+                double fixDistance = NavigationMath.Distance(lat, lon, fixLat, fixLon, radius);
+                DesiredHeading = NavigationMath.Bearing(lat, lon, fixLat, fixLon);
                 DesiredAltitude = Elevation + 800; DesiredSpeed = Math.Max(1.5 * stall, Math.Min(150, speed));
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
-                if (entryDistance < 800 && Math.Abs(cross) < 800) Phase = "final";
+                // already out on the extended centerline beyond the FAF -> intercept straight away
+                bool inbound = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(track - course)) < 60;
+                if (fixDistance < 1500 || (-along > FafDistance + 2000 && Math.Abs(cross) < 2500 && inbound)) Phase = "intercept";
+            }
+            if (Phase == "intercept")
+            {
+                double lead = Math.Max(2500, 1.2 * speed * speed / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
+                DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(cross, lead) * 180 / Math.PI, -40, 40);
+                DesiredAltitude = Elevation + 800; DesiredSpeed = Math.Max(1.4 * stall, Math.Min(140, speed));
+                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -6, 10);
+                if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
+                else if (-along < FafDistance) { Phase = "entry"; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {
@@ -81,8 +104,9 @@ namespace KSPChatBridge
                 DesiredAltitude = Elevation + Math.Max(3, (350 - along) * Math.Tan(3 * Math.PI / 180));
                 DesiredSpeed = (agl < 30 ? 1.15 : 1.3) * stall;
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .2, -4.5, 3);
-                Gear = Distance < 2500 || Distance / Math.Max(1, speed) < 30 || agl < 80;
+                Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || agl < 80;   // only on an aligned short final
                 if (agl < 15) { Phase = "flare"; DesiredVs = agl > 5 ? -2 : -1; }
+                if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
                 if (!grounded && along > length - 200 && agl > 3) Phase = "go around";

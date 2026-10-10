@@ -46,6 +46,7 @@ namespace KSPChatBridge
                 else if (Regex.IsMatch(low, @"^circle\b")) step.Op = "circle";
                 else if (Regex.IsMatch(low, @"^wait\b")) step.Op = "wait";
                 else if (Regex.IsMatch(low, @"^turn\s+(around|back)$")) step.Op = "turnaround";
+                else if (Regex.IsMatch(low, @"^head\b")) { step.Op = "head"; step.Destination = Regex.Match(low, @"^head\s+(?:to\s+)?([a-z0-9]+)").Groups[1].Value; }
                 else if (Regex.IsMatch(low, @"^taxi\s+to\s+")) { step.Op = "taxi"; step.Destination = line.Substring(8).Trim(); }
                 else if (Regex.IsMatch(low, @"^land\b")) { step.Op = "land"; step.Destination = line.Substring(4).Trim(); }
                 else throw new ArgumentException("Local plan step not yet supported: " + line);
@@ -55,6 +56,7 @@ namespace KSPChatBridge
                 string duration = number + @"\s*(?:s|sec(?:ond)?s?|min(?:ute)?s?)?";
                 string grammar = step.Op == "takeoff" ? @"take\s?off"
                     : step.Op == "turnaround" ? @"turn\s+(?:around|back)"
+                    : step.Op == "head" ? @"head\s+(?:to\s+)?(?:ksc|ksp|home|base|island)(?:\s+bank\s+" + number + @")?(?:\s+(?:left|right))?"
                     : step.Op == "climb" ? @"(?:climb|descend)\s+" + altitudeOption + holdOptions
                     : step.Op == "cruise" ? "cruise" + holdOptions + @"(?:\s+for\s+(?:" + duration + "|" + number + @"\s*km))?"
                     : step.Op == "circle" ? @"circle(?:\s+" + number + @"(?:\s+laps?)?)?(?:\s+(?:left|right))?(?:\s+bank\s+" + number + ")?" + holdOptions
@@ -80,7 +82,8 @@ namespace KSPChatBridge
                 double km = Read(low, @"\bfor\s+(\d+(?:\.\d+)?)\s*km\b", -1);
                 if (km >= 0) step.Distance = km * 1000;
                 step.Laps = Read(low, @"circle\s+(\d+(?:\.\d+)?)", 1);
-                step.Bank = FlightPolicy.Clamp(Read(low, @"bank\s+(\d+(?:\.\d+)?)", 15), 5, 20) * (low.Contains("left") ? -1 : 1);
+                step.Bank = FlightPolicy.Clamp(Read(low, @"bank\s+(\d+(?:\.\d+)?)", 15), 5, step.Op == "head" ? 45 : 20) * (low.Contains("left") ? -1 : 1);
+                if (step.Op == "head" && !low.Contains("left") && !low.Contains("right")) step.Bank = 0;   // 0 = normal heading turn
                 if (step.Op == "climb" && step.Altitude < 0) throw new ArgumentException("Climb/descend requires altitude");
                 if (step.Seconds <= 0 || step.Seconds > 86400 || step.Laps <= 0 || step.Laps > 100 || step.Heading > 360 || step.Speed > 200
                     || (step.VerticalSpeed != -999 && Math.Abs(step.VerticalSpeed) > 90) || step.Distance == 0)

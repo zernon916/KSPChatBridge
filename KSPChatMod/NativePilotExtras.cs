@@ -74,15 +74,18 @@ namespace KSPChatBridge
                 case "make_flight_plan":
                 {
                     string text = Str(a, "plan", "");
+                    var notes = new List<string>();
                     if (text.Trim().Length == 0)
                     {
-                        try { text = PilotPolicy.PlanFromText(Str(a, "request", ""), vessel.LandedOrSplashed); }
-                        catch (ArgumentException ex) { return ex.Message; }
+                        List<string> unsure;
+                        if (!PilotPolicy.TryPlan(Str(a, "request", ""), vessel.LandedOrSplashed, out text, out unsure, out notes))
+                            return "Not flying that yet - I'm not sure about: \"" + string.Join("\", \"", unsure.ToArray()) + "\". Can you say those steps another way? (I understood: " + text.Replace("\n", " / ") + ")";
                     }
                     try { ParsePlan(text); } catch (ArgumentException ex) { return "Plan not valid: " + ex.Message + "\n" + text; }
                     AicsMenu.LoadPlan(text);
-                    if (!Bool(a, "fly", true)) return "Plan written (in the Flight Plan editor):\n" + text;
-                    return Command("flightplan/fly", Args("plan", text)) + "\n" + text;
+                    string note = notes.Count > 0 ? "\nNotes: " + string.Join("; ", notes.ToArray()) : "";
+                    if (!Bool(a, "fly", true)) return "Plan written (in the Flight Plan editor):\n" + text + note;
+                    return Command("flightplan/fly", Args("plan", text)) + "\n" + text + note;
                 }
             }
             return null;

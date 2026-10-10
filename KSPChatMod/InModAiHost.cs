@@ -65,6 +65,15 @@ namespace KSPChatBridge
             try { voice = NativeFlightController.Voice(); } catch (Exception) { voice = new KeyValuePair<string, string>("AICS", ""); }
             string craft = "";
             try { craft = NativeFlightController.CraftKind(); } catch (Exception) { }
+            string confirmReply;
+            var confirmed = DestructiveConfirm.Answer(text, Time.realtimeSinceStartup, out confirmReply);
+            if (confirmReply != null) { ChatWindow.ReleasePendingChat(); ChatWindow.Notice(CrewVoice.Line(voice.Key, confirmReply)); return; }
+            if (confirmed != null)
+            {
+                string cres;
+                try { cres = NativeFlightController.Execute(confirmed.Value.Key, confirmed.Value.Value); } catch (Exception ex) { cres = "Couldn't: " + ex.Message; }
+                ChatLog.Write("result", cres); ChatWindow.ReleasePendingChat(); ChatWindow.Notice(CrewVoice.Line(voice.Key, cres)); return;
+            }
             var direct = ToolRouter.Direct(text, craft);
             ChatLog.Write("router", direct == null ? "model (" + text + ")" : "direct " + direct.Value.Key + " " + direct.Value.Value);
             if (direct != null && NativeFlightController.OwnsControls)   // clear command: no model round-trip
@@ -199,6 +208,7 @@ namespace KSPChatBridge
             {
                 try
                 {
+                    if (DestructiveConfirm.Needs(name)) { result = DestructiveConfirm.Request(name, argsJson, Time.realtimeSinceStartup); return; }   // model path: never run without Luke's yes
                     if (NativeCommands.IsPorted(name))
                     {
                         string local = NativeFlightController.Execute(name, argsJson ?? "{}");

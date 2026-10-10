@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -296,6 +296,13 @@ namespace KSPChatBridge
                 outp.Add(new CrewLine { Name = name, Trait = tr, Canned = char.ToUpperInvariant(text[0]) + text.Substring(1), Prompt = CrewPrompts.Emergency(Who(name), facts) });
                 last[name] = now; seen.Add(tr);
             }
+            if (outp.Count == 0 && others.Count == 0 && !string.IsNullOrEmpty(pilot) && (!last.ContainsKey(pilot) || now - last[pilot] >= MemberGapS))   // solo flight: the pilot reacts
+            {
+                string[] pool = PilotLines.ContainsKey(kind ?? "") ? PilotLines[kind] : PilotLines["any"];
+                string text = pool[rng.Next(pool.Length)].Replace("{part}", p).Replace("{part_the}", pthe);
+                outp.Add(new CrewLine { Name = pilot, Trait = "pilot", Canned = text, Prompt = CrewPrompts.Emergency(Who(pilot), facts) });
+                last[pilot] = now;
+            }
             return outp;
         }
 
@@ -320,6 +327,28 @@ namespace KSPChatBridge
         }
 
         internal static string FmtEta(double s) { int i = (int)Math.Round(s); return i >= 120 ? i / 60 + " min" : i >= 60 ? i / 60 + " min " + i % 60 + " s" : i + " s"; }
+
+        static readonly Dictionary<string, string[]> PilotLines = new Dictionary<string, string[]>
+        {
+            { "flameout", new[] { "Engine out! Hang on, relighting {part_the}...", "Lost {part_the}! Working the restart.", "Flameout! Give me a second, Captain." } },
+            { "parts", new[] { "We just lost {part_the}! Holding her steady.", "Something tore off - {part_the}. Still flying." } },
+            { "overheat", new[] { "{part} is running hot, easing off.", "Temperature warning on {part_the}!" } },
+            { "any", new[] { "Whoa - that wasn't good. On it, Captain.", "Problem with {part_the}! I've got it." } },
+        };
+        internal const double SoloMinS = 240, SoloMaxS = 480;
+        double? soloDue;
+        static readonly string[] SoloCanned = { "Smooth air up here, Captain.", "She's flying nicely today.", "Nice view of the coast from here.", "All gauges green. Enjoying this one.", "Wind's calm. Couldn't ask for better." };
+        /// <summary>Solo pilot idle remark every 4-8 min of calm flight (no passengers to chat with).</summary>
+        internal CrewLine SoloTick(double now, bool flying, IList<KeyValuePair<string, string>> crew, string pilot, string facts)
+        {
+            if (!Enabled || !flying || string.IsNullOrEmpty(pilot) || Others(crew, pilot).Count > 0) { soloDue = null; return null; }
+            if (now - lastEmerg < CalmAfterEmergencyS) return null;
+            if (soloDue == null) { soloDue = now + SoloMinS + rng.NextDouble() * (SoloMaxS - SoloMinS); return null; }
+            if (now < soloDue.Value) return null;
+            soloDue = now + SoloMinS + rng.NextDouble() * (SoloMaxS - SoloMinS);
+            return new CrewLine { Name = pilot, Trait = "pilot", Canned = SoloCanned[rng.Next(SoloCanned.Length)], AllowedNumbers = CrewLine.Numbers(facts),
+                Prompt = "You are flying alone. Say one short, in-character remark to the Captain about the flight. Facts: " + facts + ". Use no other numbers." };
+        }
 
         bool Eligible(double now, string vesselId, bool flying, bool tripActive, bool emergency)
         {

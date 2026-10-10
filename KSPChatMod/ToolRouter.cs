@@ -89,7 +89,8 @@ namespace KSPChatBridge
         {
             string m = (message ?? "").Trim().ToLowerInvariant().TrimEnd('.', '!', '?');
             Func<string, string, KeyValuePair<string, string>?> R = (t, a) => Fits(t, craft) && !Destructive.Contains(t) ? new KeyValuePair<string, string>(t, a) : (KeyValuePair<string, string>?)null;
-            if (Regex.IsMatch(m, @"^(make|write|create|build) (me )?(a )?(flight )?plan\b|^flight plan:|^plan:") && m.Length <= 400)
+            string confident; List<string> unsureP, notesP;
+            if (Regex.IsMatch(m, @"^(make|write|create|build) (me )?(a )?(flight )?plan\b|^flight plan:|^plan:") && m.Length <= 400 && PilotPolicy.TryPlan(message, false, out confident, out unsureP, out notesP))
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize(message.Trim()) + "}");
             if (Regex.IsMatch(m, @"^(land and circle|circle and land|circle (the )?runway (and|then) land)") && m.Length <= 80)   // circle first, then land
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize("circle 1 lap, land at KSC") + "}");
@@ -112,6 +113,7 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^(turn off (the )?autopilot|autopilot off|disengage (the )?autopilot)$")) return R("autopilot", "{\"on\":false}");
             if (Regex.IsMatch(m, @"^land( at| on)? (the )?(nearest|closest)( runway)?$")) return R("land", "{\"where\":\"nearest runway\"}");
             if (Regex.IsMatch(m, @"^circle( the)?( runway| here| field| ksc)?$")) return R("circle_here", "{}");
+            if (Regex.IsMatch(m, @"\b(flying away from|passed|overflew|overshot|missed|went past) (the )?(ksp|ksc|runway|airport|base)\b|\bturn (back|around) and land\b|\bgo back and land\b")) return R("land", "{}");   // round 3: "we passed KSP" = resume the landing
             var f = Regex.Match(m, @"^flaps? ([0-3]|up|full|down)$"); if (f.Success) return R("flaps", "{\"setting\":\"" + f.Groups[1].Value + "\"}");
             if (Regex.IsMatch(m, @"^(retract|raise) (the )?flaps$")) return R("flaps", "{\"setting\":\"up\"}");
             var l = Regex.Match(m, @"^land( (now|here))?$"); if (l.Success) return R("land", "{}");

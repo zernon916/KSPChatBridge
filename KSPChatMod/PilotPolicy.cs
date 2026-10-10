@@ -58,42 +58,131 @@ namespace KSPChatBridge
         }
         internal static double FumbleSeconds(Random rng) { return 2 + 2 * (rng ?? new Random()).NextDouble(); }
 
-        // ---- flight plan from chat text ----
-        static readonly Regex Num = new Regex(@"(\d+(?:\.\d+)?)\s*(km|kilomet\w*|m|meters?|metres?|ft|feet)?", RegexOptions.IgnoreCase);
-        /// <summary>Natural request ("fly 100km out, turn around, fly back, land at 27 ksp") -> native plan text. Throws on nothing usable.</summary>
-        internal static string PlanFromText(string request, bool grounded)
+        // ---- flight plan from chat text (round 3: units, bank/return, short final, runway; unsure -> ask) ----
+        static readonly Regex Qty = new Regex(@"(\d+(?:\.\d+)?)\s*(km|k\b|kilomet\w*|ft|feet|foot|m\b|meters?|metres?|nm|mi(?:les?)?)?", RegexOptions.IgnoreCase);
+        static readonly Regex Filler = new Regex(@"^(please|ok|okay|now|then|and|also|a|the)$");
+
+        /// <summary>Metres for an altitude phrase ("2k", "2 km", "6500 ft", "1500 m", "1500"). NaN if none.</summary>
+        internal static double AltitudeM(string p)
         {
-            string t = (request ?? "").ToLowerInvariant();
-            t = Regex.Replace(t, @"^(please\s+)?(make|write|create|build|do)\s+(me\s+)?(a\s+)?(flight\s+)?plan\s*(to|that|:|-)?\s*", "");
-            var parts = Regex.Split(t, @"\s*(?:,|;|\bthen\b|\band then\b|\band\b|\.\s)\s*");
-            var lines = new List<string>(); double outKm = -1; bool tookOff = false;
+            var m = Qty.Match(p ?? ""); if (!m.Success) return double.NaN;
+            double v = double.Parse(m.Groups[1].Value, Inv); string u = m.Groups[2].Value.ToLowerInvariant();
+            if (u.StartsWith("k")) return v * 1000;
+            if (u.StartsWith("f")) return v * .3048;
+            return v;
+        }
+        static string RunwayIn(string p)
+        {
+            var d = Regex.Match(p, @"\b(0?9|27)\b"); bool island = Regex.IsMatch(p, @"\bisland|isle\b");
+            if (!d.Success && !island && !Regex.IsMatch(p, @"\b(ksc|ksp|runway|home|base)\b")) return null;
+            return (island ? "Island" : "KSC") + (d.Success ? " " + (d.Groups[1].Value == "27" ? "27" : "09") : "");
+        }
+
+        /// <summary>Natural request -> native plan. unsure lists fragments it could not read with confidence (then ask, don't fly).</summary>
+        internal static bool TryPlan(string request, bool grounded, out string plan, out List<string> unsure, out List<string> notes)
+        {
+            unsure = new List<string>(); notes = new List<string>(); plan = "";
+            string t = (request ?? "").ToLowerInvariant().Replace("short final", "shortfinal").Replace("short-final", "shortfinal");
+            t = Regex.Replace(t, @"^\s*(please\s+)?(make|write|create|build|do)\s+(me\s+)?(a\s+)?(flight\s+)?plan\s*(to|that|for|:|-|,)?\s*", "");
+            t = Regex.Replace(t, @"^\s*(flight\s+)?plan\s*:\s*", "");
+            var parts = Regex.Split(t, @"\s*(?:,|;|\band then\b|\bthen\b|\band\b|\.(?:\s|$))\s*");
+            var lines = new List<string>(); double outKm = -1; bool tookOff = false; string runway = null, landRunway = null; bool shortFinal = false, landed = false;
             foreach (string raw in parts)
             {
-                string p = raw.Trim(); if (p.Length == 0) continue;
-                Match n = Num.Match(p);
-                double val = n.Success ? double.Parse(n.Groups[1].Value, Inv) : -1; string unit = n.Success ? n.Groups[2].Value : "";
-                if (Regex.IsMatch(p, @"^take ?off")) { lines.Add("takeoff"); tookOff = true; }
-                else if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bu-?turn\b|\breverse course\b")) lines.Add("turn around");
-                else if (Regex.IsMatch(p, @"\b(fly|go|head|come|return)\s+(back|home)\b|\breturn\b"))
-                    lines.Add("cruise for " + (outKm > 0 ? Math.Max(5, outKm - 12) : 30).ToString("0", Inv) + " km");
-                else if (Regex.IsMatch(p, @"\b(fly|cruise|go|head)\b") && val > 0 && (unit.StartsWith("k") || p.Contains("out")))
-                { outKm = unit.StartsWith("k") ? val : val / 1000; lines.Add("cruise for " + outKm.ToString("0.#", Inv) + " km"); }
-                else if (Regex.IsMatch(p, @"\b(fly|cruise)\b") && val > 0 && Regex.IsMatch(p, @"\bmin"))
-                    lines.Add("cruise for " + val.ToString("0", Inv) + " min");
-                else if (Regex.IsMatch(p, @"\b(climb|ascend|descend|altitude)\b") && val > 0)
-                    lines.Add((p.Contains("descend") ? "descend " : "climb ") + (unit.StartsWith("k") ? val * 1000 : unit.StartsWith("f") ? val * .3048 : val).ToString("0", Inv) + " m msl");
-                else if (Regex.IsMatch(p, @"\bcircle|orbit the|loiter"))
-                    lines.Add("circle " + (val > 0 && val < 20 ? val.ToString("0", Inv) : "1") + " laps " + (p.Contains("right") ? "right" : "left") + " bank 15");
-                else if (Regex.IsMatch(p, @"^land\b|\bland (at|on)\b"))
+                string p = raw.Trim().TrimEnd('.', '!'); if (p.Length == 0 || Filler.IsMatch(p)) continue;
+                string rw = RunwayIn(p);
+                if (Regex.IsMatch(p, @"^take ?off")) { lines.Add("takeoff"); tookOff = true; continue; }
+                if (Regex.IsMatch(p, @"\b(climb|ascend|descend|altitude|level off at)\b"))
+                {
+                    double alt = AltitudeM(p);
+                    if (double.IsNaN(alt)) { unsure.Add(p); continue; }
+                    if (alt < 100 && !Regex.IsMatch(p, @"\d\s*(m\b|meters?|metres?)")) { unsure.Add(p + " (" + alt.ToString("0", Inv) + " m? say e.g. 2k or 2000 m)"); continue; }
+                    if (alt < 300) notes.Add("climb " + alt.ToString("0", Inv) + " m is below the 300 m terrain safety floor; it will hold the floor");
+                    lines.Add((p.Contains("descend") ? "descend " : "climb ") + alt.ToString("0", Inv) + " m " + (p.Contains("agl") ? "agl" : "msl"));
+                    continue;
+                }
+                if (p.Contains("shortfinal") || Regex.IsMatch(p, @"\b(set up|line up|set for|approach)\b"))
+                {
+                    if (p.Contains("shortfinal")) { shortFinal = true; notes.Add("short final: standard approach used (short final not supported yet)"); }
+                    if (rw != null) runway = rw; else if (!p.Contains("shortfinal")) unsure.Add(p);
+                    continue;
+                }
+                var bank = Regex.Match(p, @"\b(?:bank|turn|roll)\b(?:\s+at)?(?:\s+(\d{1,2})\s*(?:deg\w*)?)?(?:\s+(?:to\s+the\s+)?(left|right))?");
+                bool back = Regex.IsMatch(p, @"\b(back|return|home|head(?:ing)?)\b") || Regex.IsMatch(p, @"\bto (ksc|ksp|the runway|base)\b");
+                if (bank.Success && back || Regex.IsMatch(p, @"^(return|head|go|fly) (back )?(home|to (ksc|ksp|base|the runway))$|^(return|head) back$|^(fly|go|come) back$"))
+                {
+                    if (outKm > 0 && !bank.Success && !Regex.IsMatch(p, @"ksc|ksp|home|base|runway")) { lines.Add("cruise for " + Math.Max(5, outKm - 12).ToString("0", Inv) + " km"); continue; }
+                    string side = Regex.IsMatch(p, @"\bleft\b") ? " left" : Regex.IsMatch(p, @"\bright\b") ? " right" : "";
+                    double deg = bank.Success && bank.Groups[1].Success ? double.Parse(bank.Groups[1].Value, Inv) : 15;
+                    lines.Add("head KSC bank " + deg.ToString("0", Inv) + side);
+                    if (rw != null && Regex.IsMatch(rw, @"\d")) runway = rw;
+                    continue;
+                }
+                if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bu-?turn\b|\breverse course\b")) { lines.Add("turn around"); continue; }
+                if (Regex.IsMatch(p, @"\b(fly|cruise|go|head)\b") && Regex.IsMatch(p, @"\d") && Regex.IsMatch(p, @"\bmin"))
+                { lines.Add("cruise for " + AltitudeM(p).ToString("0", Inv) + " min"); continue; }
+                if (Regex.IsMatch(p, @"\b(fly|cruise|go|head)\b") && Regex.IsMatch(p, @"\d"))
+                {
+                    var q = Qty.Match(p); double v = double.Parse(q.Groups[1].Value, Inv); string u = q.Groups[2].Value.ToLowerInvariant();
+                    if (u.Length == 0 && !p.Contains("out")) { unsure.Add(p); continue; }
+                    outKm = u.StartsWith("k") || u.Length == 0 ? v : u == "nm" ? v * 1.852 : u.StartsWith("mi") ? v * 1.609 : v / 1000;
+                    lines.Add("cruise for " + outKm.ToString("0.#", Inv) + " km"); continue;
+                }
+                if (Regex.IsMatch(p, @"\bcircle|loiter"))
+                {
+                    var n = Regex.Match(p, @"(\d+)\s*(laps?|times|circles?)"); double b = AltitudeM(Regex.Match(p, @"bank\s+\d+").Value.Replace("bank", ""));
+                    lines.Add("circle " + (n.Success ? n.Groups[1].Value : "1") + " laps " + (p.Contains("right") ? "right" : "left") + " bank " + (double.IsNaN(b) ? 15 : Math.Min(20, b)).ToString("0", Inv));
+                    continue;
+                }
+                if (Regex.IsMatch(p, @"^land\b|\bland (at|on)\b|^touch ?down"))
                 {
                     string where = Regex.Replace(p, @"^.*?\bland\b\s*(at|on)?\s*(the\s+)?", "").Trim();
-                    lines.Add("land " + (where.Length > 0 ? where : "KSC"));
+                    landRunway = where.Length > 0 ? RunwayIn(where) : runway;
+                    if (where.Length > 0 && landRunway == null) { unsure.Add(p); continue; }
+                    if (landRunway == null) { landRunway = "KSC"; notes.Add("no runway named: landing at KSC (end chosen by approach)"); }
+                    lines.Add("land " + landRunway); landed = true; continue;
                 }
-                else if (Regex.IsMatch(p, @"^wait") && val > 0) lines.Add("wait " + val.ToString("0", Inv) + (p.Contains("min") ? " min" : " s"));
+                if (Regex.IsMatch(p, @"^wait") && Regex.IsMatch(p, @"\d")) { lines.Add("wait " + AltitudeM(p).ToString("0", Inv) + (p.Contains("min") ? " min" : " s")); continue; }
+                unsure.Add(p);
             }
-            if (lines.Count == 0) throw new ArgumentException("I couldn't turn that into plan steps (try: takeoff, climb 1000 m, fly 100 km out, turn around, fly back, circle, land at KSC 27).");
-            if (grounded && !tookOff) { lines.Insert(0, "takeoff"); if (!lines.Exists(l => l.StartsWith("climb"))) lines.Insert(1, "climb 1000 m agl"); }
-            return string.Join("\n", lines.ToArray());
+            if (!landed && runway != null) { lines.Add("land " + runway); notes.Add("added the landing on " + runway); }
+            if (lines.Count == 0 && unsure.Count == 0) unsure.Add(request ?? "");
+            if (grounded && !tookOff && lines.Count > 0) { lines.Insert(0, "takeoff"); if (!lines.Exists(l => l.StartsWith("climb"))) lines.Insert(1, "climb 1000 m agl"); }
+            plan = string.Join("\n", lines.ToArray());
+            return unsure.Count == 0;
+        }
+
+        /// <summary>Old entry point: throws (with the question to ask) unless the parse is fully confident.</summary>
+        internal static string PlanFromText(string request, bool grounded)
+        {
+            string plan; List<string> unsure, notes;
+            if (!TryPlan(request, grounded, out plan, out unsure, out notes))
+                throw new ArgumentException("I'm not sure about: \"" + string.Join("\", \"", unsure.ToArray()) + "\". Can you say those steps another way (e.g. climb 2000 m, head to KSC bank 25 left, land KSC 27)?");
+            return plan;
+        }
+
+        // ---- round 3: speed cap (200 target / 220 cap low down) and altitude target vs terrain floor ----
+        internal const double CapSpeed = 220, CapAltitude = 6000;
+        /// <summary>Throttle after the over-cap rule: over 220 m/s low down, cut 15% (30% when 30+ over) at most once a second.</summary>
+        internal static double SpeedCapThrottle(double throttle, double ias, double altitude, double sinceLastCut, out bool cut)
+        {
+            cut = false;
+            if (altitude >= CapAltitude || ias <= CapSpeed || sinceLastCut < 1) return throttle;
+            cut = true; return Math.Max(.05, throttle - (ias > CapSpeed + 30 ? .3 : .15));
+        }
+        /// <summary>Hold the higher of the target and the terrain floor as the altitude target (no fighting VS overrides = no porpoise).</summary>
+        internal static double EffectiveAltitude(double target, double terrainFloor)
+        {
+            return double.IsNaN(terrainFloor) ? target : Math.Max(target, terrainFloor);
+        }
+        /// <summary>Takeoff -> hold hand-off throttle: never leave full power on.</summary>
+        internal static double HandoffThrottle(double throttle) { return Math.Min(throttle, .65); }
+
+        /// <summary>Telemetry on command only for real orders, not UI polling (flightplan/status, get_*).</summary>
+        internal static bool LogsTelemetry(string tool)
+        {
+            tool = tool ?? "";
+            return !(tool.Contains("/") || tool.StartsWith("get_") || tool.StartsWith("list_") || tool.EndsWith("_status") || tool.EndsWith("_report") || tool == "how_far" || tool == "fuel_check");
         }
 
         // ---- small-model prompt hygiene ----
@@ -106,6 +195,14 @@ namespace KSPChatBridge
             foreach (string line in notesBlock.Split('\n'))
                 if (!line.StartsWith("- ") || !SpaceNote.IsMatch(line)) keep.Add(line);
             return keep.Count <= 1 ? "" : string.Join("\n", keep.ToArray());
+        }
+
+        /// <summary>get_status: say plainly whether we are landing (the model said "autopilot is off" while it was in hold).</summary>
+        internal static string StatusLine(string mode, string craft, string landingPhase, double distance, double alt, double spd, double hdg, int planStep)
+        {
+            string what = mode == "idle" ? "autopilot OFF (manual)" : mode == "landing" ? "LANDING (" + landingPhase + ", " + (double.IsNaN(distance) ? "?" : (distance / 1000).ToString("0.0", Inv) + " km") + " to the runway)"
+                : mode == "hold" ? "autopilot ON, holding (NOT landing)" : "autopilot " + mode;
+            return craft + ": " + what + (planStep > 0 ? ", flight plan step " + planStep : "") + "; alt " + alt.ToString("0", Inv) + " m, " + spd.ToString("0", Inv) + " m/s, heading " + hdg.ToString("000", Inv) + ".";
         }
 
         internal const string ToolRules = "\nRULES: To change anything in the game you MUST call a tool (<tool_call>). Never say you did something unless a tool result says so; if a tool fails, say what failed. If no listed tool fits, call find_tool. Answer in one short sentence.";

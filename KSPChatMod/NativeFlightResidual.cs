@@ -243,6 +243,8 @@ namespace KSPChatBridge
                 }
                 case "get_landing_eta":
                 {
+                    if (mode != "landing") return "Not landing right now (autopilot: " + mode + "). Say land at <runway> to start an approach.";
+                    if (runway != null && runway.Phase != "final" && runway.Phase != "flare") return "On the approach (" + runway.Phase + "), " + FlightResidualPolicy.Distance(runway.Distance) + " from the threshold; the descent starts once lined up.";
                     double eta = FlightResidualPolicy.LandingEta(vessel.LandedOrSplashed ? 0 : vessel.radarAltitude, vessel.verticalSpeed);
                     return "{\"agl_m\":" + vessel.radarAltitude.ToString("0", Inv) + ",\"vertical_speed\":" + vessel.verticalSpeed.ToString("0.0", Inv)
                         + ",\"eta_s\":" + (double.IsNaN(eta) ? "null" : eta.ToString("0", Inv)) + "}";
