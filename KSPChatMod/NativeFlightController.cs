@@ -39,7 +39,7 @@ namespace KSPChatBridge
         bool settingsWritable = true;
         NativeSpots spots;
         NativeCraftNotes craftNotes;
-        float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double landMass0, landStall0; string loggedSmooth = "";
+        float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly SCurve pitchS = new SCurve(); double landMass0, landStall0; string loggedSmooth = "";
         readonly AlertGate alertGate = new AlertGate();
         string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
         double planBank, prevSpd = -1; bool capLifted;
@@ -481,16 +481,25 @@ namespace KSPChatBridge
                 double bank = directBank ?? FlightPolicy.Clamp(.5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -blim, blim);
                 bank = landBank && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
+                if (!vessel.LandedOrSplashed && !directBank.HasValue)
+                {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry)
+                    double want = bank; bank = TurnOnset.Bank(bankCmd, want, dt); bankCmd = bank;
+                    if (Math.Abs(want) > 30 && Math.Abs(bankPrevWant) < 10) gTraceUntil = Time.realtimeSinceStartup + 6;
+                    bankPrevWant = want;
+                    if (Time.realtimeSinceStartup < gTraceUntil && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + .5f; ChatLog.Write("g", "turn entry: want=" + want.ToString("0") + " cmd=" + bankCmd.ToString("0") + " bank=" + Roll().ToString("0") + " n=" + vessel.geeForce.ToString("0.00")); }
+                }
+                else bankCmd = vessel.LandedOrSplashed ? 0 : bank;
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, stall, decel);   // no tight turns while slow / bleeding speed
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kin * (targetVs - vessel.verticalSpeed) + vsIntegral, targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
                 if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
-                if (!vessel.LandedOrSplashed) desiredPitch += ApproachProfile.TurnPitch(Roll());   // back-pressure in turns so it does not sag
+                if (!vessel.LandedOrSplashed) desiredPitch += ApproachProfile.TurnPitch(bankCmd);   // back-pressure follows the ramped bank
+                if (vessel.LandedOrSplashed) pitchS.Reset(); else desiredPitch = pitchS.Step(desiredPitch, dt);   // S-curve: no steps into the pitch PID
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : 3;   // joins maneuver to the dynamic limit; final/flare stay gentle
             { double pr = PilotPolicy.MaxPitchRate(vessel.srfSpeed, gLim) * dt; desiredPitch = FlightPolicy.Clamp(desiredPitch, lastDesiredPitch - pr, lastDesiredPitch + pr); lastDesiredPitch = desiredPitch; }   // 3 g limit
                 pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
-                double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .012 * q + pitchIntegral, -1, 1);
+                double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral + TurnOnset.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, gLim);
                 elevator = Mathf.MoveTowards(elevator, (float)PilotPolicy.PitchCommand(pitchOut, roll), (float)(.35 * dt));
                 if (holdAltitude || directVs.HasValue || directPitch.HasValue) c.pitch = elevator;

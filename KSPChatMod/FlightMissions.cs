@@ -146,6 +146,40 @@ namespace KSPChatBridge
         internal static bool NeedsReplan(double planned, double now) { return planned > 0 && Math.Abs(now - planned) / planned > Replan; }
     }
 
+    /// <summary>Turn-onset smoothing (Luke: choppy g at turn entry). Bank command ramps with a roll-rate limit AND a g-onset
+    /// limit (~1.25 g/s on n = 1/cos(bank)); reversals ramp through wings-level. Pitch commands go through a critically
+    /// damped 2nd-order filter (S-curve) so the PID never sees a step; elevator gets feed-forward from the commanded g.</summary>
+    internal static class TurnOnset
+    {
+        internal const double GRate = 1.25, RollRate = 30;
+        static double N(double bankDeg) { double c = Math.Cos(Math.Min(85, Math.Abs(bankDeg)) * Math.PI / 180); return 1 / c; }
+        internal static double Bank(double prev, double target, double dt, double gRate = GRate, double rollRate = RollRate)
+        {
+            if (dt <= 0) return prev;
+            double tgt = prev * target < 0 && Math.Abs(prev) > .5 ? 0 : target;   // reversal: through wings-level first
+            double b = prev + FlightPolicy.Clamp(tgt - prev, -rollRate * dt, rollRate * dt);
+            double n0 = N(prev), n1 = N(b), dn = gRate * dt;
+            if (Math.Abs(n1 - n0) > dn) { double n = n0 + Math.Sign(n1 - n0) * dn; double mag = Math.Acos(Math.Min(1, 1 / Math.Max(1, n))) * 180 / Math.PI; b = (b == 0 ? Math.Sign(tgt) : Math.Sign(b)) * mag; }
+            return b;
+        }
+        /// <summary>Elevator feed-forward for the commanded load factor (0..0.3).</summary>
+        internal static double ElevatorFF(double bankCmdDeg) { return Math.Abs(bankCmdDeg) >= 80 ? 0 : FlightPolicy.Clamp(.04 * (N(bankCmdDeg) - 1), 0, .3); }
+    }
+
+    /// <summary>Critically damped second-order low-pass (S-curve response, no overshoot).</summary>
+    internal sealed class SCurve
+    {
+        double x = double.NaN, v; internal double Omega = 2.5;
+        internal void Reset() { x = double.NaN; v = 0; }
+        internal double Step(double target, double dt)
+        {
+            if (double.IsNaN(x) || dt <= 0) { if (double.IsNaN(x)) { x = target; v = 0; } return x; }
+            int n = Math.Max(1, (int)Math.Ceiling(dt / .02)); double h = dt / n;
+            for (int i = 0; i < n; i++) { double a = Omega * Omega * (target - x) - 2 * Omega * v; v += a * h; x += v * h; }
+            return x;
+        }
+    }
+
     internal sealed class ApproachChart
     {
         internal sealed class Wp { internal string Name; internal double Lat, Lon, Alt; }

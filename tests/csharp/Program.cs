@@ -1342,6 +1342,25 @@ class Program
                 Check(gb.PlanBank == 30 && gb.TurnBank == 30, "explicit bank 30 overrides the g rating");
             }
             Console.WriteLine("G-rated turns (crew/structure/stall): 11 behavior checks passed.");
+            {   // Luke: choppy g at turn entry. 4 g turn entry at 50 Hz: g-onset ramp, then the plane (0.3 s roll lag) holds 4 g within 0.3 g
+                double cmd = 0, act = 0, dt2 = .02, tgt = ApproachProfile.BankForG(4), maxRate = 0, prevN = 1, t = 0, tReach = -1, lo = 99, hi = 0;
+                for (int i = 0; i < 1000; i++, t += dt2)
+                {
+                    cmd = TurnOnset.Bank(cmd, tgt, dt2); double nCmd = 1 / Math.Cos(cmd * Math.PI / 180);
+                    maxRate = Math.Max(maxRate, Math.Abs(nCmd - prevN) / dt2); prevN = nCmd;
+                    act += (cmd - act) * dt2 / .3; double nAct = 1 / Math.Cos(act * Math.PI / 180);
+                    if (tReach < 0 && Math.Abs(cmd - tgt) < .01) tReach = t;
+                    if (tReach >= 0 && t > tReach + 1.5) { lo = Math.Min(lo, nAct); hi = Math.Max(hi, nAct); }
+                }
+                Check(maxRate <= TurnOnset.GRate + 1e-6 && tReach > 2 && tReach < 4, "g onset limited to 1.25 g/s (max " + maxRate.ToString("0.00") + ", 4 g reached at " + tReach.ToString("0.0") + " s)");
+                Check(hi - lo < .3 && Math.Abs(hi - 4) < .3, "no g oscillation > 0.3 g after the ramp (" + lo.ToString("0.00") + ".." + hi.ToString("0.00") + " g)");
+                double b2 = 40; bool zero = false; for (int i = 0; i < 400; i++) { b2 = TurnOnset.Bank(b2, -40, .02); if (Math.Abs(b2) < 1) zero = true; }
+                Check(zero && Math.Abs(b2 + 40) < .01, "reversal ramps through wings-level");
+                var sc = new SCurve(); sc.Step(0, .02); double mx = 0, y = 0, t99 = -1; for (int i = 0; i < 300; i++) { y = sc.Step(10, .02); mx = Math.Max(mx, y); if (t99 < 0 && y > 9.9) t99 = i * .02; }
+                Check(mx <= 10 + 1e-6 && t99 > 0 && t99 < 3, "pitch S-curve: no overshoot, settles in " + t99.ToString("0.0") + " s");
+                Check(TurnOnset.ElevatorFF(0) == 0 && TurnOnset.ElevatorFF(60) > .03 && TurnOnset.ElevatorFF(60) <= .3, "elevator feed-forward from commanded g");
+            }
+            Console.WriteLine("Turn onset smoothing: 5 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
