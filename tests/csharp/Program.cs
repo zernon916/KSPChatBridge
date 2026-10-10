@@ -1181,6 +1181,50 @@ class Program
                 Check(ApproachFile.Merge("garbage{", "KSC 27", ef, null).Contains("KSC 27"), "corrupt file replaced, not crashed");
             }
             Console.WriteLine("Map fog + chart save: 9 behavior checks passed.");
+            {   // Luke 13:11: 4-6 km west of WP5->WP7 (fly-over turns at 170 m/s). Lead turns + leg tracking at 130 m/s on his left join.
+                var pts = new[] { new[] { 1.58064, -76.60771 }, new[] { 1.30422, -76.88414 }, new[] { .86445, -76.95953 }, new[] { .31159, -76.95953 }, new[] { .10427, -76.86529 }, new[] { -.03419, -76.7839 } };
+                double la = 1.70, lo = -76.40, hdg = 230, v = 130, R = 600000, worst = 0; int leg = 1, steps = 0;
+                while (leg < pts.Length && steps++ < 4000)
+                {
+                    double nb = leg + 1 < pts.Length ? NavigationMath.Bearing(pts[leg][0], pts[leg][1], pts[leg + 1][0], pts[leg + 1][1]) : 90.4;
+                    bool adv; double xte; double want = RunwayMission.LegSteer(la, lo, pts[leg - 1][0], pts[leg - 1][1], pts[leg][0], pts[leg][1], nb, v, 20, R, out adv, out xte);
+                    if (steps > 60) worst = Math.Max(worst, Math.Abs(xte));
+                    if (adv) { leg++; continue; }
+                    double rate = 9.81 * Math.Tan(20 * Math.PI / 180) / v * 180 / Math.PI;   // deg/s at 20 deg bank
+                    hdg += FlightPolicy.Clamp(FlightPolicy.Wrap(want - hdg), -rate, rate);
+                    NavigationMath.Offset(la, lo, hdg, v, R, out la, out lo);
+                }
+                Check(leg == pts.Length && worst < 900, "lead turns + leg tracking keep Luke's join within 900 m of the legs (worst " + Math.Round(worst) + " m)");
+                bool a1; double x1; RunwayMission.LegSteer(0, -.5, 0, -1, 0, 0, 90, 130, 20, R, out a1, out x1);
+                Check(!a1 && Math.Abs(x1) < 1, "straight leg: no early switch");
+                bool a2; RunwayMission.LegSteer(0, -.5, 0, -1, 0, 0, 180, 130, 20, R, out a2, out x1); RunwayMission.LegSteer(0, -.4, 0, -1, 0, 0, 180, 130, 20, R, out a1, out x1);
+                Check(a1 && !a2, "90 deg turn starts ~r (4.8 km) before the fix at 130 m/s");
+                Check(RunwayMission.JoinSpeed == 130, "join speed 130 m/s from the IAF");
+            }
+            Console.WriteLine("Lead turns / leg tracking: 4 behavior checks passed.");
+            {   // Luke 13:13: settled 20-60 m right of 09 then went around 4x in one frame. Sim with a 1.5 deg steady track bias.
+                foreach (double bias in new[] { 1.5, -1.5 })
+                {
+                    var rf = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1, Phase = "final" };
+                    double crs = NavigationMath.Bearing(rf.Lat, rf.Lon, rf.EndLat, rf.EndLon), fla, flo; NavigationMath.Offset(rf.Lat, rf.Lon, crs + 180, 7000, 600000, out fla, out flo);
+                    NavigationMath.Offset(fla, flo, crs + 90, 60, 600000, out fla, out flo);
+                    double hh = crs, at1k = double.NaN; string ph = "";
+                    for (int i = 0; i < 400; i++)
+                    {
+                        double tr = hh + bias;
+                        rf.Step(fla, flo, rf.Elevation + 300, 300, 75, false, 600000, 45, tr);
+                        if (rf.Phase != "final") { ph = rf.Phase + " " + rf.Why; break; }
+                        hh += FlightPolicy.Clamp(FlightPolicy.Wrap(rf.DesiredHeading - hh), -3, 3);
+                        NavigationMath.Offset(fla, flo, tr, 75, 600000, out fla, out flo);
+                        if (double.IsNaN(at1k) && rf.Distance < 1500) at1k = rf.Cross;
+                        if (rf.Distance < 300) break;
+                    }
+                    Check(ph == "" && Math.Abs(at1k) < 5, "centerline converges < 5 m by 1.5 km despite a " + bias + " deg bias (" + at1k.ToString("0.0") + " m) " + ph);
+                }
+                var g = new RunwayMission { Phase = "go around", Kind = "short" }; g.Route = new List<ApproachChart.Wp>(); g.RouteIndex = 3; g.GoAroundReset();
+                Check(g.Phase == "entry" && g.Route == null && g.Kind == "long", "go-around rebuilds a fresh route (no 4x go-around in one frame)");
+            }
+            Console.WriteLine("Centerline integral + go-around reset: 3 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {

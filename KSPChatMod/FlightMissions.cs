@@ -245,6 +245,26 @@ namespace KSPChatBridge
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
         internal ApproachOverride Override; internal string Key = "";
         internal ApproachChart Chart; internal List<ApproachChart.Wp> Route; internal int RouteIndex; internal string RouteLog = "";
+        internal double RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
+        /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
+        internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; lastAlong = double.NaN; }
+        internal const double JoinSpeed = 130;
+
+        /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
+        /// r*tan(dHdg/2) before the fix, r from the actual speed and bank. Returns the desired heading; advance = time to switch legs.</summary>
+        internal static double LegSteer(double lat, double lon, double pLat, double pLon, double fLat, double fLon, double nextBrg, double speed, double bankDeg, double radius, out bool advance, out double xte)
+        {
+            double leg = NavigationMath.Bearing(pLat, pLon, fLat, fLon), len = NavigationMath.Distance(pLat, pLon, fLat, fLon, radius);
+            double d = NavigationMath.Distance(pLat, pLon, lat, lon, radius), th = FlightPolicy.Wrap(NavigationMath.Bearing(pLat, pLon, lat, lon) - leg) * Math.PI / 180;
+            xte = d * Math.Sin(th); double remaining = len - d * Math.Cos(th);
+            double r = speed * speed / (9.81 * Math.Tan(Math.Max(5, bankDeg) * Math.PI / 180));
+            double dh = double.IsNaN(nextBrg) ? 0 : Math.Abs(FlightPolicy.Wrap(nextBrg - leg));
+            double lead = Math.Min(len, r * Math.Tan(Math.Min(150, dh) / 2 * Math.PI / 180));
+            advance = remaining <= Math.Max(250, lead);
+            return leg - FlightPolicy.Clamp(Math.Atan2(xte, Math.Max(1500, 10 * speed)) * 180 / Math.PI, -30, 30);
+        }
+
+
         internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
@@ -264,18 +284,26 @@ namespace KSPChatBridge
                 if (Route == null)
                 {
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
-                    Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
+                    Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
-                DesiredSpeed = Math.Max(1.5 * stall, Math.Min(150, speed));
+                // Luke: ~130 m/s from the IAF onward (tighter turns), never below 1.5x stall
+                bool joined = RouteIndex > 0 || (Route.Count > 0 && NavigationMath.Distance(lat, lon, Route[0].Lat, Route[0].Lon, radius) < 2 * speed * speed / (9.81 * Math.Tan(BankDeg * Math.PI / 180)));
+                DesiredSpeed = Math.Max(1.5 * stall, joined ? JoinSpeed : Math.Min(150, speed));
                 if (RouteIndex < Route.Count)
                 {
                     var wp = Route[RouteIndex];
                     double dw = NavigationMath.Distance(lat, lon, wp.Lat, wp.Lon, radius);
-                    DesiredHeading = NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon); DesiredAltitude = wp.Alt;
+                    double pLat = RouteIndex > 0 ? Route[RouteIndex - 1].Lat : RouteStartLat, pLon = RouteIndex > 0 ? Route[RouteIndex - 1].Lon : RouteStartLon;
+                    double nextBrg = RouteIndex + 1 < Route.Count ? NavigationMath.Bearing(wp.Lat, wp.Lon, Route[RouteIndex + 1].Lat, Route[RouteIndex + 1].Lon) : course;
+                    bool leadTurn = false;
+                    DesiredHeading = NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300 ? NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon)
+                        : LegSteer(lat, lon, pLat, pLon, wp.Lat, wp.Lon, nextBrg, speed, BankDeg, radius, out leadTurn, out LegXte);
+                    if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
+                    DesiredAltitude = wp.Alt;
                     DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
-                    if (dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
+                    if (leadTurn || dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
                 }
                 if (RouteIndex >= Route.Count) Phase = "intercept";
             }
@@ -283,14 +311,18 @@ namespace KSPChatBridge
             {
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
-                DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned DesiredSpeed = Math.Max(1.4 * stall, Math.Min(140, speed));
+                DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
+                DesiredSpeed = Math.Max(1.5 * stall, JoinSpeed);
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {
-                DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 6), Math.Max(1200, 8 * speed)) * 180 / Math.PI, -15, 15);   // cross-track tracking all the way down
+                // Proportional + integral (per metre flown) centerline tracking: removes steady offsets (sideslip/wind/trim) to < 5 m
+                double ds = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along;
+                CrossI = FlightPolicy.Clamp(CrossI + cross * ds, -40000, 40000);
+                DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 6) + .002 * CrossI, Math.Max(500, 4 * speed)) * 180 / Math.PI, -15, 15);
                 DesiredAltitude = Chart != null ? Chart.GlideAlt(-along + (Override != null ? Override.TouchdownM : 350)) : Elevation + Math.Max(3, (350 - along) * Math.Tan(3 * Math.PI / 180));
                 DesiredSpeed = (agl < 30 ? 1.15 : 1.3) * stall;
                 double ff = Chart != null && agl > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
