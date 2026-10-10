@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -142,6 +142,7 @@ namespace KSPChatBridge
             var crew = CrewOf(vessel); var p = CrewVoice.Pilot(crew); string pilot = p == null ? "" : p.Value.Key;
             bool flying = vessel.situation == Vessel.Situations.FLYING;
             float now = Time.realtimeSinceStartup;
+            var map = MappingTick(crew, pilot); if (map != null) { ChatLog.Write("chatter", "mapping line for " + map[0].Name); SpeakAll(map); return; }
             var talk = chatter.TalkTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);
             if (talk != null) { StartCoroutine(Converse(talk)); return; }
             var trip = chatter.TripTick(now, vessel.id.ToString(), flying, crew, pilot, mode != "idle", false, double.NaN);

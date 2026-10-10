@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
@@ -62,6 +62,7 @@ namespace KSPChatBridge
         {
             string life = LifecycleCommand(name, a); if (life != null) return life;
             string orbital = OrbitalCommand(name, a); if (orbital != null) return orbital;
+            string scan = ScanSatCommand(name, a); if (scan != null) return scan;
             string planner = MechJebPlannerCommand(name, a); if (planner != null) return planner;
             switch (name)
             {

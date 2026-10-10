@@ -434,3 +434,32 @@ namespace KSPChatBridge
         }
     }
 }
+
+namespace KSPChatBridge
+{
+    /// <summary>SCANsat mapping chatter: coverage milestones and the scanners' altitude band, in a kerbal's voice.</summary>
+    internal static class MappingChatter
+    {
+        internal static readonly System.Collections.Generic.Dictionary<string, string[]> Canned = new System.Collections.Generic.Dictionary<string, string[]>
+        {
+            { "milestone", new[] { "{what}% of {body} mapped! I'm framing this one.", "Map's filling in nicely - {what}% on {body}. Look at all those squiggles!", "Ding! {what}% coverage. Somebody get the snacks." } },
+            { "milestone100", new[] { "That's it - {what} on {body} is fully mapped! Every last crater.", "Done! {body}'s all on paper now. Can we name a mountain after me?" } },
+            { "band_in", new[] { "Scanners are happy - we're in the sweet spot.", "Oh, the scanner just started beeping. Good beeping, I think." } },
+            { "band_out", new[] { "Uh, Captain? We've drifted out of scanner range.", "Scanner's gone quiet. We're outside its altitude band." } },
+        };
+
+        internal static CrewLine Line(string kind, string what, string body, System.Collections.Generic.IList<System.Collections.Generic.KeyValuePair<string, string>> crew, string pilot, System.Random rng)
+        {
+            string key = kind == "milestone" && what.EndsWith(" 100") ? "milestone100" : kind;
+            string[] pool; if (!Canned.TryGetValue(key, out pool)) return null;
+            var all = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>(crew);
+            if (all.Count == 0) { if (string.IsNullOrEmpty(pilot)) return null; all.Add(new System.Collections.Generic.KeyValuePair<string, string>(pilot, "pilot")); }
+            var who = all[rng.Next(all.Count)];
+            string w = kind == "milestone" ? (key == "milestone100" ? what.Substring(0, what.Length - 4) : what.Substring(what.LastIndexOf(' ') + 1)) : what;
+            string text = pool[rng.Next(pool.Length)].Replace("{what}", w).Replace("{body}", body);
+            string facts = kind == "milestone" ? "SCANsat mapping of " + body + ": " + what + "% coverage reached" : kind == "band_in" ? "the vessel just entered its SCANsat scanners' working altitude over " + body : "the vessel just left its SCANsat scanners' working altitude over " + body;
+            return new CrewLine { Name = who.Key, Trait = who.Value, Canned = text, AllowedNumbers = CrewLine.Numbers(facts),
+                Prompt = "Say one short, in-character, excited or worried remark to the Captain. Facts: " + facts + ". Use no other numbers." };
+        }
+    }
+}
