@@ -715,7 +715,7 @@ namespace KSPChatBridge
         }
 
 
-        internal double ArcBank;   // feed-forward bank on chart arcs (deg, + right)
+        internal double ArcBank; internal bool Heavy; internal const double GsMargin = 30;   // feed-forward bank on chart arcs (deg, + right)
         internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
@@ -807,7 +807,9 @@ namespace KSPChatBridge
                 double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
-                DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, -maxSink, 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
+                if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
+                bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
+                DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
                 if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s

@@ -173,6 +173,8 @@ class Program
             { var noPilot = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Bill Kerman", "Engineer"), new KeyValuePair<string, string>("Bob Kerman", "Scientist") };
               Check(CrewVoice.Speaker(noPilot, "Max") == "AUTOPILOT" && CrewVoice.Line("AUTOPILOT", "Gear down.") == "AUTOPILOT: Gear down." && CrewVoice.Speaker(crew1, "") == "Sidry", "no Pilot aboard: AUTOPILOT voices flight replies"); }
         }
+        Check(PilotPolicy.ApproachFloorVs("final", 18800, 200, 200, double.NaN, -10, -24, false) >= 3 && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -24, true) >= 3
+            && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -5, false) == -10 && PilotPolicy.FloorAgl(-24, true) == 360, "5:50 PM water landing: floor = max(150 m, 10-15 s of sink) recovers a -24 m/s dive at 200-300 m");
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

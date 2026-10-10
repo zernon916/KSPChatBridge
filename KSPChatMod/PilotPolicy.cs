@@ -309,14 +309,18 @@ namespace KSPChatBridge
             for (int k = 0; k < nv; k++) vals[k] = p[k]; for (int k = 0; k < nf; k++) flags[k] = p[nv + k] == "1"; return true;
         }
         /// <summary>Approach AGL floor: before the last 2.5 km of final, climb if below 150 m AGL or below the terrain-ahead floor.</summary>
-        internal static double ApproachFloorVs(string phase, double distance, double agl, double altitude, double terrainFloor, double vs)
+        /// <summary>Approach sea-level/terrain floor until short final. Luke 5:50 PM water landing: 150 m AGL was far too late at
+        /// -24 m/s; the floor is now max(150 m, 10 s of sink) (15 s for heavy craft) and recovers at up to +15 m/s.</summary>
+        internal static double ApproachFloorVs(string phase, double distance, double agl, double altitude, double terrainFloor, double vs, double actualVs = 0, bool heavy = false)
         {
             bool early = phase == "entry" || phase == "intercept" || (phase == "final" && distance > 2500);
             if (!early) return vs;
-            if (agl < 150) vs = Math.Max(vs, FlightPolicy.Clamp((150 - agl) * .1, 3, 15));
+            double floor = FloorAgl(actualVs, heavy);
+            if (agl < floor) vs = Math.Max(vs, FlightPolicy.Clamp((floor - agl) * .1, 3, 15));
             if (!double.IsNaN(terrainFloor) && (phase != "final") && altitude < terrainFloor) vs = Math.Max(vs, FlightPolicy.Clamp((terrainFloor - altitude) * .05, 2, 15));
             return vs;
         }
+        internal static double FloorAgl(double actualVs, bool heavy) { return Math.Max(150, (heavy ? 15 : 10) * Math.Max(0, -actualVs)); }
         /// <summary>Stall/approach margin: the speed below which we never cut power and never turn hard.</summary>
         internal static double SafeSpeed(double stall) { return Math.Max(60, 1.4 * stall); }
         /// <summary>Luke: never trade airspeed away. Below the target band power comes back up; below the safe speed it is

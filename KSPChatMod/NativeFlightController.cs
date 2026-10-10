@@ -71,7 +71,7 @@ namespace KSPChatBridge
         float nextRotorPark;
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
-        TakeoffMission takeoff; TakeoffGround tground;
+        TakeoffMission takeoff; TakeoffGround tground; bool landFloor;
         string craftAuto = "light", craftOverride = "auto"; string CraftCls { get { return CraftClass.Effective(craftAuto, craftOverride); } }
         internal static string CraftLabel { get { return instance == null ? "" : CraftClass.Label(instance.CraftCls, instance.craftOverride); } }
         internal string CraftClassCmd(string m)
@@ -436,6 +436,7 @@ namespace KSPChatBridge
                 }
                 if (mode == "landing" || mode == "takeoff")
                     flaps.Tick(vessel, recovery, Time.realtimeSinceStartup, vessel.srfSpeed, stall, mode == "landing" ? 30 : 5);
+                landFloor = false;
                 if (mode == "landing" && needStallStudy && stallStudy == null && runway.Phase == "entry"
                     && vessel.radarAltitude > 350 && Math.Abs(roll) < 10 && vessel.srfSpeed < 110)
                     stallStudy = new StallStudy(Planetarium.GetUniversalTime(), vessel.altitude, FlightGlobals.ship_heading);
@@ -478,7 +479,10 @@ namespace KSPChatBridge
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
                         { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && (vessel.srfSpeed > runway.DesiredSpeed + 8 || (on && vessel.srfSpeed > runway.DesiredSpeed + 2)); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
-                        directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value);   // AGL floor: never sink into a hill on approach
+                        runway.Heavy = CraftClass.Gentle(CraftCls);
+                        double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
+                        landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && runway.Ils.AboveGsM < -RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
+                        if (landFloor && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 1; ChatLog.Write("g", "approach floor: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " belowGS=" + (-runway.Ils.AboveGsM).ToString("0") + " spd=" + vessel.srfSpeed.ToString("0") + " pit=" + pitch.ToString("0")); }   // AGL floor: never sink into a hill on approach
                         if (runway.Phase == "entry" || runway.Phase == "intercept") landingGearDown = false; else if (runway.Gear && !landingGearDown) { SetGroup(vessel, KSPActionGroup.Gear, true); landingGearDown = true; ChatLog.Write("approach", "gear down on final"); }   // never fight the player on the outbound leg
                         if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
@@ -564,6 +568,7 @@ namespace KSPChatBridge
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double kinH = kin * CraftClass.GainScale(CraftCls);
                 double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kinH * (targetVs - vessel.verticalSpeed) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
+                if (landFloor && !directPitch.HasValue) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
                 if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
@@ -589,6 +594,7 @@ namespace KSPChatBridge
                 if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > 220) targetThrottle = throttle - .05;
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
+            if (landFloor && mode == "landing" && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt);
             bool speedLock = ApproachSpeedLocked;
