@@ -269,6 +269,28 @@ class Program
             Check(rt2 != null && Math.Abs(rt2.Stall - pp.Stall) < .01 && rt2.Complete, "profile saves and loads");
             Check(DirectOrNull("learn this plane") == "learn_plane", "chat: 'learn this plane' starts the test flight");
         }
+        {   // Luke 7:19 PM: sink map. Plant at 12 deg nose-up near 1.25 Vs: steady sink = 14 - 25*throttle (0.56 -> level), 2 s lag.
+            var lf = new LearnFlight(); var li = new LearnIn { T = 0, Speed = 80, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Vs = 0 };
+            lf.Step(li); lf.Phase = "sinkprep"; double T = 0, vs = 0, eng = .5; int g2 = 0;
+            while (lf.Phase.StartsWith("sink") && g2++ < 200000)
+            {
+                T += .1; li.T = T; li.Vs = vs; li.Alt = 5000; li.Speed = 80; lf.Step(li);
+                double th = double.IsNaN(lf.Throttle) ? .5 : lf.Throttle; eng += (th - eng) * .1 / 2; vs += ((-(14 - 25 * eng)) - vs) * .1 / 1.5;
+            }
+            var tbl = lf.P.Sink; double t0s = lf.P.ThrottleForSink(0, 30), t10 = lf.P.ThrottleForSink(10, 30);
+            Check(tbl.Count == 6 && Math.Abs(t0s - .56) < .05 && Math.Abs(t10 - .16) < .05 && lf.P.ThrottleForSink(5, 60) > lf.P.ThrottleForSink(5, 30), "sink map: 6 points, 0 m/s @" + Math.Round(t0s * 100) + "%, 10 m/s @" + Math.Round(t10 * 100) + "%, heavier needs more throttle");
+            Check(tbl.TrueForAll(r => r[2] > 0 && r[2] < 30), "sink map records the throttle->sink lag");
+            var lb = new LearnFlight(); var lj = li; lj.T = 0; lb.Step(lj); lb.Phase = "sinkmap"; lj.T = 1; lj.Speed = 70; lb.Step(lj);
+            Check(lb.Phase == "stallprep" && !lb.Aborted, "sink map stops below 1.15x stall and goes on to the stall step");
+            var rt3 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
+            { var lc = new LearnFlight(); var lk = li; lk.T = 0; lc.Step(lk); lc.Phase = "sinkmap"; lk.T = 1; lk.Alt = 3900; lc.Step(lk); bool paused = lc.Phase == "sinkclimb"; lk.T = 2; lk.Alt = 4950; lc.Step(lk);
+              Check(paused && lc.Phase == "sinkmap", "sink map pauses below 4 km, climbs back to 5 km and resumes"); }
+            Check(lf.P.Sink.TrueForAll(r => r.Length > 3 && r[3] == 30) && lf.P.Samples.Count > 0, "every sample is mass-tagged");
+            { var ld = new LearnFlight(); var lr = li; lr.T = 0; ld.Step(lr); ld.Phase = "sinkprep"; lr.Speed = 80; lr.T = .1; ld.Step(lr); var thr = new List<double>(); for (int s = 2; s < 400; s++) { lr.T = s * .1; ld.Step(lr); thr.Add(ld.Throttle); }
+              int changes = 0; double maxStep = 0; for (int k = 1; k < thr.Count; k++) if (thr[k] != thr[k - 1]) { changes++; maxStep = Math.Max(maxStep, Math.Abs(thr[k] - thr[k - 1])); }
+              Check(ld.Phase == "sinkdown" && changes >= 6 && changes <= 8 && maxStep <= .0101, "sink ramp: 1% then wait 5 s (" + changes + " steps in 40 s)"); }
+            Check(rt3.Sink.Count == 6 && Math.Abs(rt3.ThrottleForSink(4, 30) - lf.P.ThrottleForSink(4, 30)) < .01, "sink map saved in the profile");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

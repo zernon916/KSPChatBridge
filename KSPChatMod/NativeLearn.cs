@@ -88,6 +88,8 @@ namespace KSPChatBridge
         }
 
         /// <summary>ABOUT THIS PLANE page (Luke 7:10 PM): value + source/confidence (TEST = learn flight scaled to this mass, LIVE = measured in normal flight, EST = estimate).</summary>
+        /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
+        double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
         internal static List<string> AboutLines()
         {
             var o = new List<string>(); var me = instance;
@@ -106,6 +108,7 @@ namespace KSPChatBridge
             o.Add("Throttle lag " + me.shold.Lag.ToString("0.0") + " s  " + (p != null && !double.IsNaN(p.Lag) ? "TEST" : me.lagMeasured ? "LIVE" : "EST") + "  inertia x" + me.shold.K.ToString("0.0"));
             if (p != null && p.Turns.Count > 0) { var last = p.Turns[p.Turns.Count - 1]; double mg = 0; foreach (var x in p.Turns) mg = Math.Max(mg, x[1]); o.Add("Turns to " + last[0] + " deg, max " + mg.ToString("0.0") + " g, " + last[2].ToString("0.0") + " deg/s"); }
             if (p != null && p.Dives.Count > 0) { var s = ""; foreach (var x in p.Dives) s += x[0] + ":" + x[1].ToString("0") + " "; o.Add("Sink (deg:m/s) " + s.Trim()); }
+            if (p != null && p.Sink.Count > 0) { var ss = new List<double[]>(p.Sink); ss.Sort((x, y) => x[0].CompareTo(y[0])); var s2 = ""; double lg = 0; foreach (var x in ss) { s2 += x[0].ToString("0") + ":" + Math.Round(x[1] * 100) + "% "; lg = Math.Max(lg, x[2]); } o.Add("Sink map (m/s:thr) " + s2.Trim() + "  lag<=" + lg.ToString("0.0") + " s"); }
             if (p != null && !double.IsNaN(p.StallAltLoss)) o.Add("Stall recovery loses " + p.StallAltLoss.ToString("0") + " m");
             return o;
         }
