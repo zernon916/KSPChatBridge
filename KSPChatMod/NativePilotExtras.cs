@@ -84,7 +84,14 @@ namespace KSPChatBridge
                         if (!PilotPolicy.TryPlan(Str(a, "request", ""), vessel.LandedOrSplashed, out text, out unsure, out notes))
                             return "Not flying that yet - I'm not sure about: \"" + string.Join("\", \"", unsure.ToArray()) + "\". Can you say those steps another way? (I understood: " + text.Replace("\n", " / ") + ")";
                     }
-                    try { ParsePlan(text); } catch (ArgumentException ex) { return "Plan not valid: " + ex.Message + "\n" + text; }
+                    else
+                    {   // model-written plan: prefer Luke's own words when they parse; else auto-correct line by line to the runner syntax
+                        string req = Str(a, "request", ""), fromReq; List<string> u2, n2;
+                        Func<string, bool> ok = l => { try { ParsePlan(l); return true; } catch (Exception) { return false; } };
+                        if (req.Trim().Length > 0 && req.Trim() != text.Trim() && PilotPolicy.TryPlan(req, vessel.LandedOrSplashed, out fromReq, out u2, out n2) && ok(fromReq)) { text = fromReq; notes.AddRange(n2); }
+                        else { string badStep; string fixd = PilotPolicy.FixPlan(text, ok, out badStep); if (badStep != null) return "Plan not valid: step \"" + badStep + "\" is not plan syntax. Use: " + NativePlan.Syntax; if (fixd != text) notes.Add("plan steps corrected to the runner syntax"); text = fixd; }
+                    }
+                    try { ParsePlan(text); } catch (ArgumentException ex) { return "Plan not valid: " + ex.Message; }   // the bad step only, no plan dump
                     AicsMenu.LoadPlan(text);
                     string note = notes.Count > 0 ? "\nNotes: " + string.Join("; ", notes.ToArray()) : "";
                     if (!Bool(a, "fly", true)) return "Plan written (in the Flight Plan editor):\n" + text + note;

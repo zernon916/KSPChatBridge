@@ -25,15 +25,20 @@ namespace KSPChatBridge
             if (!match.Success) return fallback;
             return double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
         }
+        /// <summary>The runner's exact step syntax (shown to the model and in errors).</summary>
+        internal const string Syntax = "takeoff | climb N m msl | descend N m msl | cruise for N km | cruise for N m | cruise hdg H for N km | hold heading for N km | cruise for N min | wait N s | turn around | head KSC bank N left|right | circle N laps left|right bank N | land KSC 27|KSC 09|Island 09";
         internal static NativePlan Parse(string text, Func<string, bool> savedRunway = null, Func<string, bool> taxiRoute = null)
         {
             if (text == null || text.Length > 16000) throw new ArgumentException("Plan is empty or too long");
             var plan = new NativePlan { Text = text };
+            int stepNo = 0;
             foreach (string raw in text.Replace("\r", "").Split('\n'))
             {
                 string line = Regex.Replace(raw.Split('#')[0].Trim(), @"^(?:[-*]|\d+[.)])\s*", "").Trim();
                 if (line.Length == 0) continue;
-                string low = line.ToLowerInvariant();
+                stepNo++;
+                string low = Regex.Replace(line.ToLowerInvariant(), @"^(?:hold\s+(?:the\s+)?heading|heading\s+hold|keep\s+(?:the\s+)?heading|fly\s+straight)\b", "cruise");   // same runner step
+                low = Regex.Replace(low, @"\bfor\s+(\d+(?:\.\d+)?)\s*k\b", "for $1 km");
                 var step = new Step { Text = line, Reference = low.Contains("msl") ? "msl" : "agl" };
                 if (Regex.IsMatch(low, @"\b(ascent|orbit|deorbit|transfer|rendezvous|dock|warp|stage|science|chutes?)\b")
                     || Regex.IsMatch(low, @"^fly\s+to\b"))
@@ -51,7 +56,7 @@ namespace KSPChatBridge
                 else if (Regex.IsMatch(low, @"^head\b")) { step.Op = "head"; step.Destination = Regex.Match(low, @"^head\s+(?:to\s+)?([a-z0-9]+)").Groups[1].Value; }
                 else if (Regex.IsMatch(low, @"^taxi\s+to\s+")) { step.Op = "taxi"; step.Destination = line.Substring(8).Trim(); }
                 else if (Regex.IsMatch(low, @"^land\b")) { step.Op = "land"; step.Destination = line.Substring(4).Trim(); }
-                else throw new ArgumentException("Local plan step not yet supported: " + line);
+                else throw new ArgumentException("step " + stepNo + " \"" + line + "\" is not plan syntax. Use: " + Syntax);
                 const string number = @"\d+(?:\.\d+)?";
                 string altitudeOption = @"(?:alt(?:itude)?\s+)?" + number + @"\s*(?:km|m|ft|feet)?(?:\s+(?:agl|msl))?";
                 string holdOptions = @"(?:\s+(?:(?:hdg|heading|speed|vs)\s+" + number + @"|alt(?:itude)?\s+" + number + @"\s*(?:km|m|ft|feet)?(?:\s+(?:agl|msl))?))*";
@@ -62,14 +67,14 @@ namespace KSPChatBridge
                     : step.Op == "bank" ? @"(?:max\s+)?bank\s+" + number + @"(?:\s*deg\w*)?(?:\s+(?:to\s+the\s+)?(?:left|right))?"
                     : step.Op == "head" ? @"head\s+(?:to\s+)?(?:ksc|ksp|home|base|island)(?:\s+bank\s+" + number + @")?(?:\s+(?:left|right))?"
                     : step.Op == "climb" ? @"(?:climb|descend)\s+" + altitudeOption + holdOptions
-                    : step.Op == "cruise" ? "cruise" + holdOptions + @"(?:\s+for\s+(?:" + duration + "|" + number + @"\s*km))?"
+                    : step.Op == "cruise" ? "cruise" + holdOptions + @"(?:\s+for\s+(?:" + number + @"\s*(?:km|m|meters?|metres?|nm)|" + duration + "))?"
                     : step.Op == "circle" ? @"circle(?:\s+" + number + @"(?:\s+laps?)?)?(?:\s+(?:left|right))?(?:\s+bank\s+" + number + ")?" + holdOptions
                     : step.Op == "wait" ? @"wait\s+" + duration
                     : step.Op == "taxi" && taxiRoute != null && taxiRoute(step.Destination) ? Regex.Escape(line)
                     : step.Op == "land" && ((savedRunway != null && savedRunway(step.Destination)) || FlightResidualPolicy.BuiltInRunway(step.Destination, "") != null) ? Regex.Escape(line)
                     : @"land(?:\s+(?:KSC\s+)?Runway\s+(?:09|27)|\s+Island(?:\s+Runway(?:\s+(?:09|27))?)?)?";
                 if (!Regex.IsMatch(low, "^(?:" + grammar + ")$", RegexOptions.IgnoreCase))
-                    throw new ArgumentException("Unsupported local plan syntax: " + line);
+                    throw new ArgumentException("step " + stepNo + " \"" + line + "\" is not plan syntax. Use: " + Syntax);
                 var altitude = Regex.Match(low, @"(?:alt(?:itude)?\s+|^(?:climb|descend)\s+)(\d+(?:\.\d+)?)\s*(km|m|ft|feet)?");
                 if (altitude.Success)
                 {
@@ -83,8 +88,8 @@ namespace KSPChatBridge
                 if (Regex.IsMatch(low, @"\bmin(?:ute)?s?\b")) step.Seconds *= 60;
                 step.VerticalSpeed = Read(low, @"\bvs\s+(\d+(?:\.\d+)?)", -999);
                 if (step.VerticalSpeed != -999 && low.StartsWith("descend")) step.VerticalSpeed = -step.VerticalSpeed;
-                double km = Read(low, @"\bfor\s+(\d+(?:\.\d+)?)\s*km\b", -1);
-                if (km >= 0) step.Distance = km * 1000;
+                var dist = Regex.Match(low, @"\bfor\s+(\d+(?:\.\d+)?)\s*(km|m|meters?|metres?|nm)\b");
+                if (dist.Success) { double dv = double.Parse(dist.Groups[1].Value, CultureInfo.InvariantCulture); string du = dist.Groups[2].Value; step.Distance = du == "km" ? dv * 1000 : du == "nm" ? dv * 1852 : dv; }   // ground distance, never seconds
                 step.Laps = Read(low, @"circle\s+(\d+(?:\.\d+)?)", 1);
                 step.Bank = FlightPolicy.Clamp(Read(low, @"bank\s+(\d+(?:\.\d+)?)", 15), 5, step.Op == "head" ? 45 : 20) * (low.Contains("left") ? -1 : 1);
                 if (step.Op == "head" && !low.Contains("left") && !low.Contains("right")) step.Bank = 0;   // 0 = normal heading turn

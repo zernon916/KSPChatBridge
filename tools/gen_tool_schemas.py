@@ -25,7 +25,7 @@ NATIVE_ONLY = {
     "roll": ("Roll/bank the plane: direction left/right and degrees, inverted=true for upside down, level=true for wings level. Bank rule 20 deg (10 fast) unless override=true.",
              {"direction": "string", "degrees": "number", "inverted": "boolean", "level": "boolean", "override": "boolean"}, []),
     "autopilot": ("Turn the autopilot on (hold current altitude/heading/speed) or off (on=false).", {"on": "boolean"}, []),
-    "make_flight_plan": ("Write and fly a flight plan. Prefer plan = lines of: takeoff | climb N m msl | cruise for N km | cruise for N min | turn around | head KSC bank N left|right | circle N laps left|right bank N | wait N s | land KSC 27|KSC 09|Island 09. Or pass Luke's words as request.",
+    "make_flight_plan": ("Write and fly a flight plan. ALWAYS pass Luke's exact words as request. plan (optional) must use ONLY these lines: takeoff | climb N m msl | cruise for N km | cruise for N m | hold heading for N km | cruise for N min | wait N s | turn around | head KSC bank N left|right | circle N laps left|right bank N | land KSC 27|KSC 09|Island 09. Distances (3k = 3 km) are never seconds.",
                          {"request": "string", "plan": "string", "fly": "boolean"}, []),
     "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }

@@ -8,6 +8,7 @@ class Program
     static string Root() { var d = new System.IO.DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory); while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "personalities.txt"))) d = d.Parent; return d == null ? "." : d.FullName; }
     class Servo { private float transformRateOfMotion = 380; }
     class Rotor : Servo { public float currentRPM = 0; }
+    internal static string DirectOrNull(string m) { var d = ToolRouter.Direct(m, "plane"); return d == null ? "null" : d.Value.Key; }
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
     static void Main()
     {
@@ -1615,6 +1616,21 @@ class Program
             Check(slick.StartsWith("GA too fast"), "slick craft still fast: go-around at the speed gate, never a fast landing (" + slick + ")");
             Check(PilotPolicy.ApproachThrottle(.6, 80, 60, .05) == 0 && PilotPolicy.ApproachThrottle(.2, 50, 60, 1) > .2, "approach throttle: idle when fast, spools when slow");
             Console.WriteLine("Forced approach speed: 3 behavior checks passed.");
+        }
+        {   // Luke 3:28 PM: "Make a plan, Take off, CLimb to 2000, Hold heading for 3k, turnaround, Land runway 27"
+            string pl; List<string> un, no;
+            Check(PilotPolicy.TryPlan("Make a plan, Take off, CLimb to 2000, Hold heading for 3k, turnaround, Land runway 27", true, out pl, out un, out no), "Luke's sentence parses confidently (" + string.Join("|", un.ToArray()) + ")");
+            Check(pl == "takeoff\nclimb 2000 m msl\ncruise for 3 km\nturn around\nland KSC 27", "steps: " + pl.Replace("\n", " / "));
+            var np = NativePlan.Parse(pl); Check(np.Steps[2].Op == "cruise" && np.Steps[2].Distance == 3000, "hold heading for 3k = 3 km ground distance, not seconds");
+            var dm = Program.DirectOrNull("Make a plan, Take off, CLimb to 2000, Hold heading for 3k, turnaround, Land runway 27"); Check(dm == "make_flight_plan", "routes straight to the plan tool (" + dm + ")");
+            Check(NativePlan.Parse("cruise for 3000 m").Steps[0].Distance == 3000 && NativePlan.Parse("hold heading for 2 km").Steps[0].Distance == 2000 && NativePlan.Parse("cruise for 3k").Steps[0].Distance == 3000, "runner: distance steps in m / km / k");
+            Func<string, bool> ok = l => { try { NativePlan.Parse(l); return true; } catch (Exception) { return false; } };
+            string badS, fx = PilotPolicy.FixPlan("takeoff\nclimb 2000 m msl\ncruise for 3000 m\nheading hold for 300 s\nturn around\nland KSC 27", ok, out badS);
+            Check(badS == null && ok(fx), "the model's plan from the log is auto-corrected to runner syntax (" + fx.Replace("\n", " / ") + ")");
+            fx = PilotPolicy.FixPlan("takeoff\nloop the loop\nland KSC 27", ok, out badS); Check(badS == "loop the loop", "one bad step is reported alone");
+            string msg = ""; try { NativePlan.Parse("takeoff\nclimb 2000 m msl\nbarrel roll twice\nland KSC 27"); } catch (ArgumentException ex) { msg = ex.Message; }
+            Check(msg.Contains("step 3") && msg.Contains("barrel roll twice") && !msg.Contains("climb 2000"), "error names the exact bad step, no plan dump (" + msg + ")");
+            Console.WriteLine("Distance plan steps: 8 behavior checks passed.");
         }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));

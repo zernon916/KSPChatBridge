@@ -108,6 +108,16 @@ namespace KSPChatBridge
                     lines.Add((p.Contains("descend") ? "descend " : "climb ") + alt.ToString("0", Inv) + " m " + (p.Contains("agl") ? "agl" : "msl"));
                     continue;
                 }
+                // "hold heading for 3k" / "cruise for 3000 m" / "fly straight for 5 km": ground DISTANCE (k = km here), never seconds
+                var hf = Regex.Match(p, @"^(?:hold\s+(?:the\s+|current\s+|this\s+)?heading|heading\s+hold|keep\s+(?:the\s+)?heading|cruise|fly\s+straight|go\s+straight|fly\s+(?:on|out))(?:\s+(\d{1,3}))?\s+for\s+(\d+(?:\.\d+)?)\s*(km|k|kilomet\w*|m|meters?|metres?|nm|mi\w*|s|sec\w*|min\w*)?$");
+                if (hf.Success)
+                {
+                    double hv = double.Parse(hf.Groups[2].Value, Inv); string hu = hf.Groups[3].Value; string hdg = hf.Groups[1].Success ? " hdg " + hf.Groups[1].Value : "";
+                    if (hu.StartsWith("s") || hu.StartsWith("min")) { lines.Add("cruise" + hdg + " for " + hv.ToString("0", Inv) + (hu.StartsWith("min") ? " min" : " s")); continue; }
+                    double hkm = hu.Length == 0 ? (hv >= 100 ? hv / 1000 : hv) : hu.StartsWith("k") ? hv : hu == "nm" ? hv * 1.852 : hu.StartsWith("mi") ? hv * 1.609 : hv / 1000;
+                    if (hu.Length == 0) notes.Add("\"" + p + "\" read as " + hkm.ToString("0.#", Inv) + " km");
+                    outKm = hkm; lines.Add("cruise" + hdg + " for " + hkm.ToString("0.#", Inv) + " km"); continue;
+                }
                 if (p.Contains("shortfinal") || Regex.IsMatch(p, @"\b(set up|line up|set for|approach)\b"))
                 {
                     if (p.Contains("shortfinal")) { shortFinal = true; notes.Add("short final (4 km fix) if the geometry allows"); }
@@ -128,7 +138,7 @@ namespace KSPChatBridge
                 var bn = Regex.Match(p, @"(\d{1,2})\s*(?:deg\w*\s+)?bank|bank(?:\s+(?:angle\s+)?(?:of|at|to))?\s+(\d{1,2})");
                 string bside = Regex.IsMatch(p, @"\bleft\b") ? " left" : Regex.IsMatch(p, @"\bright\b") ? " right" : "";
                 string bnum = bn.Success ? (bn.Groups[1].Success ? bn.Groups[1].Value : bn.Groups[2].Value) : null;
-                if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bu-?turn\b|\breverse course\b")) { lines.Add("turn around" + (bnum != null ? " bank " + bnum + bside : "")); continue; }
+                if (Regex.IsMatch(p, @"\b(turn|head|come)\s+(around|back)\b|\bturnaround\b|\bu-?turn\b|\breverse course\b")) { lines.Add("turn around" + (bnum != null ? " bank " + bnum + bside : "")); continue; }
                 var pm = Regex.Match(p, @"\b(max(?:imum)?\s+)?pitch(?:\s+(?:angle\s+)?(?:of|at|to))?(?:\s+(up|down))?\s+(\d{1,2})|\b(\d{1,2})\s*(?:deg\w*\s+)?pitch(?:\s+(up|down))?");
                 if (pm.Success)
                 {
@@ -171,6 +181,20 @@ namespace KSPChatBridge
             return unsure.Count == 0;
         }
 
+        /// <summary>Model plan fixup: every line must be runner syntax; a bad line is re-read with the natural parser, else reported (only that step).</summary>
+        internal static string FixPlan(string text, Func<string, bool> valid, out string bad)
+        {
+            bad = null; var outL = new List<string>();
+            foreach (string raw in (text ?? "").Replace("\r", "").Split('\n'))
+            {
+                string line = raw.Trim(); if (line.Length == 0) continue;
+                if (valid(line)) { outL.Add(line); continue; }
+                string fixd; List<string> u, n;
+                if (TryPlan(line, false, out fixd, out u, out n) && fixd.Length > 0 && Array.TrueForAll(fixd.Split('\n'), x => valid(x))) { outL.AddRange(fixd.Split('\n')); continue; }
+                if (bad == null) bad = line;
+            }
+            return string.Join("\n", outL.ToArray());
+        }
         /// <summary>Old entry point: throws (with the question to ask) unless the parse is fully confident.</summary>
         internal static string PlanFromText(string request, bool grounded)
         {

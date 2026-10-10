@@ -134,9 +134,10 @@ namespace KSPChatBridge
         {
             text = PilotPolicy.GuardReply((text ?? "").Trim(), results);
             var sb = new System.Text.StringBuilder(text.Length == 0 && results.Count == 0 ? "(no reply)" : text);
+            var shown = new HashSet<string>();
             foreach (string r in results)
             {
-                string s = (r ?? "").Trim(); if (s.Length == 0) continue;
+                string s = (r ?? "").Trim(); if (s.Length == 0 || !shown.Add(s)) continue;   // never the same result twice
                 if (s.Length > 160) s = s.Substring(0, 157) + "...";
                 if (text.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0) continue;
                 sb.Append(sb.Length > 0 ? " [" : "[").Append(s).Append("]");
