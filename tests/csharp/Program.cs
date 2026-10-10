@@ -808,6 +808,22 @@ class Program
             Check(NativeCommands.IsPorted("tech_advisor") && ToolRouter.Rank("what should i research in the tech tree", ToolRouter.Descriptions, "")[0].Key == "tech_advisor", "tech_advisor registered + routed");
         }
         Console.WriteLine("tech_advisor: 6 behavior checks passed.");
+        // ---- Rover drive-to-building ----
+        {
+            Check(KscRoverPolicy.Facility("SpaceCenter/VehicleAssemblyBuilding/Facility/mainBuilding") == "VehicleAssemblyBuilding" && KscRoverPolicy.Facility("Junk/Rock") == null, "facility from building id");
+            Check(KscRoverPolicy.Match("the VAB") == "VehicleAssemblyBuilding" && KscRoverPolicy.Match("r&d") == "ResearchAndDevelopment" && KscRoverPolicy.Match("tracking station") == "TrackingStation", "player words -> facility");
+            Check(KscRoverPolicy.Match("mission control") == "MissionControl" && KscRoverPolicy.Match("pizza") == null && KscRoverPolicy.Display("SpaceplaneHangar") == "SPH", "more names; unknown -> null");
+            double R = 600000, m = Math.PI / 180 * R;
+            var hub = new KscRoverPolicy.P(0, 0); var bld = new KscRoverPolicy.P(0, 500 / m);
+            var far = KscRoverPolicy.Route(new KscRoverPolicy.P(0, -800 / m), bld, hub, R);
+            Check(far.Count == 2 && far[0].Lon == 0 && Math.Abs(far[1].Lon * m - 455) < 1, "far: via hub, stop 45 m in front of the building");
+            var near = KscRoverPolicy.Route(new KscRoverPolicy.P(0, 400 / m), bld, hub, R);
+            Check(near.Count == 1, "close: drive straight to the front");
+            var order = KscRoverPolicy.Order(new KscRoverPolicy.P(0, 0), new[] { new KscRoverPolicy.P(0, 900 / m), new KscRoverPolicy.P(0, 100 / m), new KscRoverPolicy.P(0, 400 / m) }, R);
+            Check(string.Join(",", order.ConvertAll(i => i.ToString()).ToArray()) == "1,2,0", "tour order nearest-first");
+            Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
+        }
+        Console.WriteLine("Rover drive-to-building: 7 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

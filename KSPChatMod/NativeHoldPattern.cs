@@ -16,6 +16,7 @@ namespace KSPChatBridge
         void ExtrasCancel(string name)
         {
             if (patternOn && NavTakeover.Contains(name)) { patternOn = false; }
+            if (touring && (name == "taxi_to" || name == "stop_current" || name == "takeoff" || name == "drive_to_building")) touring = false;
             TerrainCancel(name);
         }
         partial void TerrainCancel(string name);
@@ -27,6 +28,7 @@ namespace KSPChatBridge
                 case "follow_terrain": return FollowTerrain(a);
                 case "fuel_check_return": return FuelReturnArm(a);
                 case "formation": return Formation(a);
+                case "drive_to_building": return DriveToBuilding(a);
                 case "hold_pattern": return HoldPattern(a);
             }
             return null;
@@ -71,9 +73,11 @@ namespace KSPChatBridge
             TerrainTick();
             FuelReturnTick();
             FormationTick();
+            RoverTourTick();
         }
         partial void TerrainTick();
         partial void FuelReturnTick();
         partial void FormationTick();
+        partial void RoverTourTick();
     }
 }

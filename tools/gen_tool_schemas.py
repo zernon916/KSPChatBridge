@@ -16,6 +16,8 @@ NATIVE_ONLY = {
                   {"wingman": "string", "side": "string", "spacing_m": "number", "off": "boolean"}, []),
     "tech_advisor": ("R&D advice: call with no goal to ask Luke his plan; with a goal (Mun landing, planes, science...) returns the cheapest unlock path and highlights it.",
                      {"goal": "string"}, []),
+    "drive_to_building": ("Rover: drive to KSC buildings (VAB, SPH, R&D, Tracking Station, Mission Control, Astronaut Complex, Administration, Launch Pad, Runway; ';'-list or all) and do science at each.",
+                          {"buildings": "string", "science": "boolean", "speed": "number"}, []),
     "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }
 

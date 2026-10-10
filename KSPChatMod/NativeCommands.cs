@@ -30,7 +30,7 @@ namespace KSPChatBridge
             // MechJeb 2.15 planners in-process (NativeMechJebOps.cs)
             "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude",
             // POST-TESTING features (native-only tools, schemas in tools/gen_tool_schemas.py NATIVE_ONLY)
-            "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "tech_advisor"
+            "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "tech_advisor", "drive_to_building"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;
