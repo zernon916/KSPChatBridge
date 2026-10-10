@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -21,6 +21,9 @@ namespace KSPChatBridge
             new Site { Name = "Island Airfield", Lat = -1.5155, Lon = -71.9093 }, new Site { Name = "Desert Airfield", Lat = -6.5999, Lon = -144.0405 },
             new Site { Name = "Desert Launch Site", Lat = -6.5604, Lon = -143.9500, Pad = true }, new Site { Name = "Woomerang Launch Site", Lat = 45.2900, Lon = 136.1100, Pad = true } };
 
+        internal const double MinSpan = 2000, MaxSpan = 300000;
+        /// <summary>Map zoom (+/- buttons x0.5/x2, wheel x0.8/x1.25), clamped 2-300 km across.</summary>
+        internal static double Zoom(double span, double factor) { return Math.Max(MinSpan, Math.Min(MaxSpan, span * factor)); }
         internal static double RadiusFor(double agl) { return Math.Max(MinM, Math.Min(MaxM, MinM + 0.5 * Math.Max(0, agl))); }
         static long Key(int row, int col) { return ((long)row << 20) | (uint)col; }
         static int Row(double lat) { return (int)Math.Floor((lat + 90) / TileDeg); }

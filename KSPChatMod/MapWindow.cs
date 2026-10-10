@@ -27,8 +27,9 @@ namespace KSPChatBridge
         const int WindowId = 0x4B434D41, N = 96; const float Px = 384;
         internal static bool MapVisible;
         static Rect rect = new Rect(420, 120, Px + 20, Px + 210);
-        static readonly double[] Spans = { 10000, 30000, 80000 };
-        static int spanIdx = 1, rwIdx; static bool centerRunway;
+        internal static double ViewSpan = 30000;
+        static double Zoom(double span, double factor) { return MapReveal.Zoom(span, factor); }
+        static int rwIdx; static bool centerRunway;
         Texture2D tex; Color[] px = new Color[N * N]; int buildRow = -1; double bLat, bLon, bSpan; float nextRebuild;
         List<NativeFlightController.MapRunway> runways = new List<NativeFlightController.MapRunway>();
         List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int sel = -1; bool dragging; string note = "";
@@ -49,7 +50,7 @@ namespace KSPChatBridge
             if (rwIdx >= runways.Count) rwIdx = 0;
             var rw = runways.Count > 0 ? runways[rwIdx] : null;
             if (rw != null && fixesFor != rw.Key) LoadFixes(rw);
-            span = Spans[spanIdx];
+            span = ViewSpan;
             if (centerRunway && rw != null) { cLat = rw.Lat; cLon = rw.Lon; } else { cLat = v.latitude; cLon = v.longitude; }
             double moved = NavigationMath.Distance(cLat, cLon, bLat, bLon, body.Radius);
             if (buildRow < 0 && (bSpan != span || moved > span * .15 || Time.realtimeSinceStartup > nextRebuild)) { bLat = cLat; bLon = cLon; bSpan = span; buildRow = 0; nextRebuild = Time.realtimeSinceStartup + 15; }
@@ -145,7 +146,9 @@ namespace KSPChatBridge
             if (GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) { rwIdx = (rwIdx + runways.Count - 1) % runways.Count; fixesFor = ""; }
             GUILayout.Label(rw != null ? rw.Key : "no runway", GUILayout.Width(110));
             if (GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) { rwIdx = (rwIdx + 1) % runways.Count; fixesFor = ""; }
-            if (GUILayout.Button((Spans[spanIdx] / 1000) + " km", GUILayout.Width(56))) { spanIdx = (spanIdx + 1) % Spans.Length; }
+            if (GUILayout.Button("-", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, 2);
+            GUILayout.Label((ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km", GUILayout.Width(48));
+            if (GUILayout.Button("+", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, .5);
             centerRunway = GUILayout.Toggle(centerRunway, "center rwy");
             GUILayout.EndHorizontal();
             Rect map = GUILayoutUtility.GetRect(Px, Px, GUILayout.Width(Px), GUILayout.Height(Px));
@@ -198,7 +201,9 @@ namespace KSPChatBridge
 
         void HandleMouse(NativeFlightController.MapRunway rw)
         {
-            var e = Event.current; if (rw == null) return;
+            var e = Event.current;
+            if (e.type == EventType.ScrollWheel && e.mousePosition.x <= Px && e.mousePosition.y <= Px) { ViewSpan = Zoom(ViewSpan, e.delta.y > 0 ? 1.25 : 0.8); e.Use(); return; }
+            if (rw == null) return;
             if (e.type == EventType.MouseDown && e.button == 0 && e.mousePosition.x <= Px && e.mousePosition.y <= Px)
             {
                 sel = -1; float best = 12;

@@ -1181,6 +1181,7 @@ class Program
                 Check(ApproachFile.Merge("garbage{", "KSC 27", ef, null).Contains("KSC 27"), "corrupt file replaced, not crashed");
             }
             Console.WriteLine("Map fog + chart save: 9 behavior checks passed.");
+            Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");
