@@ -912,7 +912,7 @@ class Program
                 rw3.Step(lat, lon, alt, alt - 70, spd, alt <= 70.5, R, 45, hdg);
                 if (rw3.Phase == "final" && firstFinal == null) firstFinal = Math.Abs(rw3.Cross).ToString("0");
                 if (rw3.Phase != "final" && rw3.Phase != "flare" && rw3.Phase != "rollout" && rw3.Phase != "go around" && rw3.DesiredAltitude < 70 + 300) { descendedUnaligned = true; dbgU = rw3.Phase + " " + rw3.Kind + " des=" + rw3.DesiredAltitude.ToString("0") + " " + rw3.RouteLog; }
-                double err = FlightPolicy.Wrap(rw3.DesiredHeading - hdg); hdg = (hdg + Math.Max(-1.7, Math.Min(1.7, err)) + 360) % 360;   // 20 deg bank at 120 m/s
+                double err = FlightPolicy.Wrap(rw3.DesiredHeading - hdg); double r3 = 9.81 * Math.Tan((rw3.TurnBank > 0 ? rw3.TurnBank : 20) * Math.PI / 180) / spd * 180 / Math.PI; hdg = (hdg + Math.Max(-r3, Math.Min(r3, err)) + 360) % 360;   // flies the commanded (g-rated) bank
                 alt += Math.Max(-25, Math.Min(12, rw3.DesiredVs)); if (alt < 70) alt = 70;
                 spd += Math.Max(-2, Math.Min(2, rw3.DesiredSpeed - spd)); double nl, no; NavigationMath.Offset(lat, lon, hdg, spd, R, out nl, out no); lat = nl; lon = no;
                 if (double.IsNaN(crossAt1k) && rw3.Phase == "final" && rw3.Distance < 1000) { crossAt1k = Math.Abs(rw3.Cross); trkAt1k = Math.Abs(FlightPolicy.Wrap(hdg - course)); }
@@ -1057,7 +1057,7 @@ class Program
                     {
                         string ph0 = m.Phase + m.RouteIndex; m.Step(la, lo, alt, alt - 69, v, false, R0, 45, h); if (m.Phase + m.RouteIndex != ph0 && trace.Length < 900) trace += k + ":" + m.Phase + m.RouteIndex + "(" + (m.Along/1000).ToString("0.0") + "," + (m.Cross/1000).ToString("0.0") + "," + h.ToString("0") + ") ";
                         if (m.Phase == "final" && m.Distance < 3000) { final = true; worstCross = Math.Abs(m.Cross); break; }
-                        double err = FlightPolicy.Wrap(m.DesiredHeading - h), rate = 9.81 * Math.Tan(20 * Math.PI / 180) / v * 180 / Math.PI;
+                        double err = FlightPolicy.Wrap(m.DesiredHeading - h), rate = 9.81 * Math.Tan(Math.Min(m.TurnBank > 0 ? m.TurnBank : 20, 70) * Math.PI / 180) / v * 180 / Math.PI;   // the plane flies the bank the autopilot commands
                         double dh = FlightPolicy.Clamp(err, -rate, rate); h = (h + dh + 360) % 360; turned += Math.Abs(dh);
                         alt += FlightPolicy.Clamp(m.DesiredVs, -25, 12);
                         NavigationMath.Offset(la, lo, h, v, R0, out la, out lo);
@@ -1070,7 +1070,7 @@ class Program
                 var abeam = fly(0, 180, null);   // from the north, 90 deg to the runway
                 Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> nearest safe join, rolls out on centerline: " + abeam.JoinLog + " / " + abeam.Why);
                 var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
-                Check(behind.Why.StartsWith("ok") && behind.RouteLog.Contains("base") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> downwind, base, long final (no circles): " + behind.Why);
+                Check(behind.Why.StartsWith("ok") && behind.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> nearest safe join, long final (no circles): " + behind.Why);
                 var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
                 Check(Math.Abs(ch.LongAlt - (134.6 + 629)) < 2 && Math.Abs(ch.ShortAlt - (134.6 + 210)) < 2, "continuous 3 deg glideslope: ~630 m at 12 km, ~210 m at 4 km");
                 Check(Math.Abs(ApproachChart.Radius(130, 20) - 1.3 * 130 * 130 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1, "join spacing from r = v^2/(g tan 20) + 30% margin");
@@ -1199,7 +1199,7 @@ class Program
                 Check(!a1 && Math.Abs(x1) < 1, "straight leg: no early switch");
                 bool a2; RunwayMission.LegSteer(0, -.5, 0, -1, 0, 0, 180, 130, 20, R, out a2, out x1); RunwayMission.LegSteer(0, -.4, 0, -1, 0, 0, 180, 130, 20, R, out a1, out x1);
                 Check(a1 && !a2, "90 deg turn starts ~r (4.8 km) before the fix at 130 m/s");
-                Check(ApproachProfile.Speed(45) == 67.5, "join speed = 1.5 x stall");
+                Check(ApproachProfile.Speed(45) == 80 && ApproachProfile.Speed(60) == 90, "join speed = 1.5 x stall, floor 80 m/s");
             }
             Console.WriteLine("Lead turns / leg tracking: 4 behavior checks passed.");
             {   // Luke 13:13: settled 20-60 m right of 09 then went around 4x in one frame. Sim with a 1.5 deg steady track bias.
@@ -1267,7 +1267,7 @@ class Program
                     luke.Add(new ApproachChart.Wp { Name = "F" + luke.Count, Lat = q[0], Lon = q[1], Alt = 700 });
                 Func<double, double, int> tightCount = (stallV, chartBank) => { double v = ApproachProfile.Speed(stallV); string lg; ApproachChart.Smooth(luke, 90.4, -.0485997, -74.724375, v, ApproachProfile.Bank(chartBank, v), 600000, out lg); int t = lg.IndexOf("TIGHT"); return t < 0 ? 0 : lg.Substring(t).Split(new[] { " deg" }, StringSplitOptions.None).Length - 1; };
                 double rLight = ApproachProfile.Radius(ApproachProfile.Speed(30), ApproachProfile.Bank(20, 45)), rHeavy = ApproachProfile.Radius(ApproachProfile.Speed(80), ApproachProfile.Bank(20, 120));
-                Check(Math.Abs(rLight - 2.025 / .364 * 1000 / 9.81 * 0 - 45 * 45 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1 && rHeavy > 4 * rLight, "radius grows with v^2: trainer " + Math.Round(rLight) + " m vs cargo " + Math.Round(rHeavy) + " m");
+                Check(Math.Abs(rLight - 80 * 80 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1 && rHeavy > 2 * rLight, "radius grows with v^2: trainer " + Math.Round(rLight) + " m vs cargo " + Math.Round(rHeavy) + " m");
                 Check(tightCount(30, 20) < tightCount(80, 20), "heavier craft has more tight turns on the same chart (" + tightCount(30, 20) + " vs " + tightCount(80, 20) + ")");
                 Check(ApproachProfile.Bank(20, 300) == 10 && ApproachProfile.Bank(45, 300) == 45 && ApproachProfile.Bank(20, 100) == 20, "usable bank: 10 deg above 250 m/s, explicit bank wins");
                 Check(Math.Abs(ApproachProfile.StallAt(45, 10, 7.5) - 45 * Math.Sqrt(.75)) < 1e-9, "stall scales with sqrt(mass) (fuel burn)");
@@ -1277,7 +1277,7 @@ class Program
                 var rm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 rm.RawRoute = luke; rm.Plan(90.4, 600000, ApproachProfile.Speed(60), -1); int n1 = rm.Route.Count; rm.RouteIndex = n1 / 2; var tgt = rm.Route[rm.RouteIndex];
                 rm.Plan(90.4, 600000, ApproachProfile.Speed(40), rm.RouteIndex);
-                Check(rm.PlanSpeed == 60 && rm.SmoothLog.StartsWith("replanned") && NavigationMath.Distance(tgt.Lat, tgt.Lon, rm.Route[rm.RouteIndex].Lat, rm.Route[rm.RouteIndex].Lon, 600000) < 6000, "replan after fuel burn: new arcs, target kept nearby");
+                Check(rm.PlanSpeed == ApproachProfile.Speed(40) && rm.SmoothLog.StartsWith("replanned") && NavigationMath.Distance(tgt.Lat, tgt.Lon, rm.Route[rm.RouteIndex].Lat, rm.Route[rm.RouteIndex].Lon, 600000) < 6000, "replan after fuel burn: new arcs, target kept nearby");
             }
             Console.WriteLine("Per-craft approach profile: 7 behavior checks passed.");
             {   // Luke: join at the nearest fix/leg point this plane can safely align with (Dubins reach, altitude, terrain), shortest to touchdown
@@ -1311,6 +1311,37 @@ class Program
                 Check(Math.Abs(NavigationMath.Distance(0, 0, 0, plo, 600000) - 10000) < 1 && Math.Abs(NavigationMath.Distance(0, plo, pla, plo, 600000) - 10000) < 1, "map pan moves 25% of the shown width per press");
             }
             Console.WriteLine("ILS + map pan: 3 behavior checks passed.");
+            {   // Luke 13:33-13:44: "46 m/s, r 0.6 km" while flying 70-260 m/s -> got lost around DW-R/WP3
+                Check(ApproachProfile.EstimateStall(3000, 30) == ApproachProfile.UnmeasuredStallFloor && ApproachProfile.Speed(ApproachProfile.EstimateStall(3000, 30)) >= 80, "unmeasured stall estimate floored (no 31 m/s -> 46 m/s joins)");
+                var fast = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                fast.Step(-1.7, -72.09, 700, 700, 200, false, 600000, 31, 55, 55);
+                Check(fast.PlanSpeed >= 199 && Math.Abs(fast.PlanRadius - ApproachProfile.RadiusForG(fast.PlanSpeed, 4)) < 1, "arcs planned at the speed actually flown (200 m/s -> r " + Math.Round(fast.PlanRadius) + " m)");
+                bool ab; double xa;
+                RunwayMission.LegSteer(.3, -74.0, 0, -74.2, 0, -74.05, 90, 200, 20, 600000, out ab, out xa);
+                Check(ab && xa < -3000, "fix sequenced when passed abeam even 3 km off the line (no capture radius needed)");
+            }
+            Console.WriteLine("Approach speed/radius sanity: 3 behavior checks passed.");
+            {   // Luke: turns rated in g, not a lazy fixed 20 deg
+                Check(Math.Abs(ApproachProfile.BankForG(2) - 60) < .01 && Math.Abs(ApproachProfile.BankForG(1.5) - 48.19) < .01, "bank = acos(1/n): 2 g -> 60 deg, 1.5 g -> 48 deg");
+                Check(Math.Abs(ApproachProfile.RadiusForG(100, 2) - 100 * 100 / (9.81 * Math.Sqrt(3))) < 1e-6 && Math.Abs(ApproachProfile.RadiusForG(100, 2) - ApproachProfile.Radius(100, 60)) < 1, "radius = v^2/(g sqrt(n^2-1)) = same as tan(bank)");
+                ApproachProfile.CrewG = 6; ApproachProfile.StructG = 20; ApproachProfile.Backoff = 1;
+                Check(ApproachProfile.LoadFactor(4, 150, 45) == 4 && ApproachProfile.Limit == "rating", "default join rating 4 g when the craft allows it");
+                Check(ApproachProfile.LoadFactor(9, 300, 45) == 6 && ApproachProfile.Limit == "crew g", "crew g tolerance limits (6 g sustained)");
+                ApproachProfile.StructG = ApproachProfile.StructuralG(new double[] { 50, 4.5, 0 }); Check(Math.Abs(ApproachProfile.StructG - 3.6) < 1e-9 && ApproachProfile.LoadFactor(4, 300, 45) == 3.6 && ApproachProfile.Limit == "structure", "weakest part (80% of 4.5 g) limits");
+                ApproachProfile.StructG = 20;
+                Check(ApproachProfile.LoadFactor(4, 60, 45) < 1.5 && ApproachProfile.Limit == "stall", "stall margin at low speed (" + ApproachProfile.LoadFactor(4, 60, 45).ToString("0.00") + " g at 60 m/s)");
+                double bo = 1; for (int i = 0; i < 10; i++) bo = ApproachProfile.StressStep(bo, 17, 20, .1); ApproachProfile.Backoff = bo;
+                Check(bo < .65 && ApproachProfile.LoadFactor(4, 150, 45) < 2.6 && ApproachProfile.Limit == "stress back-off", "part stress > 80% backs off the rating");
+                for (int i = 0; i < 200; i++) bo = ApproachProfile.StressStep(bo, 5, 20, .1); Check(bo == 1, "recovers once stress is low"); ApproachProfile.Backoff = 1;
+                Check(ApproachProfile.TurnPitch(0) == 0 && Math.Abs(ApproachProfile.TurnPitch(60) - 4) < .01 && ApproachProfile.TurnPitch(85) == 0, "back-pressure scales with 1/cos(bank)");
+                var gm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                gm.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
+                Check(Math.Abs(gm.PlanG - 4) < 1e-9 && Math.Abs(gm.PlanBank - 75.52) < .01 && gm.TurnBank > 75 && gm.PlanRadius < 400, "join planned and flown at 4 g (bank " + Math.Round(gm.PlanBank) + ", r " + Math.Round(gm.PlanRadius) + " m)");
+                var gb = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1, BankDeg = 30 };
+                gb.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
+                Check(gb.PlanBank == 30 && gb.TurnBank == 30, "explicit bank 30 overrides the g rating");
+            }
+            Console.WriteLine("G-rated turns (crew/structure/stall): 11 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {

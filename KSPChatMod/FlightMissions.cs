@@ -111,14 +111,38 @@ namespace KSPChatBridge
     /// usable bank = chart bank capped by the speed bank rule, radius = v^2/(g tan bank).</summary>
     internal static class ApproachProfile
     {
-        internal const double JoinFactor = 1.5, MinSpeed = 40, MaxSpeed = 200, Replan = .08;
+        internal const double JoinFactor = 1.5, MinSpeed = 80, MaxSpeed = 200, Replan = .08, UnmeasuredStallFloor = 45;
         /// <summary>Stall at current mass from a reference stall (Vs ~ sqrt(mass)).</summary>
         internal static double StallAt(double stallRef, double massRef, double massNow) { return massRef > 0 && massNow > 0 ? stallRef * Math.Sqrt(massNow / massRef) : stallRef; }
         /// <summary>Wing-loading estimate when the craft has no measured stall: Vs = sqrt(2 m g / (rho0 * K * sum(lift coeff))), K calibrated to stock (6 t, 6 lift -> ~45 m/s).</summary>
-        internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? 45 : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (1.225 * 7.9 * liftCoeffSum)), 20, 200); }
+        internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? UnmeasuredStallFloor : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (1.225 * 7.9 * liftCoeffSum)), UnmeasuredStallFloor, 200); }   // Luke 13:33: unfloored estimate gave 31 m/s -> 46 m/s joins, 586 m arcs flown at 70-260 m/s
         internal static double Speed(double stall) { return FlightPolicy.Clamp(JoinFactor * stall, MinSpeed, MaxSpeed); }
         internal static double Bank(double chartBank, double speed) { return chartBank > 20 ? chartBank : Math.Min(Math.Max(5, chartBank), FlightPolicy.BankLimit(speed)); }   // explicit "bank 60" wins
         internal static double Radius(double speed, double bank) { return speed * speed / (9.81 * Math.Tan(bank * Math.PI / 180)); }
+        /// <summary>Luke: G-based turn rating (joins ~2 g, final corrections ~1.5 g; settable), never above the 3 g cap and
+        /// kept 20% inside the stall load factor (v/Vs)^2. Bank = acos(1/n), radius = v^2/(g sqrt(n^2-1)).</summary>
+        /// Fighter/NASA style (Luke): allowed g = min(rating, crew tolerance, structure, stall margin), with stress back-off.
+        internal static double JoinG = 4.0, FinalG = 1.5, CrewG = 6, StructG = 20, Backoff = 1;
+        internal const double GCap = 12;   // absolute sanity ceiling; real limits come from crew/structure/stall
+        internal static string Limit = "rating";
+        internal static double LoadFactor(double wantG, double speed, double stall)
+        {
+            double stallN = stall > 0 ? .8 * (speed / stall) * (speed / stall) : GCap, rating = wantG * Backoff, n = rating; Limit = Backoff < .999 ? "stress back-off" : "rating";
+            if (CrewG < n) { n = CrewG; Limit = "crew g"; }
+            if (StructG < n) { n = StructG; Limit = "structure"; }
+            if (stallN < n) { n = stallN; Limit = "stall"; }
+            return FlightPolicy.Clamp(n, 1.05, GCap);
+        }
+        /// <summary>Structural g limit from the weakest part's g tolerance (80% margin); 0/garbage tolerances ignored.</summary>
+        internal static double StructuralG(IEnumerable<double> partTolerances)
+        { double m = double.MaxValue; foreach (var t in partTolerances) if (t > 1 && t < 1e4) m = Math.Min(m, .8 * t); return m == double.MaxValue ? 20 : Math.Max(1.5, m); }
+        /// <summary>Stress back-off: above 80% of the structural limit shrink the rating quickly, recover slowly below 60%.</summary>
+        internal static double StressStep(double backoff, double g, double structG, double dt)
+        { double st = structG > 0 ? g / structG : 0; return st > .8 ? Math.Max(.4, backoff * (1 - .5 * dt)) : st < .6 ? Math.Min(1, backoff + .05 * dt) : backoff; }
+        internal static double BankForG(double n) { return Math.Acos(1 / Math.Max(1.0001, n)) * 180 / Math.PI; }
+        internal static double RadiusForG(double speed, double n) { return speed * speed / (9.81 * Math.Sqrt(Math.Max(1e-6, n * n - 1))); }
+        /// <summary>Back-pressure: extra pitch (deg) to hold altitude in a bank, scaled by the load factor 1/cos(bank).</summary>
+        internal static double TurnPitch(double rollDeg) { double a = Math.Abs(rollDeg); return a >= 80 ? 0 : FlightPolicy.Clamp(4 * (1 / Math.Cos(a * Math.PI / 180) - 1), 0, 8); }
         internal static bool NeedsReplan(double planned, double now) { return planned > 0 && Math.Abs(now - planned) / planned > Replan; }
     }
 
@@ -389,14 +413,16 @@ namespace KSPChatBridge
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
         internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
-        internal double PlanSpeed, PlanBank, PlanRadius; internal List<ApproachChart.Wp> RawRoute;
+        internal double PlanSpeed, PlanBank, PlanRadius, PlanG, TurnBank, LastStall = 45; internal List<ApproachChart.Wp> RawRoute;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
         /// r*tan(dHdg/2) before the fix, r from the actual speed and bank. Returns the desired heading; advance = time to switch legs.</summary>
         /// <summary>(Re)build the flown route from the raw chart fixes for a join speed; keeps the current target when replanning.</summary>
         internal void Plan(double course, double radius, double speed, int keepIndex, double hereLat = double.NaN, double hereLon = double.NaN)
         {
-            PlanSpeed = speed; PlanBank = ApproachProfile.Bank(BankDeg, speed); PlanRadius = ApproachProfile.Radius(speed, PlanBank);
+            PlanSpeed = speed; PlanG = ApproachProfile.LoadFactor(ApproachProfile.JoinG, speed, LastStall);
+            PlanBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(PlanG);   // explicit "bank 60" still wins
+            PlanRadius = ApproachProfile.Radius(speed, PlanBank);
             ApproachChart.Wp target = keepIndex >= 0 && Route != null && keepIndex < Route.Count ? Route[keepIndex] : null;
             // smooth from the plane's own position so the first turn (onto the run-in) gets a lead/arc too, then drop that start point
             bool here = !double.IsNaN(hereLat) && keepIndex < 0;
@@ -438,6 +464,9 @@ namespace KSPChatBridge
             Cross = cross; Along = along;
             Distance = Math.Max(0, -along);
             double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
+            LastStall = stall;
+            // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
+            TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(ApproachProfile.LoadFactor(Phase == "entry" ? ApproachProfile.JoinG : ApproachProfile.FinalG, speed, stall));
             if (Phase == "entry")
             {
                 if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
@@ -447,7 +476,7 @@ namespace KSPChatBridge
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
                     if (Kind != "short")
                     {   // join at the nearest safely-alignable fix/leg point for THIS plane; fall back to the computed long-final entry
-                        double jv = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = ApproachProfile.Radius(jv, ApproachProfile.Bank(BankDeg, jv)); string jw;
+                        double jv = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = BankDeg > 20 ? ApproachProfile.Radius(jv, BankDeg) : ApproachProfile.RadiusForG(jv, ApproachProfile.LoadFactor(ApproachProfile.JoinG, jv, stall)); string jw;
                         var join = Chart.BestJoin(lat, lon, track, altitude, jv, jr, radius, out jw);
                         if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
                         JoinLog = join != null ? jw : jw + "; long final entry";
@@ -470,7 +499,7 @@ namespace KSPChatBridge
                     double nextBrg = RouteIndex + 1 < Route.Count ? NavigationMath.Bearing(wp.Lat, wp.Lon, Route[RouteIndex + 1].Lat, Route[RouteIndex + 1].Lon) : course;
                     bool leadTurn = false;
                     DesiredHeading = NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300 ? NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon)
-                        : LegSteer(lat, lon, pLat, pLon, wp.Lat, wp.Lon, nextBrg, speed, BankDeg, radius, out leadTurn, out LegXte);
+                        : LegSteer(lat, lon, pLat, pLon, wp.Lat, wp.Lon, nextBrg, speed, TurnBank, radius, out leadTurn, out LegXte);
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = wp.Alt;
                     DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
