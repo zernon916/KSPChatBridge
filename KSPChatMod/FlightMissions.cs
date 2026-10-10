@@ -779,6 +779,12 @@ namespace KSPChatBridge
             }
         }
 
+        /// <summary>Route rebuilds at most every ~20 s (Luke 6:34 PM: turned away from the runway it rebuilt 4x/s; the fresh
+        /// route finished at once, the intercept bounced it back to entry, repeat). Inside the cooldown it keeps the route and
+        /// flies out to the join point itself.</summary>
+        internal const int RebuildCooldownSteps = 1000;
+        internal static bool RebuildDue(int stepsSinceRebuild) { return stepsSinceRebuild >= RebuildCooldownSteps; }
+        int stepsSinceRebuild = RebuildCooldownSteps; bool holdLast; internal int Rebuilds;
         internal static double LegSteer(double lat, double lon, double pLat, double pLon, double fLat, double fLon, double nextBrg, double speed, double bankDeg, double radius, out bool advance, out double xte)
         {
             double leg = NavigationMath.Bearing(pLat, pLon, fLat, fLon), len = NavigationMath.Distance(pLat, pLon, fLat, fLon, radius);
@@ -811,11 +817,14 @@ namespace KSPChatBridge
             LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
             TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(ApproachProfile.LoadFactor(Phase == "entry" ? ApproachProfile.JoinG : ApproachProfile.FinalG, speed, stall));
+            stepsSinceRebuild++;
             if (Phase == "entry")
             {
+                if (Route != null && holdLast && RouteIndex >= Route.Count) RouteIndex = Route.Count - 1;
                 if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
                 if (Route == null)
                 {
+                    stepsSinceRebuild = 0; holdLast = false; Rebuilds++;
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
                     if (Kind != "short")
@@ -857,7 +866,9 @@ namespace KSPChatBridge
                     DesiredAltitude = wp.Alt;
                     DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
-                    if (leadTurn || dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
+                    bool last = RouteIndex == Route.Count - 1;
+                    if (holdLast && last) { DesiredHeading = NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon); if (dw < 700) { holdLast = false; RouteIndex++; } }   // fly all the way out to the join point
+                    else if (leadTurn || dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
                 }
                 if (RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }
             }
@@ -869,7 +880,7 @@ namespace KSPChatBridge
                 DesiredSpeed = Math.Min(ApproachProfile.Speed(stall), ApproachProfile.FinalSchedule(Distance, stall, DecelA));   // intercept: join speed, never above the final schedule
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
-                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
+                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; if (RebuildDue(stepsSinceRebuild) || Route == null || Route.Count == 0) Route = null; else { holdLast = true; RouteIndex = Route.Count - 1; } }   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {

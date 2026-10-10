@@ -197,6 +197,21 @@ class Program
         { double a = ApproachProfile.EstimateStall(12000, 10), b = ApproachProfile.EstimateStall(48000, 10); Check(Math.Abs(b / a - 2) < .01, "stall scales with sqrt(mass) (" + a.ToString("0") + " -> " + b.ToString("0") + ")"); }
         Check(ApproachProfile.HeavyStallFloor(48.8) > 69 && CraftClass.ConservativeStall(45, 94) >= 75 && CraftClass.ConservativeStall(60, double.NaN) == 60, "heavy floor + liftoff-proven stall (A300: 45 -> >=75)");
         Check(PilotPolicy.LowEnergy(77, 75 / 1.0, -2, 240) && !PilotPolicy.LowEnergy(120, 70, -2, 240) && PilotPolicy.LowEnergy(120, 70, -23, 230) && PilotPolicy.MinSafeSpeed(75) > 97, "low energy: slow or sinking near the sea -> power + climb; never below 1.3 Vs");
+        {   // Luke 6:34 PM: A300 east of KSC 27, turned away from the runway: the route was rebuilt ~4x/s. 50 Hz, 120 s.
+            var rc = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Heavy = true }; double jg0 = ApproachProfile.JoinG; ApproachProfile.JoinG = 1.15;
+            { string rt = System.IO.Directory.GetCurrentDirectory(); while (rt != null && !System.IO.File.Exists(System.IO.Path.Combine(rt, "tests", "csharp", "luke_KSC_27.json"))) rt = System.IO.Path.GetDirectoryName(rt); string ow; rc.Override = ApproachOverride.Parse(MiniJson.Deserialize(System.IO.File.ReadAllText(System.IO.Path.Combine(rt, "tests", "csharp", "luke_KSC_27.json"))), rc.Lat, rc.Lon, 70, 600000, out ow); }
+            double la = -.0526, lo = -74.36, hd = 121, al0 = 460, sp = 95, Rk = 600000, dt0 = .02; string ph = "";
+            int at120 = -1; bool sawFinal = false;
+            for (int s = 0; s < 60000 && !sawFinal; s++)
+            {
+                if (s == 6000) at120 = rc.Rebuilds;
+                rc.Step(la, lo, al0, al0 - 70, sp, false, Rk, 70, hd); ph = rc.Phase; sawFinal |= ph == "final";
+                double er = FlightPolicy.Wrap(rc.DesiredHeading - hd), rate = 9.81 * Math.Tan(25 * Math.PI / 180) / sp * 180 / Math.PI * dt0; hd = (hd + Math.Max(-rate, Math.Min(rate, er)) + 360) % 360;
+                al0 += Math.Max(-25, Math.Min(12, rc.DesiredVs)) * dt0; double nl, no; NavigationMath.Offset(la, lo, hd, sp * dt0, Rk, out nl, out no); la = nl; lo = no;
+            }
+            ApproachProfile.JoinG = jg0;
+            Check((at120 < 0 ? rc.Rebuilds : at120) <= 7 && sawFinal, "approach turned away from the runway: no rebuild churn (" + at120 + " rebuilds in 120 s, was 154), then established on final (" + ph + ", " + rc.Rebuilds + " total)");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
