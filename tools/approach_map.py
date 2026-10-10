@@ -31,7 +31,7 @@ def chart(thr, end, elev, speed=150.0, bank=20.0):
         add("base_" + ("left" if s < 0 else "right"), "IF-%s (base)" % nm, 12000 + r, r*s, longAlt)
     add("faf", "FAF (long final 12 km)", 12000, 0, longAlt); add("sf", "SF (short final 4 km)", 4000, 0, shortAlt)
     return {"course": round(crs, 1), "elev": elev, "thr": thr, "end": end, "radius_m": round(r), "fixes": fixes,
-            "flare_start_m": 15, "flare_sink_ms": 1, "touchdown_m": 350, "tch_m": 15}
+            "alt_ref": "msl", "flare_start_m": 15, "flare_sink_ms": 1, "touchdown_m": 350, "tch_m": 15}
 def ends():
     out = {}
     for site, (a, b, elev) in RUNWAYS.items():
@@ -53,5 +53,24 @@ def main():
     tpl = open(os.path.join(os.path.dirname(__file__), "approach_map_template.html"), encoding="utf-8").read()
     open(out, "w", encoding="utf-8").write(tpl.replace("/*DATA*/null", json.dumps(data)))
     print(out, len(data["track"]), "track points")
+
+def turn_audit(points, speed, bank=20.0):
+    """points: [(name, lat, lon)] ending at the threshold. For each interior fix: heading change, turn lead
+    r*tan(dtheta/2); tight when the lead plus the neighbouring turn's lead exceeds either adjoining leg."""
+    r = speed**2 / (G * math.tan(math.radians(bank)))
+    legs = [(math.hypot(*_xy(points[i], points[i+1])), bearing(points[i][1], points[i][2], points[i+1][1], points[i+1][2])) for i in range(len(points)-1)]
+    leads = [0.0] + [r * math.tan(math.radians(abs(((legs[i][1] - legs[i-1][1] + 180) % 360) - 180) / 2)) for i in range(1, len(legs))] + [0.0]
+    out = []
+    for i in range(1, len(points)-1):
+        dth = abs(((legs[i][1] - legs[i-1][1] + 180) % 360) - 180)
+        need_in, need_out = leads[i] + leads[i-1], leads[i] + leads[i+1]
+        tight = dth >= 179 or need_in > legs[i-1][0] or need_out > legs[i][0]
+        out.append({"fix": points[i][0], "turn": round(dth), "lead_m": round(leads[i]), "leg_in_m": round(legs[i-1][0]), "leg_out_m": round(legs[i][0]), "tight": tight})
+    return out, r
+
+def _xy(a, b):
+    k = math.radians(1) * R
+    return ((b[2]-a[2]) * k * math.cos(math.radians(a[1])), (b[1]-a[1]) * k)
+
 if __name__ == "__main__":
     main()

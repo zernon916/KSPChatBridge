@@ -1137,6 +1137,17 @@ class Program
                 Check(c3.CustomLeft == null, "no fix list -> computed joins kept");
             }
             Console.WriteLine("Chart waypoint add/remove: 4 behavior checks passed.");
+            {
+                string why3; string agl = "{\"alt_ref\":\"agl\",\"fixes\":[{\"role\":\"faf\",\"lat\":-.05,\"lon\":-74.85,\"alt\":600}]}";
+                var oa = ApproachOverride.Parse(MiniJson.Deserialize(agl), -.0486, -74.7244, 69, 600000, out why3, (la, lo) => 0);
+                Check(oa != null && oa.Fixes[0].Alt == 600 && oa.Fixes[0].Agl == 600 && oa.AltRef == "agl", "AGL over the sea (terrain 0) -> 600 m MSL: " + why3);
+                var ob = ApproachOverride.Parse(MiniJson.Deserialize(agl), -.0486, -74.7244, 69, 600000, out why3, (la, lo) => 250);
+                Check(ob.Fixes[0].Alt == 850, "AGL over a 250 m hill -> 850 m MSL");
+                var oc = ApproachOverride.Parse(MiniJson.Deserialize(agl), -.0486, -74.7244, 69, 600000, out why3);
+                Check(oc.Fixes[0].Alt == 669, "no terrain sampler -> runway elevation + AGL");
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"alt_ref\":\"ft\"}"), 0, 0, 0, 600000, out why3) == null && ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"lat\":-.05,\"lon\":-74.85,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why3).AltRef == "msl", "bad alt_ref rejected; legacy file = msl");
+            }
+            Console.WriteLine("AGL approach altitudes: 4 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

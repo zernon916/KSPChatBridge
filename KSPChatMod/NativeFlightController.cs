@@ -882,7 +882,7 @@ namespace KSPChatBridge
                                 object end; string why;
                                 if (all != null && all.TryGetValue(selectedRunway.Key, out end))
                                 {
-                                    selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why);
+                                    selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why, selectedRunway.Terrain);
                                     ChatLog.Write("approach", selectedRunway.Override != null ? "using Luke's chart for " + selectedRunway.Key : "approaches.json " + selectedRunway.Key + " invalid (" + why + "); computed chart");
                                 }
                             }

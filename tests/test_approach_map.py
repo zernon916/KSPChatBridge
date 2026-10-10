@@ -20,3 +20,12 @@ def test_final_fixes_last_and_sides():
     assert [f['role'] for f in fx[-2:]] == ['faf', 'sf']
     assert all(f['side'] in ('left', 'right', 'both') for f in fx)
 
+
+
+def test_turn_audit_flags_short_leg_before_big_turn():
+    pts = [('A', 0.2, -75.0), ('B', 0.0, -74.99), ('C', 0.0, -74.8), ('THR', 0.0, -74.7)]
+    a, r = am.turn_audit(pts, 150)
+    assert 6000 < r < 6500 and a[0]['tight'] and a[0]['turn'] > 80
+    a2, _ = am.turn_audit([('A', 0.0, -76.0), ('B', 0.0, -75.5), ('THR', 0.0, -74.7)], 150)
+    assert not a2[0]['tight']
+

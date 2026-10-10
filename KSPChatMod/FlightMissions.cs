@@ -58,20 +58,25 @@ namespace KSPChatBridge
     /// <summary>One runway end's edited chart from PluginData/approaches.json (validated; invalid -> null = computed defaults).</summary>
     internal sealed class ApproachOverride
     {
-        internal sealed class Fix { internal string Role, Name, Side; internal double Lat, Lon, Alt; }
+        internal sealed class Fix { internal string Role, Name, Side; internal double Lat, Lon, Alt, Agl = double.NaN; }
+        internal string AltRef = "msl";
         internal readonly List<Fix> Fixes = new List<Fix>();
         internal double FlareStartM = 15, FlareSinkMs = 1, TouchdownM = 350, TchM = 15;
         internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "wp" };
         internal const int MaxFixes = 16;
         static double N(Dictionary<string, object> d, string k, double def) { object v; return d != null && d.TryGetValue(k, out v) && v != null ? Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture) : def; }
         /// <summary>Parse one end. Fixes must sit within 60 km of the threshold, 0-6000 m above the runway; flare/touchdown in sane ranges.</summary>
-        internal static ApproachOverride Parse(object raw, double thrLat, double thrLon, double elevation, double radius, out string why)
+        /// alt_ref "agl" (editor default): alt is height above the terrain under the fix, converted here with in-game terrain (runway elevation if unavailable); "msl" = legacy.
+        internal static ApproachOverride Parse(object raw, double thrLat, double thrLon, double elevation, double radius, out string why, Func<double, double, double> terrain = null)
         {
             why = ""; var d = raw as Dictionary<string, object>; if (d == null) { why = "not an object"; return null; }
             try
             {
                 var o = new ApproachOverride { FlareStartM = N(d, "flare_start_m", 15), FlareSinkMs = N(d, "flare_sink_ms", 1), TouchdownM = N(d, "touchdown_m", 350), TchM = N(d, "tch_m", 15) };
                 if (o.FlareStartM < 3 || o.FlareStartM > 60 || o.FlareSinkMs < .2 || o.FlareSinkMs > 5 || o.TouchdownM < 0 || o.TouchdownM > 1500 || o.TchM < 0 || o.TchM > 100) { why = "flare/touchdown/TCH out of range"; return null; }
+                object ar; string altRef = d.TryGetValue("alt_ref", out ar) && ar != null ? Convert.ToString(ar) : "msl";
+                if (altRef != "agl" && altRef != "msl") { why = "alt_ref must be agl or msl"; return null; }
+                o.AltRef = altRef;
                 object fl; if (d.TryGetValue("fixes", out fl) && fl is System.Collections.IList)
                     foreach (object x in (System.Collections.IList)fl)
                     {
@@ -83,8 +88,14 @@ namespace KSPChatBridge
                         if (o.Fixes.Count >= MaxFixes) { why = "more than " + MaxFixes + " fixes"; return null; }
                         object nm; var f = new Fix { Role = role, Side = side, Name = fd.TryGetValue("name", out nm) ? Convert.ToString(nm) : role, Lat = N(fd, "lat", double.NaN), Lon = N(fd, "lon", double.NaN), Alt = N(fd, "alt", double.NaN) };
                         if (double.IsNaN(f.Lat) || double.IsNaN(f.Lon) || double.IsNaN(f.Alt)) { why = role + ": lat/lon/alt missing"; return null; }
+                        if (altRef == "agl")
+                        {
+                            if (f.Alt < 0 || f.Alt > 6000) { why = role + ": AGL altitude outside 0..6000 m"; return null; }
+                            double g = terrain != null ? terrain(f.Lat, f.Lon) : double.NaN;
+                            f.Agl = f.Alt; f.Alt = (double.IsNaN(g) ? elevation : g) + f.Alt;
+                        }
                         if (NavigationMath.Distance(thrLat, thrLon, f.Lat, f.Lon, radius) > 60000) { why = role + ": more than 60 km from the threshold"; return null; }
-                        if (f.Alt < elevation || f.Alt > elevation + 6000) { why = role + ": altitude outside runway..+6000 m"; return null; }
+                        if (altRef == "msl" && (f.Alt < elevation || f.Alt > elevation + 6000)) { why = role + ": altitude outside runway..+6000 m"; return null; }
                         o.Fixes.Add(f);
                     }
                 return o;
