@@ -517,7 +517,7 @@ namespace KSPChatBridge
                 var args = new Dictionary<string, object>(); string result = "";
                 if (step.Op == "takeoff") result = Command("takeoff", args);
                 else if (step.Op == "taxi") { args["name"] = step.Destination; result = Command("taxi_to", args); }
-                else if (step.Op == "land") { args["name"] = FlightResidualPolicy.BuiltInRunway(step.Destination, "") != null ? FlightResidualPolicy.RunwayAlias(step.Destination) : step.Destination; result = Command("land_plane", args); }
+                else if (step.Op == "land") { args["name"] = FlightResidualPolicy.BuiltInRunway(step.Destination, "") != null ? FlightResidualPolicy.RunwayAlias(step.Destination) : step.Destination; args["short_final"] = step.Destination.ToLowerInvariant().Contains("short"); result = Command("land_plane", args); }
                 else if (step.Op == "head")
                 {
                     bool isl = step.Destination == "island";
@@ -800,21 +800,41 @@ namespace KSPChatBridge
                     Vector3d tp = tgt.GetTransform().position;
                     builtIn = Tuple.Create(NearestBuiltIn(vessel.mainBody.GetLatitude(tp), vessel.mainBody.GetLongitude(tp)), direction);
                 }
-                if (builtIn != null && builtIn.Item1 == "nearest") builtIn = Tuple.Create(NearestBuiltIn(vessel.latitude, vessel.longitude), builtIn.Item2);
+                bool wantNearest = builtIn != null && builtIn.Item1 == "nearest";
+                if (wantNearest)   // Luke: closest of built-ins + saved runway spots, then the end best aligned with our heading
+                {
+                    var names = new List<string> { "ksc", "island" }; var mids = new List<double[]> { new[] { -.0494058, -74.6073375 }, new[] { -1.5154, -71.9093 } };
+                    foreach (var pt in spots.Points(vessel.mainBody.bodyName))
+                    {
+                        try { var row = spots.Find(pt.Name, vessel.mainBody.bodyName); object mv; if (row != null && row.TryGetValue("mode", out mv) && "H".Equals(mv)) { names.Add("spot:" + pt.Name); mids.Add(new[] { pt.Lat, pt.Lon }); } } catch (ArgumentException) { }
+                    }
+                    if (vessel.mainBody.bodyName != "Kerbin") { names.RemoveRange(0, 2); mids.RemoveRange(0, 2); }
+                    int ni = PilotPolicy.Nearest(vessel.latitude, vessel.longitude, mids, vessel.mainBody.Radius);
+                    if (ni < 0) return "No runway known on " + vessel.mainBody.bodyName + ".";
+                    if (names[ni].StartsWith("spot:"))
+                    {
+                        selectedRunway = spots.Runway(names[ni].Substring(5), vessel.mainBody.bodyName, vessel.mainBody.Radius, (lat, lon) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(lat, lon)) - vessel.mainBody.Radius));
+                        savedRunway = selectedRunway != null; builtIn = null;
+                    }
+                    else builtIn = Tuple.Create(names[ni], "");
+                    direction = "";
+                }
                 bool island = builtIn != null && builtIn.Item1 == "island";
                     if (!savedRunway)
                     {
-                        if (builtIn == null) return "Unknown local runway: " + destination + " (built-in: KSC 09/27, Island 09/27; or a saved spot).";
+                        if (builtIn == null && !savedRunway) return "Unknown local runway: " + destination + " (built-in: KSC 09/27, Island 09/27; or a saved spot).";
                         if (vessel.mainBody.bodyName != "Kerbin") return "Built-in runways are on Kerbin.";
                         direction = builtIn.Item2; destination = "";
                         selectedRunway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
                             : new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                     }
-                    if (!savedRunway && (island ? direction == "09" : direction == "27" || (direction == "" && vessel.longitude > -74.6)))
+                    if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEnd(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading)
+                    : !savedRunway && (island ? direction == "09" : direction == "27"))
                     { double lat = selectedRunway.Lat, lon = selectedRunway.Lon; selectedRunway.Lat = selectedRunway.EndLat; selectedRunway.Lon = selectedRunway.EndLon; selectedRunway.EndLat = lat; selectedRunway.EndLon = lon; }
                     if (NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius) > 150000) return "Runway is beyond the 150 km approach limit.";
                     double approachSpeed = Num(a, "approach_speed", 0);
-                    goArounds = 0; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                    selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
+                goArounds = 0; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
                     if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);

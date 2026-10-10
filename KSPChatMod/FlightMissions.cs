@@ -61,6 +61,7 @@ namespace KSPChatBridge
         internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
         internal double Cross, Along;
         internal string Why = "";
+        internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
         /// and go around if not aligned within 40 m / 6 deg by 1 km out. track = ground track (NaN = unknown).</summary>
@@ -75,19 +76,21 @@ namespace KSPChatBridge
             double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
             if (Phase == "entry")
             {
+                if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
                 double fixLat, fixLon, turnR = Math.Max(800, speed * speed / (9.81 * Math.Tan(20 * Math.PI / 180)));
-                NavigationMath.Offset(Lat, Lon, course + 180, IfDistance, radius, out fixLat, out fixLon);
+                NavigationMath.Offset(Lat, Lon, course + 180, FixDistance, radius, out fixLat, out fixLon);
                 // Outbound (heading away from the runway) or abeam: aim for a base point 2 turn radii to our side of the fix,
                 // so the 180 deg turn back rolls out on the centerline instead of overshooting it.
                 bool outbound = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(track - course)) > 90;
-                if (outbound || -along < IfDistance - 2000) NavigationMath.Offset(fixLat, fixLon, course + (cross >= 0 ? 90 : -90), 2 * turnR, radius, out fixLat, out fixLon);
+                if (Kind == "long" && (outbound || -along < FixDistance - 2000)) NavigationMath.Offset(fixLat, fixLon, course + (cross >= 0 ? 90 : -90), 2 * turnR, radius, out fixLat, out fixLon);
                 double fixDistance = NavigationMath.Distance(lat, lon, fixLat, fixLon, radius);
                 DesiredHeading = NavigationMath.Bearing(lat, lon, fixLat, fixLon);
                 DesiredAltitude = Elevation + 800; DesiredSpeed = Math.Max(1.5 * stall, Math.Min(150, speed));
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
                 // already out on the extended centerline beyond the FAF -> intercept straight away
                 bool inbound = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(track - course)) < 60;
-                if (fixDistance < 1500 || (-along > FafDistance + 2000 && Math.Abs(cross) < 2500 && inbound)) Phase = "intercept";
+                double faf = Kind == "short" ? 2000 : FafDistance;
+                if (fixDistance < 1500 || (-along > faf + 2000 && Math.Abs(cross) < 2500 && inbound)) Phase = "intercept";
             }
             if (Phase == "intercept")
             {
@@ -96,7 +99,7 @@ namespace KSPChatBridge
                 DesiredAltitude = Elevation + 800; DesiredSpeed = Math.Max(1.4 * stall, Math.Min(140, speed));
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -6, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
-                else if (-along < FafDistance) { Phase = "entry"; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
+                else if (-along < (Kind == "short" ? 2000 : FafDistance)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {

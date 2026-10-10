@@ -103,7 +103,7 @@ namespace KSPChatBridge
                 }
                 if (p.Contains("shortfinal") || Regex.IsMatch(p, @"\b(set up|line up|set for|approach)\b"))
                 {
-                    if (p.Contains("shortfinal")) { shortFinal = true; notes.Add("short final: standard approach used (short final not supported yet)"); }
+                    if (p.Contains("shortfinal")) { shortFinal = true; notes.Add("short final (4 km fix) if the geometry allows"); }
                     if (rw != null) runway = rw; else if (!p.Contains("shortfinal")) unsure.Add(p);
                     continue;
                 }
@@ -140,12 +140,12 @@ namespace KSPChatBridge
                     landRunway = where.Length > 0 ? RunwayIn(where) : runway;
                     if (where.Length > 0 && landRunway == null) { unsure.Add(p); continue; }
                     if (landRunway == null) { landRunway = "KSC"; notes.Add("no runway named: landing at KSC (end chosen by approach)"); }
-                    lines.Add("land " + landRunway); landed = true; continue;
+                    lines.Add("land " + landRunway + (shortFinal || p.Contains("shortfinal") ? " short final" : "")); landed = true; continue;
                 }
                 if (Regex.IsMatch(p, @"^wait") && Regex.IsMatch(p, @"\d")) { lines.Add("wait " + AltitudeM(p).ToString("0", Inv) + (p.Contains("min") ? " min" : " s")); continue; }
                 unsure.Add(p);
             }
-            if (!landed && runway != null) { lines.Add("land " + runway); notes.Add("added the landing on " + runway); }
+            if (!landed && runway != null) { lines.Add("land " + runway + (shortFinal ? " short final" : "")); notes.Add("added the landing on " + runway); }
             if (lines.Count == 0 && unsure.Count == 0) unsure.Add(request ?? "");
             if (grounded && !tookOff && lines.Count > 0) { lines.Insert(0, "takeoff"); if (!lines.Exists(l => l.StartsWith("climb"))) lines.Insert(1, "climb 1000 m agl"); }
             plan = string.Join("\n", lines.ToArray());
@@ -203,6 +203,26 @@ namespace KSPChatBridge
             string what = mode == "idle" ? "autopilot OFF (manual)" : mode == "landing" ? "LANDING (" + landingPhase + ", " + (double.IsNaN(distance) ? "?" : (distance / 1000).ToString("0.0", Inv) + " km") + " to the runway)"
                 : mode == "hold" ? "autopilot ON, holding (NOT landing)" : "autopilot " + mode;
             return craft + ": " + what + (planStep > 0 ? ", flight plan step " + planStep : "") + "; alt " + alt.ToString("0", Inv) + " m, " + spd.ToString("0", Inv) + " m/s, heading " + hdg.ToString("000", Inv) + ".";
+        }
+
+        // ---- Luke's approach rules (Oct 9): short final when near head-on, long otherwise; nearest runway + best end ----
+        internal const double ShortFix = 4000, ShortHeadOn = 20, ShortForcedMax = 60;
+        /// <summary>"short" (4 km fix) when the track is within 20 deg of runway heading (or short final was asked for and we're within
+        /// 60 deg) and we're still far enough out; else "long" (12 km fix). distOut = metres before the threshold (-along).</summary>
+        internal static string ApproachKind(double track, double course, double distOut, bool forcedShort)
+        {
+            if (double.IsNaN(track) || distOut < ShortFix + 1000) return "long";
+            double err = Math.Abs(FlightPolicy.Wrap(track - course));
+            return err <= ShortHeadOn || (forcedShort && err <= ShortForcedMax) ? "short" : "long";
+        }
+        /// <summary>Land on the end whose heading is closest to ours: swap when the threshold->end course is >90 deg off.</summary>
+        internal static bool SwapEnd(double thresholdToEndCourse, double heading) { return Math.Abs(FlightPolicy.Wrap(heading - thresholdToEndCourse)) > 90; }
+        /// <summary>Index of the nearest runway among (lat, lon) midpoints.</summary>
+        internal static int Nearest(double lat, double lon, IList<double[]> runways, double radius)
+        {
+            int best = -1; double bd = double.MaxValue;
+            for (int i = 0; i < runways.Count; i++) { double d = NavigationMath.Distance(lat, lon, runways[i][0], runways[i][1], radius); if (d < bd) { bd = d; best = i; } }
+            return best;
         }
 
         internal const string ToolRules = "\nRULES: To change anything in the game you MUST call a tool (<tool_call>). Never say you did something unless a tool result says so; if a tool fails, say what failed. If no listed tool fits, call find_tool. Answer in one short sentence.";

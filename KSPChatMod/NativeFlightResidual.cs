@@ -73,8 +73,9 @@ namespace KSPChatBridge
                     string route = FlightResidualPolicy.LandRoute(where, vessel.LandedOrSplashed, props.HasLift(vessel), IsPlane(), known);
                     if (route == "grounded") return "Already grounded.";
                     if (route == "heli") return Command("heli_control", Args("mode", "land"));
-                    if (route == "spot") return Command("land_plane", Args("name", FlightResidualPolicy.RunwayAlias(where)));
-                    if (route == "plane") return Command("land_plane", Args());
+                    bool sf = Bool(a, "short_final", false) || where.ToLowerInvariant().Contains("short");
+                    if (route == "spot") return Command("land_plane", Args("name", FlightResidualPolicy.RunwayAlias(where), "short_final", sf));
+                    if (route == "plane") return Command("land_plane", Args("short_final", sf));
                     return Command("land_here", Args());
                 }
                 case "fly_to": case "fly_to_place":

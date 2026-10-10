@@ -887,7 +887,7 @@ class Program
         {
             string lp; List<string> uns, nts;
             bool ok3 = PilotPolicy.TryPlan("Make a flight plan, Take off and climb to 2k, then bank at 25 degrees to the left back to KSP and set for a shortfinal on runway 27, and land.", true, out lp, out uns, out nts);
-            Check(ok3 && lp == "takeoff\nclimb 2000 m msl\nhead KSC bank 25 left\nland KSC 27", "Luke's sentence -> " + lp.Replace("\n", " | ") + " unsure=" + string.Join(",", uns.ToArray()));
+            Check(ok3 && lp == "takeoff\nclimb 2000 m msl\nhead KSC bank 25 left\nland KSC 27 short final", "Luke's sentence -> " + lp.Replace("\n", " | ") + " unsure=" + string.Join(",", uns.ToArray()));
             Check(nts.Exists(n => n.Contains("short final")), "short final reported, not silently dropped");
             var lpp = NativePlan.Parse(lp, n => false, r => false);
             Check(lpp.Steps[2].Op == "head" && lpp.Steps[2].Bank == -25 && lpp.Steps[3].Op == "land", "plan grammar: head KSC bank 25 left");
@@ -958,6 +958,37 @@ class Program
             Check(PilotPolicy.StatusLine("hold", "Aeris 3A", null, double.NaN, 900, 150, 273, 0).Contains("NOT landing") && PilotPolicy.StatusLine("landing", "Aeris 3A", "intercept", 8000, 900, 150, 273, 0).Contains("LANDING (intercept, 8.0 km"), "status says plainly whether we're landing");
         }
         Console.WriteLine("Round-3 confirm / chatter / passed-KSP / status: 13 behavior checks passed.");
+        // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
+        {
+            Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");
+            Check(PilotPolicy.ApproachKind(230, 270, 10000, true) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, true) == "long" && PilotPolicy.ApproachKind(270, 270, 3000, true) == "long", "short final asked: only if geometry allows");
+            Check(PilotPolicy.SwapEnd(90, 270) && !PilotPolicy.SwapEnd(90, 100), "lands on the end matching our heading");
+            Check(PilotPolicy.Nearest(-1.4, -72.0, new List<double[]> { new[] { -.0494, -74.607 }, new[] { -1.5154, -71.909 }, new[] { 2.0, -70.0 } }, 600000) == 1, "nearest of built-ins + saved runways");
+            Check(ToolRouter.Direct("land at 27 short final", "plane").Value.Value == "{\"where\":\"27 short final\"}" && FlightResidualPolicy.BuiltInRunway("27 short final", "").Item2 == "27", "'short final' in chat");
+            Check(NativePlan.Parse("land KSC 27 short final", n => false, r => false).Steps[0].Op == "land", "'short final' in plans");
+            double R = 600000;
+            Func<double, double, double, RunwayMission> Sim = (lat0, lon0, h0) =>
+            {
+                var m = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70 };
+                double la = lat0, lo = lon0, h = h0, al = 800, sp = 120;
+                for (int s = 0; s < 1500 && m.Phase != "rollout" && m.Phase != "go around"; s++)
+                {
+                    m.Step(la, lo, al, al - 70, sp, al <= 70.5, R, 45, h);
+                    double e = FlightPolicy.Wrap(m.DesiredHeading - h); h = (h + Math.Max(-1.7, Math.Min(1.7, e)) + 360) % 360;
+                    al += Math.Max(-6, Math.Min(10, m.DesiredVs)); if (al < 70) al = 70; sp += Math.Max(-2, Math.Min(2, m.DesiredSpeed - sp));
+                    double nl, no; NavigationMath.Offset(la, lo, h, sp, R, out nl, out no); la = nl; lo = no;
+                }
+                return m;
+            };
+            double crs = NavigationMath.Bearing(-.0502119, -74.490300, -.0485997, -74.724375), sl, so;
+            NavigationMath.Offset(-.0502119, -74.490300, crs + 180, 10000, R, out sl, out so);
+            var headOn = Sim(sl, so, (crs + 8) % 360);
+            Check(headOn.Kind == "short" && headOn.FixDistance == 4000 && (headOn.Phase == "rollout" || headOn.Phase == "flare" || headOn.Phase == "final"), "head-on sim: short final, lands (" + headOn.Kind + "/" + headOn.Phase + ")");
+            NavigationMath.Offset(sl, so, crs + 90, 6000, R, out sl, out so);
+            var abeam = Sim(sl, so, (crs + 90) % 360);
+            Check(abeam.Kind == "long" && abeam.Phase != "go around", "90 deg sim: long final (" + abeam.Kind + "/" + abeam.Phase + ")");
+        }
+        Console.WriteLine("Approach rules (short/long final, nearest + best end): 8 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

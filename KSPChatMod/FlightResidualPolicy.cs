@@ -36,7 +36,7 @@ namespace KSPChatBridge
         }
 
         static readonly System.Text.RegularExpressions.Regex DirRx = new System.Text.RegularExpressions.Regex(@"(?:^|[^0-9])(0?9|27)(?:[^0-9]|$)");
-        static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land", "nearest", "closest", "near", "program", "port", "airport", "spaceport", "please", "a", "runways" };
+        static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land", "nearest", "closest", "near", "program", "port", "airport", "spaceport", "please", "a", "runways", "short", "final", "shortfinal", "with", "for", "approach" };
 
         /// <summary>Fuzzy built-in Kerbin runway: (site "ksc"|"island", direction "09"|"27"|"") or null when the name
         /// mentions something else (a saved spot). Accepts KSC 27, KSP 27, runway 27, rwy 27, 27, 09, island, Island Runway 09...</summary>
