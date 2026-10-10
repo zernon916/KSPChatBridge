@@ -377,6 +377,7 @@ namespace KSPChatBridge
         {
             if (!apLoaded) { apLoaded = true; ApLoad(); }
             GUILayout.Label(NativeFlightController.ApSummary(), small);
+            ApSave();   // persists every change (survives restarts; statics survive flight <-> tracking station)
             Hold(ref apAlt, "Altitude", ref apAltT, "m");
             GUILayout.BeginHorizontal(); GUILayout.Space(20); apAgl = GUILayout.Toggle(apAgl, apAgl ? "AGL (above ground / runway)" : "MSL (sea level)"); GUILayout.EndHorizontal();
             Hold(ref apVs, "Vertical speed", ref apVsT, "m/s");
@@ -398,20 +399,22 @@ namespace KSPChatBridge
             return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d.ToString(CultureInfo.InvariantCulture) : fallback;
         }
 
-        static bool apLoaded;
+        static bool apLoaded; static string apSaved;
         static string ApPath { get { return System.IO.Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/autopilot_window.txt"); } }
         static void ApSave()
         {
-            try { AtomicFile.Write(ApPath, string.Join("|", new[] { apAltT, apVsT, apHdgT, apRollT, apSpdT, apAlt ? "1" : "0", apVs ? "1" : "0", apHdg ? "1" : "0", apRoll ? "1" : "0", apSpd ? "1" : "0", apAgl ? "1" : "0" })); } catch (Exception) { }
+            string t = PilotPolicy.ApSerialize(new[] { apAltT, apVsT, apHdgT, apRollT, apSpdT }, new[] { apAlt, apVs, apHdg, apRoll, apSpd, apAgl });
+            if (t == apSaved) return;
+            try { AtomicFile.Write(ApPath, t); apSaved = t; } catch (Exception) { }
         }
         static void ApLoad()
         {
             try
             {
                 if (!System.IO.File.Exists(ApPath)) return; string t = System.IO.File.ReadAllText(ApPath); if (AtomicFile.Torn(t)) return;
-                var p = t.Trim().Split('|'); if (p.Length < 11) return;
-                apAltT = p[0]; apVsT = p[1]; apHdgT = p[2]; apRollT = p[3]; apSpdT = p[4];
-                apAlt = p[5] == "1"; apVs = p[6] == "1"; apHdg = p[7] == "1"; apRoll = p[8] == "1"; apSpd = p[9] == "1"; apAgl = p[10] == "1";
+                string[] v; bool[] f; if (!PilotPolicy.ApParse(t, 5, 6, out v, out f)) return;
+                apAltT = v[0]; apVsT = v[1]; apHdgT = v[2]; apRollT = v[3]; apSpdT = v[4];
+                apAlt = f[0]; apVs = f[1]; apHdg = f[2]; apRoll = f[3]; apSpd = f[4]; apAgl = f[5]; apSaved = t.Trim();
             }
             catch (Exception) { }
         }

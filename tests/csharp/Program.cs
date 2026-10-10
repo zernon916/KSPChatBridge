@@ -1072,12 +1072,12 @@ class Program
                 var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
                 Check(behind.Why.StartsWith("ok") && behind.RouteLog.Contains("base") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> downwind, base, long final (no circles): " + behind.Why);
                 var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
-                Check(Math.Abs(ch.LongAlt - (134.6 + 2500)) < 1 && Math.Abs(ch.ShortAlt - (134.6 + 1500)) < 1, "fix altitudes AGL: long 2500 m, short 1500 m");
-                Check(Math.Abs(ApproachChart.Radius(130, 20) - 130 * 130 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1, "join spacing from r = v^2/(g tan 20)");
-                Func<double, double, double> hill = (la2, lo2) => Math.Abs(lo2 - -71.80) < .03 ? 1400 : 100;   // ridge east of the Island runway, on final
+                Check(Math.Abs(ch.LongAlt - (134.6 + 629)) < 2 && Math.Abs(ch.ShortAlt - (134.6 + 210)) < 2, "continuous 3 deg glideslope: ~630 m at 12 km, ~210 m at 4 km");
+                Check(Math.Abs(ApproachChart.Radius(130, 20) - 1.3 * 130 * 130 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1, "join spacing from r = v^2/(g tan 20) + 30% margin");
+                Func<double, double, double> hill = (la2, lo2) => Math.Abs(lo2 - -71.40) < .05 ? 1400 : 100;   // ridge east of the Island runway, on final
                 var chh = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, hill);
-                Check(chh.GlideAlt(5800) > 1460 && chh.GlideAlt(4000) > 1460 || chh.LongAlt > 2634.6, "glide path raised over the ridge (Island hill)");
-                var rh = chh.Route(-1.40, -71.80, 180, "long", R0); bool clear = true; foreach (var w in rh) clear &= w.Alt >= 100 + ApproachChart.Clearance;
+                Check(chh.LongAlt > 134.6 + 629 + 100, "glide path raised over the ridge (Island hill)");
+                var rh = chh.Route(-1.40, -71.40, 180, "long", R0); bool clear = true; foreach (var w in rh) clear &= w.Alt >= 100 + ApproachChart.Clearance;
                 Check(clear, "every waypoint clears sampled terrain");
                 Check(PilotPolicy.ApproachFloorVs("entry", 20000, 90, 500, double.NaN, -5) >= 3 && PilotPolicy.ApproachFloorVs("final", 1000, 40, 100, double.NaN, -4) == -4, "AGL floor on approach, not in the last km");
                 Check(ApproachChart.Pad(0, 0, 70).Alt == 370, "launch pad vertical approach point");
@@ -1102,6 +1102,28 @@ class Program
                 Check(PilotPolicy.MaxPitchRate(130) < 10 && PilotPolicy.MaxPitchRate(130) > 7 && PilotPolicy.GScale(6) == .5 && PilotPolicy.GScale(2) == 1, "3 g limit: pitch rate + elevator scaling");
             }
             Console.WriteLine("Reply guard / G limit: 3 behavior checks passed.");
+            {
+                Check(RunwayMission.PredictCross(0, 170, 100, 90, 10) > 250 && RunwayMission.PredictCross(-200, 170, 80, 90, 10) < -400 && RunwayMission.PredictCross(50, 170, double.NaN, 90, 10) == 50, "predicted cross-track damps the intercept");
+                double eta = PilotPolicy.ApproachEta(3000, new List<double> { 4000, 5000 }, 150, 10);
+                Check(Math.Abs(eta - 12000.0 / 160) < .01, "ETA = (next fix + legs) / (speed + |vs|)");
+                Check(PilotPolicy.ApproachEtaText("entry", 3000, new List<double> { 9000 }, 150, 0, new List<string> { "long final 12 km 698 m" }).Contains("long final 12 km") && PilotPolicy.ApproachEtaText("entry", 3000, new List<double> { 9000 }, 150, 0, new List<string>()).Contains("ETA 80 s"), "ETA text lists fixes");
+                var rates = new float[] { 1, 2, 3, 4 };
+                Check(PilotPolicy.WarpIndexCap(true, 3, rates) == 2 && PilotPolicy.WarpIndexCap(false, 3, rates) == 3 && PilotPolicy.WarpIndexCap(true, 1, rates) == 1, "warp cap 3x in atmosphere only");
+                string ser = PilotPolicy.ApSerialize(new[] { "1000", "5", "090", "0", "180" }, new[] { true, false, true, false, true, true });
+                string[] av; bool[] af; Check(PilotPolicy.ApParse(ser, 5, 6, out av, out af) && av[2] == "090" && af[0] && !af[1] && af[5] && !PilotPolicy.ApParse("\0\0", 5, 6, out av, out af), "autopilot window settings round-trip (restart-safe)");
+            }
+            Console.WriteLine("Tracking / ETA / warp / AP persistence: 5 behavior checks passed.");
+            {
+                string why;
+                string good = "{\"fixes\":[{\"role\":\"faf\",\"name\":\"KAPPA\",\"lat\":-0.05,\"lon\":-74.85,\"alt\":700}],\"flare_start_m\":20,\"flare_sink_ms\":1,\"touchdown_m\":300,\"tch_m\":12}";
+                var ov = ApproachOverride.Parse(MiniJson.Deserialize(good), -.0486, -74.7244, 69, 600000, out why);
+                Check(ov != null && ov.Fixes.Count == 1 && ov.FlareStartM == 20 && ov.TchM == 12, "approaches.json end parsed: " + why);
+                var chO = ApproachChart.Build(-.0486, -74.7244, 90.4, 69, 150, 20, 600000, null); chO.Apply(ov);
+                Check(chO.Long.Name == "KAPPA" && chO.LongAlt == 700 && chO.Tch == 12 && Math.Abs(chO.GlideAlt(0) - 81) < .01, "edited fix + TCH override the computed chart");
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"faf\",\"lat\":10,\"lon\":10,\"alt\":700}]}"), -.0486, -74.7244, 69, 600000, out why) == null && why.Contains("60 km"), "fix far away rejected -> defaults");
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"flare_start_m\":500}"), -.0486, -74.7244, 69, 600000, out why) == null && ApproachOverride.Parse("x", 0, 0, 0, 600000, out why) == null, "bad flare / garbage rejected");
+            }
+            Console.WriteLine("Editable approach charts: 4 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

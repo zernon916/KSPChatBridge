@@ -312,3 +312,9 @@ Still needs live check: all.
 Changed: ApproachChart per runway end (12/4 km fixes, L/R downwind+base for r=v^2/(g tan bank), fix alts AGL 2500/1500 m as at-or-below settings approach_long_agl/approach_short_agl, terrain-raised legs + glide), waypoint flying, AGL floor, steep-path feed-forward; speed override follow-up + last speed; bank N land; status alias; reply guard vs tool results; notice de-dupe; 3 g pitch limit; gear sabotage (autopilot on); atomic status file; AP window summary + persistence.
 Tests: pytest 494, C# green (+21).
 Still needs live check: all.
+
+## 3 deg approaches + editable charts (2026-10-10)
+Cause of the left offset: no coordinate/heading error (runway coords match the takeoff GPS; bearings are true); the centerline intercept overshot S->N (1.5 km south at the 12 km fix, 200 m north at 2.4 km) because the intercept had no damping.
+Changed: continuous 3 deg glideslope (630/210 m), predicted cross-track (damped) intercept + tracking to the flare, join radius +30%, approaches.json overrides (validated), flare/TCH/touchdown, ETA via remaining fixes, warp cap 3x in atmosphere, trim deg buttons, AP window persistence on every change, tools/approach_map.py (editable plate HTML) + import_approaches.ps1.
+Tests: pytest 496, C# green.
+Still needs live check: all.

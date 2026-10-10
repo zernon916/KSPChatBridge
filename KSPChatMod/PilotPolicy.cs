@@ -211,6 +211,37 @@ namespace KSPChatBridge
         /// <summary>G limit (Luke: no violent maneuvering): max pitch-attitude rate for a load factor limit at this speed.</summary>
         internal static double MaxPitchRate(double speed, double gLimit = 3) { return (gLimit - 1) * 9.81 / Math.Max(30, speed) * 180 / Math.PI; }
         internal static double GScale(double g, double gLimit = 3) { return g > gLimit ? Math.Max(.2, gLimit / g) : 1; }
+        /// <summary>Landing ETA = (distance to the next fix + remaining legs incl. fix->threshold) / (surface speed + |vertical speed|).</summary>
+        internal static double ApproachEta(double toNext, IList<double> legs, double spd, double vs)
+        {
+            double sum = toNext; foreach (double l in legs) sum += l;
+            double v = Math.Abs(spd) + Math.Abs(vs); return v < 1 ? double.NaN : sum / v;
+        }
+        internal static string ApproachEtaText(string phase, double toNext, IList<double> legs, double spd, double vs, IList<string> fixes)
+        {
+            double eta = ApproachEta(toNext, legs, spd, vs), total = toNext; foreach (double l in legs) total += l;
+            string t = double.IsNaN(eta) ? "unknown" : eta >= 90 ? (eta / 60).ToString("0.0", Inv) + " min" : eta.ToString("0", Inv) + " s";
+            return "On the approach (" + phase + "): " + (total / 1000).ToString("0.0", Inv) + " km to touchdown via " + (fixes.Count == 0 ? "the final" : string.Join(" > ", System.Linq.Enumerable.ToArray(fixes)))
+                + "; ETA " + t + ".";
+        }
+        /// <summary>Autopilot warp cap: max 3x physics warp while in atmosphere; normal warp in space.</summary>
+        internal static int WarpIndexCap(bool inAtmosphere, int index, float[] rates)
+        {
+            if (!inAtmosphere || rates == null) return index;
+            int cap = 0; for (int k = 0; k < rates.Length; k++) if (rates[k] <= 3.001f) cap = k;
+            return Math.Min(index, cap);
+        }
+        internal static string ApSerialize(string[] vals, bool[] flags)
+        {
+            var parts = new List<string>(vals); foreach (bool f in flags) parts.Add(f ? "1" : "0"); return string.Join("|", parts.ToArray());
+        }
+        internal static bool ApParse(string text, int nv, int nf, out string[] vals, out bool[] flags)
+        {
+            vals = null; flags = null; if (string.IsNullOrEmpty(text)) return false;
+            var p = text.Trim().Split('|'); if (p.Length < nv + nf) return false;
+            vals = new string[nv]; flags = new bool[nf];
+            for (int k = 0; k < nv; k++) vals[k] = p[k]; for (int k = 0; k < nf; k++) flags[k] = p[nv + k] == "1"; return true;
+        }
         /// <summary>Approach AGL floor: before the last 2.5 km of final, climb if below 150 m AGL or below the terrain-ahead floor.</summary>
         internal static double ApproachFloorVs(string phase, double distance, double agl, double altitude, double terrainFloor, double vs)
         {

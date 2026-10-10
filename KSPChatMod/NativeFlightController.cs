@@ -269,6 +269,8 @@ namespace KSPChatBridge
                 int restored = recovery.Tick(vessel, now, revert);
                 restored += reversers.Recover(vessel, now, revert);
                 var noticed = new List<string>(recovery.Noticed); noticed.AddRange(reversers.Noticed);
+                if (Active && flying && TimeWarp.WarpMode == TimeWarp.Modes.LOW && vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
+                { int capI = PilotPolicy.WarpIndexCap(true, TimeWarp.CurrentRateIndex, TimeWarp.fetch != null ? TimeWarp.fetch.physicsWarpRates : null); if (capI < TimeWarp.CurrentRateIndex) { TimeWarp.SetRate(capI, true); ChatLog.Write("ap", "physics warp capped at 3x in atmosphere"); } }
                 if (nativeMode && Active && flying) GearWatch(now); else { gearGate.Reset(); if (!Active) gearSaid = null; }
                 foreach (string what in noticed)
                 {
@@ -866,7 +868,27 @@ namespace KSPChatBridge
                     double approachSpeed = Num(a, "approach_speed", 0);
                     selectedRunway.Terrain = (la, lo) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(la, lo)) - vessel.mainBody.Radius);
                     double askBank = Num(a, "bank", 0); selectedRunway.BankDeg = askBank > 0 ? FlightPolicy.Clamp(askBank, 10, 60) : 20;
-                    selectedRunway.LongAgl = FlightPolicy.Clamp(Num(settingsData, "approach_long_agl", 2500), 100, 5000); selectedRunway.ShortAgl = FlightPolicy.Clamp(Num(settingsData, "approach_short_agl", 1500), 100, 5000);
+                    selectedRunway.LongAgl = Num(settingsData, "approach_long_agl", -1); selectedRunway.ShortAgl = Num(settingsData, "approach_short_agl", -1);   // <= 0: 3 deg glideslope (default)
+                    {
+                        double crsK = NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon);
+                        string endK = Math.Abs(FlightPolicy.Wrap(crsK - 90)) < 45 ? "09" : "27";
+                        selectedRunway.Key = savedRunway ? Str(a, "name", "") : (island ? "Island " : "KSC ") + endK;
+                        try
+                        {
+                            string apPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/approaches.json");
+                            if (File.Exists(apPath))
+                            {
+                                string txt = File.ReadAllText(apPath); var all = AtomicFile.Torn(txt) ? null : MiniJson.Deserialize(txt) as Dictionary<string, object>;
+                                object end; string why;
+                                if (all != null && all.TryGetValue(selectedRunway.Key, out end))
+                                {
+                                    selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why);
+                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using Luke's chart for " + selectedRunway.Key : "approaches.json " + selectedRunway.Key + " invalid (" + why + "); computed chart");
+                                }
+                            }
+                        }
+                        catch (Exception ex) { ChatLog.Write("approach", "approaches.json unreadable (" + ex.Message + "); computed chart"); }
+                    }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
                 goArounds = 0; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;

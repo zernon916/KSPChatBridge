@@ -20,6 +20,7 @@ namespace KSPChatBridge
     {
         const string BridgeUrl = "http://127.0.0.1:8765/";
         const int WindowId = 0x4B434235;
+        const float TrimDegPerUnit = 20f;   // 1.0 trim = ~20 deg surface deflection; buttons nudge in degrees
         const float MinW = 280, MinH = 300, Nudge = 0.05f, CollMax = 12f, PollInterval = 2.5f;
 
         internal static bool TrimVisible;
@@ -258,6 +259,10 @@ namespace KSPChatBridge
             else if (Event.current.type == EventType.MouseUp) dragging = false;
             if (GUILayout.Button("+", GUILayout.Width(22))) { val = ClampTrim(val + Nudge); SetTrim(axis, val); dragging = false; }
             GUILayout.Label(TrimPct(val), valStyle, GUILayout.Width(44));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal(GUILayout.Width(w)); GUILayout.Space(44);
+            foreach (float d in new[] { -5f, -1f, -.5f, .5f, 1f, 5f })
+                if (GUILayout.Button((d > 0 ? "+" : "") + d.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "\u00b0", GUILayout.Width(40))) { val = ClampTrim(val + d / TrimDegPerUnit); SetTrim(axis, val); dragging = false; }
             GUILayout.EndHorizontal();
         }
 

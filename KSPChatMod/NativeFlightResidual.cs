@@ -246,7 +246,20 @@ namespace KSPChatBridge
                 case "get_landing_eta":
                 {
                     if (mode != "landing") return "Not landing right now (autopilot: " + mode + "). Say land at <runway> to start an approach.";
-                    if (runway != null && runway.Phase != "final" && runway.Phase != "flare") return "On the approach (" + runway.Phase + "), " + FlightResidualPolicy.Distance(runway.Distance) + " from the threshold; the descent starts once lined up.";
+                    if (runway != null && runway.Phase != "final" && runway.Phase != "flare")
+                    {
+                        var names = new List<string>(); var legs = new List<double>(); double toNext = runway.Distance;
+                        double pla = vessel.latitude, plo = vessel.longitude; bool first = true;
+                        if (runway.Route != null) for (int k = runway.RouteIndex; k < runway.Route.Count; k++)
+                        {
+                            var w = runway.Route[k]; double d = NavigationMath.Distance(pla, plo, w.Lat, w.Lon, vessel.mainBody.Radius);
+                            if (first) { toNext = d; first = false; } else legs.Add(d);
+                            names.Add(w.Name + " " + w.Alt.ToString("0", Inv) + " m"); pla = w.Lat; plo = w.Lon;
+                        }
+                        double fin = NavigationMath.Distance(pla, plo, runway.Lat, runway.Lon, vessel.mainBody.Radius);
+                        if (first) toNext = fin; else legs.Add(fin);
+                        return PilotPolicy.ApproachEtaText(runway.Phase, toNext, legs, vessel.srfSpeed, vessel.verticalSpeed, names);
+                    }
                     double eta = FlightResidualPolicy.LandingEta(vessel.LandedOrSplashed ? 0 : vessel.radarAltitude, vessel.verticalSpeed);
                     return "{\"agl_m\":" + vessel.radarAltitude.ToString("0", Inv) + ",\"vertical_speed\":" + vessel.verticalSpeed.ToString("0.0", Inv)
                         + ",\"eta_s\":" + (double.IsNaN(eta) ? "null" : eta.ToString("0", Inv)) + "}";
