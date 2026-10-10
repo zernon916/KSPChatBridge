@@ -362,7 +362,7 @@ namespace KSPChatBridge
                 }
                 if (mode == "taxi")
                 {
-                    taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi);
+                    taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi, Twr());
                     c.wheelSteer = (float)taxi.Wheel; c.wheelThrottle = (float)taxi.Drive; c.yaw = (float)taxi.Yaw;
                     c.mainThrottle = vessel.LandedOrSplashed ? (float)taxi.Throttle : Math.Max(.05f, c.mainThrottle);
                     SetGroup(vessel, KSPActionGroup.Brakes, taxi.Brakes);
@@ -913,7 +913,7 @@ namespace KSPChatBridge
                         if (vessel.mainBody.bodyName != "Kerbin") return "Built-in runways are on Kerbin.";
                         direction = builtIn.Item2; destination = "";
                         selectedRunway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
-                            : new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                            : new RunwayMission { Lat = KscRunway.Lat, Lon = KscRunway.Lon09, EndLat = KscRunway.Lat, EndLon = KscRunway.Lon27, Elevation = 69.1 };
                     }
                     if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEnd(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading)
                     : !savedRunway && (island ? direction == "09" : direction == "27"))
@@ -1016,6 +1016,11 @@ namespace KSPChatBridge
         }
 
         /// <summary>Vehicle max level speed estimate (maxspeed.py port): measured drag area + available thrust.</summary>
+        double Twr()
+        {
+            double t = 0; foreach (Part pt in vessel.parts) foreach (PartModule m in pt.Modules) { var e = m as ModuleEngines; if (e != null && e.EngineIgnited) t += e.maxThrust; }
+            double w = vessel.GetTotalMass() * 9.81; return w > 0 ? t / w : 1;
+        }
         double EstimateVMax()
         {
             if (vessel == null || vessel.LandedOrSplashed) return double.NaN;

@@ -5,7 +5,7 @@ M = 600000 * math.pi / 180   # Kerbin m per degree
 all_ = json.load(open(src, encoding="utf-8-sig"))
 # Aeris 3A, ~70-90 m/s at 1.5-2 g joins: r ~350-480 m -> 2.5 km downwind offset, base at the 12 km FAF line
 OFF, UP, DWEND = 2500, 1500, 9500
-RWY = ((-0.0485997, -74.724375), (-0.0502119, -74.4903))
+RWY = ((-0.0485997, -74.724375), (-0.0485997, -74.4903))
 for key in ("KSC 09", "KSC 27"):
     e = all_[key]; fx = {f["role"]: f for f in e["fixes"]}
     a, b = RWY if key.endswith("09") else RWY[::-1]   # threshold, far end (mod constants)

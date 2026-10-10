@@ -50,7 +50,7 @@ namespace KSPChatBridge
         /// <summary>Saved spot sitting on a built-in runway threshold (duplicate row in the landing list).</summary>
         internal static bool DuplicatesBuiltIn(double lat, double lon)
         {
-            foreach (var t in new[] { new[] { -.0486, -74.7244 }, new[] { -.0502, -74.4903 }, new[] { -1.5161, -71.8567 }, new[] { -1.5148, -71.9618 } })
+            foreach (var t in new[] { new[] { -.0486, -74.7244 }, new[] { -.0486, -74.4903 }, new[] { -1.5161, -71.8567 }, new[] { -1.5148, -71.9618 } })
                 if (Math.Abs(lat - t[0]) < .005 && Math.Abs(lon - t[1]) < .005) return true;
             return false;
         }

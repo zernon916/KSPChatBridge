@@ -13,7 +13,7 @@ def bearing(la1, lo1, la2, lo2):
     la1, lo1, la2, lo2 = map(math.radians, (la1, lo1, la2, lo2))
     y = math.sin(lo2-lo1)*math.cos(la2); x = math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(lo2-lo1)
     return (math.degrees(math.atan2(y, x)) + 360) % 360
-RUNWAYS = {"KSC": ((-0.0485997, -74.724375), (-0.0502119, -74.490300), 69.1),
+RUNWAYS = {"KSC": ((-0.0485997, -74.724375), (-0.0485997, -74.490300), 69.1),
            "Island": ((-1.516092, -71.856744), (-1.514809, -71.961815), 134.6)}
 def chart(thr, end, elev, speed=150.0, bank=20.0):
     crs = bearing(thr[0], thr[1], end[0], end[1]); r = 1.3 * speed**2 / (G * math.tan(math.radians(bank))); tg = math.tan(math.radians(3))

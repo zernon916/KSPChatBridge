@@ -237,7 +237,7 @@ class Program
         taxi.Step(2, 0, .1, 90, 0, 600000, true, true);
         Check(taxi.Result.Contains("arrived") && taxi.Brakes && taxi.Drive == 0, "taxi arrival stops");
         taxi = new TaxiMission("0,0.1", "Mun", 8); taxi.Step(0, 0, 0, 90, 0, 600000, true, false);
-        Check(taxi.Throttle == .05 && taxi.Drive == 0, "engine taxi throttle steps");
+        Check(taxi.Throttle > 0 && taxi.Throttle <= TaxiMission.MaxThrottle(1) && taxi.Drive == 0, "engine taxi throttle low and capped");
         taxi.Step(2000, 0, 0, 90, 0, 600000, true, false);
         Check(taxi.Result.Contains("timeout") && taxi.Throttle == 0, "stuck taxi timeout");
         taxi = new TaxiMission("0,0.1", "Mun", 8); taxi.Step(0, 0, 0, 90, 0, 600000, false, true);
@@ -1664,6 +1664,25 @@ class Program
             Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - 1.35 * 45) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
             Check(ApproachProfile.SaneStall(33) == 40 && ApproachProfile.SaneStall(double.NaN) >= 40, "stall estimate sanity floor");
             Console.WriteLine("Final speed schedule: 3 behavior checks passed.");
+        }
+        {   // Luke 3:44 PM: KSC 27 localizer must be the TRUE runway centerline (landed 230 m south)
+            var r27 = Ils.Compute(-.0486, -74.60, 69.1, KscRunway.Lat, KscRunway.Lon27, KscRunway.Lat, KscRunway.Lon09, 69.1, 600000);
+            Check(Math.Abs(r27.CrossM) < 2 && Math.Abs(r27.LocDeg) < .02, "point on the runway at lat -0.0486: ILS 27 cross-track ~0 (" + r27.CrossM.ToString("0.0") + " m)");
+            var r09 = Ils.Compute(-.0486, -74.75, 400, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, 600000);
+            Check(Math.Abs(r09.CrossM) < 2 && Math.Abs(FlightPolicy.Wrap(r09.Course - 90)) < .1, "ILS 09 course 090, on centerline west of the runway");
+            var south = Ils.Compute(-.0507, -74.48, 120, KscRunway.Lat, KscRunway.Lon27, KscRunway.Lat, KscRunway.Lon09, 69.1, 600000);
+            Check(south.CrossM < -15 && south.CrossM > -30, "the 15:4x landing line (lat -0.0507 = 0.0021 deg = ~22 m) reads south of the 27 course (" + south.CrossM.ToString("0") + " m)");
+            Console.WriteLine("KSC runway centerline: 3 behavior checks passed.");
+        }
+        {   // Luke 3:45 PM taxi: low throttle, wheel brakes when fast, full stop first
+            var tx = new TaxiMission("0,0.05", "Kerbin", 25); double v = 30, thrMax = 0;
+            for (int i = 0; i < 40; i++) { tx.Step(i * .1, 0, 0, 90, v, 600000, true, false, 2); if (tx.Brakes) v = Math.Max(0, v - 1.5); }
+            Check(v < .5, "rolling at 30 m/s: brakes to a full stop before taxiing");
+            for (int i = 40; i < 2000; i++) { tx.Step(i * .1, 0, 0, 90, v, 600000, true, false, 2); thrMax = Math.Max(thrMax, tx.Throttle); v = Math.Max(0, v + (tx.Throttle * 20 - (tx.Brakes ? 3 : .2)) * .1); }
+            Check(thrMax <= TaxiMission.MaxThrottle(2) + 1e-9 && TaxiMission.MaxThrottle(2) <= .15 && TaxiMission.MaxThrottle(.5) <= .3, "taxi throttle capped (TWR-scaled, max " + thrMax.ToString("0.00") + ")");
+            Check(v > 5 && v < 11.5, "taxi speed ~8-10 m/s (" + v.ToString("0.0") + ")");
+            tx.Step(300, 0, 0, 90, 16, 600000, true, false, 2); Check(tx.Brakes && tx.Throttle == 0, "over speed: wheel brakes, idle");
+            Console.WriteLine("Taxi speed: 4 behavior checks passed.");
         }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));

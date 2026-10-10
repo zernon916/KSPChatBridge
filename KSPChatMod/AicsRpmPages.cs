@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -16,7 +16,7 @@ namespace KSPChatBridge
                 var v = FlightGlobals.ActiveVessel; if (v == null) return "AICS ILS\nno vessel";
                 var act = NativeFlightController.ActiveRunway; double tla, tlo, ela, elo, el; string label;
                 if (act != null) { tla = act.Lat; tlo = act.Lon; ela = act.EndLat; elo = act.EndLon; el = act.Elevation; label = act.Key ?? ""; }
-                else { tla = -.0485997; tlo = -74.724375; ela = -.0502119; elo = -74.4903; el = 69.1; label = "KSC 09 (no autoland)"; }
+                else { tla = -.0485997; tlo = -74.724375; ela = -.0485997; elo = -74.4903; el = 69.1; label = "KSC 09 (no autoland)"; }
                 var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, el, v.mainBody.Radius, act != null ? act.TouchdownM : 350);
                 string cpl = act == null ? "AP OFF - raw ILS" : act.Coupled ? (act.GsCoupled ? "COUPLED LOC+GS" : "COUPLED LOC") : "LOC ARMED";
                 double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);

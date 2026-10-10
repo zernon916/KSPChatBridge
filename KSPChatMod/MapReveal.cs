@@ -148,6 +148,9 @@ namespace KSPChatBridge
         internal static double Needle(double dev, double fullScale) { return FlightPolicy.Clamp(dev / fullScale, -1, 1); }
     }
 
+    /// <summary>True KSC runway centerline (KSP 1.12: due east-west; the old -0.0502 east end was the pre-1.3 misaligned runway, 230 m south at the 27 end).</summary>
+    internal static class KscRunway { internal const double Lat = -.0485997, Lon09 = -74.724375, Lon27 = -74.490300; }
+
     /// <summary>Text pages for IVA MFDs (RasterPropMonitor PAGEHANDLER; pure, tested). Fixed-width characters, cols x rows.</summary>
     internal static class MfdText
     {
