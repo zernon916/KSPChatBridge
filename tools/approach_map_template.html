@@ -16,8 +16,8 @@ input.nm{width:150px} button{font-size:14px;padding:6px 14px;margin:4px 4px 4px 
 <div id="side"><b>Fixes</b> (lat/lon, altitude per fix: AGL = above the terrain under the fix (mod uses in-game terrain), MSL = above sea level/water)<br>Turn check speed <input id="spd" value="150"> m/s, 20&deg; bank: <span id="tight"></span><table id="tbl"></table>
 <p><b>Landing</b><br>Flare start height (m AGL) <input id="flare_start_m"><br>Flare target sink (m/s) <input id="flare_sink_ms"><br>
 Touchdown point (m past threshold) <input id="touchdown_m"><br>Threshold crossing height (m) <input id="tch_m"></p>
-<button id="add">Add waypoint</button><button id="del">Remove</button><br><button class="save" id="save">SAVE approaches.json</button><button id="reset">Reset this end to computed</button>
-<div class="note">SAVE downloads approaches.json (all runway ends). Put it in <b>GameData/KSPChatBridge/PluginData</b>, or run <b>tools/import_approaches.ps1</b> to copy the newest download there. Edits auto-save in this browser. FAF/SF are locked to the extended centerline (drag slides them along it) and cannot be removed.</div></div></div>
+<button id="add">Add waypoint</button><button id="del">Remove</button><br><button class="save" id="save">SAVE chart files</button><button id="reset">Reset this end to computed</button>
+<div class="note">SAVE downloads one file per runway end (KSC_09.json, ...). Put them in <b>GameData/KSPChatBridge/PluginData/charts</b> (the mod reloads them live), or run <b>tools/import_approaches.ps1</b> to copy the newest downloads there. Edits auto-save in this browser. FAF/SF are locked to the extended centerline (drag slides them along it) and cannot be removed.</div></div></div>
 <script>
 const DATA=/*DATA*/null; const R=600000, D2R=Math.PI/180;
 const LS='aics_approaches_v1'; let ends=JSON.parse(JSON.stringify(DATA.ends));
@@ -110,7 +110,7 @@ function table(e){const t=document.getElementById('tbl');t.innerHTML='<tr><th>fi
   t.appendChild(tr);});
  for(const k of ['flare_start_m','flare_sink_ms','touchdown_m','tch_m']){const i=document.getElementById(k);i.value=e[k];i.onchange=()=>{e[k]=+i.value;persist();draw();};}}
 document.getElementById('save').onclick=()=>{const out={};for(const k in ends){const e=ends[k];out[k]={alt_ref:'agl',fixes:e.fixes.map(f=>({role:f.role,side:f.side,alt_ref:f.ref,name:f.name,lat:f.lat,lon:f.lon,alt:f.alt})),flare_start_m:e.flare_start_m,flare_sink_ms:e.flare_sink_ms,touchdown_m:e.touchdown_m,tch_m:e.tch_m};}
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,1)],{type:'application/json'}));a.download='approaches.json';a.click();};
+ Object.keys(out).forEach((k,i)=>setTimeout(()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(out[k],null,1)],{type:'application/json'}));a.download=k.replace(/ /g,'_')+'.json';a.click();},i*300));};
 document.getElementById('add').onclick=()=>{const e=ends[cur],fx=e.fixes;let at=selIdx>=0&&!FINAL(fx[selIdx].role)?selIdx+1:fx.findIndex(x=>FINAL(x.role));if(at<0)at=fx.length;
  const prev=fx[at-1]||fx.find(x=>x.role=='faf'),next=fx[at];const a=prev,b=next&&!FINAL(next.role)?next:fx.find(x=>x.role=='faf');
  const n=fx.filter(x=>x.role=='wp').length+1;const w={role:'wp',ref:(a&&a.ref)||'agl',side:prev&&!FINAL(prev.role)?prev.side:'both',name:'WP'+n,lat:+((a.lat+b.lat)/2+(a===b?.02:0)).toFixed(5),lon:+((a.lon+b.lon)/2).toFixed(5),alt:a.alt};

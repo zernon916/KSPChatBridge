@@ -1,6 +1,6 @@
 """Generate tools/approach_map.html: editable instrument-approach charts (plates) for KSC/Island runway ends,
 mirroring KSPChatMod/FlightMissions.cs ApproachChart, with today's flight track from the chat log [T] lines.
-SAVE downloads approaches.json (put it in GameData/KSPChatBridge/PluginData; tools/import_approaches.ps1 copies it)."""
+SAVE downloads one chart file per runway end (put them in GameData/KSPChatBridge/PluginData/charts; tools/import_approaches.ps1 copies them; the mod hot-reloads)."""
 import json, math, re, sys, glob, os, datetime
 R = 600000.0
 G = 9.81

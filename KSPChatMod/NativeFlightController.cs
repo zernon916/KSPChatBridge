@@ -39,7 +39,7 @@ namespace KSPChatBridge
         bool settingsWritable = true;
         NativeSpots spots;
         NativeCraftNotes craftNotes;
-        float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly SCurve pitchS = new SCurve(); double landMass0, landStall0; string loggedSmooth = "";
+        float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
         readonly AlertGate alertGate = new AlertGate();
         string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
         double planBank, prevSpd = -1; bool capLifted;
@@ -169,8 +169,30 @@ namespace KSPChatBridge
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
         }
         internal static bool OwnsControls { get { return NativeSafety.NativeOwns(BridgeLauncher.AiEnabled, BridgeLauncher.NativeReady, BridgeLauncher.NativeChat); } }
+        float nextChartPoll;
+        /// <summary>Hot-swap: charts/ mtimes every ~2 s; a changed chart reloads live (bad JSON keeps the old one) and an active approach replans from here.</summary>
+        void PollCharts()
+        {
+            if (Time.realtimeSinceStartup < nextChartPoll) return; nextChartPoll = Time.realtimeSinceStartup + 2;
+            try
+            {
+                EnsureCharts();
+                foreach (var key in ChartStore.Changed())
+                {
+                    var rw = runway != null && runway.Key == key ? runway : null;
+                    string why; object end = ChartStore.Read(key, out why); ApproachOverride ov = null;
+                    if (end != null && rw != null && FlightGlobals.ActiveVessel != null) ov = ApproachOverride.Parse(end, rw.Lat, rw.Lon, rw.Elevation, FlightGlobals.ActiveVessel.mainBody.Radius, out why, rw.Terrain);
+                    if (rw == null) { if (why.Length == 0) { ChatWindow.Notice("[SYSTEM] chart " + key + " reloaded"); ChatLog.Write("approach", "chart " + key + " reloaded (" + System.IO.Path.GetFileName(ChartStore.PathFor(key)) + ")"); } else ChatLog.Write("approach", "chart " + key + " reload rejected (" + why + "); keeping the old chart"); continue; }
+                    if (ov == null) { ChatLog.Write("approach", "chart " + key + " reload rejected (" + (why.Length > 0 ? why : "unreadable") + "); keeping the old chart"); ChatWindow.Notice("[SYSTEM] chart " + key + " has an error - kept the old chart (see log)"); continue; }
+                    rw.Override = ov; rw.ReloadChart();
+                    ChatWindow.Notice("[SYSTEM] chart " + key + " reloaded"); ChatLog.Write("approach", "chart " + key + " reloaded (" + System.IO.Path.GetFileName(ChartStore.PathFor(key)) + ")" + (rw == runway && mode == "landing" ? "; active approach replanned, phase " + rw.Phase : ""));
+                }
+            }
+            catch (Exception ex) { ChatLog.Write("approach", "chart poll failed: " + ex.Message); }
+        }
         void Update()
         {
+            PollCharts();
             Bind();
             bool nativeMode = OwnsControls;
             // P5-1.7: the in-mod safety tick (power, sabotage revert, parking, engine restart) runs whenever
@@ -494,15 +516,17 @@ namespace KSPChatBridge
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kin * (targetVs - vessel.verticalSpeed) + vsIntegral, targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
                 if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
-                if (!vessel.LandedOrSplashed) desiredPitch += ApproachProfile.TurnPitch(bankCmd);   // back-pressure follows the ramped bank
-                if (vessel.LandedOrSplashed) pitchS.Reset(); else desiredPitch = pitchS.Step(desiredPitch, dt);   // S-curve: no steps into the pitch PID
+                if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare") ? Math.Max(1.2, ApproachProfile.FinalG) : 3;   // gentler once established inbound   // joins maneuver to the dynamic limit; final/flare stay gentle
-            { double pr = PilotPolicy.MaxPitchRate(vessel.srfSpeed, gLim) * dt; desiredPitch = FlightPolicy.Clamp(desiredPitch, lastDesiredPitch - pr, lastDesiredPitch + pr); lastDesiredPitch = desiredPitch; }   // 3 g limit
+            if (!(mode == "landing" && runway != null && runway.Phase == "entry") && mode != "takeoff") gLim = Math.Min(gLim, 3);
+            gLim = PitchShaper.Limit(gLim, bankCmd);   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
+            if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
-                double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral + TurnOnset.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping
-                pitchOut *= PilotPolicy.GScale(vessel.geeForce, gLim);
-                elevator = Mathf.MoveTowards(elevator, (float)PilotPolicy.PitchCommand(pitchOut, roll), (float)(.35 * dt));
+                double pitchOut = FlightPolicy.Clamp(.022 * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral + PitchShaper.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping
+                pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
+                float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
+                elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
                 if (holdAltitude || directVs.HasValue || directPitch.HasValue) c.pitch = elevator;
                 if (holdHeading || directBank.HasValue) c.roll = (float)FlightPolicy.Clamp(.014 * (bank - roll) - .01 * p, -1, 1);
                 double targetThrottle = throttle;
@@ -766,9 +790,14 @@ namespace KSPChatBridge
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime();
                     return "Local plan " + plan.Status;
                 case "flightplan/status": return PlanStatus;
+                case "flightplan/follow":   // Luke: "follow/fly/run/resume the flight plan" runs the EXISTING plan from its current step
+                    if (plan == null) { string ed = AicsMenu.PlanText; if (string.IsNullOrEmpty(ed) || ed.Trim().Length == 0) return "No flight plan yet - say \"make a plan: ...\" first."; plan = ParsePlan(ed); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }
+                    if (plan.Running && !plan.Paused) return "Local plan already running: " + plan.Status;
+                    plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan resumed: " + plan.Status;
                 case "flightplan/fly":
                     string text = Str(a, "plan", "");
-                    if (plan == null || plan.Text != text || !plan.Paused) { plan = ParsePlan(text); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }
+                    if (plan != null && plan.Text.Trim() == text.Trim() && plan.Running && !plan.Paused) return "Local plan already running: " + plan.Status;   // never reset a running plan
+                    if (plan == null || plan.Text.Trim() != text.Trim()) { plan = ParsePlan(text); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }   // same text = resume from the current step
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan " + plan.Status;
                 case "get_status": case "autopilot_status": return PilotPolicy.StatusLine(mode, vessel.vesselName, mode == "landing" && runway != null ? runway.Phase : null, mode == "landing" && runway != null ? runway.Distance : double.NaN, vessel.altitude, vessel.srfSpeed, FlightGlobals.ship_heading, plan != null && plan.Running ? plan.Index + 1 : 0);
                 case "set_gear": gearSaid = Bool(a, "down", true); SetGroup(vessel, KSPActionGroup.Gear, gearSaid.Value); return "Gear " + (gearSaid.Value ? "down." : "up.");
@@ -894,19 +923,17 @@ namespace KSPChatBridge
                         selectedRunway.Key = savedRunway ? Str(a, "name", "") : (island ? "Island " : "KSC ") + endK;
                         try
                         {
-                            string apPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/approaches.json");
-                            if (File.Exists(apPath))
+                            EnsureCharts(); string why; object end = ChartStore.Read(selectedRunway.Key, out why);
+                            if (why.Length > 0) ChatLog.Write("approach", "chart " + selectedRunway.Key + ": " + why + "; computed chart");
                             {
-                                string txt = File.ReadAllText(apPath); var all = AtomicFile.Torn(txt) ? null : MiniJson.Deserialize(txt) as Dictionary<string, object>;
-                                object end; string why;
-                                if (all != null && all.TryGetValue(selectedRunway.Key, out end))
+                                if (end != null)
                                 {
                                     selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why, selectedRunway.Terrain);
-                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using Luke's chart for " + selectedRunway.Key : "approaches.json " + selectedRunway.Key + " invalid (" + why + "); computed chart");
+                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using Luke's chart for " + selectedRunway.Key : "chart " + selectedRunway.Key + " invalid (" + why + "); computed chart");
                                 }
                             }
                         }
-                        catch (Exception ex) { ChatLog.Write("approach", "approaches.json unreadable (" + ex.Message + "); computed chart"); }
+                        catch (Exception ex) { ChatLog.Write("approach", "chart unreadable (" + ex.Message + "); computed chart"); }
                     }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
                 goArounds = 0; landMass0 = 0; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;

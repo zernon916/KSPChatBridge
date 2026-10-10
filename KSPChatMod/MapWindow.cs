@@ -103,7 +103,7 @@ namespace KSPChatBridge
             if (ov != null && ov.Fixes.Count > 0)
             {
                 foreach (var f in ov.Fixes) fixes.Add(new ApproachFile.EditFix { Role = f.Role, Name = f.Name, Side = f.Side, Ref = f.AltRef, Lat = f.Lat, Lon = f.Lon, AltMsl = f.Alt });
-                note = "Chart from approaches.json";
+                note = "Chart from charts/" + System.IO.Path.GetFileName(ChartStore.PathFor(rw.Key));
             }
             else
             {
@@ -111,7 +111,7 @@ namespace KSPChatBridge
                 add("dw_left", "left", ch.DownLeftA); add("dwend_left", "left", ch.DownLeftB); add("base_left", "left", ch.ApexLeft);
                 add("dw_right", "right", ch.DownRightA); add("dwend_right", "right", ch.DownRightB); add("base_right", "right", ch.ApexRight);
                 add("faf", "both", ch.Long); add("sf", "both", ch.Short);
-                note = why.Length > 0 ? "approaches.json invalid (" + why + "); computed chart" : "Computed chart (not saved yet)";
+                note = why.Length > 0 ? "chart file invalid (" + why + "); computed chart" : "Computed chart (not saved yet)";
             }
         }
 
@@ -152,6 +152,13 @@ namespace KSPChatBridge
             GUILayout.Label((ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km", GUILayout.Width(48));
             if (GUILayout.Button("+", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, .5);
             centerRunway = GUILayout.Toggle(centerRunway, "center rwy");
+            if (Tab == 1 && rw != null)
+            {   // chart variant selector (default = Luke's chart; e.g. "tight"); writes charts/active.json, hot-swap reloads it
+                NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, "");
+                string cur = ChartStore.Active(rw.Key);
+                if (vs.Count > 1 && GUILayout.Button("chart: " + (cur.Length == 0 ? "default" : cur), GUILayout.Width(110)))
+                { string next = vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]; ChartStore.SetActive(rw.Key, next); fixesFor = ""; }
+            }
             GUILayout.EndHorizontal();
             Rect map = GUILayoutUtility.GetRect(Px, Px, GUILayout.Width(Px), GUILayout.Height(Px));
             if (tex != null) GUI.DrawTexture(map, tex);
@@ -183,6 +190,7 @@ namespace KSPChatBridge
                     var p = Proj(act.Route[i].Lat, act.Route[i].Lon); Dot(p, 5, Color.green);
                     if (i > 0) Line(Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
                 }
+            if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); Dot(jp, 11, Color.magenta); GUI.Label(new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
             var v = FlightGlobals.ActiveVessel;
             if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
             HandleMouse(rw);
@@ -231,7 +239,8 @@ namespace KSPChatBridge
             if (act == null && GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + 1) % runways.Count;
             GUILayout.EndHorizontal();
             if (v == null) return;
-            var r = Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius);
+            var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);   // single source of truth with the autopilot
+            if (act != null) GUILayout.Label(act.Coupled ? (act.GsCoupled ? "COUPLED  LOC + GS" : "COUPLED  LOC  (GS armed)") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC armed" : "not coupled");
             const float S = 260; Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
             var o = GUI.color; GUI.color = new Color(.05f, .05f, .08f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
             Vector2 c = box.center;
@@ -313,10 +322,14 @@ namespace KSPChatBridge
         {
             try
             {
-                string path = NativeFlightController.ApproachPath, old = File.Exists(path) ? File.ReadAllText(path) : "";
+                NativeFlightController.EnsureCharts();
+                string variant = ChartStore.Active(rw.Key), path = ChartStore.PathFor(rw.Key); if (!File.Exists(path)) path = System.IO.Path.Combine(ChartStore.Dir, ChartStore.FileName(rw.Key, variant));
+                string old = File.Exists(path) ? File.ReadAllText(path) : "";
                 if (old.Length > 0) File.Copy(path, path + ".bak", true);
-                AtomicFile.Write(path, ApproachFile.Merge(old, rw.Key, fixes, (la, lo) => NativeFlightController.MapTerrain(body, la, lo)));
-                note = "Saved " + rw.Key + " to approaches.json (used on the next landing).";
+                string wrapped = old.Trim().Length > 0 ? "{" + MiniJson.Serialize(rw.Key) + ":" + old + "}" : "";
+                var merged = MiniJson.Deserialize(ApproachFile.Merge(wrapped, rw.Key, fixes, (la, lo) => NativeFlightController.MapTerrain(body, la, lo)));
+                AtomicFile.Write(path, MiniJson.Serialize(merged[rw.Key]));   // same per-end file the hot-swap watcher reloads
+                note = "Saved " + rw.Key + " to charts/" + System.IO.Path.GetFileName(path) + " (reloads live).";
                 ChatLog.Write("approach", "map editor saved " + rw.Key + " (" + fixes.Count + " fixes)");
             }
             catch (Exception ex) { note = "Save failed: " + ex.Message; }

@@ -1,0 +1,83 @@
+{
+ "alt_ref": "agl",
+ "fixes": [
+  {
+   "role": "faf",
+   "side": "both",
+   "alt_ref": "agl",
+   "name": "FAF (long final 12 km)",
+   "lat": -0.0581,
+   "lon": -73.34441,
+   "alt": 700
+  },
+  {
+   "role": "sf",
+   "side": "both",
+   "alt_ref": "agl",
+   "name": "SF (short final 4 km)",
+   "lat": -0.05284,
+   "lon": -74.10834,
+   "alt": 280
+  },
+  {
+   "role": "dw_left",
+   "side": "left",
+   "alt_ref": "agl",
+   "name": "IAF-L (tight downwind)",
+   "lat": -0.28795,
+   "lon": -74.63518,
+   "alt": 600
+  },
+  {
+   "role": "dwend_left",
+   "side": "left",
+   "alt_ref": "agl",
+   "name": "DW-L end",
+   "lat": -0.29519,
+   "lon": -73.58478,
+   "alt": 600
+  },
+  {
+   "role": "base_left",
+   "side": "left",
+   "alt_ref": "agl",
+   "name": "BASE-L (12 km)",
+   "lat": -0.29683,
+   "lon": -73.34606,
+   "alt": 650
+  },
+  {
+   "role": "dw_right",
+   "side": "right",
+   "alt_ref": "agl",
+   "name": "IAF-R (tight downwind)",
+   "lat": 0.1895,
+   "lon": -74.63189,
+   "alt": 600
+  },
+  {
+   "role": "dwend_right",
+   "side": "right",
+   "alt_ref": "agl",
+   "name": "DW-R end",
+   "lat": 0.18227,
+   "lon": -73.58149,
+   "alt": 600
+  },
+  {
+   "role": "base_right",
+   "side": "right",
+   "alt_ref": "agl",
+   "name": "BASE-R (12 km)",
+   "lat": 0.18062,
+   "lon": -73.34277,
+   "alt": 650
+  }
+ ],
+ "variant": "tight",
+ "note": "Aeris 3A, 1.5-2 g joins: 2.5 km downwind, base on the 12 km FAF line; FAF 12 km / SF 4 km kept",
+ "flare_start_m": 15,
+ "flare_sink_ms": 3,
+ "touchdown_m": 350,
+ "tch_m": 15
+}

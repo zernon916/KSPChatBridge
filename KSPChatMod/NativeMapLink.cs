@@ -53,15 +53,21 @@ namespace KSPChatBridge
 
         internal static string ApproachPath { get { return Path.Combine(BridgeLauncher.PluginDataDirectory, "approaches.json"); } }
 
+        static bool chartsReady;
+        /// <summary>PluginData/charts (hot-swappable per-end chart files); migrates approaches.json once.</summary>
+        internal static void EnsureCharts()
+        {
+            if (chartsReady) return; chartsReady = true;
+            ChartStore.Dir = Path.Combine(BridgeLauncher.PluginDataDirectory, "charts");
+            try { int n = ChartStore.Migrate(ApproachPath); if (n > 0) ChatLog.Write("approach", "migrated " + n + " charts from approaches.json to charts/ (backup approaches.json.premigrate.bak)"); }
+            catch (Exception ex) { ChatLog.Write("approach", "chart migration failed: " + ex.Message); }
+        }
         internal static ApproachOverride LoadOverride(string key, MapRunway rw, CelestialBody body, out string why)
         {
             why = "";
             try
             {
-                if (!File.Exists(ApproachPath)) return null;
-                string txt = File.ReadAllText(ApproachPath); if (AtomicFile.Torn(txt)) return null;
-                var all = MiniJson.Deserialize(txt); object end;
-                if (all == null || !all.TryGetValue(key, out end)) return null;
+                EnsureCharts(); object end = ChartStore.Read(key, out why); if (end == null) return null;
                 return ApproachOverride.Parse(end, rw.Lat, rw.Lon, rw.Elevation, body.Radius, out why, (la, lo) => MapTerrain(body, la, lo));
             }
             catch (Exception ex) { why = ex.Message; return null; }

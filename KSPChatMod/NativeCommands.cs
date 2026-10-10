@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -14,7 +14,7 @@ namespace KSPChatBridge
             "heli_control", "taxi_to", "taxi/list", "get_trim_state", "set_trim", "save_craft_notes",
             "save_landing_spot", "get_status", "autopilot_status", "set_gear", "set_brakes", "set_lights",
             "set_rcs", "set_sas", "auto_trim_now", "trim", "set_heading", "set_speed",
-            "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status",
+            "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status", "flightplan/follow",
             "list_landing_spots", "list_taxi_points", "set_ai_name", "remember_preference",
             // P5-2 flight residuals (NativeFlightResidual.cs)
             "land", "fly_to", "fly_to_place", "touch_and_go", "go_around", "circle_here", "turn", "plane_pitch",

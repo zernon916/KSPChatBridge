@@ -122,8 +122,8 @@ namespace KSPChatBridge
         /// <summary>Luke: G-based turn rating (joins ~2 g, final corrections ~1.5 g; settable), never above the 3 g cap and
         /// kept 20% inside the stall load factor (v/Vs)^2. Bank = acos(1/n), radius = v^2/(g sqrt(n^2-1)).</summary>
         /// Fighter/NASA style (Luke): allowed g = min(rating, crew tolerance, structure, stall margin), with stress back-off.
-        internal static double JoinG = 4.0, FinalG = 1.5, CrewG = 6, StructG = 20, Backoff = 1;
-        internal const double GCap = 12;   // absolute sanity ceiling; real limits come from crew/structure/stall
+        internal static double JoinG = 4.0, FinalG = 1.5, CrewG = 6, StructG = 9, Backoff = 1;
+        internal const double GCap = 12, StructCap = 9;   // absolute sanity ceiling; real limits come from crew/structure/stall
         internal static string Limit = "rating";
         internal static double LoadFactor(double wantG, double speed, double stall)
         {
@@ -135,7 +135,7 @@ namespace KSPChatBridge
         }
         /// <summary>Structural g limit from the weakest part's g tolerance (80% margin); 0/garbage tolerances ignored.</summary>
         internal static double StructuralG(IEnumerable<double> partTolerances)
-        { double m = double.MaxValue; foreach (var t in partTolerances) if (t > 1 && t < 1e4) m = Math.Min(m, .8 * t); return m == double.MaxValue ? 20 : Math.Max(1.5, m); }
+        { double m = double.MaxValue; foreach (var t in partTolerances) if (t > 1 && t < 1e4) m = Math.Min(m, .8 * t); return m == double.MaxValue ? StructCap : FlightPolicy.Clamp(m, 1.5, StructCap); }   // part gTolerance is not a measured airframe limit: cap ~9 g
         /// <summary>Stress back-off: above 80% of the structural limit shrink the rating quickly, recover slowly below 60%.</summary>
         internal static double StressStep(double backoff, double g, double structG, double dt)
         { double st = structG > 0 ? g / structG : 0; return st > .8 ? Math.Max(.4, backoff * (1 - .5 * dt)) : st < .6 ? Math.Min(1, backoff + .05 * dt) : backoff; }
@@ -164,6 +164,28 @@ namespace KSPChatBridge
         }
         /// <summary>Elevator feed-forward for the commanded load factor (0..0.3).</summary>
         internal static double ElevatorFF(double bankCmdDeg) { return Math.Abs(bankCmdDeg) >= 80 ? 0 : FlightPolicy.Clamp(.04 * (N(bankCmdDeg) - 1), 0, .3); }
+    }
+
+    /// <summary>Pitch-command shaping (crash 047208f: 9.5 g at the takeoff->climb handoff). S-curve + pitch-rate limit; high g only
+    /// in commanded turns/joins (|bank| > 15), otherwise ClimbG; turn back-pressure only when banked; Reset() from the current
+    /// state at every mode change so no stale filter/rate state produces a jump.</summary>
+    internal sealed class PitchShaper
+    {
+        internal const double ClimbG = 1.8, TurnBankMin = 15, FFBankMin = 5;
+        readonly SCurve s = new SCurve(); double last = double.NaN;
+        internal void Reset(double pitch) { s.Reset(); s.Step(pitch, 0); last = pitch; }
+        internal static double Limit(double gLim, double bankCmd) { return Math.Abs(bankCmd) > TurnBankMin ? gLim : Math.Min(gLim, ClimbG); }
+        internal static double BackPressure(double bankCmd) { return Math.Abs(bankCmd) > FFBankMin ? ApproachProfile.TurnPitch(bankCmd) : 0; }
+        internal static double ElevatorFF(double bankCmd) { return Math.Abs(bankCmd) > FFBankMin ? TurnOnset.ElevatorFF(bankCmd) : 0; }
+        internal double Step(double desired, double pitch, double speed, double gLim, double bankCmd, double dt)
+        {
+            if (double.IsNaN(last)) Reset(pitch);
+            double d = s.Step(desired + BackPressure(bankCmd), dt);
+            double pr = PilotPolicy.MaxPitchRate(speed, Limit(gLim, bankCmd)) * dt;
+            last = FlightPolicy.Clamp(d, last - pr, last + pr); return last;
+        }
+        /// <summary>Elevator slew: normal .35/s; unloading when g is near/over the limit is fast (3/s) so the g limiter can act.</summary>
+        internal static double ElevatorRate(double g, double gLim, double cmd, double elevator) { return g > .9 * gLim && cmd < elevator ? 3 : .35; }
     }
 
     /// <summary>Critically damped second-order low-pass (S-curve response, no overshoot).</summary>
@@ -368,39 +390,54 @@ namespace KSPChatBridge
         /// <summary>Luke: join the chart at the nearest fix or leg point (1/3, 2/3) ahead of the FAF this plane can safely align with:
         /// Dubins turn-straight-turn reach at its radius, arriving on the leg track; descent/climb within 10/15 m/s at its speed;
         /// terrain 150 m below the path. Picks the shortest total path to touchdown; null = none (fall back to the long final).</summary>
+        internal const double JoinStep = 300, MaxIntercept = 45, MaxSink = 25; internal Wp JoinPoint;
         internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why)
         {
             why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
             double k = Math.PI / 180 * radius, cl = Math.Cos(ThrLat * Math.PI / 180);
             Func<double, double, double[]> xy = (la, lo) => new[] { (lo - ThrLon) * k * cl, (la - ThrLat) * k };
             var me = xy(lat, lon); List<Wp> best = null; double bestCost = double.MaxValue; string bestWhy = ""; int nReach = 0, nAlt = 0, nTerr = 0, n = 0;
+            // Luke: the route LINE is continuous mini-waypoints (every ~300 m). Join at any point ahead (toward the FAF, chart order only)
+            // that is intercepted at <= 45 deg; then track the line by cross-track. Prefer the leg we are already flying along (< 30 deg).
+            double direct = NavigationMath.Distance(lat, lon, ThrLat, ThrLon, radius);
             foreach (bool right in new[] { false, true })
             {
                 var seq = Side(right);
                 for (int i = 0; i < seq.Count; i++)
-                    foreach (double fr in i == 0 ? new[] { 1.0 } : new[] { 1 / 3.0, 2 / 3.0, 1.0 })
+                {
+                    Wp a = i > 0 ? seq[i - 1] : null, f = seq[i];
+                    double legLen = a == null ? 0 : NavigationMath.Distance(a.Lat, a.Lon, f.Lat, f.Lon, radius);
+                    int steps = a == null ? 1 : Math.Max(1, (int)Math.Ceiling(legLen / JoinStep));
+                    double legTrack = a != null ? NavigationMath.Bearing(a.Lat, a.Lon, f.Lat, f.Lon) : i + 1 < seq.Count ? NavigationMath.Bearing(f.Lat, f.Lon, seq[i + 1].Lat, seq[i + 1].Lon) : Course;
+                    if (i == seq.Count - 1 && a == null) legTrack = Course;
+                    for (int kk = a == null ? steps : 1; kk <= steps; kk++)
                     {
                         n++;
-                        Wp a = i > 0 ? seq[i - 1] : null, f = seq[i];
-                        var j = a == null || fr >= 1 ? f : new Wp { Name = fr < 1 ? f.Name + " (leg " + Math.Round(fr * 100) + "%)" : f.Name, Lat = a.Lat + (f.Lat - a.Lat) * fr, Lon = a.Lon + (f.Lon - a.Lon) * fr, Alt = a.Alt + (f.Alt - a.Alt) * fr };
-                        double legTrack = a != null ? NavigationMath.Bearing(a.Lat, a.Lon, f.Lat, f.Lon) : i + 1 < seq.Count ? NavigationMath.Bearing(f.Lat, f.Lon, seq[i + 1].Lat, seq[i + 1].Lon) : Course;
-                        // run-in: arrive on the leg track 2.5 r before the join point so the autopilot is aligned, not just "there"
-                        double rla, rlo; NavigationMath.Offset(j.Lat, j.Lon, legTrack + 180, 2.5 * turnR, radius, out rla, out rlo);
-                        var runIn = new Wp { Name = j.Name + " run-in", Lat = rla, Lon = rlo, Alt = j.Alt };
-                        var jp = xy(rla, rlo);
-                        double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR) + 2.5 * turnR;
+                        double fr = (double)kk / steps;
+                        var j = a == null || kk == steps ? f : new Wp { Name = "line " + f.Name.Split('(')[0].Trim() + " -" + ((1 - fr) * legLen / 1000).ToString("0.0") + " km", Lat = a.Lat + (f.Lat - a.Lat) * fr, Lon = a.Lon + (f.Lon - a.Lon) * fr, Alt = a.Alt + (f.Alt - a.Alt) * fr };
+                        double toJ = NavigationMath.Distance(lat, lon, j.Lat, j.Lon, radius), brg = NavigationMath.Bearing(lat, lon, j.Lat, j.Lon);
+                        double icpt = Math.Abs(FlightPolicy.Wrap(legTrack - brg)), hdgErr = Math.Abs(FlightPolicy.Wrap(heading - legTrack));
+                        bool onLeg = hdgErr < 30 && toJ < 6000 && icpt < 60;   // already flying this leg: the point ahead on it
+                        if (icpt > MaxIntercept && !onLeg && toJ > turnR) { nReach++; continue; }   // never a point behind / against the line direction
+                        var jp = xy(j.Lat, j.Lon);
+                        double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
                         if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) { nReach++; continue; }
-                        double dz = j.Alt - altitude;
-                        if (dz < -reach * 10 / speed || dz > reach * 15 / speed) { nAlt++; continue; }
+                        double dz = j.Alt - altitude, sink = reach * MaxSink / Math.Max(30, speed);
+                        if (dz > reach * 15 / Math.Max(30, speed)) { nAlt++; continue; }   // can't climb that much
+                        double lose = -dz > sink ? (-dz - sink) * Math.Max(30, speed) / MaxSink : 0;   // too high: S-turns/slowing, flown as extra distance
+                        if (lose > 30000) { nAlt++; continue; }
                         bool clear = true;
-                        for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo), path = altitude + (j.Alt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clear = false; }   // clearance vs the PATH flown (MSL climb/descent to the join), not the lower of now/join
+                        for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo), path = altitude + (j.Alt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clear = false; }   // clearance vs the PATH flown
                         if (!clear) { nTerr++; continue; }
                         double rest = 0; Wp prev = j;
-                        var route = new List<Wp> { runIn, j };
-                        for (int q = (fr < 1 ? i : i + 1); q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
+                        var route = new List<Wp> { j };
+                        for (int q = kk == steps || a == null ? i + 1 : i; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
                         rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
-                        if (reach + rest < bestCost) { bestCost = reach + rest; best = route; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + ": reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m), total " + ((reach + rest) / 1000).ToString("0.0") + " km to touchdown"; }
+                        double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.5 * direct + 15000)) * 2;   // penalize a path much longer than direct
+                        if (onLeg) cost *= .6;   // prefer the leg we are already heading along
+                        if (cost < bestCost) { bestCost = cost; best = route; JoinPoint = j; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
+                }
             }
             why = (best != null ? bestWhy : "no safe join point") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable]";
             return best;
@@ -446,7 +483,16 @@ namespace KSPChatBridge
         internal string SmoothLog = "", JoinLog = "";
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
-        internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        /// <summary>Hot-swapped chart: rebuild while joining (route from here); established on final/flare/rollout keeps flying the centerline.</summary>
+        internal void ReloadChart()
+        {
+            if (Phase == "entry") Route = null;   // rebuilt next step from the current position (BestJoin picks the nearest still-valid fix)
+            else if (Chart != null && Override != null) Chart.Apply(Override);
+        }
+        internal Ils.Reading Ils; internal bool LocCoupled, GsCoupled; internal const double LocRange = 18000;
+        internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
+        internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
+        internal void GoAroundReset() { LocCoupled = GsCoupled = false; Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanSpeed, PlanBank, PlanRadius, PlanG, TurnBank, LastStall = 45; internal List<ApproachChart.Wp> RawRoute;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
@@ -557,8 +603,13 @@ namespace KSPChatBridge
             {
                 // Proportional + integral (per metre flown) centerline tracking: removes steady offsets (sideslip/wind/trim) to < 5 m
                 double ds = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along;
-                DesiredHeading = CenterlineHeading(cross, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
-                DesiredAltitude = Chart != null ? Chart.GlideAlt(-along + (Override != null ? Override.TouchdownM : 350)) : Elevation + Math.Max(3, (350 - along) * Math.Tan(3 * Math.PI / 180));
+                // Luke: coupled ILS. The SAME localizer/glideslope deviations the ILS tab shows feed the controllers: capture LOC, then GS.
+                Ils = KSPChatBridge.Ils.Compute(lat, lon, altitude, Lat, Lon, EndLat, EndLon, Elevation, radius, TouchdownM);
+                if (!LocCoupled && Math.Abs(Ils.LocDeg) < KSPChatBridge.Ils.LocFullScale && Ils.Front && -along < LocRange) LocCoupled = true;
+                if (LocCoupled && !GsCoupled && Math.Abs(Ils.GsDeg) < KSPChatBridge.Ils.GsFullScale) GsCoupled = true;
+                double latDev = LocCoupled ? Ils.CrossM : cross;
+                DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
+                DesiredAltitude = GsCoupled ? altitude - Ils.AboveGsM : Chart != null ? Math.Max(Chart.GlideAlt(-along + TouchdownM), altitude - Ils.AboveGsM) : Elevation + Math.Max(3, (TouchdownM - along) * Math.Tan(3 * Math.PI / 180));   // before GS capture: never below the ILS path
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
                 DesiredSpeed = (hat < 30 ? 1.15 : 1.3) * stall;
                 double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)

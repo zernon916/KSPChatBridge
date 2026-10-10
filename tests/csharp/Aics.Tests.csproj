@@ -26,7 +26,7 @@
     <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
     <Compile Include="../../KSPChatMod/MiniJson.cs"/>
     <Compile Include="../../KSPChatMod/TerrainGrid.cs"/>
-    <Compile Include="../../KSPChatMod/MapReveal.cs"/>
+    <Compile Include="../../KSPChatMod/MapReveal.cs"/><Compile Include="../../KSPChatMod/ChartStore.cs"/>
     <Compile Include="../../KSPChatMod/KerbalPersonality.cs"/>
     <Compile Include="../../KSPChatMod/IntercomTalk.cs"/>
     <Compile Include="../../KSPChatMod/NativeSafety.cs"/>

@@ -210,6 +210,12 @@ namespace KSPChatBridge
         }
         /// <summary>G limit (Luke: no violent maneuvering): max pitch-attitude rate for a load factor limit at this speed.</summary>
         internal static double MaxPitchRate(double speed, double gLimit = 3) { return (gLimit - 1) * 9.81 / Math.Max(30, speed) * 180 / Math.PI; }
+        /// <summary>"follow/fly/run/resume/continue/start/execute the (flight) plan" = run the EXISTING plan; only "make/new/clear plan" replaces it.</summary>
+        internal static bool IsFollowPlan(string message)
+        {
+            string m = (message ?? "").Trim().ToLowerInvariant().TrimEnd('.', '!', '?');
+            return System.Text.RegularExpressions.Regex.IsMatch(m, @"^(please )?(follow|fly|run|resume|continue|start|execute|go on with)( with)? (the |my |our |this |current |that )*(flight ?)?plan( now| please)?$");
+        }
         internal static double GScale(double g, double gLimit = 3) { return g > gLimit ? Math.Max(.2, gLimit / g) : 1; }
         /// <summary>Landing ETA = (distance to the next fix + remaining legs incl. fix->threshold) / (surface speed + |vertical speed|).</summary>
         internal static double ApproachEta(double toNext, IList<double> legs, double spd, double vs)

@@ -90,6 +90,7 @@ namespace KSPChatBridge
             string m = (message ?? "").Trim().ToLowerInvariant().TrimEnd('.', '!', '?');
             Func<string, string, KeyValuePair<string, string>?> R = (t, a) => Fits(t, craft) && !Destructive.Contains(t) ? new KeyValuePair<string, string>(t, a) : (KeyValuePair<string, string>?)null;
             string confident; List<string> unsureP, notesP;
+            if (PilotPolicy.IsFollowPlan(m)) return R("flightplan/follow", "{}");
             if (Regex.IsMatch(m, @"^(make|write|create|build) (me )?(a )?(flight )?plan\b|^flight plan:|^plan:") && m.Length <= 400 && PilotPolicy.TryPlan(message, false, out confident, out unsureP, out notesP))
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize(message.Trim()) + "}");
             if (Regex.IsMatch(m, @"^(land and circle|circle and land|circle (the )?runway (and|then) land)") && m.Length <= 80)   // circle first, then land

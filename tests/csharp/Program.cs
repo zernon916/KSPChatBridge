@@ -1288,12 +1288,27 @@ class Program
                 var chj = ApproachChart.Build(thrLa, thrLo, 90.4, 69, v, 20, 600000, null);
                 string jw; double bLa, bLo; NavigationMath.Offset(chj.ApexLeft.Lat, chj.ApexLeft.Lon, 0, 3000, 600000, out bLa, out bLo);
                 var j1 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt, v, r, 600000, out jw);
-                Check(j1 != null && j1[0].Name != chj.DownLeftA.Name && j1[j1.Count - 1].Lat == chj.Long.Lat && j1[0].Name.EndsWith("run-in"), "near the left base heading south: joins late in the sequence, not at the first fix (" + jw + ")");
+                Check(j1 != null && j1[0].Name != chj.DownLeftA.Name && j1[j1.Count - 1].Lat == chj.Long.Lat && (j1[0].Name.StartsWith("line") || j1[0].Name == chj.ApexLeft.Name || j1[0].Name == chj.Long.Name), "near the left base heading south: joins late in the sequence, not at the first fix (" + jw + ")");
                 double sLa, sLo; NavigationMath.Offset(thrLa, thrLo, 270.4, 20000, 600000, out sLa, out sLo);
                 var j2 = chj.BestJoin(sLa, sLo, 90.4, chj.LongAlt, v, r, 600000, out jw);
-                Check(j2 != null && j2[j2.Count - 1].Lat == chj.Long.Lat && j2.Count == 2, "on the extended centerline 20 km out: straight to the FAF (" + jw + ")");
+                Check(j2 != null && j2[j2.Count - 1].Lat == chj.Long.Lat && j2.Count <= 2, "on the extended centerline 20 km out: straight to the FAF (" + jw + ")");
                 var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
                 Check(jw.Contains("altitude") && (j3 == null || j3[0].Name != chj.ApexLeft.Name), "4 km too high: close fixes rejected for descent (" + jw + ")");
+                {   // Luke 3:12 PM bug: joins along the LINE, forward in chart order only, prefer the leg we are on, no 40 g structure
+                    var sideR = chj.Side(true);
+                    Func<List<ApproachChart.Wp>, List<ApproachChart.Wp>, bool> forward = (rt, sd) => { int at = -1; for (int q = 1; q < rt.Count; q++) { int ix = sd.FindIndex(w => w.Lat == rt[q].Lat && w.Lon == rt[q].Lon); if (ix <= at) return false; at = ix; } return true; };
+                    var A = sideR[0]; var B = sideR[1]; double lt = NavigationMath.Bearing(A.Lat, A.Lon, B.Lat, B.Lon);
+                    double mLa = A.Lat + (B.Lat - A.Lat) * .4, mLo = A.Lon + (B.Lon - A.Lon) * .4;
+                    var jr1 = chj.BestJoin(mLa, mLo, lt, A.Alt, v, r, 600000, out jw);
+                    Check(jr1 != null && jw.Contains("right") && jw.Contains("on the leg ahead") && forward(jr1, sideR), "on the right downwind heading along it: joins that leg ahead, chart order (" + jw + ")");
+                    Check(NavigationMath.Distance(mLa, mLo, jr1[0].Lat, jr1[0].Lon, 600000) < 6000 && Math.Abs(FlightPolicy.Wrap(NavigationMath.Bearing(mLa, mLo, jr1[0].Lat, jr1[0].Lon) - lt)) < 60, "join point is ahead on the line, not behind");
+                    var jr2 = chj.BestJoin(mLa, mLo, lt + 180, A.Alt, v, r, 600000, out jw);
+                    Check(jr2 == null || forward(jr2, jw.Contains("right") ? sideR : chj.Side(false)), "heading against the leg: never flies the route backwards (" + jw + ")");
+                    var jr3 = chj.BestJoin(mLa, mLo, lt, A.Alt + 2500, v, r, 600000, out jw);
+                    Check(jr3 != null, "2.5 km high: joins with S-turns/slowing instead of rejecting (" + jw + ")");
+                    Check(ApproachProfile.StructuralG(new[] { 50.0, 60 }) <= 9 && ApproachProfile.StructuralG(new[] { 5.0 }) == 4, "structure g capped ~9 g (part tolerances are not airframe limits)");
+                    Console.WriteLine("Line joins: 5 behavior checks passed.");
+                }
                 var hill = ApproachChart.Build(thrLa, thrLo, 90.4, 69, v, 20, 600000, (la, lo) => 5000);
                 Check(hill.BestJoin(bLa, bLo, 180, 800, v, r, 600000, out jw) == null && jw.Contains("terrain"), "terrain in the way: no join, fall back to the long final (" + jw + ")");
                 var rmj = new RunwayMission { Lat = thrLa, Lon = thrLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
@@ -1538,6 +1553,68 @@ class Program
         }
         finally { try { System.IO.Directory.Delete(pd, true); } catch (Exception) { } }
         Console.WriteLine("P5-6 PluginData migration: 6 behavior checks passed.");
+        {   // crash 047208f: takeoff -> hold/climb handoff must not spike g
+            var ps = new PitchShaper(); double pitch = 9, rate = 0, maxG = 0, v = 110;
+            for (int i = 0; i < 200; i++) { double d = ps.Step(9, pitch, v, 3, 0, .02); pitch += (d - pitch) / .4 * .02; }
+            ps.Reset(pitch);   // mode change: takeoff -> hold
+            for (int i = 0; i < 600; i++)
+            {
+                double d = ps.Step(15 + 3, pitch, v, 4.5, 0, .02);   // climb target + stray back-pressure-sized step, joins-level g limit requested
+                double np = pitch + (d - pitch) / .4 * .02; rate = (np - pitch) / .02; pitch = np;
+                double g = Math.Cos(pitch * Math.PI / 180) + v * rate * Math.PI / 180 / 9.81; maxG = Math.Max(maxG, g);
+            }
+            Check(maxG < 2, "takeoff->climb handoff: no g spike above 2 g (max " + maxG.ToString("0.00") + ")");
+            Check(PitchShaper.BackPressure(0) == 0 && PitchShaper.ElevatorFF(2) == 0 && PitchShaper.BackPressure(45) > 0, "no turn feed-forward when wings level");
+            Check(PitchShaper.Limit(4.5, 0) == PitchShaper.ClimbG && PitchShaper.Limit(4.5, 40) == 4.5, "high g only in commanded turns");
+            Check(PitchShaper.ElevatorRate(3.5, 3, -.1, .2) > 1, "over-g unloads the elevator fast");
+            Console.WriteLine("Climb handoff g: 4 behavior checks passed.");
+        }
+        {   // "follow the flight plan" runs the existing plan; only make/new plan replaces it
+            foreach (var m in new[] { "Follow flight plan", "follow the flight plan", "fly the plan", "resume flight plan", "run my plan", "continue the plan." })
+            { Check(PilotPolicy.IsFollowPlan(m), "follow phrase: " + m); var d = ToolRouter.Direct(m, "plane"); Check(d != null && d.Value.Key == "flightplan/follow", "routes to follow: " + m); }
+            foreach (var m in new[] { "make a plan: takeoff, land", "new flight plan", "clear plan", "follow terrain" }) Check(!PilotPolicy.IsFollowPlan(m), "not follow: " + m);
+            var mk = ToolRouter.Direct("Make a plan, Takeoff, Climb to 2000, land ksc 09", "plane"); Check(mk != null && mk.Value.Key == "make_flight_plan", "make a plan still replaces");
+            Console.WriteLine("Follow flight plan: 14 behavior checks passed.");
+        }
+        {   // coupled ILS: the AP flies the same LOC/GS deviations the ILS tab shows
+            double tLa = -.0485997, tLo = -74.724375; var rmI = new RunwayMission { Lat = tLa, Lon = tLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+            double crsI = NavigationMath.Bearing(tLa, tLo, rmI.EndLat, rmI.EndLon), pLa, pLo, qLa, qLo;
+            NavigationMath.Offset(tLa, tLo, crsI + 180, 3000, 600000, out pLa, out pLo); NavigationMath.Offset(pLa, pLo, crsI + 90, 20, 600000, out qLa, out qLo);   // 3 km out, 20 m right
+            double gAlt = 69.1 + 3350 * Math.Tan(3 * Math.PI / 180);
+            rmI.Phase = "final"; rmI.Kind = "long";   // established inbound
+            for (int i = 0; i < 3; i++) rmI.Step(qLa, qLo, gAlt, gAlt - 0, 65, false, 600000, 45, crsI, crsI);
+            Check(rmI.Phase == "final" && rmI.Coupled && rmI.GsCoupled, "short final aligned: LOC then GS coupled (" + rmI.Phase + ")");
+            Check(Math.Abs(rmI.Ils.CrossM - rmI.Cross) < 2 && rmI.Ils.CrossM > 15, "ILS cross-track = controller input (same sign, 20 m right)");
+            Check(Math.Abs(rmI.DesiredAltitude - (gAlt - rmI.Ils.AboveGsM)) < .01 && FlightPolicy.Wrap(rmI.DesiredHeading - crsI) < 0, "GS path and a left correction come from the ILS reading");
+            rmI.GoAroundReset(); Check(!rmI.Coupled && !rmI.GsCoupled, "go-around uncouples");
+            Console.WriteLine("Coupled ILS: 4 behavior checks passed.");
+        }
+        {   // hot-swappable chart files
+            string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(cd);
+            try
+            {
+                string ap = System.IO.Path.Combine(cd, "approaches.json");
+                System.IO.File.WriteAllText(ap, "{\"KSC 09\":{\"alt_ref\":\"agl\",\"fixes\":[]},\"Island 27\":{\"fixes\":[]}}");
+                ChartStore.Dir = System.IO.Path.Combine(cd, "charts"); ChartStore.ResetWatch();
+                Check(ChartStore.Migrate(ap) == 2 && System.IO.File.Exists(System.IO.Path.Combine(ChartStore.Dir, "KSC_09.json")) && System.IO.File.Exists(ap + ".premigrate.bak"), "approaches.json split into per-end files + backup");
+                string v; Check(ChartStore.KeyOf("KSC_09_tight.json", out v) == "KSC 09" && v == "tight" && ChartStore.FileName("Island 27", "") == "Island_27.json", "file names <-> runway keys/variants");
+                string why; Check(ChartStore.Read("KSC 09", out why) != null, "default chart read");
+                ChartStore.Write("KSC 09", "tight", "{\"fixes\":[],\"tight\":true}");
+                Check(((Dictionary<string, object>)ChartStore.Read("KSC 09", out why)).ContainsKey("tight") == false, "Luke's chart stays default");
+                ChartStore.SetActive("KSC 09", "tight");
+                Check(((Dictionary<string, object>)ChartStore.Read("KSC 09", out why)).ContainsKey("tight"), "active variant picked");
+                ChartStore.Changed();   // prime
+                System.Threading.Thread.Sleep(20); System.IO.File.WriteAllText(System.IO.Path.Combine(ChartStore.Dir, "Island_27.json"), "{bad json");
+                System.IO.File.SetLastWriteTimeUtc(System.IO.Path.Combine(ChartStore.Dir, "Island_27.json"), DateTime.UtcNow.AddSeconds(5));
+                var ch = ChartStore.Changed(); Check(ch.Count == 1 && ch[0] == "Island 27", "mtime watch reports the changed end");
+                object badC = null; try { badC = ChartStore.Read("Island 27", out why); } catch (Exception) { }
+                Check(badC == null, "bad JSON -> null (caller keeps the old chart)");
+                Check(ChartStore.Changed().Count == 0, "no change -> nothing reloaded");
+            }
+            finally { ChartStore.Dir = null; try { System.IO.Directory.Delete(cd, true); } catch (Exception) { } }
+            Console.WriteLine("Chart files: 8 behavior checks passed.");
+        }
         string smoke = Environment.GetEnvironmentVariable("AICS_LLAMA_SMOKE");
         if (!string.IsNullOrEmpty(smoke))
         {

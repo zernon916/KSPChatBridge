@@ -76,6 +76,7 @@ namespace KSPChatBridge
                 case "make_flight_plan":
                 {
                     string text = Str(a, "plan", "");
+                    if (text.Trim().Length == 0 && PilotPolicy.IsFollowPlan(Str(a, "request", ""))) return Command("flightplan/follow", new Dictionary<string, object>());   // never replace the plan on "follow the plan"
                     var notes = new List<string>();
                     if (text.Trim().Length == 0)
                     {
