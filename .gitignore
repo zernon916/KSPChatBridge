@@ -4,7 +4,6 @@ logs/
 *.log
 playstyle_notes.md
 bridge_settings.json
-chatgpt_chat.json*
 # secrets
 .env
 .env.*
@@ -13,7 +12,6 @@ chatgpt_chat.json*
 *token*
 # build output
 __pycache__/
-*.pyc
 bin/
 obj/
 *.dll

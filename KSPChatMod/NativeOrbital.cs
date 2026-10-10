@@ -5,7 +5,7 @@ using UnityEngine;
 namespace KSPChatBridge
 {
     // P5-4: orbital / docking ports. Plans with native maneuver nodes (OrbitMath); executes with MechJeb when present,
-    // otherwise says so clearly. Sun/antenna lock use stock SAS LockRotation (no MechJeb, no kRPC).
+    // otherwise says so clearly. Sun/antenna lock use stock SAS LockRotation (no MechJeb needed).
     public partial class NativeFlightController
     {
         string attitudeLock; float nextAttitudeLock;

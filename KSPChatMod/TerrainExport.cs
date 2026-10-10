@@ -13,7 +13,7 @@ namespace KSPChatBridge
     public class TerrainExporter : MonoBehaviour
     {
         internal static bool Requested, Running; internal static string Status = "";
-        internal static string FilePath { get { return Path.Combine(BridgeLauncher.PluginDataDirectory, "terrain_kerbin.json"); } }
+        internal static string FilePath { get { return Path.Combine(AicsCore.PluginDataDirectory, "terrain_kerbin.json"); } }
         void Start() { if (!File.Exists(FilePath)) Requested = true; }
         void Update()
         {

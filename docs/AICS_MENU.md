@@ -7,9 +7,9 @@ AICS ("AI Control System") is the KSPChatBridge mod's main menu. It sits alongsi
 | **Left-click** the toolbar button (or Alt+K) | Chat window (existing). Its **x** (top right) closes it, like the AICS panels; the Landing window has one too. The `//` grip in the upper-right corner resizes it up/right (min 300x200; the bottom-right grip still works); the input box is multi-line (word wrap, Shift+Enter = new line, Enter sends) and grows downward up to ~5 lines, then scrolls. Replies are labelled with the pilot's name. |
 | **Right-click** the toolbar button (or Alt+J) | **AICS** top menu. It is *sticky*: it stays open until you right-click again or press its X. Clicking a menu item expands or collapses that item's panel underneath, and more than one panel can be open. (Popping a panel out into its own window is planned.) |
 
-Style: dark, MechJeb-like (dark grey panels, light text, green accents, small fonts). On every panel, a **MechJeb when available** principle applies. If MechJeb2 + kRPC.MechJeb is installed, the panel drives MechJeb's own autopilot (ascent, landing, rendezvous, docking, node executor, attitude). The Python bridge fills the gaps MechJeb doesn't cover, or does badly, such as plane autoland, suicide burns, the science watcher and runway spots. The header shows `MJ` (green) or `no MJ` (grey).
+Style: dark, MechJeb-like (dark grey panels, light text, green accents, small fonts). On every panel, a **MechJeb when available** principle applies. If MechJeb2 is installed, the panel drives MechJeb's own autopilot (ascent, landing, rendezvous, docking, node executor, attitude). The in-mod controller fills the gaps MechJeb doesn't cover, or does badly, such as plane autoland, suicide burns, the science watcher and runway spots. The header shows `MJ` (green) or `no MJ` (grey).
 
-Every panel button maps to either (a) a bridge `/tool` call (whitelisted in `http_server.MENU_TOOLS`), (b) the Flight Plan runner (`/flightplan/*`), (c) a local C# action (KSP API: power, crew transfer, EVA boarding, map pick), or (d) a chat prompt to the AI. As of 2026-10-08 every panel is wired; the remaining hard limits are listed at the end.
+Every panel button maps to either (a) a native tool call (`NativeCommands`), (b) the Flight Plan runner , (c) a local C# action (KSP API: power, crew transfer, EVA boarding, map pick), or (d) a chat prompt to the AI. As of 2026-10-08 every panel is wired; the remaining hard limits are listed at the end.
 
 Status legend: **[W]** wired, **[P]** partial, **[S]** stub (UI only).
 
@@ -22,26 +22,26 @@ Classic airliner autopilot holds. Each hold has its own checkbox and target fiel
 - **Heading Hold**: degrees. Shows the signed heading error (+ right / − left).
 - **Roll Hold**: bank angle (capped 20° low speed / 10° above 250 m/s).
 - **Speed Hold**: actual airspeed (TAS) target, throttle only. Never trades altitude for speed.
-- **Takeoff throttle from the craft's specs** (`kspchat/takeoff.py`, used by both the plane autopilot and the hold/Flight Plan takeoff): before the roll the bridge reads mass + available/max thrust over kRPC and picks the start throttle from the thrust-to-weight ratio: TWR <= 0.4 -> 100 %, 0.6 -> 90 %, 0.8 -> 75 %, 1.0 -> 65 %, 1.2 -> 55 %, >= 1.5 -> 35 % (linear, 5 % steps, never 0). Then 5 % steps with spool waits (4 s after start, 3 s on the roll, 4 s airborne, 2 s urgent): more power on the roll only if accelerating < 1.5 m/s^2 below Vr; airborne it HOLDS while the speed is still changing, except under the stall margin (add power) or over / heading over the 220 EAS cap (5 s look-ahead; take power off, floor 10 %, else 30 %). Target 200 / cap 220 EAS. bridge.log: `takeoff TWR x (mass, thrust) -> start throttle y%` and every step.
-- **Speed cap override authority** (`kspchat/speedcap.py`): a speed above the active cap (220 m/s EAS, e.g. `set speed 300` low down, a supersonic `fly_to` at a low altitude, a Flight Plan step) is not flown; the tool answers `needs_override: That's above the 220 m/s low-altitude cap (...). Grant override authority? (yes/no)`. A plain **yes** in that chat session raises the cap to the requested speed and applies the request; **no** keeps the cap. A Flight Plan step waits up to 2 min for the answer (no / no answer = flies the step at the cap). `/override speed on|off` (blanket, this bridge session; off restores 200/220). Not persisted: a bridge restart is back to the defaults.
-- **Safe ceiling + override**: the autopilot estimates its own safe max altitude from the craft (air-breathing sea-level TWR via kRPC `max_thrust_at(1 atm)`, intakes, rocket engines): `8000 m x ln(TWR / 0.1)` clamped 3-18 km for jets, 20 km with rocket engines, 3 km with no engines or intakes (logged as `safe ceiling ...`). An altitude target above it (plane_hold, fly_to, Flight Plan climb/cruise) asks `That's above the estimated safe ceiling of X m. Grant override authority? (yes/no)` with the same yes/no flow; `/override altitude on|off`; `/override` = status.
-- **Max speed estimate** (`kspchat/maxspeed.py`): a requested speed (plane_hold, fly_to cruise_speed, chat `set speed N` / `speed N`) above the craft's best (conservative) estimate is clamped and reported: `Best estimate max is ~326 m/s here; you asked 400. Flying 326.` Method: drag area from kRPC now (|drag| / dynamic pressure), drag ~ rho V^2 at the target altitude, thrust = jets' current available thrust x density ratio + rockets' available_thrust_at(target pressure), level flight T = D, x0.9 safety (no transonic drag-rise model). No estimate on the ground / below 40 m/s (nothing clamped). Separate from the 220 EAS cap: the clamped speed then goes through the override question if it's above the cap.
-- **Pitch command** (`plane_pitch`; chat: `pitch up 10`, `pitchup 90`, `pitch down 5`, `nose up|down N`, N 0-90 deg, default 5): an ABSOLUTE attitude for the running holds (replaces the V/S loop and the 5-15 deg climb bands; it's the player's explicit command, no override question). Nose up: throttle up; near the stall margin (1.3 Vs + 10 m/s, or AoA > 15) it levels off at ~1 deg with full power (never cut), rebuilds +20 m/s, returns to the pitch, and repeats until the command changes or it reaches the target altitude (if one is set above) or the estimated safe ceiling; then it holds altitude. Nose down: ends at a target altitude below or the terrain floor (lead from V/S and the pull-out time); over the EAS cap it levels off until the speed is back. Above 60 deg the wings are held level. A pitch command drops the altitude target being held; `set altitude` / V/S ends the pitch hold. Each level-off / resume / end is in bridge.log (`hold: Pitch ...`) and posted as a chat note. Nothing engaged -> "Nothing is engaged".
-- **Direct chat commands** (`chat.parse_direct`, handled before the AI so tiny local models work; each is also an AI tool): `throttle 60` / `throttle to 60%` / `throttle max` / `throttle idle` / `throttle auto` (`set_throttle`; numbers are percent; in atmospheric flight never 0, idle = 5 %; while the holds fly it is a *manual throttle override*: they stop managing the throttle, stall protection can still add power, until `throttle auto` or a new speed/altitude/V-S/pitch command; refused while the landing / fly-to autopilot runs), `gear|wheels up|down` (`set_gear`; not raised on the ground), `airbrake|brakes on|off` (`set_brakes`, Brakes group; says so if the craft has no airbrake parts), `deploy chutes` / `chutes` (`deploy_parachutes`; "No parachutes on this craft"), `eject` / `eject kerbal` (`eject_kerbal`: asks `Eject <name>? ... (yes/no)`; on yes the bridge queues `!cmd eject <unix time> <name>` on `/events` and the mod (polls `/events?cmd=1` every 3 s) EVAs that kerbal - else the first crew member of a command part - via KSP's `FlightEVA.fetch.spawnEVA` out of the part's hatch; commands older than 30 s are ignored (no replay after a KSP restart). With an old mod build (no `cmd=1` poll in the last 20 s) it explains that the mod needs the update instead of asking).
-- **Captain's orders, batch 1** (`kspchat/orders.py`, parsed before the AI; the AI reaches them all through one tool, `captain_order(order)`, so small models aren't swamped): `turn left|right N` (from the current heading, default 90, max 175; holds only), `heading NNN` (holds only), `fly to KSC|Island|<spot>` (runways -> `fly_to`, which lands; KSC picks runway 09 when we're west of it, else 27; a non-runway spot/waypoint -> the holds fly its bearing once, no landing), `return to base` / `RTB` (= fly to KSC), `circle here [left|right]` (bank hold at the current altitude, 15 deg, max 20 / 15 above 250 m/s), `report` (alt, AGL, speed, V/S, heading, fuel %, KSC distance/bearing, autopilot), `fuel check` (fuel % + endurance/range at the current burn rate vs KSC with 30 % reserve), `how far to <place>` (distance, bearing, ETA at ground speed), `time to target` / `eta` (landing ETA or the KSP target vessel), `level off` / `wings level` (cancels pitch/turn/circle; holds the current MSL altitude and heading), `stage`, `SAS on|off`, `hold prograde|retrograde`, `RCS on|off`, `lights on|off`, `AG N` / `action group N [on|off]` (1-10). Anything longer ("fly to KSC and land at 3 km") goes to the AI.
-- **Captain's orders, batch 2**: `engines on|off` (off = cut engines), `cut engines` (asks yes/no: autopilots off, throttle 0, all engines shut down), `switch engine mode` (multi-mode engines, e.g. RAPIER), `afterburner on|off` (Wet/Dry-mode engines), `flaps 1|2|up` (default flaps 1 = AG 5, flaps 2 = AG 5 + AG 6, up = both off; change in bridge_settings.json `"flaps_action_groups": {"1": 5, "2": 6}`), `trim nose up|down N` (% of the trim range, default 5; `reset trim`; needs a kRPC with pitch_trim), `land` / `land at KSC|Island` (planes: holds hand over to the autoland / fly_to; rockets: land_here / land_at_ksc), `go around` (drops the approach, climbs to 600 m above the field on the runway heading with the holds), `touch and go` (one, then full stop), `abort` (asks yes/no, then stops the bridge autopilots and fires the ABORT action group; `abort autopilot` = the old safe abort without the AG, no question), `crew report`. Yes/no for destructive orders uses the same per-session question as the speed override (`yes` / `confirm ...` / `no`).
-- **Pilot voice**: with crew aboard, chat replies (direct orders and AI replies) come from the kerbal at the controls (Pilot trait first, else the first crew member; first name, read via kRPC and cached ~10 s), e.g. `Sidry: Gear down, Captain.` No crew / no vessel: the AI's name (or `Bridge` for bridge commands like /override).
+- **Takeoff throttle from the craft's specs**: before the roll the controller reads mass + available/max thrust and picks the start throttle from the thrust-to-weight ratio: TWR <= 0.4 -> 100 %, 0.6 -> 90 %, 0.8 -> 75 %, 1.0 -> 65 %, 1.2 -> 55 %, >= 1.5 -> 35 % (linear, 5 % steps, never 0). Then 5 % steps with spool waits (4 s after start, 3 s on the roll, 4 s airborne, 2 s urgent): more power on the roll only if accelerating < 1.5 m/s^2 below Vr; airborne it HOLDS while the speed is still changing, except under the stall margin (add power) or over / heading over the 220 EAS cap (5 s look-ahead; take power off, floor 10 %, else 30 %). Target 200 / cap 220 EAS. The log: `takeoff TWR x (mass, thrust) -> start throttle y%` and every step.
+- **Speed cap override authority**: a speed above the active cap (220 m/s EAS, e.g. `set speed 300` low down, a supersonic `fly_to` at a low altitude, a Flight Plan step) is not flown; the tool answers `needs_override: That's above the 220 m/s low-altitude cap (...). Grant override authority? (yes/no)`. A plain **yes** in that chat session raises the cap to the requested speed and applies the request; **no** keeps the cap. A Flight Plan step waits up to 2 min for the answer (no / no answer = flies the step at the cap). `/override speed on|off` (blanket, this KSP session; off restores 200/220). Not persisted: a restart is back to the defaults.
+- **Safe ceiling + override**: the autopilot estimates its own safe max altitude from the craft (air-breathing sea-level TWR from engine max thrust at 1 atm, intakes, rocket engines): `8000 m x ln(TWR / 0.1)` clamped 3-18 km for jets, 20 km with rocket engines, 3 km with no engines or intakes (logged as `safe ceiling ...`). An altitude target above it (plane_hold, fly_to, Flight Plan climb/cruise) asks `That's above the estimated safe ceiling of X m. Grant override authority? (yes/no)` with the same yes/no flow; `/override altitude on|off`; `/override` = status.
+- **Max speed estimate**: a requested speed (plane_hold, fly_to cruise_speed, chat `set speed N` / `speed N`) above the craft's best (conservative) estimate is clamped and reported: `Best estimate max is ~326 m/s here; you asked 400. Flying 326.` Method: drag area from KSP now (|drag| / dynamic pressure), drag ~ rho V^2 at the target altitude, thrust = jets' current available thrust x density ratio + rockets' available_thrust_at(target pressure), level flight T = D, x0.9 safety (no transonic drag-rise model). No estimate on the ground / below 40 m/s (nothing clamped). Separate from the 220 EAS cap: the clamped speed then goes through the override question if it's above the cap.
+- **Pitch command** (`plane_pitch`; chat: `pitch up 10`, `pitchup 90`, `pitch down 5`, `nose up|down N`, N 0-90 deg, default 5): an ABSOLUTE attitude for the running holds (replaces the V/S loop and the 5-15 deg climb bands; it's the player's explicit command, no override question). Nose up: throttle up; near the stall margin (1.3 Vs + 10 m/s, or AoA > 15) it levels off at ~1 deg with full power (never cut), rebuilds +20 m/s, returns to the pitch, and repeats until the command changes or it reaches the target altitude (if one is set above) or the estimated safe ceiling; then it holds altitude. Nose down: ends at a target altitude below or the terrain floor (lead from V/S and the pull-out time); over the EAS cap it levels off until the speed is back. Above 60 deg the wings are held level. A pitch command drops the altitude target being held; `set altitude` / V/S ends the pitch hold. Each level-off / resume / end is in the log (`hold: Pitch ...`) and posted as a chat note. Nothing engaged -> "Nothing is engaged".
+- **Direct chat commands** (handled before the AI so tiny local models work; each is also an AI tool): `throttle 60` / `throttle to 60%` / `throttle max` / `throttle idle` / `throttle auto` (`set_throttle`; numbers are percent; in atmospheric flight never 0, idle = 5 %; while the holds fly it is a *manual throttle override*: they stop managing the throttle, stall protection can still add power, until `throttle auto` or a new speed/altitude/V-S/pitch command; refused while the landing / fly-to autopilot runs), `gear|wheels up|down` (`set_gear`; not raised on the ground), `airbrake|brakes on|off` (`set_brakes`, Brakes group; says so if the craft has no airbrake parts), `deploy chutes` / `chutes` (`deploy_parachutes`; "No parachutes on this craft"), `eject` / `eject kerbal` (`eject_kerbal`: asks `Eject <name>? ... (yes/no)`; on yes AICS ejects the kerbal and the mod (polls `/events?cmd=1` every 3 s) EVAs that kerbal - else the first crew member of a command part - via KSP's `FlightEVA.fetch.spawnEVA` out of the part's hatch; commands older than 30 s are ignored (no replay after a KSP restart). With an old mod build (no `cmd=1` poll in the last 20 s) it explains that the mod needs the update instead of asking).
+- **Captain's orders, batch 1**`, so small models aren't swamped): `turn left|right N` (from the current heading, default 90, max 175; holds only), `heading NNN` (holds only), `fly to KSC|Island|<spot>` (runways -> `fly_to`, which lands; KSC picks runway 09 when we're west of it, else 27; a non-runway spot/waypoint -> the holds fly its bearing once, no landing), `return to base` / `RTB` (= fly to KSC), `circle here [left|right]` (bank hold at the current altitude, 15 deg, max 20 / 15 above 250 m/s), `report` (alt, AGL, speed, V/S, heading, fuel %, KSC distance/bearing, autopilot), `fuel check` (fuel % + endurance/range at the current burn rate vs KSC with 30 % reserve), `how far to <place>` (distance, bearing, ETA at ground speed), `time to target` / `eta` (landing ETA or the KSP target vessel), `level off` / `wings level` (cancels pitch/turn/circle; holds the current MSL altitude and heading), `stage`, `SAS on|off`, `hold prograde|retrograde`, `RCS on|off`, `lights on|off`, `AG N` / `action group N [on|off]` (1-10). Anything longer ("fly to KSC and land at 3 km") goes to the AI.
+- **Captain's orders, batch 2**: `engines on|off` (off = cut engines), `cut engines` (asks yes/no: autopilots off, throttle 0, all engines shut down), `switch engine mode` (multi-mode engines, e.g. RAPIER), `afterburner on|off` (Wet/Dry-mode engines), `flaps 1|2|up` (default flaps 1 = AG 5, flaps 2 = AG 5 + AG 6, up = both off; change in native_settings.json `"flaps_action_groups": {"1": 5, "2": 6}`), `trim nose up|down N` (% of the trim range, default 5; `reset trim`; pitch trim), `land` / `land at KSC|Island` (planes: holds hand over to the autoland / fly_to; rockets: land_here / land_at_ksc), `go around` (drops the approach, climbs to 600 m above the field on the runway heading with the holds), `touch and go` (one, then full stop), `abort` (asks yes/no, then stops the autopilots and fires the ABORT action group; `abort autopilot` = the old safe abort without the AG, no question), `crew report`. Yes/no for destructive orders uses the same per-session question as the speed override (`yes` / `confirm ...` / `no`).
+- **Pilot voice**: with crew aboard, chat replies (direct orders and AI replies) come from the kerbal at the controls (Pilot trait first, else the first crew member; first name, read from KSP and cached ~10 s), e.g. `Sidry: Gear down, Captain.` No crew / no vessel: the AI's name (or `AICS` for commands like /override).
 - **Altitude orders** (`orders.parse_altitude` -> `set_altitude`, before the AI): `descend to N`, `drop to N`, `go down to N`, `climb to N`, `altitude N`, `set altitude N` (N in m, `5km` / `5k` = 5000; a bare number under 100 is left to the AI; MSL by default - the KSP altimeter - or add `agl`). Loose phrasing works when it's unambiguous: fillers like now / max / asap / please / KSP / Kerbin are ignored, so `NOW MAX DOWN TO KSP ALTITUDE 5km` = descend to 5000 m MSL, urgent. It sets the holds' altitude target (engages them if nothing flies the plane; refused while the landing / fly-to autopilot flies). Descents fly at up to 15 m/s V/S (30 m/s when urgent: max / now / asap), still inside the hold's -5 deg nose-down limit and overspeed level-off - never a dive for speed. Climbs above the estimated safe ceiling ask for override authority (yes/no). A target on the wrong side ('descend to' above us) is refused with a hint.
 - **Aircraft guard**: when the active vessel is an aircraft (plane autopilot / holds on, or flying with intakes, lift > 30 % of the weight, or wings) the rocket powered-descent / suicide-burn tools (`land_here`, `land_at`, `land_at_ksc`) are hidden from the AI's tool list (cached 10 s) and refuse even with force, pointing to `set_altitude` / `plane_hold` / `land_plane`. Delta-v answers carry an explicit verdict so the AI never compares numbers itself: `get_delta_v` -> `enough_fuel: true|false` (false for aircraft, with a note), `landing_check`, deorbit / dock / fly-to fuel refusals and `fuel_check` say `enough_fuel: ...`, `capture_plan` gives one per option.
 - **Typo tolerance**: command keywords of 6+ letters are fuzzily corrected before parsing (`Overide speed to 325`, `overrride`, `over ride`, `authorse all`, `throtle 60`, `altitdue 5000`, `circel here`); words that already contain a keyword (`pitchup`) are left alone; anything that still doesn't parse goes to the AI as typed.
 - **Orders while the landing / fly-to autopilot flies** (`plane.LIVE`): `speed N` sets its en-route cruise speed (max-speed estimate clamps, cap/override question as usual); on final / flare it is flown too with a one-line caution (Luke's call). `climb to N` / `descend to N` en route set the cruise altitude (MSL; the planned descent to the runway stays); on final it says 'go around' first. `speed N` with nothing engaged (flying) engages the holds at the current altitude / heading with that speed.
 - **Overrides always work** - holds, fly-to, autoland (every phase, incl. final / flare with a caution), Flight Plan, or nothing engaged (stored; applies to whatever engages next). `override speed N` also flies N when an autopilot is up. `override speed max` = no cap and full throttle (holds: manual 100 %, autoland/fly-to: full on the leg), the physical estimate is reported.
-- **Airframe / crew watcher** (`kspchat/protect.py`, 1 s kRPC sampling while an override or autopilot is active): an overridden bank / pitch is flown as commanded, but above 6 g, a part at >= 90 % of its max temperature or parts breaking off it eases the overridden excess in 25 % steps (back up 5 %/s when clear) and says why. G-force blackout: crew aboard + vessel control lost (`Control.source` / `state` = none) + recent high G (fallback: > 6.5 g for 3 s) -> 'Sidry blacked out!', wings level and gentle pitch; when control returns 'Sidry is back - resuming the previous command' and the stored commands carry on.
+- **Airframe / crew watcher**: an overridden bank / pitch is flown as commanded, but above 6 g, a part at >= 90 % of its max temperature or parts breaking off it eases the overridden excess in 25 % steps (back up 5 %/s when clear) and says why. G-force blackout: crew aboard + vessel control lost (`Control.source` / `state` = none) + recent high G (fallback: > 6.5 g for 3 s) -> 'Sidry blacked out!', wings level and gentle pitch; when control returns 'Sidry is back - resuming the previous command' and the stored commands carry on.
 - **Limit overrides in chat**: `override bank|pitch|speed|altitude N [*|***]`, `override [kind] off`, `authorise all` - same rules as the Flight Plan steps (section 4).
-- **No-tool claims**: if the chat AI replies that it changed holds/settings but called no tool, the bridge re-prompts it once to call the tool; if it still claims it, the reply gets `(no action taken)`.
+- **No-tool claims**: if the chat AI replies that it changed holds/settings but called no tool, AICS re-prompts it once to call the tool; if it still claims it, the reply gets `(no action taken)`.
 - **Engage / Disengage**: one autopilot owner at a time (cross-process guard).
 
-Backend: `kspchat/hold.py` + the `plane_hold` tool. Targets live in `bridge_settings.json` ("plane_hold") and are re-read twice a second, so Engage / Update and the chat set commands ("set altitude 7200", "hold heading 270", "climb at 50 m/s") apply *live, without a restart*. AGL = above the nearest known runway within 60 km (else the ground under the plane). On the ground and lined up on a runway, it takes off on the runway heading first. `autopilot_status` reports targets, AGL/radar altitude and the signed heading error.
+Backend: the in-mod controller + the `plane_hold` tool. Targets live in `native_settings.json` ("plane_hold") and are re-read twice a second, so Engage / Update and the chat set commands ("set altitude 7200", "hold heading 270", "climb at 50 m/s") apply *live, without a restart*. AGL = above the nearest known runway within 60 km (else the ground under the plane). On the ground and lined up on a runway, it takes off on the runway heading first. `autopilot_status` reports targets, AGL/radar altitude and the signed heading error.
 
 ## 2. Approach & Autoland  [W]
 - Runway picker (H spots: KSC 09/27, Island 27 (E-W, from Luke's position), Island Airfield (approx), saved strips).
@@ -59,7 +59,7 @@ Backend: `kspchat/hold.py` + the `plane_hold` tool. Targets live in `bridge_sett
 - **Land at Target**: KSP's current target (vessel / flag / waypoint, "radio location" beacons). [W] `land_at_spot("target")`
 
 ## 4. Flight Plan  [W]
-The AI (or a template) writes a plan of one step per line into the text box; you edit it; **Fly** runs it step by step (`kspchat/flightplan.py`, a background runner on the bridge). Planes use the bridge controllers (`plane_hold` takeoff/climb/cruise/turns, `land_plane` / `land_at_spot` autoland); rocket steps use MechJeb (ascent, maneuver planner + node executor, landing autopilot).
+The AI (or a template) writes a plan of one step per line into the text box; you edit it; **Fly** runs it step by step. Planes use the in-mod controller (`plane_hold` takeoff/climb/cruise/turns, `land_plane` / `land_at_spot` autoland); rocket steps use MechJeb (ascent, maneuver planner + node executor, landing autopilot).
 
 Buttons:
 - Templates: **Cruise + circle** (takeoff → climb → cruise → circle laps around the field → land), **Out & back**, **T&G circuit**, **Orbit (MJ)**.
@@ -81,7 +81,7 @@ Step grammar (case-insensitive; `#` = comment):
 
 Circling: without "around", the plane banks in place and counts heading change; "around field/KSC/<spot>" flies a circle around that point (radius ≥ 1.6 × turn radius, so fast planes fly big circles: at 320 m/s it is ~50+ km).
 
-**Limit overrides** (plan steps AND chat orders; `kspchat/speedcap.py`, tool `set_override`): `override bank N` (bank limit, 5-80 deg, replaces 20 / 15 above 250 m/s in the holds, circles, `circle here` and the autoland's en-route turns - never on final/flare), `override pitch N` (climb attitude of the holds, 5-90 deg; stall protection still levels off), `override speed N` (m/s EAS hard cap, 50-3000), `override altitude N [km]` (safe ceiling, 500-70000 m), `override off` (every default back, also ends `authorise all`) / `override bank|pitch|speed|altitude off`. They last for the rest of the bridge session (not persisted).
+**Limit overrides** (plan steps AND chat orders; the in-mod controller, tool `set_override`): `override bank N` (bank limit, 5-80 deg, replaces 20 / 15 above 250 m/s in the holds, circles, `circle here` and the autoland's en-route turns - never on final/flare), `override pitch N` (climb attitude of the holds, 5-90 deg; stall protection still levels off), `override speed N` (m/s EAS hard cap, 50-3000), `override altitude N [km]` (safe ceiling, 500-70000 m), `override off` (every default back, also ends `authorise all`) / `override bank|pitch|speed|altitude off`. They last for the rest of the KSP session (not persisted).
 Authority markers: `override bank 50 *` or unmarked = **ask**: when the step runs (or the chat order arrives) Luke gets `Override the bank limit 50 deg for the rest of the session? (yes/no)` in chat; yes applies it, no / no answer in 2 min keeps the defaults and the plan goes on. `override bank 50 ***` = **pre-authorized**, applied directly. `authorise all` / `authorize all` (plan line or chat) = every override (and speed-cap / safe-ceiling question) applies without asking until `override off`. Check shows the markers (`override bank 50 *`, `override speed 400 ***`, `authorise all`). AI fill writes `*` by default; an AI-written `***` is downgraded to `*` and `authorise all` dropped unless Luke's own request contains `***` / "authorise". The physical max-speed estimate still clamps speeds (with a note).
 ## 5. Orbit Plan  [W]
 All MechJeb (maneuver planner → node → node executor; the menu buttons ARE the confirmation, they burn right away):
@@ -97,13 +97,13 @@ Arriving at a body: **Capture numbers** `capture_plan` (Pe, v at Pe, capture/cir
 
 ## 8. Orbital Autopilot  [W]
 - **Station keep over target / KSC / lon** [W] `station_keep`: synchronous orbit with the sub-satellite point over the target's longitude (else KSC, or the Lon field). Runs as a Flight Plan: MJ raises Ap to synchronous altitude, MJ "apsis longitude" puts that Ap over the longitude, MJ circularizes there. **Sync alt?** shows the synchronous altitude.
-- **Antenna Lock** [W] `antenna_lock`: nose to nadir, held by the kRPC autopilot.
+- **Antenna Lock** [W] `antenna_lock`: nose to nadir, held by the in-mod autopilot.
 
 ## 9. Sun Lock  [W]
-Space only. Points the craft's best face (the one with the most fixed solar-panel area) at the sun, then holds it with SAS/MJ SmartASS. v1 (`sun_lock`): nose to the sun via the kRPC autopilot. Best-face (side panels): queued.
+Space only. Points the craft's best face (the one with the most fixed solar-panel area) at the sun, then holds it with SAS/MJ SmartASS. v1 (`sun_lock`): nose to the sun via the in-mod autopilot. Best-face (side panels): queued.
 
 ## 10. Power  [W]
-Electric charge: amount / max, % bar, net rate (EC/s, smoothed), **time to empty / time to full**. This is local C#, so it works with no bridge.
+Electric charge: amount / max, % bar, net rate (EC/s, smoothed), **time to empty / time to full**. This is local C#, so it always works.
 
 ## 11. Science  [W]
 - **Collect all**: run every rerunnable experiment. [W] `run_science(transmit=false)`
@@ -117,21 +117,21 @@ Electric charge: amount / max, % bar, net rate (EC/s, smoothed), **time to empty
 - EVA: **return to ship** boards the nearest free seat with a hatch within 50 m. [W] `KerbalEVA.BoardPart`
 
 ## 13. Taxi / Base Run  [W]
-Waypoint list (`GET /taxi`: Runway 09/27 start, Runway middle, KSC Pad, Island 27/09 start, plus saved spots) with distance/bearing from the craft, **Go** per point, a **Route** field (`;`-separated names or lat,lon), a speed cap, **Mark here as point**, **Stop**. Backend `kspchat/taxi.py` (`taxi_to`): straight-line steering with wheel steering + yaw; rovers drive with wheel motors, planes with engine throttle (≤ 40 %) + brakes. Also a Flight Plan step (`taxi to Runway 09 start`).
+Waypoint list (Runway 09/27 start, Runway middle, KSC Pad, Island 27/09 start, plus saved spots) with distance/bearing from the craft, **Go** per point, a **Route** field (`;`-separated names or lat,lon), a speed cap, **Mark here as point**, **Stop**. Backend the in-mod controller (`taxi_to`): straight-line steering with wheel steering + yaw; rovers drive with wheel motors, planes with engine throttle (≤ 40 %) + brakes. Also a Flight Plan step (`taxi to Runway 09 start`).
 
 ## 14. Abort / Status  [W]
-- **Abort**: stops any bridge autopilot cleanly and releases the controls. [W]
+- **Abort**: stops any autopilot cleanly and releases the controls. [W]
 - **Status** [W]: radar alt, MSL alt, speed, heading (local); the `/landing` line now includes the **signed heading error ±** (autoland and holds); the `autopilot_status` button.
 
 ## 15. Settings  [W]
-MechJeb detected / prefer MechJeb [W display], UI opacity [W], bridge autostart (PluginData/bridge.cfg) [display], window positions saved [W].
+MechJeb detected / prefer MechJeb [W display], UI opacity [W], window positions saved [W].
 
 ## Remaining hard limits (2026-10-08)
 - **Multi-vessel crew transfer**: only within one vessel (docked = one vessel). Kerbals can't jump between separate ships except by EVA (then "return to ship").
 - **Taxi**: straight lines between waypoints, no obstacle/building avoidance; route around buildings with intermediate points. No KSC map overlay drawing.
 - **Station-keep**: one-shot placement (no continuous trim); with inclination ≠ 0 the ground track still swings N-S. Phasing depends on MechJeb's apsis-longitude op (it may take an extra orbit).
 - **Sun Lock**: nose to the sun only; "best face" for side-mounted fixed panels is not done.
-- **Planes**: MechJeb's aircraft autopilot / spaceplane autoland is deliberately not used (unreliable); bridge controllers fly planes.
+- **Planes**: MechJeb's aircraft autopilot / spaceplane autoland is deliberately not used (unreliable); the in-mod controller flies planes.
 - **launch_to_target_plane**: MJ waits for the window; if it doesn't stage at T-0 on your craft, press space.
 - One autopilot at a time (guard): a Flight Plan step waits for the previous controller; Abort stops everything.
 
@@ -149,9 +149,9 @@ Status as of commit after 31b7fc6: 1-9 DONE in code, except where noted (they st
 8. **Climb V/S via throttle.** In the climb, throttle chases a V/S target (Luke: 50–60 m/s) and ignores airspeed (no overspeed cuts during the climb). Pitch stays in its band.
 9. **EAS vs TAS.** The 200 m/s climb target below 8 km is applied as TAS (should be EAS); the EAS cap also clamps the Mach 1.5 target.
 
-## Emergencies, parts & control-config awareness (bridge `kspchat/emergency.py`)
+## Emergencies, parts & control-config awareness (in-mod)
 
-- Always-on watcher (own kRPC connection, 1 s, flight scene only): engine flameout (incl. intake-air starvation / out
+- Always-on watcher (1 s, flight scene only): engine flameout (incl. intake-air starvation / out
   of fuel), reverse thrust in flight (normal on the ground / rollout), part loss without staging, overheating (>= 95 %),
   fuel < 5 %, stall (AoA > 20 deg sinking; FAR stall fraction), G-LOC blackout, and control-config sabotage
   (surfaces losing pitch/yaw/roll duty, inversion / authority changes, reaction wheels off, engines shut down or
@@ -184,8 +184,8 @@ Status as of commit after 31b7fc6: 1-9 DONE in code, except where noted (they st
   per system (green OK / amber caution / red failure): each engine (thrust %, mode, REVERSE), intakes (open, air %),
   each control surface (P/Y/R axes, INV, authority, deployed, CHANGED vs the engage baseline), reaction wheels, gear,
   brakes, chutes, fuel, hottest part, G-load, pilot, control adaptation. Option (default on): blink the craft's Light
-  action group during an unacknowledged MAYDAY (restored afterwards; the bridge setting `mayday_lights=false` vetoes it).
-## Autoland rollout thrust reversers (bridge `kspchat/reversers.py`)
+  action group during an unacknowledged MAYDAY (restored afterwards;).
+## Autoland rollout thrust reversers (in-mod)
 
 - Full-stop landings only (not touch-and-go): once the mains and nose are down, wings level and the wheels on the
   runway (> 40 m/s), every running engine that can reverse (an engine mode named 'reverse', or the part's reverser
@@ -205,7 +205,7 @@ Status as of commit after 31b7fc6: 1-9 DONE in code, except where noted (they st
 - Emergency: an engine shut down mid-flight keeps the original tamper alert ('Who shut down an engine?!', wings level) -
   Luke shut Engine 1 down himself at 17:44, so it was a correct detection. The control probe waits until the autopilot has been engaged 20 s and is near level (< 10 deg bank, |V/S| < 30).
 
-## Takeoff rotation, ramjet throttle and runway-end abort (2026-10-08, bridge `kspchat/takeoff.py`)
+## Takeoff rotation, ramjet throttle and runway-end abort (2026-10-08)
 
 The Aeris 4A (Whiplash delta, 19.4 t, TWR 1.25) ran the whole runway at 50 % throttle with only ~20 % up elevator,
 never rotated, went off the end at ~200 m/s and skimmed the water. Vr was fine (56 m/s, default stall 45 - the craft
@@ -231,10 +231,10 @@ isn't in the stall cache) and the roll accelerated normally; the nose simply nev
 
 ## Propeller planes, upside-down detection, damage facts (2026-10-08 18:35)
 
-- Propellers count as propulsion (`kspchat/propulsion.py`): Breaking Ground rotors (ModuleRoboticServoRotor) with
+- Propellers count as propulsion: Breaking Ground rotors (ModuleRoboticServoRotor) with
   blade parts, and electric-only engines. No more 'no engines' for a prop plane; 'take off' / 'takeoff' is a direct
   order (and a model tool) for a runway takeoff - never a MechJeb ascent for a plane on a runway. Props show no thrust
-  in kRPC: the takeoff never stages them, starts at full throttle and is governed by the measured acceleration; the
+  in KSP: the takeoff never stages them, starts at full throttle and is governed by the measured acceleration; the
   max-speed estimate measures their thrust from the acceleration (drag + m dV/dt); safe ceiling 5 km. The takeoff
   warns if a rotor motor reads disengaged. Prop blades are left out of the control-sabotage scan; the Systems
   dashboard gets a Props row (rotors, RPM, motor).
@@ -248,20 +248,20 @@ isn't in the stall cache) and the roll accelerated normally; the nose simply nev
   upside down, alerts); set_gear adds a note only if gear really was lost.
 - State-claim guard: a reply claiming a state no tool reported ('down and ready', 'equipped for takeoff', 'fixed',
   'all set'; with damage on record also 'everything is fine', 'no damage', ...) is re-prompted once with what the tools
-  did and the watcher facts, else flagged '(Bridge: ... is not confirmed by any tool. <facts>)'. The watcher facts go
+  did and the watcher facts, else flagged '(AICS: ... is not confirmed by any tool. <facts>)'. The watcher facts go
   into the AI's context when there is damage or Luke's message mentions it.
 
-## Gentle rollout brakes (2026-10-08 18:40, bridge `kspchat/rollout.py`)
+## Gentle rollout brakes (2026-10-08 18:40)
 
 Luke's prop plane (main gear behind the CoM, narrow track) flipped onto its back under hard braking. The autoland
-rollout no longer brakes until every wheel reports grounded (kRPC Wheel.grounded; broken wheels ignored; fallback
+rollout no longer brakes until every wheel reports grounded (wheel grounded state; broken wheels ignored; fallback
 after 8 s on the roll) and the craft has been calm for 1.5 s (|V/S| < 1 m/s, pitch rate < 1 deg/s, bank < 4 deg).
-Brakes are on/off in kRPC, so they pulse: duty 20 % ramping to the maximum over 4 s (0.5 s cycle). A nose dip > 2.5 deg
+Brakes are on/off, so they pulse: duty 20 % ramping to the maximum over 4 s (0.5 s cycle). A nose dip > 2.5 deg
 below the settled rollout attitude, a nose-down rate > 3 deg/s, bank > 4 deg, roll rate > 6 deg/s or a wheel lifting
 releases them until it settles again (within 1 deg, calm 0.5 s); each release lowers the maximum duty by 20 % (never
 below 30 %). Reversers work as before. /status keeps the brake state (STATUS 'brakes'); releases are logged.
 
-## Propeller control (2026-10-08 18:45, bridge `kspchat/propulsion.py`)
+## Propeller control (2026-10-08 18:45)
 
 Breaking Ground props = rotor (RPM Limit, Torque Limit(%), Motor engaged) + blade pitch (blade Deploy Angle, blades
 deployed). Field names are matched by keyword at runtime and logged once per craft ('props: rotor ... fields ...').
@@ -286,7 +286,7 @@ deployed). Field names are matched by keyword at runtime and logged once per cra
   0.15 toward the live side for the autopilots, cleared when it spins up again.
 - Systems dashboard Props row per group: 'L: 440 RPM/460 tq 100% pitch +24; R: ...; counter-rotating'.
 
-## Helicopters (2026-10-08 18:50, bridge `kspchat/heli.py`) - NOT yet flown in game
+## Helicopters (2026-10-08 18:50) - NOT yet flown in game
 
 - Classification per craft (logged with each rotor's role): rotor spin axis = the rotor part's 'up' direction.
   Vertical (|cos| >= 0.8 vs world up) = lift rotor; horizontal with the axis fore-aft and off to one side = side prop
@@ -299,7 +299,7 @@ deployed). Field names are matched by keyword at runtime and logged once per cra
   (target from the AGL/radar altitude target, max 3 m/s up/down). Tilt (pitch + roll, cap 12 deg; compound 6 deg as
   the side props add forward thrust) = the ground-velocity vector resolved into forward / lateral relative to the
   nose: nose down = accelerate, nose up = slow / stop. Yaw loop = HEADING (nose). HEADING and TRACK are separate: the
-  nose follows the track above 15 m/s unless pinned by 'face N'. kRPC AutoPilot (surface frame) holds the attitude; a
+  nose follows the track above 15 m/s unless pinned by 'face N'. The in-mod autopilot (surface frame) holds the attitude; a
   VAB-built craft (control point looking up) gets SAS + vertical control only. The yaw actuator sign is checked online
   (3 wrong 1-s windows -> flip, logged).
 - Orders: 'take off' (vertical to a 20 m hover), 'hover [at N] [facing N]', 'climb to N' / 'descend [to N]' (AGL;
@@ -321,10 +321,10 @@ deployed). Field names are matched by keyword at runtime and logged once per cra
   on the compound -> land.
 - Dashboard 'Mode' row: HELI (layout), rotor RPM/limit, collective, V/S, HDG vs TRK + drift, Locked on power loss.
 
-## Crew intercom chatter (2026-10-08 19:00, bridge `kspchat/crew.py`)
+## Crew intercom chatter (2026-10-08 19:00)
 
 - The PILOT makes the MAYDAY radio call and flies the recovery (unchanged: 'Sidry: MAYDAY! ...'). The rest of the
-  crew (names + traits read from kRPC) react on the intercom: '[INTERCOM] Bob (Sci): WHAT IS GOING ON?!',
+  crew (names + traits read from KSP) react on the intercom: '[INTERCOM] Bob (Sci): WHAT IS GOING ON?!',
   '[COMMS] Bill (Eng): Left main wheel is GONE!' (engineers on COMMS), tourists scream; an occasional '-- over'.
 - Rate limits: one line per crew member per 10 s, at most 2 non-pilot lines per emergency, none on 'resolved'.
   Damage events: the engineer speaks first and names the real lost part from the watcher.
@@ -338,19 +338,19 @@ deployed). Field names are matched by keyword at runtime and logged once per cra
 
 ## Trip chatter, personalities, language option (2026-10-08 19:08)
 
-- 'Are we there yet?' (`kspchat/crew.py` Trip): on quiet trips only - an autopilot leg / fly-to / heli / flight plan
+- 'Are we there yet?': on quiet trips only - an autopilot leg / fly-to / heli / flight plan
   running, or more than 2 min in the air; never during an emergency or within 60 s after one. Short trips (ETA < 5 min):
   at most one line, ~1 in 3 trips. Long trips: the first after 1.5-3.5 min, then every 3-6 min, the gap shrinking as
   the impatience grows (from the 3rd ask: 'ARE. WE. THERE. YET?!'). Scientists, engineers and tourists ask; the pilot
   answers about half the time with the REAL ETA / distance (from the landing-ETA estimate; AI answers containing any
   number that isn't in the facts fall back to the canned reply). Same AI-with-canned-fallback approach, same
   '/crew chatter on|off' and per-member 10 s limit.
-- Personalities (`kspchat/personality.py`): per kerbal name, generated once and kept in kerbal_personalities.json
-  (gitignored, next to bridge_settings.json): a temperament from KSP's stats where kRPC has them (low courage =
+- Personalities: per kerbal name, generated once and kept in kerbal_personalities.json
+  (gitignored, next to native_settings.json): a temperament from KSP's stats where KSP has them (low courage =
   nervous / panicky, high stupidity = goofy, badass = unflappable, veteran = seasoned; else a random one), two likes and
   one dislike (often job-ironic: 'hates flying', 'is afraid of heights', 'gets airsick', 'is terrified of space').
   Prompts read 'You are Bob, a nervous scientist who loves rocks and snacks and is afraid of heights, aboard ...'.
-- Language: '/language filter on|off' (bridge_settings.json 'language_filter', default ON). ON: a no-cursing line in
+- Language: '/language filter on|off' (native_settings.json 'language_filter', default ON). ON: a no-cursing line in
   the chat and crew prompts plus a filter that masks cuss words in AI replies and intercom lines ('s***'). OFF: neither.
   Slurs / hate: always forbidden in the prompts and removed by the filter. AICS Settings: POST /setting
   {"key": "language_filter" | "crew_chatter", "value": "on|off"}; /health reports both (the mod has no toggle for
@@ -379,8 +379,7 @@ GET /systems picks rows by craft type (Craft row: ROCKET / LANDER / ROVER / STAT
 - Rockets / landers: per-engine thrust, gimbal (LOCKED / limit %), NO FUEL on a starved engine; fuel of the next decouple stage per resource (LF/OX/Mono/Xenon/SRB; <15% amber, <5% red); Power (EC %, solar panels out and flow; <25% amber, <10% red); RCS on/off + thrusters + mono; SAS + mode; next stage contents; reaction wheels, chutes, temperature (existing rows).
 - Rovers: wheels grounded / motors on / BROKEN (red), battery, speed, SAS.
 - Stations / probes: power + solar, per-resource totals, comms (connected / NO SIGNAL, signal %, antennas deployed; red on an uncrewed craft), RCS, SAS.
-Bridge-side only (kRPC); no mod change.
 
 ## Talk to a kerbal
 
-Address a crew member ABOARD the active vessel by first name in chat ('Hey Bob, are you having a good time?', 'Bob: ...', '@Bob ...', '..., Bob?'; 3+ letter prefixes work, e.g. 'Jeb') and that kerbal answers in character over the intercom: '[INTERCOM] Bob (Sci): ...' (engineers on [COMMS]). Replies use the kerbal's personality and trait and only real flight facts (situation, altitude, speed, destination/ETA, active emergencies); kerbals can't act (tool-ish text and lines claiming an action are dropped). An order to a kerbal ('Bob, gear down') goes to the pilot as usual. A kerbal who isn't aboard doesn't answer; the pilot says so. Each kerbal remembers the last 4 exchanges (until the bridge restarts). Language filter applies. Addressing the pilot by name is the normal chat.
+Address a crew member ABOARD the active vessel by first name in chat ('Hey Bob, are you having a good time?', 'Bob: ...', '@Bob ...', '..., Bob?'; 3+ letter prefixes work, e.g. 'Jeb') and that kerbal answers in character over the intercom: '[INTERCOM] Bob (Sci): ...' (engineers on [COMMS]). Replies use the kerbal's personality and trait and only real flight facts (situation, altitude, speed, destination/ETA, active emergencies); kerbals can't act (tool-ish text and lines claiming an action are dropped). An order to a kerbal ('Bob, gear down') goes to the pilot as usual. A kerbal who isn't aboard doesn't answer; the pilot says so. Each kerbal remembers the last 4 exchanges (until KSP restarts). Language filter applies. Addressing the pilot by name is the normal chat.

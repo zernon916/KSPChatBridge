@@ -1,7 +1,7 @@
 // AICS: the KSPChatBridge main menu (design: docs/AICS_MENU.md).
 // Right-click the toolbar button (or Alt+J) toggles a sticky, expandable top menu; left-click stays the chat.
-// Dark MechJeb-like IMGUI skin. Each item opens its own window. Every panel is wired: bridge /tool calls (MechJeb via
-// kRPC.MechJeb where it has an autopilot), the Flight Plan runner, or local KSP data/actions (Power, Crew, map pick).
+// Dark MechJeb-like IMGUI skin. Each item opens its own window. Every panel runs in-mod: native tools (MechJeb via
+// reflection where it has an autopilot), the Flight Plan runner, or local KSP data/actions (Power, Crew, map pick).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -24,7 +24,7 @@ namespace KSPChatBridge
             "Crew / Station / EVA", "Taxi / Base Run", "Abort / Status", "Settings" };
         static readonly string[] Tags = { "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W" };
         static readonly bool[] Open = new bool[Items.Length];
-        // which bridge status flag lights the indicator next to each item (null = not an autopilot / mode)
+        // which controller mode lights the indicator next to each item (null = not an autopilot / mode)
         static readonly string[] IndKeys = { "ind_holds", "ind_autoland", "ind_lander", "ind_flightplan", "ind_mechjeb", null,
             "ind_docking", "ind_mechjeb", null, null, null, null, "ind_taxi", null, null };
 
@@ -44,15 +44,10 @@ namespace KSPChatBridge
         static bool dragging, dragMoved;
         static float dragOff;
 
-        // Required dependencies: MechJeb2, kRPC (+ kRPC.MechJeb) in GameData and the Python bridge on :8765.
+        // Optional: MechJeb2 (orbital autopilots say so when it is missing).
         static string missingMods;          // null = not checked yet, "" = all present
-        static volatile bool bridgeOk;
-        static volatile bool bridgeChecked;
-        static int bridgePolling;
-        static int bridgeFailStreak;
-        static float nextBridgeCheck;
         static bool warned;
-        // modules that work without MechJeb / the bridge (local KSP data only)
+        // modules that work without MechJeb (local KSP data only)
         static readonly bool[] LocalOnly = { false, false, false, false, false, false, false, false, false, true, false, true, false, false, true };
 
         static void CheckMods()
@@ -60,56 +55,18 @@ namespace KSPChatBridge
             var names = new HashSet<string>(AssemblyLoader.loadedAssemblies.Select(a => a.name));
             var miss = new List<string>();
             if (!names.Any(n => n.StartsWith("MechJeb2"))) miss.Add("MechJeb2");
-            if (!names.Contains("KRPC")) miss.Add("kRPC");
-            if (!names.Contains("KRPC.MechJeb")) miss.Add("kRPC.MechJeb");
             missingMods = string.Join(", ", miss.ToArray());
             mj = !miss.Contains("MechJeb2");
         }
 
-        static void PollBridge()
-        {
-            if (!BridgeLauncher.UseBridge) return;
-            if (Interlocked.CompareExchange(ref bridgePolling, 1, 0) != 0) return;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    var req = BridgeHttp.Create("health");
-                    req.Timeout = 2500; req.Proxy = null;
-                    using (var resp = req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream()))
-                    {
-                        string body = rd.ReadToEnd();
-                        const string key = "\"chatgpt_mode\": \"";
-                        int k = body.IndexOf(key);
-                        int end = k >= 0 ? body.IndexOf('"', k + key.Length) : -1;
-                        if (end > 0) ChatWindow.ChatGptMode = body.Substring(k + key.Length, end - k - key.Length);
-                        const string rk = "\"backends_ready\": \"";
-                        int r = body.IndexOf(rk);
-                        int rend = r >= 0 ? body.IndexOf('"', r + rk.Length) : -1;
-                        ChatWindow.BackendsReady = rend >= 0 ? body.Substring(r + rk.Length, rend - r - rk.Length) : null;
-                    }
-                    Interlocked.Exchange(ref bridgeFailStreak, 0);
-                    bridgeOk = true;
-                }
-                catch (Exception)
-                {
-                    if (Interlocked.Increment(ref bridgeFailStreak) >= 3)
-                        bridgeOk = false;
-                }
-                finally { bridgeChecked = true; Interlocked.Exchange(ref bridgePolling, 0); }
-            });
-        }
 
-        static string MissingNow { get { return missingMods == null ? null : NativeSafety.MissingDeps(BridgeLauncher.UseBridge, missingMods); } }
-        static bool DepsOk { get { return MissingNow == "" && (!BridgeLauncher.UseBridge || bridgeOk); } }
+        static string MissingNow { get { return missingMods == null ? null : ""; } }
+        static bool DepsOk { get { return MissingNow == ""; } }
 
         void DepsWarning()
         {
             if (!string.IsNullOrEmpty(MissingNow))
                 GUILayout.Label("⚠ AICS needs " + missingMods + " installed in GameData (CKAN). Autopilot modules are disabled.", warnStyle);
-            if (BridgeLauncher.UseBridge && bridgeChecked && !bridgeOk)
-                GUILayout.Label("⚠ Bridge not responding on 127.0.0.1:8765 - start run_bridge.py serve (it auto-starts with KSP unless autostart=false in PluginData/bridge.cfg).", warnStyle);
         }
 
         // panel state (static: survives scene changes)
@@ -119,12 +76,10 @@ namespace KSPChatBridge
         static bool shortFinal, vertical, chuteCheck = true;
         static string apprHdgT = "", tgT = "0";
         static string planText = "", planAsk = "";
-        // Flight Plan: bridge replies arrive on worker threads; the editor text is swapped in on the GUI thread.
+        // Flight Plan: the editor text is swapped in on the GUI thread.
         static volatile string planIncoming;            // plan text to load into the editor (AI fill / template / chat)
-        static volatile string planMsg = "";            // last bridge answer (check / fly / stop / errors)
+        static volatile string planMsg = "";            // last answer (check / fly / stop / errors)
         static volatile string planStatus = "";         // live runner status (GET /flightplan)
-        static volatile bool planBusy;                  // AI fill in progress
-        static int planRev, planPolling;
         static float nextTaxiLoad;
         static string orbApT = "80000", orbPeT = "80000", orbIncT = "0", xferBodyT = "Mun", capPeT = "", skLonT = "";
         // Landing Guidance map pick (green 4-prong cursor in map view)
@@ -138,12 +93,10 @@ namespace KSPChatBridge
         static int sciWatch = 1;
         static readonly string[] SciModes = { "off", "remind", "auto" };
         static bool preferMj = true;
-        static readonly string[] CgModes = { "OpenAI API key", "ChatGPT desktop (MCP) - heavy token use" };  // 0 = api (default)
         static bool backendDrop;            // AI backend dropdown open
-        // In-game API key entry (Settings): POST /api_key saves to the bridge's git-ignored .env and applies it live.
+        // In-game API key entry (Settings): saved to PluginData/.env and applied live.
         static string keyInput = "", keyFor = "", cuUrlT, cuModelT;
         static volatile string keyMsg = "", keysBody;
-        static int keysPolling;
         static float nextKeysPoll;
         static bool clearArmed, typeLocked;
         static int modelDlBusy;
@@ -155,7 +108,6 @@ namespace KSPChatBridge
         // live data
         static double ecAmt, ecMax, ecRate, ecPrevAmt = -1, ecPrevT;
         static volatile string landing = "";
-        static int polling;
         float nextSample;
 
         public static void Toggle() { Expanded = !Expanded; showTab = true; Save(); }
@@ -208,22 +160,15 @@ namespace KSPChatBridge
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             if (alt && Input.GetKeyDown(KeyCode.J)) Toggle();
             if (missingMods == null) CheckMods();
-            if (Time.realtimeSinceStartup > nextBridgeCheck)
-            {
-                nextBridgeCheck = Time.realtimeSinceStartup + (bridgeOk ? 10f : 4f);
-                PollBridge();
-            }
-            if (!warned && missingMods != null && bridgeChecked && Time.timeSinceLevelLoad > 20f)
+            if (!warned && missingMods != null && Time.timeSinceLevelLoad > 20f)
             {
                 warned = true;  // once per session, in chat
                 if (MissingNow != "") ChatWindow.Notice("AICS: missing required mods: " + missingMods + ". Install them (CKAN) - autopilot modules are disabled until then.");
-                if (BridgeLauncher.UseBridge && !bridgeOk) ChatWindow.Notice("AICS: the Python bridge isn't responding on 127.0.0.1:8765 (run_bridge.py serve). Autopilot modules are disabled until it is up.");
             }
             if (Time.realtimeSinceStartup < nextSample) return;
             nextSample = Time.realtimeSinceStartup + 1f;
             if (!Open.Any(o => o)) return;
             SamplePower();
-            if (Open[13] || Open[1] || Open[2] || Open[0]) PollLanding();
             if (Open[3]) PollPlan();
             if (Open[12] && taxiPts.Count == 0 && Time.realtimeSinceStartup > nextTaxiLoad) { nextTaxiLoad = Time.realtimeSinceStartup + 10f; LoadTaxi(); }
         }
@@ -260,7 +205,7 @@ namespace KSPChatBridge
                     Save();
                 }
             }
-            bool depsBad = MissingNow != null && (MissingNow != "" || (BridgeLauncher.UseBridge && bridgeChecked && !bridgeOk));
+            bool depsBad = MissingNow != null && MissingNow != "";
             GUI.Box(tab, (Expanded ? "▼ AICS" : "▲ AICS") + (depsBad ? " ⚠ " : " ") + (Expanded ? "▼" : "▲"), depsBad ? tabWarn : tabStyle);
             if (Expanded)
             {
@@ -314,7 +259,7 @@ namespace KSPChatBridge
                 for (int i = col * half; i < Math.Min(Items.Length, (col + 1) * half); i++)
                 {
                     GUILayout.BeginHorizontal();
-                    // active-mode indicator (bridge GET /status ind_* keys): green filled = engaged, grey empty = not
+                    // active-mode indicator (controller mode): green filled = engaged, grey empty = not
                     if (IndKeys[i] != null)
                     {
                         bool act = StatusWindow.Active(IndKeys[i]);
@@ -475,7 +420,7 @@ namespace KSPChatBridge
             GUI.enabled = was && vertical;
             if (GUILayout.Button("Chute / dV check", GUILayout.Width(110))) ChatWindow.ToolFromMenu("landing_check", "{}");
             GUI.enabled = was;
-            if (NativeFlightController.OwnsControls && GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
+            if (GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
             if (GUILayout.Button("Abort")) ChatWindow.ToolFromMenu("abort", "{}");
             GUILayout.EndHorizontal();
             LandingLine();
@@ -537,8 +482,8 @@ namespace KSPChatBridge
             GUI.SetNextControlName("aics_plan");
             planText = GUILayout.TextArea(planText, GUILayout.MinHeight(110));
             GUILayout.BeginHorizontal();
-            GUI.enabled = was && !planBusy;
-            if (GUILayout.Button(planBusy ? "AI drafting..." : "AI fill")) PlanDraft(false);
+            GUI.enabled = was;
+            if (GUILayout.Button("AI fill")) PlanDraft(false);
             if (GUILayout.Button("From chat")) PlanDraft(true);
             GUI.enabled = was;
             if (GUILayout.Button("Check", GUILayout.Width(50))) PlanPost("flightplan/check", "{\"plan\":" + ChatWindow.JsonStr(planText) + "}", false);
@@ -550,36 +495,16 @@ namespace KSPChatBridge
             if (msg.Length > 0) GUILayout.Label(msg, small);
             GUILayout.Label("AI fill uses the AI picked in Settings (" + ChatWindow.BackendLabels[ChatWindow.BackendIndex] +
                             "); 'Ask AI' is optional (e.g. climb to 8 km at 40 m/s, circle the field 5 laps, land). " +
-                            "Plans the chat AI writes land here too. Planes: bridge autopilot; rocket steps: MechJeb.", small);
+                            "Plans the chat AI writes land here too. Planes: in-mod autopilot; rocket steps: MechJeb.", small);
         }
 
         // AI fill / From chat: POST /flightplan/draft -> the normalized plan text replaces the editor content.
         static void PlanDraft(bool fromChat)
         {
-            if (!BridgeLauncher.UseBridge)
-            {
                 string ask = fromChat ? ChatWindow.LastPlayerLine() : planAsk.Trim();
                 if (ask.Length == 0) ask = planAsk.Trim();
                 try { planIncoming = PilotPolicy.PlanFromText(ask, FlightGlobals.ActiveVessel != null && FlightGlobals.ActiveVessel.LandedOrSplashed) + "\n"; planMsg = "Plan from \"" + ask + "\" loaded - check it, then Fly."; }
                 catch (ArgumentException ex) { planMsg = ex.Message; }
-                return;
-            }
-            planBusy = true;
-            planMsg = fromChat ? "Converting the chat's plan..." : "AI is drafting the plan...";
-            string json = "{\"model\":" + ChatWindow.JsonStr(ChatWindow.BackendId(ChatWindow.BackendIndex)) +
-                          ",\"session\":\"ingame\",\"from_chat\":" + (fromChat ? "true" : "false") +
-                          ",\"request\":" + ChatWindow.JsonStr(planAsk.Trim()) + "}";
-            BridgeText("flightplan/draft", json, 300000, (ok, body) =>
-            {
-                planBusy = false;
-                if (ok && body.Trim().Length > 0)
-                {
-                    planIncoming = body.TrimEnd() + "\n";
-                    planMsg = "Plan loaded into the editor - check the numbers, then Fly.";
-                    ChatWindow.Notice("AICS Flight Plan: " + (fromChat ? "chat plan" : "AI draft") + " loaded into the editor.");
-                }
-                else planMsg = body;
-            });
         }
 
         internal static string PlanText { get { return planText; } }
@@ -587,93 +512,21 @@ namespace KSPChatBridge
 
         static void PlanTemplate(string kind)
         {
-            if (!BridgeLauncher.UseBridge)
-            {
                 if (kind == "orbit" || kind == "circuit") { planMsg = "This template is not yet supported in local mode."; return; }
                 planIncoming = "takeoff\nclimb 1500 m agl\ncruise hdg 090 speed 150 for 2 min\ncircle 1 laps left bank 15\nland Runway 27";
-                planMsg = "Local aircraft template loaded."; return;
-            }
-            BridgeText("flightplan/template?kind=" + kind, null, 5000, (ok, body) =>
-            {
-                if (ok) { planIncoming = body; planMsg = "Template loaded - edit the numbers, then Fly."; }
-                else planMsg = body;
-            });
+                planMsg = "Local aircraft template loaded.";
         }
 
         static void PlanPost(string path, string json, bool toChat)
         {
-            if (NativeFlightController.OwnsControls) { planMsg = NativeFlightController.Execute(path, json); return; }
-            planMsg = "...";
-            BridgeText(path, json, 30000, (ok, body) =>
-            {
-                planMsg = body;
-                if (toChat) ChatWindow.Notice("AICS Flight Plan: " + body);
-            });
+            planMsg = NativeFlightController.Execute(path, json);
+            if (toChat) ChatWindow.Notice("AICS Flight Plan: " + planMsg);
         }
 
         // Live runner status + plans pushed by the chat AI (GET /flightplan?since=rev, about once a second).
         static void PollPlan()
-        {
-            if (NativeFlightController.OwnsControls) { planStatus = NativeFlightController.PlanStatus; return; }
-            if (Interlocked.CompareExchange(ref planPolling, 1, 0) != 0) return;
-            int since = planRev;
-            BridgeText("flightplan?format=text&since=" + since, null, 3000, (ok, body) =>
-            {
-                try
-                {
-                    if (!ok) { planStatus = "Controller unavailable"; return; }
-                    int nl = body.IndexOf('\n');
-                    string head = nl >= 0 ? body.Substring(0, nl) : body, rest = nl >= 0 ? body.Substring(nl + 1) : "";
-                    int tab = head.IndexOf('\t');
-                    int rev;
-                    if (tab < 0 || !int.TryParse(head.Substring(0, tab), out rev)) return;
-                    planStatus = head.Substring(tab + 1).Trim();
-                    if (rev < planRev) planRev = rev;               // bridge restarted
-                    else if (rev > planRev)
-                    {
-                        planRev = rev;
-                        if (rest.Trim().Length > 0)
-                        {
-                            planIncoming = rest;
-                            planMsg = "The chat AI wrote a plan - loaded into the editor. Check it, then Fly.";
-                        }
-                    }
-                }
-                finally { Interlocked.Exchange(ref planPolling, 0); }
-            });
-        }
+        { planStatus = NativeFlightController.PlanStatus; }
 
-        // GET (json == null) or POST JSON to the bridge on a worker thread; done(ok, text) runs on that thread.
-        static void BridgeText(string path, string json, int timeoutMs, Action<bool, string> done)
-        {
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                bool ok = false;
-                string text;
-                try
-                {
-                    var req = BridgeHttp.Create("" + path);
-                    req.Timeout = timeoutMs; req.ReadWriteTimeout = timeoutMs; req.Proxy = null;
-                    if (json != null)
-                    {
-                        req.Method = "POST"; req.ContentType = "application/json";
-                        byte[] b = Encoding.UTF8.GetBytes(json);
-                        req.ContentLength = b.Length;
-                        using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
-                    }
-                    using (var resp = req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                        text = rd.ReadToEnd();
-                    ok = true;
-                }
-                catch (WebException ex) when (ex.Response != null)
-                {
-                    using (var rd = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8)) text = rd.ReadToEnd().Trim();
-                }
-                catch (Exception ex) { text = "Couldn't reach the bridge: " + ex.Message; }
-                try { done(ok, text); } catch (Exception) { }
-            });
-        }
 
         void OrbitPlan()
         {
@@ -682,7 +535,7 @@ namespace KSPChatBridge
             GUILayout.Label("Pe", GUILayout.Width(20)); GUI.SetNextControlName("aics_pe"); orbPeT = GUILayout.TextField(orbPeT, 9, GUILayout.Width(70));
             GUILayout.Label("Inc", GUILayout.Width(26)); GUI.SetNextControlName("aics_inc"); orbIncT = GUILayout.TextField(orbIncT, 5, GUILayout.Width(40));
             GUILayout.EndHorizontal();
-            GUILayout.Label((mj == true && preferMj ? "MechJeb Ascent Guidance + maneuver planner / node executor." : "MechJeb not found: these need MechJeb2 + kRPC.MechJeb.") + " Each button burns right away (no extra confirm).", small);
+            GUILayout.Label((mj == true && preferMj ? "MechJeb Ascent Guidance + maneuver planner / node executor." : "MechJeb not found: these need MechJeb2.") + " Each button burns right away (no extra confirm).", small);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Ascent to Ap"))
                 ChatWindow.ToolFromMenu("mechjeb_ascent", "{\"target_altitude_km\":" + Km(orbApT, 80) + ",\"inclination_deg\":" + Num(orbIncT, "0") + "}");
@@ -757,7 +610,7 @@ namespace KSPChatBridge
 
         void SunLock()
         {
-            GUILayout.Label("Space only: nose to the sun and hold (kRPC autopilot). Best-face (side panels) not available yet.", small);
+            GUILayout.Label("Space only: nose to the sun and hold (stock SAS). Best-face (side panels) not available yet.", small);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Sun Lock")) ChatWindow.ToolFromMenu("sun_lock", "{\"on\":true}");
             if (GUILayout.Button("Release")) ChatWindow.ToolFromMenu("sun_lock", "{\"on\":false}");
@@ -879,7 +732,7 @@ namespace KSPChatBridge
             return "Boarding " + best.partInfo.title + " on " + best.vessel.vesselName + ".";
         }
 
-        // Taxi / Base Run: waypoint list (GET /taxi) with distance/bearing from here; Go = taxi_to (bridge controller).
+        // Taxi / Base Run: waypoint list  with distance/bearing from here; Go = taxi_to (in-mod controller).
         void Taxi()
         {
             string tb = taxiBody;
@@ -940,10 +793,7 @@ namespace KSPChatBridge
         }
 
         static void LoadTaxi()
-        {
-            if (NativeFlightController.OwnsControls) { taxiBody = NativeFlightController.Execute("taxi/list", "{}"); return; }
-            BridgeText("taxi", null, 4000, (ok, body) => { if (ok) taxiBody = body; else ChatWindow.Notice("AICS Taxi: " + body); });
-        }
+        { taxiBody = NativeFlightController.Execute("taxi/list", "{}"); }
 
         static double GcDist(double la1, double lo1, double la2, double lo2, double r)
         {
@@ -1027,14 +877,13 @@ namespace KSPChatBridge
 
         void Settings()
         {
-            bool ai = GUILayout.Toggle(BridgeLauncher.AiEnabled, "AI");
-            if (ai != BridgeLauncher.AiEnabled) BridgeLauncher.SetAiEnabled(ai);
-            if (BridgeLauncher.Switching) GUILayout.Label("Switching mode after controller handoff...");
-            if (!BridgeLauncher.AiEnabled) GUILayout.Label("AI off: local controls available; unported commands are disabled.");
+            bool ai = GUILayout.Toggle(AicsCore.AiEnabled, "AI");
+            if (ai != AicsCore.AiEnabled) AicsCore.SetAiEnabled(ai);
+            if (!AicsCore.AiEnabled) GUILayout.Label("AI off: local controls available; unported commands are disabled.");
             if (GUILayout.Button(TerrainExporter.Running ? TerrainExporter.Status : "Export terrain for charts") && !TerrainExporter.Running) TerrainExporter.Requested = true;
             if (!TerrainExporter.Running && TerrainExporter.Status.Length > 0) GUILayout.Label(TerrainExporter.Status);
             DrawInModAiSettings();
-            if (!BridgeLauncher.AiEnabled) return;
+            if (!AicsCore.AiEnabled) return;
             // AI backend dropdown (IMGUI has none: a button that unfolds the option list inline).
             string[] labels = ChatWindow.BackendLabels;
             int cur = ChatWindow.BackendIndex;
@@ -1050,17 +899,7 @@ namespace KSPChatBridge
                 }
             }
             string id = ChatWindow.BackendId(cur);
-            if (id == "chatgpt")
-            {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("ChatGPT via", small, GUILayout.Width(70));
-                int cg = ChatWindow.ChatGptMode == "mcp" ? 1 : 0;
-                int ncg = GUILayout.Toolbar(cg, CgModes);
-                GUILayout.EndHorizontal();
-                if (ncg != cg) { ChatWindow.ChatGptMode = ncg == 1 ? "mcp" : "api"; ChatWindow.SettingFromMenu("chatgpt_mode", ChatWindow.ChatGptMode); }
-                GUILayout.Label(ncg == 1 ? "MCP (opt-in): no API key, but HEAVY token use - the ChatGPT desktop thread keeps polling. Keep a thread with the ksp_bridge tools open and say \"check KSP chat\"."
-                                         : "API: paste your OpenAI API key (platform.openai.com) below and Save.", ncg == 1 ? warnStyle : small);
-            }
+            if (id == "chatgpt") GUILayout.Label("ChatGPT: paste your OpenAI API key (platform.openai.com) below and Save.", small);
             else if (id == "gemini") GUILayout.Label("Gemini (free tier): free key from aistudio.google.com. Paste it below and Save.", small);
             else if (id == "cline") GUILayout.Label("Cline API: key from app.cline.bot. Default model minimax/minimax-m2.5 (free); set CLINE_MODEL for others (provider/model).", small);
             else if (id == "groq") GUILayout.Label("Groq (free tier, fast): free key from console.groq.com. Free = 8K tokens/min, so tool steps may pause ~10-30 s.", small);
@@ -1071,13 +910,9 @@ namespace KSPChatBridge
             else if (id == "ollama") GUILayout.Label("Ollama on this PC (ollama serve, no key). /model lists/switches models.", small);
             if (NeedsKey(id)) KeyBox(id);
             GUILayout.Label("Also: type /ai <name> in the chat (e.g. /ai gemini).", small);
-            if (BridgeLauncher.UseBridge)
-                GUILayout.Label("Bridge chat needs MechJeb2, kRPC, kRPC.MechJeb, bridge.  Missing mods: " + (string.IsNullOrEmpty(missingMods) ? "none" : missingMods) +
-                    "   Bridge: " + (bridgeOk ? "OK" : (bridgeChecked ? "NOT responding" : "checking...")), small);
-            else GUILayout.Label("MechJeb2: " + (mj == true ? "installed" : "not installed (orbital autopilots that need it will say so)"), small);
-            if (GUILayout.Button("Re-check dependencies")) { missingMods = null; nextBridgeCheck = 0; }
+            GUILayout.Label("MechJeb2: " + (mj == true ? "installed" : "not installed (orbital autopilots that need it will say so)"), small);
+            if (GUILayout.Button("Re-check dependencies")) { missingMods = null; mj = null; }
             preferMj = GUILayout.Toggle(preferMj, "Prefer MechJeb when available");
-            GUILayout.Label("Bridge autostart: PluginData/bridge.cfg (autostart=true).", small);
             showTab = GUILayout.Toggle(showTab, "Show the collapsed ▲ AICS ▲ tab at the top");
             GUILayout.BeginHorizontal();
             GUILayout.Label("Opacity", small, GUILayout.Width(52));
@@ -1089,8 +924,6 @@ namespace KSPChatBridge
         void DrawInModAiSettings()
         {
             GUILayout.Label("In-mod AI", hdr);
-            bool nc = GUILayout.Toggle(BridgeLauncher.NativeChatEnabled, "Chat in-mod");
-            if (nc != BridgeLauncher.NativeChatEnabled) BridgeLauncher.SetNativeChat(nc);
             var policy = AiSettings.Policy;
             GUILayout.Label("Embedded Qwen offload (GPU = all layers, Hybrid = half, CPU = none)", small);
             GUILayout.BeginHorizontal();
@@ -1114,10 +947,10 @@ namespace KSPChatBridge
             if (mm.Error != null && mm.Phase != "ready") GUILayout.Label(mm.Error, warnStyle);
             else if (!string.IsNullOrEmpty(mm.Warning)) GUILayout.Label(mm.Warning, small);
             GUILayout.BeginHorizontal();
-            GUI.enabled = BridgeLauncher.AiEnabled && Interlocked.CompareExchange(ref modelDlBusy, 0, 0) == 0 && !mm.Ready;
+            GUI.enabled = AicsCore.AiEnabled && Interlocked.CompareExchange(ref modelDlBusy, 0, 0) == 0 && !mm.Ready;
             if (GUILayout.Button("Download Qwen2.5-3B Q4_K_M"))
             {
-                if (!BridgeLauncher.AiEnabled)
+                if (!AicsCore.AiEnabled)
                     ChatWindow.Notice("Turn on AI to download the local model.");
                 else if (Interlocked.CompareExchange(ref modelDlBusy, 1, 0) == 0)
                 {
@@ -1127,7 +960,7 @@ namespace KSPChatBridge
                     {
                         try
                         {
-                            string err = ModelManager.Instance.Download(null, BridgeLauncher.AiEnabled);
+                            string err = ModelManager.Instance.Download(null, AicsCore.AiEnabled);
                             modelDlMsg = err ?? (ModelManager.Instance.Warning ?? "Download complete.");
                         }
                         catch (Exception ex) { modelDlMsg = ex.Message; }
@@ -1148,7 +981,7 @@ namespace KSPChatBridge
                     : string.Format(CultureInfo.InvariantCulture, "Runtime {0} {1:P0}", rt.Phase, rt.Progress), small);
                 if (rt.Error != null && rt.Phase != "ready") GUILayout.Label(rt.Error, warnStyle);
                 GUILayout.BeginHorizontal();
-                GUI.enabled = BridgeLauncher.AiEnabled && !rt.Ready && rt.Phase != "downloading" && rt.Phase != "extracting";
+                GUI.enabled = AicsCore.AiEnabled && !rt.Ready && rt.Phase != "downloading" && rt.Phase != "extracting";
                 if (GUILayout.Button("Download runtime")) InModAiHost.StartRuntimeDownload();
                 GUI.enabled = rt.Phase == "downloading";
                 if (GUILayout.Button("Cancel")) rt.Cancel();
@@ -1159,24 +992,20 @@ namespace KSPChatBridge
             }
             string inModStatus = InModChatStatus(mm);
             GUILayout.Label("Status: " + inModStatus, inModStatus.StartsWith("In-mod chat ready") ? tagW : (inModStatus.Contains("error") || inModStatus.Contains("not") ? warnStyle : small));
-            if (BridgeLauncher.NativeChatEnabled)
+            string backend = ChatWindow.BackendId(ChatWindow.BackendIndex);
+            if (NeedsKey(backend) || backend == "local" || backend == "ollama")
             {
-                string backend = ChatWindow.BackendId(ChatWindow.BackendIndex);
-                if (NeedsKey(backend) || backend == "local" || backend == "ollama")
-                {
-                    GUILayout.Label("Keys / endpoints (PluginData/.env — in-mod chat)", small);
-                    if (NeedsKey(backend)) KeyBox(backend);
-                    else GUILayout.Label(backend == "local"
-                        ? "LM Studio: set LMSTUDIO_URL / LMSTUDIO_MODEL in .env if not localhost:1234."
-                        : "Ollama: set OLLAMA_URL / OLLAMA_MODEL in .env if not localhost:11434.", small);
-                }
+                GUILayout.Label("Keys / endpoints (PluginData/.env — in-mod chat)", small);
+                if (NeedsKey(backend)) KeyBox(backend);
+                else GUILayout.Label(backend == "local"
+                    ? "LM Studio: set LMSTUDIO_URL / LMSTUDIO_MODEL in .env if not localhost:1234."
+                    : "Ollama: set OLLAMA_URL / OLLAMA_MODEL in .env if not localhost:11434.", small);
             }
         }
 
         static string InModChatStatus(ModelManager mm)
         {
-            if (!BridgeLauncher.NativeChatEnabled) return "In-mod chat disabled (bridge chat when AI is on).";
-            if (!BridgeLauncher.AiEnabled) return "AI off - turn on AI to use in-mod chat.";
+            if (!AicsCore.AiEnabled) return "AI off - turn on AI to use in-mod chat.";
             if (mm.Phase == "downloading") return "Downloading model...";
             if (!string.IsNullOrEmpty(mm.Error) && mm.Phase != "ready") return "Model error: " + mm.Error;
             string emb = EmbeddedLlm.Readiness();
@@ -1187,15 +1016,15 @@ namespace KSPChatBridge
         {
             return id == "gemini" || id == "groq" || id == "openrouter" || id == "huggingface" || id == "custom"
                 || id == "claude" || id == "grokbot" || id == "cline"
-                || (id == "chatgpt" && ChatWindow.ChatGptMode == "api");
+                || id == "chatgpt";
         }
 
-        // API key field (password-style) + Save/Clear + status, and URL/model for Custom. The key is sent once to the
-        // local bridge (127.0.0.1) and the field is emptied; the bridge only ever shows it masked (••••last4).
+        // API key field (password-style) + Save/Clear + status, and URL/model for Custom. The key is saved to PluginData/.env
+        // and the field is emptied; it is only ever shown masked (••••last4).
         void KeyBox(string id)
         {
             if (keyFor != id) { keyFor = id; keyInput = ""; keyMsg = ""; clearArmed = false; }
-            if (Time.realtimeSinceStartup > nextKeysPoll) { nextKeysPoll = Time.realtimeSinceStartup + 5f; PollKeys(); }
+            if (Time.realtimeSinceStartup > nextKeysPoll) { nextKeysPoll = Time.realtimeSinceStartup + 5f; try { keysBody = SecretsStore.StatusText(); } catch (Exception) { } }
             string body = keysBody;
             if (body != null)
             {
@@ -1235,17 +1064,15 @@ namespace KSPChatBridge
             keyInfo.TryGetValue(id, out info);
             string[] st = (info ?? "").Split('\t');
             string masked = st.Length > 1 ? st[1] : "";
-            bool keysLocal = BridgeLauncher.NativeChatEnabled;
             string status;
-            if (!bridgeOk && !keysLocal) status = bridgeChecked ? "bridge not responding" : "checking...";
-            else if (info == null) status = "checking...";
+            if (info == null) status = "checking...";
             else if (id == "custom") status = st[0] == "1" ? "configured (key " + (masked.Length > 0 ? masked : "none - fine if the API needs none") + ")" : "missing URL and/or model";
             else status = masked.Length > 0 ? "configured (" + masked + ")" : "missing - paste a key and Save";
             GUILayout.Label("Status: " + status, status.StartsWith("configured") ? tagW : (status.StartsWith("missing") ? warnStyle : small));
             GUILayout.BeginHorizontal();
             bool changed = keyInput.Trim().Length > 0 || (id == "custom" &&
                 ((cuUrlT != null && cuUrlT != Val("custom_url")) || (cuModelT != null && cuModelT != Val("custom_model"))));
-            GUI.enabled = changed && (bridgeOk || keysLocal);
+            GUI.enabled = changed;
             if (GUILayout.Button("Save") || (enter && GUI.enabled))
             {
                 string trimmedKey = keyInput.Trim();
@@ -1256,7 +1083,7 @@ namespace KSPChatBridge
                 KeyPost(json, id, trimmedKey, cuUrlT, cuModelT, false);
                 if (enter) e.Use();
             }
-            GUI.enabled = (bridgeOk || keysLocal) && masked.Length > 0;
+            GUI.enabled = masked.Length > 0;
             if (GUILayout.Button(clearArmed ? "Really clear?" : "Clear key"))
             {
                 if (!clearArmed) clearArmed = true;
@@ -1266,32 +1093,11 @@ namespace KSPChatBridge
             GUILayout.EndHorizontal();
             string msg = keyMsg;
             if (msg.Length > 0) GUILayout.Label(msg, small);
-            GUILayout.Label("Saved to PluginData/.env; in-mod chat reads it immediately; bridge picks up on restart.", small);
+            GUILayout.Label("Saved to PluginData/.env; in-mod chat reads it immediately.", small);
         }
 
         static string Val(string k) { string v; return keyInfo.TryGetValue(k, out v) ? v : ""; }
 
-        static void PollKeys()
-        {
-            if (Interlocked.CompareExchange(ref keysPolling, 1, 0) != 0) return;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    var req = BridgeHttp.Create("api_keys");
-                    req.Timeout = 3000; req.Proxy = null;
-                    using (var resp = req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                        keysBody = rd.ReadToEnd();
-                }
-                catch (Exception)
-                {
-                    try { keysBody = SecretsStore.StatusText(); }
-                    catch (Exception) { }
-                }
-                finally { Interlocked.Exchange(ref keysPolling, 0); }
-            });
-        }
 
         static void KeyPost(string json, string backend, string key, string customUrl, string customModel, bool clear)
         {
@@ -1299,41 +1105,14 @@ namespace KSPChatBridge
             {
                 try { keyMsg = SecretsStore.SaveBackend(backend, key, customUrl, customModel, clear); }
                 catch (Exception ex) { keyMsg = ".env: " + ex.Message; }
-                if (bridgeOk)
-                {
-                    try
-                    {
-                        var req = BridgeHttp.Create("api_key");
-                        req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000; req.Proxy = null;
-                        byte[] b = Encoding.UTF8.GetBytes(json);
-                        req.ContentLength = b.Length;
-                        using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
-                        using (var resp = req.GetResponse())
-                        using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                            keyMsg = rd.ReadToEnd().Trim();
-                    }
-                    catch (WebException ex) when (ex.Response != null)
-                    {
-                        using (var rd = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8))
-                            keyMsg = keyMsg + " Bridge: " + rd.ReadToEnd().Trim();
-                    }
-                    catch (Exception ex) { keyMsg = keyMsg + " Bridge unreachable: " + ex.Message; }
-                }
                 cuUrlT = cuModelT = null;
-                nextKeysPoll = 0; nextBridgeCheck = 0;
+                nextKeysPoll = 0;
             });
         }
-
-        // Readiness note per backend in the dropdown (keyed APIs from /health "backends_ready"; unknown on an old bridge).
         static string BackendHint(int i)
-        {
-            string id = ChatWindow.BackendId(i), ready = ChatWindow.BackendsReady;
-            if (id == "local" || id == "ollama") return "(local, no key)";
-            if (id == "chatgpt") return ChatWindow.ChatGptMode == "api" ? (ready == null ? "(API)" : ("," + ready + ",").Contains(",chatgpt,") ? "(API, key set)" : "(API, no key!)") : "(desktop MCP, heavy token use)";
-            string free = id == "gemini" || id == "groq" || id == "openrouter" ? "free tier, " : "";
-            if (ready == null) return free.Length > 0 ? "(free tier, needs key)" : "";
-            return "(" + free + (("," + ready + ",").Contains("," + id + ",") ? "configured)" : "not configured)");
-        }
+        { string id = ChatWindow.BackendId(i);
+            if (id == "local" || id == "ollama" || id == "embedded") return "(local, no key)";
+            return id == "gemini" || id == "groq" || id == "openrouter" ? "(free tier, needs key)" : ""; }
 
         // ---------- helpers ----------
         void Hold(ref bool on, string label, ref string val, string unit)
@@ -1352,23 +1131,6 @@ namespace KSPChatBridge
             GUILayout.Label(l.Length > 0 ? l : "(no active landing / ETA)", small);
         }
 
-        static void PollLanding()
-        {
-            if (!BridgeLauncher.UseBridge) return;
-            if (!HighLogic.LoadedSceneIsFlight || Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    var req = BridgeHttp.Create("landing?format=text");
-                    req.Timeout = 3000; req.Proxy = null;
-                    using (var resp = req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8)) landing = rd.ReadToEnd().Trim();
-                }
-                catch (Exception) { landing = ""; }
-                finally { Interlocked.Exchange(ref polling, 0); }
-            });
-        }
 
         static void SamplePower()
         {

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace KSPChatBridge
 {
-    /// <summary>PluginData/.env — same keys as kspchat/config.py (BridgeLauncher.DataDirectory or GameData fallback).</summary>
+    /// <summary>PluginData/.env — same keys as kspchat/config.py (AicsCore.DataDirectory or GameData fallback).</summary>
     internal static class SecretsStore
     {
         static readonly object Gate = new object();
@@ -32,7 +32,7 @@ namespace KSPChatBridge
         {
             get
             {
-                string data = DataDirectoryOverride != null ? DataDirectoryOverride() : BridgeLauncher.PluginDataDirectory;
+                string data = DataDirectoryOverride != null ? DataDirectoryOverride() : AicsCore.PluginDataDirectory;
                 return System.IO.Path.Combine(data, ".env");
             }
         }
@@ -80,7 +80,7 @@ namespace KSPChatBridge
                 if (!string.IsNullOrWhiteSpace(customUrl)) Set("CUSTOM_AI_URL", customUrl.Trim().TrimEnd('/'));
                 if (!string.IsNullOrWhiteSpace(customModel)) Set("CUSTOM_AI_MODEL", customModel.Trim());
             }
-            return "Saved to PluginData/.env (bridge picks up on restart).";
+            return "Saved to PluginData/.env.";
         }
 
         static string MaskValue(string value)

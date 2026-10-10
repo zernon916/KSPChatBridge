@@ -11,7 +11,7 @@ namespace KSPChatBridge
         const string FileName = "native_ai.json";
         internal static AiRuntimePolicy Policy = new AiRuntimePolicy();
 
-        internal static string FilePath { get { return Path.Combine(BridgeLauncher.PluginDataDirectory, FileName); } }
+        internal static string FilePath { get { return Path.Combine(AicsCore.PluginDataDirectory, FileName); } }
 
         internal static void Load()
         {
@@ -62,7 +62,6 @@ namespace KSPChatBridge
             if (nativeSettings == null) return;
             nativeSettings["ai_offload"] = Policy.Offload.ToString();
             nativeSettings["ai_context_tokens"] = Policy.ContextTokens;
-            nativeSettings["ai_native_chat"] = BridgeLauncher.NativeChatEnabled;
         }
 
         internal static void ApplyOffload(AiOffloadMode mode, int contextTokens)

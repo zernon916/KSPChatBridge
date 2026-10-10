@@ -1,8 +1,7 @@
 // KSPChatBridge in-game chat window.
 // Draggable IMGUI window (Flight + Space Center). Toggle with the AppLauncher button (left-click) or Alt+K.
 // Right-click the button (or Alt+J) for the AICS menu (AicsMenu.cs).
-// Messages go to the local Python bridge (run_bridge.py serve) at http://127.0.0.1:8765/chat
-// on a worker thread; replies are queued and appended on the Unity main thread in Update().
+// Messages go to the in-mod AI host (InModAiHost); replies are queued and appended on the Unity main thread in Update().
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,7 +16,6 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
     public class ChatWindow : MonoBehaviour
     {
-        const string BridgeUrl = "http://127.0.0.1:8765/";
         const string LockId = "KSPChatBridge_TypingLock";
         const string InputName = "kspchat_input";
         const int WindowId = 0x4B434231;
@@ -29,7 +27,6 @@ namespace KSPChatBridge
         static readonly string[] ModelLabels = { "LM Studio", "Ollama", "ChatGPT", "Gemini", "Groq", "OpenRouter", "Hugging Face", "Custom (OpenAI-compatible)", "Claude", "Grok Bot", "Cline", "Embedded Qwen (in-mod)" };
         static readonly string[] ModelIds = { "local", "ollama", "chatgpt", "gemini", "groq", "openrouter", "huggingface", "custom", "claude", "grokbot", "cline", "embedded" };
         static readonly string[] LegacyIds = { "local", "ollama", "chatgpt", "grokbot" };   // old window.txt stored an index
-        internal static volatile string BackendsReady = null;  // GET /health "backends_ready" (keyed APIs configured), null = unknown
         const float MinW = 300, MinH = 200, InputH = 24;
         const float InputMaxH = 120;   // the input box grows (word wrap) up to this, then scrolls
 
@@ -40,14 +37,9 @@ namespace KSPChatBridge
         static bool visible;
         static int modelIdx;
         static int pending;
-        static int lastEventId;
-        static volatile string lastModel = "";   // from the bridge's X-AI-Model header, shown in the title
-        static volatile bool cgWaiting;           // ChatGPT (MCP mode) message queued, no reply yet
-        internal static volatile string ChatGptMode = "api";   // bridge's chatgpt_mode (GET /health, AicsMenu)
-        static int polling;
+        static volatile string lastModel = "";   // model id shown in the title
         static Rect winRect = new Rect(80, 120, 480, 460);
         static float inputExtra;   // extra window height while the input box is taller than one line (not saved)
-        static readonly Queue<string> Commands = new Queue<string>();   // "!cmd ..." lines from /events (eject)
         static bool settingsLoaded;
         static string settingsFile;
 
@@ -62,7 +54,7 @@ namespace KSPChatBridge
         static string spotName = "", latText = "", lonText = "", hdgText = "";
         Vector2 spotScroll;
 
-        /// <summary>Thread-safe: show a line in the chat history (used by BridgeLauncher).</summary>
+        /// <summary>Thread-safe: show a line in the chat history .</summary>
         static string lastNotice; static DateTime lastNoticeAt;
         public static void Notice(string line)
         {
@@ -123,7 +115,6 @@ namespace KSPChatBridge
             GameEvents.onGUIApplicationLauncherReady.Add(AddButton);
             if (ApplicationLauncher.Ready) AddButton();
             InvokeRepeating("PollTestFile", 3f, 2f);
-            InvokeRepeating("PollEvents", 5f, 3f);
             Debug.Log("[KSPChatBridge] loaded in scene " + HighLogic.LoadedScene);
         }
 
@@ -160,7 +151,6 @@ namespace KSPChatBridge
             }
             lock (Sync)
             {
-                while (Commands.Count > 0) { RunCommand(Commands.Dequeue()); scrollToEnd = true; }
             }
             string sb = spotsBody;
             if (sb != null) { spotsBody = null; ParseSpots(sb); }
@@ -255,7 +245,6 @@ namespace KSPChatBridge
             scroll = GUILayout.BeginScrollView(scroll, false, true, GUILayout.Width(innerW), GUILayout.Height(histH));
             foreach (string line in History) GUILayout.Label(line, msgStyle, GUILayout.Width(innerW - 24));
             if (pending > 0) GUILayout.Label("... thinking", msgStyle, GUILayout.Width(innerW - 24));
-            else if (cgWaiting) GUILayout.Label("... waiting for ChatGPT desktop (MCP) - in ChatGPT say \"check KSP chat\"", msgStyle, GUILayout.Width(innerW - 24));
             GUILayout.EndScrollView();
 
             GUILayout.BeginHorizontal(GUILayout.Width(innerW), GUILayout.Height(inH));
@@ -274,7 +263,7 @@ namespace KSPChatBridge
                 if (landVisible) { landRect.x = Mathf.Min(winRect.xMax + 6, Screen.width - landRect.width); landRect.y = winRect.y; RefreshSpots(); }
             }
             if (GUILayout.Button("Send", GUILayout.Width(60), GUILayout.Height(InputH))) { Send(input); input = ""; }
-            if (GUILayout.Button("Clear", GUILayout.Width(50), GUILayout.Height(InputH))) { History.Clear(); cgWaiting = false; InModAiHost.CancelQueued(); Post("reset", "{\"session\":\"ingame\"}", null); }
+            if (GUILayout.Button("Clear", GUILayout.Width(50), GUILayout.Height(InputH))) { History.Clear(); InModAiHost.CancelQueued(); }
             GUILayout.EndHorizontal();
 
             // Resize handle (bottom-right corner).
@@ -360,22 +349,13 @@ namespace KSPChatBridge
             GUI.DragWindow();
         }
 
+        static string RunTool(string name, string argsJson) { return NativeCommands.IsPorted(name) ? NativeFlightController.Execute(name, argsJson) : "Not available in-mod (" + name + ")"; }
+
         void Tool(string name, string argsJson)
-        {
-            if (!BridgeLauncher.UseBridge) { Notice("Landing: " + (NativeCommands.IsPorted(name) ? NativeFlightController.Execute(name, argsJson) : BridgeHttp.Friendly(name))); return; }
-            Interlocked.Increment(ref pending);
-            Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "Landing: " + reply);
-        }
+        { Notice("Landing: " + RunTool(name, argsJson)); }
 
         void RefreshSpots()
-        {
-            if (!BridgeLauncher.UseBridge) { NativeSpotsNow(); return; }
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try { spotsBody = HttpGet("spots?format=text", 3000); }
-                catch (Exception ex) { Notice("[bridge error] landing spots: " + ex.Message); }
-            });
-        }
+        { NativeSpotsNow(); }
 
         static void ParseSpots(string body)
         {
@@ -388,15 +368,6 @@ namespace KSPChatBridge
             if (spotSel >= Spots.Count) spotSel = -1;
         }
 
-        static string HttpGet(string path, int timeoutMs)
-        {
-            var req = BridgeHttp.Create(path);
-            req.Timeout = timeoutMs;
-            req.Proxy = null;
-            using (var resp = (HttpWebResponse)req.GetResponse())
-            using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                return rd.ReadToEnd();
-        }
 
         // ---- used by the AICS menu (AicsMenu.cs) ----
         internal static void ShowChat() { SetVisible(true); }
@@ -406,40 +377,27 @@ namespace KSPChatBridge
         static void NativeSpotsNow() { Spots.Clear(); Spots.AddRange(NativeFlightController.SpotRows()); if (spotSel >= Spots.Count) spotSel = -1; }
         internal static string LastPlayerLine() { for (int i = History.Count - 1; i >= 0; i--) if (History[i].StartsWith("You: ")) return History[i].Substring(5); return ""; }
         internal static void RequestSpots()
-        {
-            if (!BridgeLauncher.UseBridge) { NativeSpotsNow(); return; }
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try { spotsBody = HttpGet("spots?format=text", 3000); }
-                catch (Exception ex) { Notice("[bridge error] landing spots: " + ex.Message); }
-            });
-        }
+        { NativeSpotsNow(); }
         internal static void ToolFromMenu(string name, string argsJson)
-        {
-            // P5-3: menu buttons for ported tools run in-mod whenever AI is off or in-mod chat/tools are on.
-            if (!BridgeLauncher.AiEnabled || (NativeFlightController.OwnsControls && NativeCommands.IsPorted(name))) { Notice(NativeFlightController.Execute(name, argsJson)); return; }
-            Interlocked.Increment(ref pending);
-            Post("tool", "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}", (n, reply) => "AICS " + name + ": " + reply);
-        }
+        { Notice(RunTool(name, argsJson)); }
         internal static void ChatFromMenu(string text)
         {
-            if (!BridgeLauncher.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
+            if (!AicsCore.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
             lock (Sync) Incoming.Enqueue("You (AICS): " + text);
             if (!visible) SetVisible(true);
-            MarkChatGpt(text);
             DispatchChat(text, ModelIds[modelIdx]);
         }
 
         void Send(string text)
         {
-            if (!BridgeLauncher.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
+            if (!AicsCore.AiEnabled) { Notice("AI off. Use the local control panels."); return; }
             text = (text ?? "").Trim();
             if (text.Length == 0) return;
             string low = text.ToLowerInvariant();
             if (low == "/ai" || low.StartsWith("/ai ") || low == "/backend" || low.StartsWith("/backend "))
             {
                 History.Add("You: " + text);
-                History.Add("Bridge: " + SwitchBackend(text.Substring(text.IndexOf(' ') < 0 ? text.Length : text.IndexOf(' ')).Trim()));
+                History.Add("AICS: " + SwitchBackend(text.Substring(text.IndexOf(' ') < 0 ? text.Length : text.IndexOf(' ')).Trim()));
                 scrollToEnd = true;
                 return;
             }
@@ -453,41 +411,22 @@ namespace KSPChatBridge
             string model = ModelIds[modelIdx];
             History.Add("You: " + text);
             scrollToEnd = true;
-            MarkChatGpt(text);
             DispatchChat(text, model);
         }
 
         static void DispatchChat(string text, string model)
         {
-            if (UseInModChat(model))
-            {
                 Interlocked.Increment(ref pending);
                 if (HighLogic.LoadedSceneIsFlight && NativeFlightController.TryIntercom(text)) return;   // '@Bob ...' -> Bob answers
                 InModAiHost.EnqueueChat(text, model, "ingame");
-                return;
-            }
-            string json = "{\"message\":" + JsonStr(text) + ",\"model\":" + JsonStr(model) + ",\"session\":\"ingame\"}";
-            Interlocked.Increment(ref pending);
-            Post("chat?format=text", json, (name, reply) => name + ": " + reply);
         }
 
-        static bool UseInModChat(string model)
-        {
-            if (!InModAiHost.UseInModChat()) return false;
-            if (model == "chatgpt" && ChatGptMode != "api") return false;
-            return true;
-        }
 
         internal static void ReleasePendingChat()
         {
             Interlocked.Decrement(ref pending);
         }
 
-        // ChatGPT in MCP mode: the bridge queues the message for the ChatGPT desktop app; its reply arrives via /events.
-        static void MarkChatGpt(string text)
-        {
-            if (ModelIds[modelIdx] == "chatgpt" && ChatGptMode != "api" && !text.StartsWith("/")) cgWaiting = true;
-        }
 
         // "/ai <name>" (or /backend): switch backend from the chat; "/ai" alone lists them.
         static string SwitchBackend(string arg)
@@ -510,97 +449,8 @@ namespace KSPChatBridge
             set { if (value != modelIdx && value >= 0 && value < ModelIds.Length) { modelIdx = value; lastModel = ""; SaveSettings(); } }
         }
         internal static string CurrentModel { get { return ModelIds[modelIdx]; } }
-        internal static void SettingFromMenu(string key, string value)
-        {
-            Interlocked.Increment(ref pending);
-            Post("setting", "{\"key\":" + JsonStr(key) + ",\"value\":" + JsonStr(value) + "}", (n, reply) => "Bridge: " + reply);
-        }
 
-        // Background HTTP POST; result text (or an error line) is queued for the main thread.
-        // format(aiName, replyText); aiName comes from the bridge's X-AI-Name header (set_ai_name tool).
-        static void Post(string path, string json, Func<string, string, string> format)
-        {
-            if (!BridgeHttp.Allowed())
-            {
-                if (format != null) { Notice(path.StartsWith("chat") ? "This chat backend needs the bridge (ChatGPT desktop/MCP); pick another AI or turn in-mod chat off." : BridgeHttp.Friendly(path)); Interlocked.Decrement(ref pending); }
-                return;
-            }
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                string line;
-                try
-                {
-                    var req = BridgeHttp.Create(path);
-                    req.Method = "POST";
-                    req.ContentType = "application/json";
-                    req.Timeout = 600000;
-                    req.ReadWriteTimeout = 600000;
-                    req.Proxy = null;
-                    byte[] body = Encoding.UTF8.GetBytes(json);
-                    req.ContentLength = body.Length;
-                    using (Stream s = req.GetRequestStream()) s.Write(body, 0, body.Length);
-                    string aiName;
-                    using (var resp = (HttpWebResponse)req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                    {
-                        aiName = resp.Headers["X-AI-Name"];
-                        string m = resp.Headers["X-AI-Model"];
-                        if (!string.IsNullOrEmpty(m)) lastModel = m;
-                        line = rd.ReadToEnd();
-                    }
-                    if (format == null) return;
-                    line = format(string.IsNullOrEmpty(aiName) ? "AI" : aiName, line);
-                    Debug.Log("[KSPChatBridge] reply: " + (line.Length > 300 ? line.Substring(0, 300) : line));
-                }
-                catch (Exception ex)
-                {
-                    if (format == null) return;
-                    line = "[bridge error] " + ex.Message + "  (is 'python run_bridge.py serve' running? It auto-starts with KSP unless autostart=false in PluginData/bridge.cfg)";
-                    Debug.LogWarning("[KSPChatBridge] " + line);
-                }
-                finally
-                {
-                    if (format != null) Interlocked.Decrement(ref pending);
-                }
-                lock (Sync) Incoming.Enqueue(line);
-            });
-        }
 
-        // Science-watcher notices from the bridge (GET /events, "id<TAB>text" lines), polled off the main thread.
-        void PollEvents()
-        {
-            if (!BridgeLauncher.UseBridge) return;
-            if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
-            int since = lastEventId;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    var req = BridgeHttp.Create("events?format=text&chat=1&cmd=1&since=" + since);
-                    req.Timeout = 3000;
-                    req.Proxy = null;
-                    string body;
-                    using (var resp = (HttpWebResponse)req.GetResponse())
-                    using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                        body = rd.ReadToEnd();
-                    foreach (string raw in body.Split('\n'))
-                    {
-                        int tab = raw.IndexOf('\t');
-                        int id;
-                        if (tab <= 0 || !int.TryParse(raw.Substring(0, tab), out id)) continue;
-                        lastEventId = id;  // ascending; after a bridge restart ids start again at 1
-                        string t = raw.Substring(tab + 1), line;
-                        if (t.StartsWith("!cmd ")) { lock (Sync) Commands.Enqueue(t.Substring(5)); continue; }  // run in Update()
-                        if (t.StartsWith("@")) { line = t.Substring(1); cgWaiting = false; }  // ChatGPT desktop (MCP) reply
-                        else line = "Bridge: " + t;
-                        Debug.Log("[KSPChatBridge] " + line);
-                        lock (Sync) Incoming.Enqueue(line);
-                    }
-                }
-                catch (Exception) { /* bridge not running: stay quiet */ }
-                finally { Interlocked.Exchange(ref polling, 0); }
-            });
-        }
 
         // Test hook: drop a text file at GameData/KSPChatBridge/PluginData/test_message.txt and the
         // mod sends its contents as a chat message (reply is logged to KSP.log with [KSPChatBridge]).
@@ -651,29 +501,6 @@ namespace KSPChatBridge
             catch (Exception) { }
         }
 
-        // ---- bridge -> mod commands ("!cmd ..." lines in /events), run on the main thread ----
-        static void RunCommand(string cmd)
-        {
-            string[] p = (cmd ?? "").Trim().Split(new[] { ' ' }, 3);
-            if (p.Length >= 2 && p[0] == "eject")
-            {
-                double t;
-                double now = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
-                if (!double.TryParse(p[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out t)
-                    || Math.Abs(now - t) > 30)
-                {
-                    History.Add("Bridge: ignored an old eject command.");   // e.g. replayed after a KSP restart
-                    return;
-                }
-                History.Add("Bridge: " + Eject(p.Length > 2 ? p[2] : null));
-            }
-            else if (p[0] == "trim_show")
-            {
-                TrimWindow.ShowTrim();
-                History.Add("Bridge: Trim panel opened.");
-            }
-            else Debug.Log("[KSPChatBridge] unknown bridge command: " + cmd);
-        }
 
         // Real eject: EVA a crew member (by name, else the first one in a command part) out of the active vessel.
         internal static string Eject(string name)

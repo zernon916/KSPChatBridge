@@ -112,7 +112,7 @@ namespace KSPChatBridge
                 if (r == null) continue;
                 Field(r, "brakePercentage", brake);
                 Field(r, "servoMotorLimit", torque);
-                // Same axis setter as the installed kRPC API, without RPC.
+                // Direct robotic axis setter.
                 var axis = typeof(ModuleRoboticServoRotor).GetField("rpmLimitAxisField", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(r) as BaseAxisField;
                 if (axis == null || !axis.SetValue(rpm, axis.module)) throw new InvalidOperationException("Rotor RPM axis unavailable");
                 if (motor) r.EngageMotor(); else r.DisengageMotor();

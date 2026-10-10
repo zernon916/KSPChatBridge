@@ -6,7 +6,7 @@ using UnityEngine;
 namespace KSPChatBridge
 {
     // P5-3: vessel lifecycle + science ported in-mod (stage, recover, launch_craft, parachutes, eject, run/reset science,
-    // science watcher). Decisions in SciencePolicy; the watcher runs from SafetyTick whenever the bridge watcher cannot.
+    // science watcher). Decisions in SciencePolicy; the watcher runs from SafetyTick.
     public partial class NativeFlightController
     {
         string sciLastKey, sciLastVessel; float sciNextPoll, sciLastPost = -999, sciTransmitAt = -1;

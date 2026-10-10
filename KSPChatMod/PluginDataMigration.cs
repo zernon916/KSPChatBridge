@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -61,6 +61,17 @@ namespace KSPChatBridge
             string tmp = native + ".tmp"; File.WriteAllText(tmp, MiniJson.Serialize(n));
             if (File.Exists(native)) File.Replace(tmp, native, null); else File.Move(tmp, native);
             return "science mode imported";
+        }
+        /// <summary>ai_enabled from aics.cfg (or the old bridge.cfg on first run); fallback when absent.</summary>
+        internal static bool ParseAiEnabled(string text, bool fallback)
+        {
+            foreach (string raw in (text ?? "").Split('\n'))
+            {
+                string line = raw.Trim(); int eq = line.IndexOf('=');
+                if (line.StartsWith("#") || eq <= 0 || line.Substring(0, eq).Trim() != "ai_enabled") continue;
+                return line.Substring(eq + 1).Trim().ToLowerInvariant() != "false";
+            }
+            return fallback;
         }
     }
 }

@@ -1,4 +1,4 @@
-// AICS Trim panel: pitch / roll / yaw trim (+ collective on rotorcraft), live via POST /tool on the Python bridge.
+// AICS Trim panel: pitch / roll / yaw trim (+ collective on rotorcraft), via the in-mod set_trim / get_trim_state tools.
 // Expected JSON from get_trim_state:
 //   {"pitch":-1..1,"roll":-1..1,"yaw":-1..1,"collective"?:deg,"heli":bool,"craft":"name","notes_saved":bool,
 //    "auto_master":bool,"auto_pitch":bool,"auto_roll":bool,"auto_yaw":bool,"auto_rotor":bool}
@@ -18,7 +18,6 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
     public class TrimWindow : MonoBehaviour
     {
-        const string BridgeUrl = "http://127.0.0.1:8765/";
         const int WindowId = 0x4B434235;
         const float TrimDegPerUnit = 20f;   // 1.0 trim = ~20 deg surface deflection; buttons nudge in degrees
         const float MinW = 280, MinH = 300, Nudge = 0.05f, CollMax = 12f, PollInterval = 2.5f;
@@ -32,7 +31,6 @@ namespace KSPChatBridge
         static volatile bool stateOk;
         static bool everStateOk;
         static float lastGoodState;
-        static int polling;
         static float nextPoll;
 
         static float pitch, roll, yaw, collective = 4f;
@@ -82,44 +80,16 @@ namespace KSPChatBridge
             if (Time.realtimeSinceStartup >= nextPoll)
             {
                 nextPoll = Time.realtimeSinceStartup + PollInterval;
-                if (LocalTrim)
-                {
-                    string local = NativeFlightController.Execute("get_trim_state", "{}");
-                    stateOk = local.StartsWith("{");
-                    if (stateOk) { ApplyJson(local); everStateOk = true; lastGoodState = Time.realtimeSinceStartup; }
-                    return;
-                }
                 PollState();
             }
         }
 
-        // P5-1.8: trim panel is fully local whenever AI is off or in-mod chat/tools are on (native set_trim/get_trim_state).
-        static bool LocalTrim { get { return !BridgeLauncher.AiEnabled || BridgeLauncher.NativeChat; } }
-
         static void PollState()
         {
-            if (LocalTrim) return;
-            if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    string body = PostTool("get_trim_state", "{}");
-                    stateJson = body ?? "";
-                    stateOk = body != null && body.TrimStart().StartsWith("{");
-                    if (stateOk)
-                    {
-                        ApplyJson(body);
-                        everStateOk = true;
-                        lastGoodState = Time.realtimeSinceStartup;
-                    }
-                }
-                catch (Exception)
-                {
-                    stateOk = false;
-                }
-                finally { Interlocked.Exchange(ref polling, 0); }
-            });
+            string local = NativeFlightController.Execute("get_trim_state", "{}");
+            stateJson = local ?? "";
+            stateOk = local != null && local.StartsWith("{");
+            if (stateOk) { ApplyJson(local); everStateOk = true; lastGoodState = Time.realtimeSinceStartup; }
         }
 
         static void ApplyJson(string json)
@@ -238,12 +208,7 @@ namespace KSPChatBridge
             else if (axis == "auto_yaw") autoYaw = on;
             else if (axis == "auto_rotor") autoRotor = on;
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, on ? 1 : 0);
-            if (LocalTrim) { ChatWindow.Notice(NativeFlightController.Execute("set_trim", json)); return; }
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try { PostTool("set_trim", json); PollState(); }
-                catch (Exception ex) { ChatWindow.Notice("Trim auto: " + ex.Message); }
-            });
+            ChatWindow.Notice(NativeFlightController.Execute("set_trim", json));
         }
 
         void AxisRow(float w, string label, ref float val, ref bool dragging, string axis)
@@ -293,29 +258,7 @@ namespace KSPChatBridge
         static void SetTrim(string axis, float value)
         {
             string json = string.Format(CultureInfo.InvariantCulture, "{{\"axis\":\"{0}\",\"value\":{1}}}", axis, value);
-            if (LocalTrim) { NativeFlightController.Execute("set_trim", json); return; }
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try { PostTool("set_trim", json); }
-                catch (Exception ex) { ChatWindow.Notice("Trim set_trim: " + ex.Message); }
-            });
-        }
-
-        static string PostTool(string name, string argsJson)
-        {
-            var req = BridgeHttp.Create("tool");
-            req.Method = "POST";
-            req.ContentType = "application/json";
-            req.Timeout = 8000;
-            req.ReadWriteTimeout = 8000;
-            req.Proxy = null;
-            string payload = "{\"name\":\"" + name + "\",\"args\":" + argsJson + "}";
-            byte[] body = Encoding.UTF8.GetBytes(payload);
-            req.ContentLength = body.Length;
-            using (Stream s = req.GetRequestStream()) s.Write(body, 0, body.Length);
-            using (var resp = (HttpWebResponse)req.GetResponse())
-            using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                return rd.ReadToEnd();
+            NativeFlightController.Execute("set_trim", json);
         }
 
         static void Resize()

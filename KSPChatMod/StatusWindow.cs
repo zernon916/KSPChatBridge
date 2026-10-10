@@ -6,8 +6,7 @@
 // Toggle both from the AICS menu ("status" / "systems"); visibility and window rects persist in
 // GameData/KSPChatBridge/PluginData/status_window.txt. The master warning / caution flashes while an emergency is active
 // and not acknowledged - click it to acknowledge (silences the flashing and the MAYDAY light blinking). During an
-// unacknowledged warning the craft's Light action group blinks (setting in the Systems window, default on; the bridge
-// can veto it with mayday_lights=false). Existing text colors are untouched; only the new lights have their own colors.
+// unacknowledged warning the craft's Light action group blinks (setting in the Systems window, default on). Existing text colors are untouched; only the new lights have their own colors.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,7 +21,6 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
     public class StatusWindow : MonoBehaviour
     {
-        const string BridgeUrl = "http://127.0.0.1:8765/";
         const int StatusId = 0x4B434233, SystemsId = 0x4B434234;
         const float MinW = 260, MinH = 140;
 
@@ -39,13 +37,8 @@ namespace KSPChatBridge
         static volatile List<string[]> rows = new List<string[]>();
         static volatile List<string[]> sysRows = new List<string[]>();
         static volatile string[] master = { "", "0", "" };   // level, seq, text
-        static volatile bool bridgeLights = true;
         static volatile bool statusOk, systemsOk;
-        static volatile List<string[]> bridgeRows;
-        static double bridgeRowsAt = -1;
-        static int polling, lightsPolling;
         static int ackSeq;
-        static float nextLightsPoll;
 
         static readonly Dictionary<string, string> Labels = new Dictionary<string, string> {
             { "autopilot", "Autopilot" }, { "phase", "Phase" }, { "alt", "Altitude" }, { "speed", "Speed" },
@@ -61,20 +54,14 @@ namespace KSPChatBridge
         Vessel blinkVessel;
         float nextBlink;
 
-        /// <summary>AICS menu indicators: true if the bridge reports this "ind_..." key as active.</summary>
+        /// <summary>AICS menu indicators: true if the in-mod controller is in that mode.</summary>
         internal static bool Active(string key)
         {
-            if (!BridgeLauncher.UseBridge)
-            {
                 string phase = NativeFlightController.Phase;
                 return key == "ind_holds" ? phase == "hold" || phase == "takeoff" || phase == "spool" || phase == "helicopter"
                     : key == "ind_autoland" ? phase == "landing"
                     : key == "ind_taxi" ? phase == "taxi"
                     : key == "ind_flightplan" && NativeFlightController.PlanRunning;
-            }
-            var d = data;
-            string v;
-            return d != null && d.TryGetValue(key, out v) && v == "1";
         }
 
         internal static void ToggleStatus() { StatusVisible = !StatusVisible; Save(); }
@@ -103,81 +90,12 @@ namespace KSPChatBridge
                 systemsOk = LocalVesselState.Available;
             }
             else if (master[0] != "") master = new[] { "", "0", "" };
-            if (BridgeLauncher.UseBridge && maydayLights && Time.realtimeSinceStartup >= nextLightsPoll)
-            {
-                nextLightsPoll = Time.realtimeSinceStartup + 2f;
-                PollBridgeMaydayLights();
-            }
-            else if (!BridgeLauncher.UseBridge) bridgeLights = true;
         }
 
-        // ---------------------------------------------------------------- polling (worker threads)
-        static string HttpGet(string path)
-        {
-            var req = BridgeHttp.Create(path);
-            req.Timeout = 2500;
-            req.Proxy = null;
-            using (var resp = (HttpWebResponse)req.GetResponse())
-            using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-                return rd.ReadToEnd();
-        }
 
         static void PollStatus()
-        {
-            // P5-1.8: always show something honest: fresh bridge rows, else the in-mod controller's own state.
-            double age = bridgeRowsAt < 0 ? -1 : Time.realtimeSinceStartup - bridgeRowsAt;
-            rows = DashboardRows.Choose(BridgeLauncher.AiEnabled && !NativeFlightController.OwnsControls, bridgeRows, age, NativeFlightController.Phase, NativeFlightController.PlanStatus);
-            statusOk = true;
-            if (!BridgeLauncher.AiEnabled || NativeFlightController.OwnsControls) { bridgeRows = null; data = new Dictionary<string, string>(); return; }
-            if (Interlocked.CompareExchange(ref polling, 1, 0) != 0) return;
-            float started = Time.realtimeSinceStartup;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    var d = new Dictionary<string, string>();
-                    var r = new List<string[]>();
-                    foreach (string line in HttpGet("status?format=text").Split('\n'))
-                    {
-                        int tab = line.IndexOf('\t');
-                        if (tab <= 0) continue;
-                        string k = line.Substring(0, tab), v = line.Substring(tab + 1).TrimEnd('\r');
-                        d[k] = v;
-                        if (!k.StartsWith("ind_")) r.Add(new[] { k, v });
-                    }
-                    data = d;
-                    bridgeRows = r;
-                    bridgeRowsAt = started;
-                }
-                catch (Exception)
-                {
-                    data = new Dictionary<string, string>();
-                    bridgeRows = null;
-                }
-                finally { Interlocked.Exchange(ref polling, 0); }
-            });
-        }
+        { rows = DashboardRows.Local(NativeFlightController.Phase, NativeFlightController.PlanStatus); statusOk = true; }
 
-        /// <summary>Bridge mayday_lights veto only; vessel systems stay on LocalVesselState.</summary>
-        static void PollBridgeMaydayLights()
-        {
-            if (Interlocked.CompareExchange(ref lightsPolling, 1, 0) != 0) return;
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    bool lights = true;
-                    foreach (string raw in HttpGet("systems?format=text").Split('\n'))
-                    {
-                        string[] f = raw.TrimEnd('\r').Split('\t');
-                        if (f[0] == "lights" && f.Length >= 2) lights = f[1].Trim() != "0";
-                    }
-                    bridgeLights = lights;
-                }
-                catch (Exception) { /* keep last bridgeLights; local MAYDAY blink still honors maydayLights toggle */ }
-                finally { Interlocked.Exchange(ref lightsPolling, 0); }
-            });
-        }
 
         static int Seq()
         {
@@ -192,7 +110,7 @@ namespace KSPChatBridge
         void Blink()
         {
             Vessel v = HighLogic.LoadedSceneIsFlight ? FlightGlobals.ActiveVessel : null;
-            bool want = maydayLights && bridgeLights && v != null && master[0] == "warning" && Unacked();
+            bool want = maydayLights && v != null && master[0] == "warning" && Unacked();
             if (want)
             {
                 if (!blinking || blinkVessel != v)
@@ -324,14 +242,14 @@ namespace KSPChatBridge
                 GUILayout.Label(kv[0] + ": " + kv[1], valStyle);
             if (statusOk && rows.Count > 0)
             {
-                GUILayout.Label(BridgeLauncher.UseBridge ? "Autopilot (bridge)" : "Autopilot (local)", keyStyle, GUILayout.Width(w));
+                GUILayout.Label("Autopilot", keyStyle, GUILayout.Width(w));
                 foreach (string[] kv in rows)
                 {
                     if (LocalVesselState.Available && (kv[0] == "alt" || kv[0] == "speed" || kv[0] == "throttle" || kv[0] == "pilot")) continue;
                     string label;
                     if (!Labels.TryGetValue(kv[0], out label)) label = kv[0];
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label((BridgeLauncher.UseBridge ? "AP: " : "") + label, keyStyle, GUILayout.Width(100));
+                    GUILayout.Label(label, keyStyle, GUILayout.Width(100));
                     GUILayout.Label(kv[1], valStyle, GUILayout.Width(w - 130));
                     GUILayout.EndHorizontal();
                 }

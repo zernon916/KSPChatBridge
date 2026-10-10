@@ -4,7 +4,7 @@ using System.Reflection;
 namespace KSPChatBridge
 {
     // P5-4: optional MechJeb2 link by reflection (no compile-time dependency). Every call reports a clear
-    // "needs MechJeb" / API mismatch instead of silently falling back to kRPC.
+    // "needs MechJeb" / API mismatch instead of failing silently.
     internal static class MechJebLink
     {
         internal const string Missing = MechJebPolicy.Missing;

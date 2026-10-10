@@ -4,7 +4,7 @@ using System.IO;
 
 namespace KSPChatBridge
 {
-    // Single validated command surface for menu, AI-off tools, bridge handoff and future AI routing.
+    // Single validated command surface for menu, AI-off tools and AI tool calls.
     // Keep this file free of Unity/KSP types so the offline C# suite can compile it.
     internal static class NativeCommands
     {

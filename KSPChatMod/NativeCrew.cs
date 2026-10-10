@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -50,7 +50,7 @@ namespace KSPChatBridge
             return "rocket";
         }
 
-        static bool ChatterOn { get { return BridgeLauncher.AiEnabled && !BridgeLauncher.UseBridge; } }
+        static bool ChatterOn { get { return AicsCore.AiEnabled; } }
         bool chatterInit;
         static bool poolLoaded;
 

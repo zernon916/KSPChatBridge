@@ -4,7 +4,7 @@ using System.Globalization;
 namespace KSPChatBridge
 {
     // P5-1.9: one identity story for native tools. Vessel = Vessel.id GUID ("D" form); part = Part.flightID (decimal,
-    // invariant). kRPC remote ids (RotorTelemetry.RpcId) are bridge-only extras and never used as native keys.
+    // invariant).
     internal static class NativeIds
     {
         internal static string Vessel(Guid id) { return id.ToString("D"); }

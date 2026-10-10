@@ -11,7 +11,7 @@ namespace KSPChatBridge
     {
         internal const int MaxNotes = 100;
         internal static Func<string> PathProvider = DefaultPath;
-        static string DefaultPath() { return Path.Combine(BridgeLauncher.DataDirectory, "playstyle_notes.md"); }
+        static string DefaultPath() { return Path.Combine(AicsCore.DataDirectory, "playstyle_notes.md"); }
 
         internal static List<string> Load()
         {
@@ -130,7 +130,7 @@ namespace KSPChatBridge
         internal static readonly string[] Goofy = { "goofy", "scatterbrained" };
 
         internal static Func<string> PathProvider = DefaultPath;
-        static string DefaultPath() { return Path.Combine(BridgeLauncher.DataDirectory, "kerbal_personalities.json"); }
+        static string DefaultPath() { return Path.Combine(AicsCore.DataDirectory, "kerbal_personalities.json"); }
         // stats: courage < 0.3 nervous; stupidity > 0.7 goofy; badass -> unflappable; veteran -> seasoned.
         internal static Dictionary<string, object> Generate(string name, Dictionary<string, object> stats)
         {

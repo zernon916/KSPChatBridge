@@ -4,7 +4,7 @@ namespace KSPChatBridge
     {
         internal static string ApplicationRootPath { get { return System.IO.Path.GetTempPath(); } }
     }
-    internal static class BridgeLauncher
+    internal static class AicsCore
     {
         internal static string PluginDataDirectory { get { return System.IO.Path.GetTempPath(); } }
         internal static string DataDirectory

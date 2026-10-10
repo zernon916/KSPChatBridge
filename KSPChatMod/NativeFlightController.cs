@@ -112,13 +112,13 @@ namespace KSPChatBridge
             try
             {
                 if (File.Exists(settingsPath)) settingsData = MiniJson.Deserialize(File.ReadAllText(settingsPath));
-                string legacyPath = Path.Combine(BridgeLauncher.DataDirectory, "bridge_settings.json");
+                string legacyPath = Path.Combine(AicsCore.DataDirectory, "bridge_settings.json");
                 var legacy = Num(settingsData, "migration_version", 0) < 1 && File.Exists(legacyPath) ? MiniJson.Deserialize(File.ReadAllText(legacyPath)) : new Dictionary<string, object>();
                 settingsData = NativeSettings.Migrate(settingsData, legacy);
                 AiSettings.MergeInto(settingsData);
                 if (!settingsData.ContainsKey("craft_notes_imported"))
                 {
-                    string notesPath = Path.Combine(BridgeLauncher.DataDirectory, "craft_notes.json");
+                    string notesPath = Path.Combine(AicsCore.DataDirectory, "craft_notes.json");
                     if (!settingsData.ContainsKey("craft_notes") && File.Exists(notesPath)) settingsData["craft_notes"] = MiniJson.Deserialize(File.ReadAllText(notesPath));
                     settingsData["craft_notes_imported"] = true;
                 }
@@ -168,12 +168,11 @@ namespace KSPChatBridge
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
         }
-        internal static bool OwnsControls { get { return NativeSafety.NativeOwns(BridgeLauncher.AiEnabled, BridgeLauncher.NativeReady, BridgeLauncher.NativeChat); } }
         /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
         internal static bool AirbrakesByAutopilot;
         float nextChartPoll;
         static DecelLearner decelStore; double decelPrevV = -1; float decelSaveAt;
-        static string DecelPath { get { return System.IO.Path.Combine(BridgeLauncher.PluginDataDirectory, "decel_profiles.json"); } }
+        static string DecelPath { get { return System.IO.Path.Combine(AicsCore.PluginDataDirectory, "decel_profiles.json"); } }
         internal static DecelLearner Decel { get { if (decelStore == null) { try { decelStore = System.IO.File.Exists(DecelPath) ? DecelLearner.FromJson(System.IO.File.ReadAllText(DecelPath)) : new DecelLearner(); } catch (Exception) { decelStore = new DecelLearner(); } } return decelStore; } }
         /// <summary>Measure this craft's deceleration at idle (+airbrakes) in level-ish flight; saved per craft name in PluginData/decel_profiles.json.</summary>
         void LearnDecel(double dt)
@@ -210,11 +209,6 @@ namespace KSPChatBridge
         {
             PollCharts();
             Bind();
-            bool nativeMode = OwnsControls;
-            // P5-1.7: the in-mod safety tick (power, sabotage revert, parking, engine restart) runs whenever
-            // NativeSafety.ShouldRun says so; the local flight tick (plans/hold/spool/trim) only in native mode.
-            bool safetyNet = nativeMode || NativeSafety.ShouldRun(BridgeLauncher.AiEnabled, BridgeLauncher.BridgeResponding);
-            if (!nativeMode && !safetyNet) { wasNative = false; return; }
             if (vessel == null || vessel.packed) return;
             if (!wasNative)
             {
@@ -231,8 +225,7 @@ namespace KSPChatBridge
                 reversers = new NativeReversers(vessel);
                 flaps = new NativeFlaps(vessel);
             }
-            SafetyTick(nativeMode, safetyNet);
-            if (!nativeMode) return;
+            SafetyTick();
             if (rotorPark != null && Time.realtimeSinceStartup >= nextRotorPark)
             {
                 nextRotorPark = Time.realtimeSinceStartup + .5f;
@@ -290,7 +283,7 @@ namespace KSPChatBridge
             if (watchTrimUntil > Time.realtimeSinceStartup && (Math.Abs(vessel.verticalSpeed) > Math.Abs(trimBaselineVs) + 2 || Math.Abs(Pitch() - trimBaselinePitch) > 3))
             { trimSuspended = true; watchTrimUntil = 0; ChatWindow.Notice("Auto-trim paused: flight drifted from level. Reset restores surfaces."); }
         }
-        void SafetyTick(bool nativeMode, bool safetyNet)
+        void SafetyTick()
         {
             float now = Time.realtimeSinceStartup;
             bool flying = !vessel.LandedOrSplashed;
@@ -307,13 +300,13 @@ namespace KSPChatBridge
             catch (Exception ex) { ChatWindow.Notice("Local engine restart failed: " + ex.Message); }
             try
             {
-                bool revert = NativeSafety.ShouldRevert(!nativeMode && safetyNet, nativeMode && Active, flying);
+                bool revert = NativeSafety.ShouldRevert(Active, flying);
                 int restored = recovery.Tick(vessel, now, revert);
                 restored += reversers.Recover(vessel, now, revert);
                 var noticed = new List<string>(recovery.Noticed); noticed.AddRange(reversers.Noticed);
                 if (Active && flying && TimeWarp.WarpMode == TimeWarp.Modes.LOW && vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
                 { int capI = PilotPolicy.WarpIndexCap(true, TimeWarp.CurrentRateIndex, TimeWarp.fetch != null ? TimeWarp.fetch.physicsWarpRates : null); if (capI < TimeWarp.CurrentRateIndex) { TimeWarp.SetRate(capI, true); ChatLog.Write("ap", "physics warp capped at 3x in atmosphere"); } }
-                if (nativeMode && Active && flying) GearWatch(now); else { gearGate.Reset(); if (!Active) gearSaid = null; }
+                if (Active && flying) GearWatch(now); else { gearGate.Reset(); if (!Active) gearSaid = null; }
                 foreach (string what in noticed)
                 {
                     string al = "[SYSTEM] WARNING: " + what + " configuration changed in flight - pilot reverting";
@@ -355,7 +348,7 @@ namespace KSPChatBridge
         }
         void Fly(FlightCtrlState c)
         {
-            if (!OwnsControls || mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
+            if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
             try
             {
                 if (mode == "spool") return;
@@ -688,7 +681,7 @@ namespace KSPChatBridge
         internal static string Execute(string name, string argsJson)
         {
             // AI-off autopilot, or in-mod chat tool dispatch (NativeChat) may call into the local command layer.
-            bool allowed = OwnsControls;
+            bool allowed = true;
             if (!allowed) return "Local mode is not ready.";
             if (name == "tech_advisor") { try { return TechAdvisor.Run(MiniJson.Deserialize(argsJson ?? "{}")); } catch (Exception ex) { return "Tech advice failed: " + ex.Message; } }
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";

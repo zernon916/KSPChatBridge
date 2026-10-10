@@ -457,9 +457,9 @@ Luke runs and records results here. Only then flip lines to **DONE (live)**.
 
 ### P5-8 — Remove the bridge
 Only after P5-7 pass:
-- [ ] Delete bridge launch / watchdog / shutdown and obsolete HTTP telemetry polling from shipping plugin
-- [ ] Stop packaging `AICSBridge.exe`; update README / wiki / CKAN (download buttons; Desktop MCP discontinued; MJ-optional)
-- [ ] Repo keeps `kspchat/` source
+- [x] **DONE (Oct 10, backup at branch `backup/bridge-final`)** Delete bridge launch / watchdog / shutdown and obsolete HTTP telemetry polling from shipping plugin (BridgeLauncher, BridgeHttp, native_chat toggle, kRPC ids; AI on/off now in PluginData/aics.cfg)
+- [x] **DONE** Stop packaging `AICSBridge.exe`; update README / CKAN (wiki still to update) (download buttons; Desktop MCP discontinued; MJ-optional)
+- [x] **CHANGED (Luke)**: repo keeps only current code - `kspchat/`, run_bridge.py, Python tests and bridge tools removed (history on `backup/bridge-final`)
 - [ ] Final report: commits, zip/DLL paths, intentional limitations
 
 Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5 Llama downloads → P5-6 Bridge-free RC → P5-7 Live DONE → P5-8 Remove bridge.

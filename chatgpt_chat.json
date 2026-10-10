@@ -1,0 +1,49 @@
+{
+ "next": 8,
+ "inbox": [
+  {
+   "id": 1,
+   "ts": 1791486397.7035584,
+   "text": "hi",
+   "state": "answered"
+  },
+  {
+   "id": 2,
+   "ts": 1791486477.4176366,
+   "text": "Hello gpt",
+   "state": "answered"
+  },
+  {
+   "id": 3,
+   "ts": 1791486560.1343398,
+   "text": "hello",
+   "state": "answered"
+  },
+  {
+   "id": 4,
+   "ts": 1791486615.4853902,
+   "text": "Are you ready for play testing?",
+   "state": "answered"
+  },
+  {
+   "id": 5,
+   "ts": 1791486640.3178763,
+   "text": "ok,",
+   "state": "answered"
+  },
+  {
+   "id": 6,
+   "ts": 1791486721.8545115,
+   "text": "ok",
+   "state": "answered"
+  },
+  {
+   "id": 7,
+   "ts": 1791486767.1084743,
+   "text": "Ok, test",
+   "state": "answered"
+  }
+ ],
+ "outbox": [],
+ "seen": 1791486863.4381514
+}

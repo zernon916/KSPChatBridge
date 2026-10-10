@@ -3,7 +3,7 @@
 Paste any plan into **AICS > Flight Plan** (or ask the chat AI: "fly the island hop plan"), edit the numbers,
 then **Fly**. One step per line. Plans below the built-in four (`circle`, `cruise`, `circuit`, `orbit`).
 
-**Step grammar the runner understands today** (planes/rockets fully; see `kspchat/flightplan.py`):
+**Step grammar the runner understands today** (planes/rockets fully; see `KSPChatMod/NativePlan.cs`):
 `takeoff` · `climb 3000 m agl vs 50` · `descend 1000 m agl vs 30` · `cruise hdg 090 alt 3000 m agl speed 180 for 3 min`
 (`for` takes s/min/km) · `circle 3 laps right bank 15 [around field]` · `fly to Island Airfield alt 500 m speed 150`
 (flies there and lands) · `land` / `land Runway 27` / `land Island Airfield` / `land Runway 09 tg 2` (touch-and-goes)
@@ -398,5 +398,5 @@ wait 60 s
 - **`override bank 30 *`** raises a limit for the rest of the plan — ALWAYS end it with `override off`. The ` *`
   means Luke gets a yes/no prompt when it runs. Never write `***` or `authorise all`.
 - Known runways: `Runway 09`, `Runway 27`, `Island Airfield` (plus any saved spot via `save_landing_spot`).
-- Rocket legs need **MechJeb** (kRPC.MechJeb). Plane and taxi legs run without it.
+- Rocket legs need **MechJeb**. Plane and taxi legs run without it.
 - The chat AI can draft a plan for you: "plan a survey flight" fills the editor; you edit and press Fly.

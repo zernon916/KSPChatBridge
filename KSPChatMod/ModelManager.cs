@@ -39,7 +39,7 @@ namespace KSPChatBridge
                 {
                     if (instance == null)
                     {
-                        string root = NativeLibraryLayout.ModelsRoot(BridgeLauncher.PluginDataDirectory);
+                        string root = NativeLibraryLayout.ModelsRoot(AicsCore.PluginDataDirectory);
                         instance = new ModelManager(root, DefaultSha256, DefaultMinBytes);
                     }
                     return instance;

@@ -51,17 +51,17 @@ namespace KSPChatBridge
             try { return Math.Max(0, body.TerrainAltitude(lat, lon, false)); } catch (Exception) { return double.NaN; }
         }
 
-        internal static string ApproachPath { get { return Path.Combine(BridgeLauncher.PluginDataDirectory, "approaches.json"); } }
+        internal static string ApproachPath { get { return Path.Combine(AicsCore.PluginDataDirectory, "approaches.json"); } }
 
         static bool chartsReady;
         /// <summary>PluginData/charts (hot-swappable per-end chart files); migrates approaches.json once.</summary>
         internal static void EnsureCharts()
         {
             if (chartsReady) return; chartsReady = true;
-            ChartStore.Dir = Path.Combine(BridgeLauncher.PluginDataDirectory, "charts");
+            ChartStore.Dir = Path.Combine(AicsCore.PluginDataDirectory, "charts");
             try
             {   // shipped default charts (e.g. KSC_09_tight.json) are copied once, never over the player's files
-                string defs = Path.Combine(Path.GetDirectoryName(BridgeLauncher.PluginDataDirectory.TrimEnd('/', '\\')), "Defaults", "charts");
+                string defs = Path.Combine(Path.GetDirectoryName(AicsCore.PluginDataDirectory.TrimEnd('/', '\\')), "Defaults", "charts");
                 if (Directory.Exists(defs)) { Directory.CreateDirectory(ChartStore.Dir); foreach (var f in Directory.GetFiles(defs, "*.json")) { string to = Path.Combine(ChartStore.Dir, Path.GetFileName(f)); if (!File.Exists(to)) File.Copy(f, to); } }
             }
             catch (Exception ex) { ChatLog.Write("approach", "default charts not copied: " + ex.Message); }

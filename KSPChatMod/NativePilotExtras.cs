@@ -31,13 +31,12 @@ namespace KSPChatBridge
 
         void EngineWatchTick(float now, bool flying)
         {
-            bool owns = OwnsControls;
             foreach (Part p in vessel.parts)
                 foreach (var e in p.FindModulesImplementing<ModuleEngines>())
                 {
                     bool running = e.EngineIgnited && !e.flameout, was;
                     engineRunning.TryGetValue(e, out was);
-                    string act = PilotPolicy.EngineWatch(was, running, e.flameout, flying && owns, now - EnginesCommandedAt < 5, e.allowRestart);
+                    string act = PilotPolicy.EngineWatch(was, running, e.flameout, flying, now - EnginesCommandedAt < 5, e.allowRestart);
                     engineRunning[e] = running;
                     if (act != "restart") continue;
                     string title = e.part.partInfo != null ? e.part.partInfo.title : "engine";

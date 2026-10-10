@@ -12,22 +12,6 @@ class Program
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
     static void Main()
     {
-        var p = new RestartPolicy();
-        Check(p.CanStart(0, true, false, false, false), "initial launch");
-        Check(!p.CanStart(0, false, false, false, false), "autostart off");
-        Check(!p.CanStart(0, true, true, false, false), "quit");
-        Check(!p.CanStart(0, true, false, true, false), "already starting");
-        Check(!p.CanStart(0, true, false, false, true), "alive but unhealthy");
-        p.Failed(0);
-        Check(!p.CanStart(1, true, false, false, false), "backoff");
-        Check(p.CanStart(2, true, false, false, false), "retry");
-        p.Failed(2);
-        Check(!p.CanStart(5, true, false, false, false), "increased backoff");
-        for (int i = 0; i < 20; i++) p.Failed(10);
-        Check(p.CanStart(70, true, false, false, false), "bounded backoff");
-        p.Stable(); p.Failed(100);
-        Check(p.CanStart(102, true, false, false, false), "stable reset");
-        Console.WriteLine("Restart policy: 10 behavior checks passed.");
         Check(RotorMeasurements.Rpm(new Rotor()) == 380, "physics RPM beats stale UI field");
         Check(float.IsNaN(RotorMeasurements.Rpm(new object())), "missing measurement is unknown");
         Console.WriteLine("Rotor measurement: 2 behavior checks passed.");
@@ -498,11 +482,8 @@ class Program
         Check(fakeCalls == 2 && toolLog == "get_status:{}" && answer == "Altitude 5 km. [alt 5000 m]", "in-mod tool loop (reply carries the tool result)");
         Console.WriteLine("In-mod AI stack: 7 behavior checks passed.");
         // ---- P5-1 foundation ----
-        var cfgDefaults = BridgeConfigDefaults.Create();
-        Check(cfgDefaults["native_chat"] == "true", "new installs default to native chat (no :8765 needed)");
-        Check(cfgDefaults["ai_enabled"] == "true" && cfgDefaults["autostart"] == "false", "defaults: AI on, bridge autostart off (bridge-free)");
-        Check(cfgDefaults.ContainsKey("bridge_dir") && cfgDefaults.ContainsKey("python"), "bridge fallback keys kept");
-        Console.WriteLine("P5-1 config defaults: 3 behavior checks passed.");
+        Check(PluginDataMigration.ParseAiEnabled("# x\nai_enabled = false\n", true) == false && PluginDataMigration.ParseAiEnabled("autostart = true\n", true) && PluginDataMigration.ParseAiEnabled("", false) == false, "aics.cfg / old bridge.cfg: ai_enabled read, default kept");
+        Console.WriteLine("AI on/off setting: 1 behavior check passed.");
         // ---- P5-1: Claude + Grok are real providers, not stubs ----
         SecretsStore.Set("ANTHROPIC_API_KEY", "ant-key-1234567890");
         var claude = OpenAiBackend.Resolve("claude");
@@ -596,10 +577,7 @@ class Program
         Check(new NativeSpots(emptySettings).List() == "", "empty spot list");
         Console.WriteLine("P5-1 read-only ports: 2 behavior checks passed.");
         // ---- P5-1.7: native safety tick policy (power/sabotage/parking/engine restart run in-mod) ----
-        Check(NativeSafety.ShouldRun(false, true) && NativeSafety.ShouldRun(true, false) && !NativeSafety.ShouldRun(true, true), "safety tick runs when AI off or bridge absent");
-        Check(NativeSafety.IsFresh(100, 105) && !NativeSafety.IsFresh(100, 111) && !NativeSafety.IsFresh(0, 5), "bridge freshness window");
-        Check(NativeSafety.ShouldRevert(true, false, true) && NativeSafety.ShouldRevert(false, true, true), "sabotage revert in flight (safety net or active pilot)");
-        Check(!NativeSafety.ShouldRevert(true, true, false) && !NativeSafety.ShouldRevert(false, false, true), "no revert landed or when idle without safety net");
+        Check(NativeSafety.ShouldRevert(true, true) && !NativeSafety.ShouldRevert(true, false) && !NativeSafety.ShouldRevert(false, true), "sabotage revert only in flight with the controller active");
         Check(NativeSafety.ParkingAction(true, true, true, true, true, true, false, false) == "rearm", "parking re-arms after landing");
         Check(NativeSafety.ParkingAction(true, false, false, false, true, true, false, false) == "set", "parking set when grounded idle with wheels");
         Check(NativeSafety.ParkingAction(true, false, false, true, true, true, false, true) == "released", "player brake-off releases parking");
@@ -608,11 +586,7 @@ class Program
             && NativeSafety.ParkingAction(false, false, false, false, true, true, false, false) == "none"
             && NativeSafety.ParkingAction(true, false, true, false, true, true, false, false) == "none", "parking exempt: busy mode, no wheels, airborne, released");
         Check(NativeSafety.ParkingAction(true, false, false, true, true, true, true, false) == "none", "parking holds while set");
-        Console.WriteLine("P5-1 native safety tick: 9 behavior checks passed.");
-        // ---- Oct 9 decision: native controller owns the controls with AI on (AI issues commands only) ----
-        Check(NativeSafety.NativeOwns(false, true, false) && !NativeSafety.NativeOwns(false, false, true), "AI off: native owns after handoff");
-        Check(NativeSafety.NativeOwns(true, false, true) && !NativeSafety.NativeOwns(true, true, false), "AI on: native owns when in-mod chat/tools on");
-        Console.WriteLine("Native ownership with AI on: 2 behavior checks passed.");
+        Console.WriteLine("Native safety tick: 7 behavior checks passed.");
         // ---- MechJeb 2.15 planner ports ----
         Check(MechJebPolicy.VersionGate(new Version(2, 15, 0, 0)) == null && MechJebPolicy.VersionGate(new Version(2, 16)) == null, "MJ 2.15+ supported");
         Check(MechJebPolicy.VersionGate(new Version(2, 14, 1)).StartsWith("Unsupported MechJeb version") && MechJebPolicy.VersionGate(null) == MechJebPolicy.Missing, "old/missing MJ refused gracefully");
@@ -633,8 +607,6 @@ class Program
             Check(NativeCommands.IsPorted(tl), tl + " ported in-process");
         Console.WriteLine("MechJeb planner ports: 14 behavior checks passed.");
         // ---- Live bugs Oct 9 (bridge-free build) ----
-        Check(!NativeSafety.NeedsBridge(true, true) && NativeSafety.NeedsBridge(true, false) && !NativeSafety.NeedsBridge(false, false), "menus gate on bridge only for bridge chat");
-        Check(NativeSafety.MissingDeps(false, "kRPC, kRPC.MechJeb") == "" && NativeSafety.MissingDeps(true, "kRPC") == "kRPC", "kRPC not required natively");
         Check(NativeSafety.ReleaseForTakeoff("takeoff", "roll", true, true) && !NativeSafety.ReleaseForTakeoff("takeoff", "roll", false, true) && !NativeSafety.ReleaseForTakeoff("hold", "roll", true, true), "takeoff releases parking brake on the roll");
         Check(!NativeSafety.ParkingIdle("idle", true) && !NativeSafety.ParkingIdle("takeoff", false) && NativeSafety.ParkingIdle("idle", false), "parking idle only without command/plan");
         Check(NativeSafety.ParkingAction(true, false, false, false, NativeSafety.ParkingIdle("takeoff", false), true, false, false) == "none", "parking never re-applies during takeoff");
@@ -668,16 +640,6 @@ class Program
         Check(offPosted == 0, "chatter off = silent");
         int portedTools = 0; foreach (var pn in NativeCommands.Ported) if (!pn.Contains("/")) portedTools++;
         Check(NativeToolSchemas.Count == portedTools, "tool schemas cover every ported tool (" + NativeToolSchemas.Count + "/" + portedTools + ")");
-        {
-            BridgeHttp.Allowed = () => NativeSafety.NeedsBridge(true, true);   // AI on + in-mod chat
-            int before = BridgeHttp.Blocked; bool threw = false;
-            try { BridgeHttp.Create("tool"); } catch (BridgeOffException ex) { threw = ex.Message.StartsWith("Not available in-mod yet"); }
-            Check(threw && BridgeHttp.Blocked == before + 1, "native mode: no request to 127.0.0.1:8765 is ever created");
-            BridgeHttp.Allowed = () => NativeSafety.NeedsBridge(false, false);
-            threw = false; try { BridgeHttp.Create("health"); } catch (BridgeOffException) { threw = true; }
-            Check(threw, "AI off: bridge HTTP refused too");
-            BridgeHttp.Allowed = () => false;
-        }
         Check(EmbeddedLlm.UnloadOnScene("MAINMENU") && !EmbeddedLlm.UnloadOnScene("FLIGHT") && !EmbeddedLlm.UnloadOnScene("SPACECENTER"), "model unloads only at the main menu");
         EmbeddedLlm.Unload(); Check(!EmbeddedLlm.Loaded, "unload with nothing loaded is safe; next chat reloads lazily");
         Console.WriteLine("Live bug fixes (menus, brakes, runway, voice, chatter, tools): 25 behavior checks passed.");
@@ -1409,13 +1371,9 @@ class Program
             Check(abeam.Kind == "long" && abeam.Phase != "go around", "90 deg sim: long final (" + abeam.Kind + "/" + abeam.Phase + ")");
         }
         Console.WriteLine("Approach rules (short/long final, nearest + best end): 8 behavior checks passed.");
-        // ---- P5-1.8: dashboard honesty ----
-        var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
-        Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");
-        Check(DashboardRows.Choose(true, br, 1, "idle", "")[0][1] == "bridge" && DashboardRows.Choose(true, br, 1, "idle", "")[1][1] == "BRIDGE hold", "fresh bridge rows labeled bridge");
-        Check(DashboardRows.Choose(true, br, 30, "idle", "")[0][1] == "local (in-mod)", "stale bridge rows replaced by local");
-        Check(DashboardRows.Choose(true, null, 1, "idle", "")[1][1] == "Local idle" && DashboardRows.Choose(true, br, -1, null, null)[1][1] == "Local idle", "failed poll / never polled shows local");
-        Console.WriteLine("P5-1 dashboard honesty: 4 behavior checks passed.");
+        // ---- dashboard rows come from the in-mod controller ----
+        Check(DashboardRows.Local("hold", "p")[1][1] == "Local hold" && DashboardRows.Local(null, null)[1][1] == "Local idle", "dashboard shows the in-mod controller state");
+        Console.WriteLine("Dashboard rows: 1 behavior check passed.");
         // ---- P5-1.9: single native identity ----
         var gid = new Guid("0123456789abcdef0123456789abcdef");
         Check(NativeIds.Vessel(gid) == "01234567-89ab-cdef-0123-456789abcdef", "vessel id is GUID D form");
@@ -1684,6 +1642,25 @@ class Program
             tx.Step(300, 0, 0, 90, 16, 600000, true, false, 2); Check(tx.Brakes && tx.Throttle == 0, "over speed: wheel brakes, idle");
             Console.WriteLine("Taxi speed: 4 behavior checks passed.");
         }
+        {   // repo checks ported from the removed Python suite (bridge removal, P5-8)
+            string root = System.IO.Directory.GetCurrentDirectory();
+            while (root != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root, "KSPChatMod"))) root = System.IO.Path.GetDirectoryName(root);
+            Check(root != null, "repo root found");
+            string pkg = System.IO.File.ReadAllText(System.IO.Path.Combine(root, "tools", "package_release.ps1"));
+            Check(pkg.Contains("personalities.txt") && pkg.Contains("AICS_RPM.cfg") && pkg.Contains("Defaults\\charts") && !pkg.Contains("AICSBridge") && !pkg.Contains("PyInstaller"), "release ships personalities, RPM pages, default charts; no bridge exe");
+            Check(PersonalityPrompts.All.Length == 36, "36 personality prompts generated from personalities.txt (" + PersonalityPrompts.All.Length + ")");
+            string crewSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(root, "KSPChatMod", "NativeCrew.cs"));
+            Check(crewSrc.Contains("class AicsCrewScenario : ScenarioModule") && crewSrc.Contains("AddToAllGames"), "kerbal personalities persist per save");
+            foreach (var f in System.IO.Directory.GetFiles(System.IO.Path.Combine(root, "KSPChatMod"), "*.cs"))
+            {
+                string src = System.IO.File.ReadAllText(f);
+                Check(!src.Contains("127.0.0.1:8765") && !src.Contains("KRPC.") && !src.Contains("run_bridge"), "no bridge / kRPC code left: " + System.IO.Path.GetFileName(f));
+            }
+            string netkan = System.IO.File.ReadAllText(System.IO.Path.Combine(root, "ckan", "KSPChatBridge.netkan"));
+            Check(!netkan.Contains("kRPC") && !netkan.Contains("\"depends\""), "CKAN draft: no kRPC dependency");
+            Console.WriteLine("Repo / packaging checks: 6 behavior checks passed.");
+        }
+
         {   // measured deceleration drives the decel start (Luke 3:43 PM)
             var dl = new DecelLearner(); for (int i = 0; i < 200; i++) dl.Learn("Aeris 3A", 60 + i % 60, 2.5, true);
             double a = dl.Estimate("Aeris 3A", 104, 54, true); Check(Math.Abs(a - 2.5) < .01 && double.IsNaN(dl.Estimate("Unknown", 104, 54, true)), "decel learned per craft (" + a.ToString("0.00") + ")");
