@@ -1160,6 +1160,27 @@ class Program
                 Check(Convert.ToInt32(site["n"]) == 176 && Convert.ToInt32(((System.Collections.IList)site["h"])[1]) == 87 && ((System.Collections.IList)site["h"]).Count == 176 * 176, "terrain json round-trips");
             }
             Console.WriteLine("Terrain export grid: 2 behavior checks passed.");
+            {
+                MapReveal.Clear(); const double Rk = 600000;
+                Check(MapReveal.RadiusFor(0) == 3000 && MapReveal.RadiusFor(4000) == 5000 && MapReveal.RadiusFor(1e6) == 12000, "reveal radius 3 km, grows with height, capped 12 km");
+                Check(MapReveal.Revealed("Kerbin", -1.52, -71.91, Rk, null) && MapReveal.Revealed("Kerbin", -6.6, -144.04, Rk, null) && !MapReveal.Revealed("Kerbin", 10, 10, Rk, null), "airports always revealed, the rest fogged");
+                int added = MapReveal.Fly("Kerbin", 10, 10, 0, Rk);
+                Check(added > 100 && MapReveal.Revealed("Kerbin", 10.02, 10, Rk, null) && MapReveal.Revealed("Kerbin", 10.2, 10, Rk, null) && !MapReveal.Revealed("Kerbin", 10.4, 10, Rk, null), "flight path reveals ~3 km around the craft");
+                Check(MapReveal.Fly("Kerbin", 10.001, 10, 0, Rk) == 0, "no re-reveal until the craft moved 500 m");
+                Check(MapReveal.Revealed("Kerbin", 20, 20, Rk, (la, lo) => la > 19) && !MapReveal.Revealed("Kerbin", 10.02, 10, Rk, (la, lo) => false), "SCANsat coverage drives reveal when installed");
+                var ser = MapReveal.Serialize(); int before = MapReveal.Count("Kerbin"); MapReveal.Clear(); MapReveal.Load("Kerbin", ser["Kerbin"]);
+                Check(MapReveal.Count("Kerbin") == before && MapReveal.Revealed("Kerbin", 10.02, 10, Rk, null), "reveal persists (save round-trip)");
+                Check(MapReveal.Revealed("Mun", 0, 0, Rk, null, new[] { new[] { 0.0, 0.0 } }), "saved spots revealed like airports");
+                MapReveal.Clear();
+                string other = "{\"Island 09\":{\"alt_ref\":\"agl\",\"fixes\":[],\"flare_start_m\":22}}";
+                var ef = new List<ApproachFile.EditFix> { new ApproachFile.EditFix { Role = "faf", Name = "FAF", Lat = -.0478, Lon = -74.832, AltMsl = 700 }, new ApproachFile.EditFix { Role = "wp", Name = "WP1", Side = "left", Ref = "msl", Lat = .05, Lon = -74.83, AltMsl = 800 } };
+                string merged = ApproachFile.Merge(other, "KSC 09", ef, (la, lo) => 40);
+                var mj = MiniJson.Deserialize(merged); string whyM;
+                var back = ApproachOverride.Parse(mj["KSC 09"], -.0486, -74.7244, 69, Rk, out whyM, (la, lo) => 40);
+                Check(mj.ContainsKey("Island 09") && back != null && back.Fixes.Count == 2 && back.Fixes[0].Agl == 660 && back.Fixes[0].Alt == 700 && back.Fixes[1].AltRef == "msl" && back.Fixes[1].Alt == 800, "map editor save keeps other ends and round-trips agl/msl: " + whyM);
+                Check(ApproachFile.Merge("garbage{", "KSC 27", ef, null).Contains("KSC 27"), "corrupt file replaced, not crashed");
+            }
+            Console.WriteLine("Map fog + chart save: 9 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

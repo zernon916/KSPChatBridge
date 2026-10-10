@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -27,6 +27,17 @@ namespace KSPChatBridge
         }
 
         internal static bool Installed { get { Find(); return util != null; } }
+
+        static System.Reflection.MethodInfo covered; static int coverMask = -1;
+        /// <summary>True when SCANsat has altimetry or visual coverage at lat/lon (any resolution).</summary>
+        internal static bool IsCovered(double lat, double lon, CelestialBody body)
+        {
+            if (!Installed || body == null) return false;
+            if (covered == null) covered = util.GetMethod("isCovered", new[] { typeof(double), typeof(double), typeof(CelestialBody), typeof(int) });
+            if (covered == null) return false;
+            if (coverMask < 0) { coverMask = 0; foreach (var t in new[] { "AltimetryLoRes", "AltimetryHiRes", "VisualLoRes", "VisualHiRes" }) coverMask |= TypeMask(t); }
+            try { return (bool)covered.Invoke(null, new object[] { lon, lat, body, coverMask }); } catch (Exception) { return false; }
+        }
 
         static int TypeMask(string name)
         {

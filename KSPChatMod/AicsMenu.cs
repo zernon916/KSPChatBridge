@@ -300,7 +300,7 @@ namespace KSPChatBridge
             if (GUILayout.Toggle(chatOn, "chat", GUI.skin.button, GUILayout.Width(40)) != chatOn) ChatWindow.ToggleChat();
             if (GUILayout.Toggle(stOn, "status", GUI.skin.button, GUILayout.Width(50)) != stOn) StatusWindow.ToggleStatus();     // live autopilot state window
             if (GUILayout.Toggle(syOn, "systems", GUI.skin.button, GUILayout.Width(60)) != syOn) StatusWindow.ToggleSystems();   // parts / emergency dashboard
-            if (GUILayout.Toggle(trOn, "trim", GUI.skin.button, GUILayout.Width(44)) != trOn) TrimWindow.ToggleTrim();
+            if (GUILayout.Toggle(trOn, "trim", GUI.skin.button, GUILayout.Width(44)) != trOn) TrimWindow.ToggleTrim(); if (HighLogic.LoadedSceneIsFlight && GUILayout.Toggle(MapWindow.MapVisible, "map", GUI.skin.button, GUILayout.Width(40)) != MapWindow.MapVisible) MapWindow.ToggleMap();
             GUILayout.EndHorizontal();
             DepsWarning();
             // two columns of module toggles (MechJeb style); each opens its own window

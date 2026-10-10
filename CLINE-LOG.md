@@ -318,3 +318,8 @@ Cause of the left offset: no coordinate/heading error (runway coords match the t
 Changed: continuous 3 deg glideslope (630/210 m), predicted cross-track (damped) intercept + tracking to the flare, join radius +30%, approaches.json overrides (validated), flare/TCH/touchdown, ETA via remaining fixes, warp cap 3x in atmosphere, trim deg buttons, AP window persistence on every change, tools/approach_map.py (editable plate HTML) + import_approaches.ps1.
 Tests: pytest 496, C# green.
 Still needs live check: all.
+
+## Terrain export + in-game map/chart window (2026-10-10)
+Changed: TerrainExporter (terrain_kerbin.json on first KSC/flight load or Settings button), chart HTML hillshade/contours/cursor/real-terrain profile, update_approach_map.ps1; MapWindow ('map' toolbar button): fog of war (airports/pads/saved spots always revealed; flight path reveals 3-12 km by height, per save via AicsMapScenario; SCANsat 21.1 coverage drives reveal when installed), craft + active route, chart editor (drag, FAF/SF on centerline, add/remove, AGL/MSL, Save merges approaches.json).
+Tests: pytest 499, C# green.
+Still needs live check: all.
