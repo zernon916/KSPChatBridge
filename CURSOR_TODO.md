@@ -466,10 +466,10 @@ Flow: P5-1 Foundation → P5-2 Flight → P5-3 Science → P5-4 Orbital → P5-5
 
 
 ## POST-TESTING FEATURES (Luke approved, do after P5-7)
-- hold_pattern: circle a spot at a set altitude until told otherwise.
-- follow_terrain: hold a fixed height above ground.
-- fuel_check_return: fly home automatically when fuel equals what the return trip needs.
-- formation: AI wingman flies a second craft within KSP's ~2.5 km physics range.
+- hold_pattern **DONE (tests; needs live check)**: circle a spot at a set altitude until told otherwise.
+- follow_terrain **DONE (tests; needs live check)**: hold a fixed height above ground.
+- fuel_check_return **DONE (tests; needs live check)**: fly home automatically when fuel equals what the return trip needs.
+- formation **DONE (tests; needs live check)**: AI wingman flies a second craft within KSP's ~2.5 km physics range.
 
-- tech_advisor: in the R&D tech tree, the AI first ASKS the player's plan/goal (e.g. Mun landing, better planes), then recommends the cheapest unlock path for it and highlights those nodes in the tree.
+- tech_advisor **DONE (tests; needs live check)**: in the R&D tech tree, the AI first ASKS the player's plan/goal (e.g. Mun landing, better planes), then recommends the cheapest unlock path for it and highlights those nodes in the tree.
 
