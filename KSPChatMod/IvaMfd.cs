@@ -62,10 +62,13 @@ namespace KSPChatBridge
                 foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
                 foreach (var cl in internalProp.GetComponentsInChildren<Collider>(true)) cl.enabled = false;
                 foreach (var m in internalProp.internalModules) if (!(m is AicsIvaMfd) && !(m is AicsRpmPages)) m.enabled = false;
+            }
+            else if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
+            if (rpmHost || autoOrient)
+            {
                 int idx = 0; if (internalProp.internalModel != null) foreach (var pr in internalProp.internalModel.props) { if (pr == internalProp) break; foreach (var x in pr.internalModules) if (x is AicsIvaMfd) { idx++; break; } }
                 OpenItem(DefaultPage(idx)); Debug.Log("[KSPChatBridge] IVA MFD on RPM screen #" + idx + " -> " + item);
             }
-            else if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
             if (font == null)
             {
                 font = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Lucida Console", "Courier New", "DejaVu Sans Mono", "Liberation Mono" }, FontPx);

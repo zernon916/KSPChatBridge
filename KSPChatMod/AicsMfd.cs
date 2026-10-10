@@ -99,8 +99,50 @@ namespace KSPChatBridge
             if (mfdSkin == null) BuildMfdSkin();
             if (mfdRect.x < 0) mfdRect.x = Mathf.Max(0, Screen.width - mfdRect.width - 40);
             mfdRect.width = Mathf.Clamp(mfdRect.width, MfdMinW, Screen.width); mfdRect.height = Mathf.Clamp(mfdRect.height, MfdMinH, Screen.height);
-            SyncOpen();
-            mfdRect = GUI.Window(MfdId, mfdRect, DrawMfd, "", GUIStyle.none);
+            mfdRect = GUI.Window(MfdId, mfdRect, DrawScreen, "", GUIStyle.none);
+            for (int i = 1; i < ScreenCount; i++)
+            {
+                var s = extra[i]; if (s.R.x < 0) s.R.x = Mathf.Max(0, Screen.width - s.R.width - 40 - 60 * i);
+                s.R.width = Mathf.Clamp(s.R.width, MfdMinW, Screen.width); s.R.height = Mathf.Clamp(s.R.height, MfdMinH, Screen.height);
+                s.R = GUI.Window(MfdId + i, s.R, DrawScreen, "", GUIStyle.none);
+            }
+            bool anyMap = mfdGroup == "map"; for (int i = 1; i < ScreenCount; i++) anyMap |= extra[i].G == "map";
+            MapWindow.MapVisible = Expanded && anyMap && HighLogic.LoadedSceneIsFlight;
+        }
+
+        // ---- External MFD screens 1/2/3 (Luke 5:53 PM): screen 0 lives in the mfd* statics; screens 1-2 swap their own
+        // page/rect/scroll into those statics only while their (deferred) window callback runs, so every page is independent.
+        internal sealed class ScreenState { internal Rect R; internal string G, I; internal int P; internal Vector2 S; }
+        internal static int ScreenCount = 1; static bool inExtra, savePending;
+        static readonly ScreenState[] extra = { null, new ScreenState { R = new Rect(20, 80, 640, 560), G = "map", I = "ils" }, new ScreenState { R = new Rect(20, 660, 640, 520), G = "comms", I = "all" } };
+        void DrawScreen(int id)
+        {
+            int i = id - MfdId; if (i <= 0 || i >= extra.Length) { SyncOpen(); DrawMfd(id); return; }
+            var s = extra[i];
+            Rect r0 = mfdRect; string g0 = mfdGroup, i0 = mfdItem; int p0 = mfdPage; Vector2 sc0 = mfdScroll;
+            mfdRect = s.R; mfdGroup = s.G; mfdItem = s.I; mfdPage = s.P; mfdScroll = s.S;
+            inExtra = true; try { SyncOpen(); DrawMfd(id); }
+            finally
+            {
+                s.R.width = mfdRect.width; s.R.height = mfdRect.height; s.G = mfdGroup; s.I = mfdItem; s.P = mfdPage; s.S = mfdScroll;
+                mfdRect = r0; mfdGroup = g0; mfdItem = i0; mfdPage = p0; mfdScroll = sc0; inExtra = false;
+                if (savePending) { savePending = false; Save(); }
+            }
+        }
+        static bool OverAnyScreen(Vector2 m) { if (mfdRect.Contains(m)) return true; for (int i = 1; i < ScreenCount; i++) if (extra[i].R.Contains(m)) return true; return false; }
+        static string ExtraSave()
+        {
+            var b = new System.Text.StringBuilder(); b.Append("screens=" + ScreenCount + "\n");
+            for (int i = 1; i < extra.Length; i++) { var s = extra[i]; b.Append(string.Format(System.Globalization.CultureInfo.InvariantCulture, "s{0}={1},{2},{3},{4},{5},{6},{7}\n", i, s.R.x, s.R.y, s.R.width, s.R.height, s.G ?? "", s.I ?? "", s.P)); }
+            return b.ToString();
+        }
+        static void ExtraLoad(string key, string val)
+        {
+            if (key == "screens") { int n; if (int.TryParse(val.Trim(), out n)) ScreenCount = Mathf.Clamp(n, 1, 3); return; }
+            if (key.Length != 2 || key[0] != 's') return; int k = key[1] - '0'; if (k < 1 || k >= extra.Length) return;
+            var a = val.Split(','); if (a.Length < 7) return; var ci = System.Globalization.CultureInfo.InvariantCulture; float x, y, w, h; int pg;
+            if (!float.TryParse(a[0], System.Globalization.NumberStyles.Float, ci, out x) || !float.TryParse(a[1], System.Globalization.NumberStyles.Float, ci, out y) || !float.TryParse(a[2], System.Globalization.NumberStyles.Float, ci, out w) || !float.TryParse(a[3], System.Globalization.NumberStyles.Float, ci, out h)) return;
+            int.TryParse(a[6], out pg); extra[k] = new ScreenState { R = new Rect(x, y, Mathf.Max(MfdMinW, w), Mathf.Max(MfdMinH, h)), G = a[4].Length == 0 ? null : a[4], I = a[5].Length == 0 ? null : a[5], P = pg };
         }
 
         static string Title()

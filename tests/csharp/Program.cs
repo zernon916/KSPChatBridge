@@ -1838,8 +1838,9 @@ class Program
             Check(scaled && kp >= 8 && kl.Count <= 2 && kl.TrueForAll(x => x.Length * .6f * kp <= kr0.Wd), "layout stretches to any size; key labels keep glyph aspect and wrap (" + kp + " px, " + kl.Count + " lines)");
             Check(IvaLayout.Wrap("one two three four", 9).Count == 3 && IvaLayout.Wrap("a\nb", 9).Count == 2, "screen text wraps to the columns");
             string root2 = System.IO.Directory.GetCurrentDirectory(); while (root2 != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root2, "KSPChatMod"))) root2 = System.IO.Path.GetDirectoryName(root2);
-            string iva = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "AICS_IVA.cfg"));
-            bool all = true; foreach (var ii in new[] { "mk1CockpitInternal", "mk2InlineInternal", "Mk1-3", "mk2CockpitStandardInternals", "mk1InlineInternal" }) all &= iva.Contains("@INTERNAL[" + ii + "]");
+            string iva = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "AICS_IVA.cfg")), ivaSa = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "AICS_IVA_Standalone.cfg")); iva += ivaSa;
+            bool all = true; foreach (var ii in new[] { "mk1CockpitInternal", "mk2InlineInternal", "PodCockpit", "mk2CockpitStandardInternals", "mk1InlineInternal", "MK3_Cockpit_Int" }) all &= iva.Contains("@INTERNAL[" + ii + "]");
+            Check(iva.Contains("@PROP[RasterPropMonitorBasicMFD]:NEEDS[RasterPropMonitor]:FINAL") && ivaSa.Contains("@INTERNAL[MK3_Cockpit_Int]:NEEDS[!RasterPropMonitor]") && System.Text.RegularExpressions.Regex.Matches(ivaSa, "name = AICS_MFD_RPMPOS\\r?\\n\\s*position").Count >= 40, "IVA: generic RPM-screen patch + standalone RPM positions without RPM");
             Check(all && iva.Contains("name = AicsIvaMfd") && System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "tools", "package_release.ps1")).Contains("AICS_IVA.cfg"), "AICS_MFD prop patched into 5 stock cockpits and shipped");
             Console.WriteLine("IVA MFD: 7 behavior checks passed.");
         }

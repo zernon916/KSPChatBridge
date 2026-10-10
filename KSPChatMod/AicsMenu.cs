@@ -133,7 +133,7 @@ namespace KSPChatBridge
         static bool MouseOverUi()
         {
             Vector2 m = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-            if (Expanded && mfdRect.Contains(m)) return true;
+            if (Expanded && OverAnyScreen(m)) return true;
             if (TrimWindow.ContainsPoint(m)) return true;
             return false;
         }
@@ -799,6 +799,7 @@ namespace KSPChatBridge
             GUILayout.EndHorizontal();
             if (GUILayout.Button("RPM AICS pages: " + AicsRpmPages.Mode + "  (auto = hidden in cockpits with the native AICS MFD)")) AicsRpmPages.Mode = AicsRpmPages.Mode == "auto" ? "on" : AicsRpmPages.Mode == "on" ? "off" : "auto";
                 if (GUILayout.Button("RPM MFD screens: " + (AicsIvaMfd.KeepRpm ? "KEEP RPM" : "AICS replaces them") + "  (applies on next IVA load)")) AicsIvaMfd.KeepRpm = !AicsIvaMfd.KeepRpm;
+                if (GUILayout.Button("External MFD screens: " + ScreenCount + "  (1/2/3, each its own page)")) { ScreenCount = ScreenCount % 3 + 1; Save(); }
                 if (GUILayout.Button("Reset MFD position / size")) { mfdRect = new Rect(-1, 60, 780, 600); Save(); }
         }
 
@@ -1127,6 +1128,7 @@ namespace KSPChatBridge
                         case "visible": Expanded = kv[1].Trim() == "1"; break;
                         case "preferMj": preferMj = kv[1].Trim() != "0"; break;
                         case "opacity": opacity = Mathf.Clamp(f, 0.2f, 1f); break;
+                        default: ExtraLoad(kv[0].Trim(), kv[1]); break;
 
                     }
                 }
@@ -1136,13 +1138,14 @@ namespace KSPChatBridge
 
         static void Save()
         {
+            if (inExtra) { savePending = true; return; }   // an extra screen's state is swapped in right now
             try
             {
                 if (cfgFile == null) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(cfgFile));
                 File.WriteAllText(cfgFile, string.Format(CultureInfo.InvariantCulture,
                     "mx={0}\nmy={1}\nmw={2}\nmh={3}\nvisible={4}\npreferMj={5}\nopacity={6}\ngroup={7}\nitem={8}\npage={9}\n", mfdRect.x, mfdRect.y,
-                    mfdRect.width, mfdRect.height, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, mfdGroup ?? "", mfdItem ?? "", mfdPage));
+                    mfdRect.width, mfdRect.height, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, mfdGroup ?? "", mfdItem ?? "", mfdPage) + ExtraSave());
             }
             catch (Exception ex) { Debug.Log("[KSPChatBridge] aics save: " + ex.Message); }
         }
