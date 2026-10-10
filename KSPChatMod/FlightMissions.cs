@@ -282,6 +282,72 @@ namespace KSPChatBridge
             return outp;
         }
 
+        /// <summary>Shortest Dubins CSC path (LSL/RSR/LSR/RSL) from (x0,y0) heading h0 to (x1,y1) arriving on heading h1
+        /// (compass degrees, metres east/north), turn radius r. Returns metres.</summary>
+        internal static double Dubins(double x0, double y0, double h0, double x1, double y1, double h1, double r)
+        {
+            Func<double, double> m = z => { z %= 2 * Math.PI; return z < 0 ? z + 2 * Math.PI : z; };
+            double t0 = (90 - h0) * Math.PI / 180, t1 = (90 - h1) * Math.PI / 180, dx = x1 - x0, dy = y1 - y0, D = Math.Sqrt(dx * dx + dy * dy), d = D / r;
+            double phi = Math.Atan2(dy, dx), a = m(t0 - phi), b = m(t1 - phi), sa = Math.Sin(a), sb = Math.Sin(b), ca = Math.Cos(a), cb = Math.Cos(b), best = double.MaxValue;
+            double p2 = 2 + d * d - 2 * Math.Cos(a - b) + 2 * d * (sa - sb);   // LSL
+            if (p2 >= 0) { double tmp = Math.Atan2(cb - ca, d + sa - sb); best = Math.Min(best, m(-a + tmp) + Math.Sqrt(p2) + m(b - tmp)); }
+            p2 = 2 + d * d - 2 * Math.Cos(a - b) + 2 * d * (sb - sa);          // RSR
+            if (p2 >= 0) { double tmp = Math.Atan2(ca - cb, d - sa + sb); best = Math.Min(best, m(a - tmp) + Math.Sqrt(p2) + m(-b + tmp)); }
+            p2 = -2 + d * d + 2 * Math.Cos(a - b) + 2 * d * (sa + sb);         // LSR
+            if (p2 >= 0) { double p = Math.Sqrt(p2), tmp = Math.Atan2(-ca - cb, d + sa + sb) - Math.Atan2(-2, p); best = Math.Min(best, m(-a + tmp) + p + m(-m(b) + tmp)); }
+            p2 = -2 + d * d + 2 * Math.Cos(a - b) - 2 * d * (sa + sb);         // RSL
+            if (p2 >= 0) { double p = Math.Sqrt(p2), tmp = Math.Atan2(ca + cb, d - sa - sb) - Math.Atan2(2, p); best = Math.Min(best, m(a - tmp) + p + m(b - tmp)); }
+            return best * r;
+        }
+
+        /// <summary>One side's full join sequence ending at the long-final fix (custom editor list or computed downwind/base).</summary>
+        internal List<Wp> Side(bool right)
+        {
+            var seq = new List<Wp>(right ? (CustomRight ?? new List<Wp> { DownRightA, DownRightB, ApexRight }) : (CustomLeft ?? new List<Wp> { DownLeftA, DownLeftB, ApexLeft }));
+            seq.Add(Long); return seq;
+        }
+
+        /// <summary>Luke: join the chart at the nearest fix or leg point (1/3, 2/3) ahead of the FAF this plane can safely align with:
+        /// Dubins turn-straight-turn reach at its radius, arriving on the leg track; descent/climb within 10/15 m/s at its speed;
+        /// terrain 150 m below the path. Picks the shortest total path to touchdown; null = none (fall back to the long final).</summary>
+        internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why)
+        {
+            why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
+            double k = Math.PI / 180 * radius, cl = Math.Cos(ThrLat * Math.PI / 180);
+            Func<double, double, double[]> xy = (la, lo) => new[] { (lo - ThrLon) * k * cl, (la - ThrLat) * k };
+            var me = xy(lat, lon); List<Wp> best = null; double bestCost = double.MaxValue; string bestWhy = ""; int nReach = 0, nAlt = 0, nTerr = 0, n = 0;
+            foreach (bool right in new[] { false, true })
+            {
+                var seq = Side(right);
+                for (int i = 0; i < seq.Count; i++)
+                    foreach (double fr in i == 0 ? new[] { 1.0 } : new[] { 1 / 3.0, 2 / 3.0, 1.0 })
+                    {
+                        n++;
+                        Wp a = i > 0 ? seq[i - 1] : null, f = seq[i];
+                        var j = a == null || fr >= 1 ? f : new Wp { Name = fr < 1 ? f.Name + " (leg " + Math.Round(fr * 100) + "%)" : f.Name, Lat = a.Lat + (f.Lat - a.Lat) * fr, Lon = a.Lon + (f.Lon - a.Lon) * fr, Alt = a.Alt + (f.Alt - a.Alt) * fr };
+                        double legTrack = a != null ? NavigationMath.Bearing(a.Lat, a.Lon, f.Lat, f.Lon) : i + 1 < seq.Count ? NavigationMath.Bearing(f.Lat, f.Lon, seq[i + 1].Lat, seq[i + 1].Lon) : Course;
+                        // run-in: arrive on the leg track 2.5 r before the join point so the autopilot is aligned, not just "there"
+                        double rla, rlo; NavigationMath.Offset(j.Lat, j.Lon, legTrack + 180, 2.5 * turnR, radius, out rla, out rlo);
+                        var runIn = new Wp { Name = j.Name + " run-in", Lat = rla, Lon = rlo, Alt = j.Alt };
+                        var jp = xy(rla, rlo);
+                        double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR) + 2.5 * turnR;
+                        if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) { nReach++; continue; }
+                        double dz = j.Alt - altitude;
+                        if (dz < -reach * 10 / speed || dz > reach * 15 / speed) { nAlt++; continue; }
+                        bool clear = true;
+                        for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo); if (!double.IsNaN(g) && g + 150 > Math.Min(altitude, j.Alt)) clear = false; }
+                        if (!clear) { nTerr++; continue; }
+                        double rest = 0; Wp prev = j;
+                        var route = new List<Wp> { runIn, j };
+                        for (int q = (fr < 1 ? i : i + 1); q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
+                        rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
+                        if (reach + rest < bestCost) { bestCost = reach + rest; best = route; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + ": reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m), total " + ((reach + rest) / 1000).ToString("0.0") + " km to touchdown"; }
+                    }
+            }
+            why = (best != null ? bestWhy : "no safe join point") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable]";
+            return best;
+        }
+
         internal string Describe(List<Wp> route)
         {
             var parts = new List<string>(); foreach (var w in route) parts.Add(w.Name + " " + w.Alt.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " m");
@@ -319,7 +385,7 @@ namespace KSPChatBridge
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
         internal ApproachOverride Override; internal string Key = "";
         internal ApproachChart Chart; internal List<ApproachChart.Wp> Route; internal int RouteIndex; internal string RouteLog = "";
-        internal string SmoothLog = "";
+        internal string SmoothLog = "", JoinLog = "";
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
         internal void GoAroundReset() { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
@@ -328,11 +394,15 @@ namespace KSPChatBridge
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
         /// r*tan(dHdg/2) before the fix, r from the actual speed and bank. Returns the desired heading; advance = time to switch legs.</summary>
         /// <summary>(Re)build the flown route from the raw chart fixes for a join speed; keeps the current target when replanning.</summary>
-        internal void Plan(double course, double radius, double speed, int keepIndex)
+        internal void Plan(double course, double radius, double speed, int keepIndex, double hereLat = double.NaN, double hereLon = double.NaN)
         {
             PlanSpeed = speed; PlanBank = ApproachProfile.Bank(BankDeg, speed); PlanRadius = ApproachProfile.Radius(speed, PlanBank);
             ApproachChart.Wp target = keepIndex >= 0 && Route != null && keepIndex < Route.Count ? Route[keepIndex] : null;
-            string sm; Route = ApproachChart.Smooth(RawRoute, course, Lat, Lon, speed, PlanBank, radius, out sm);
+            // smooth from the plane's own position so the first turn (onto the run-in) gets a lead/arc too, then drop that start point
+            bool here = !double.IsNaN(hereLat) && keepIndex < 0;
+            var src = here ? new List<ApproachChart.Wp>(RawRoute) : RawRoute; if (here) src.Insert(0, new ApproachChart.Wp { Name = "here", Lat = hereLat, Lon = hereLon, Alt = RawRoute[0].Alt });
+            string sm; Route = ApproachChart.Smooth(src, course, Lat, Lon, speed, PlanBank, radius, out sm);
+            if (here && Route.Count > 1) { RouteStartLat = hereLat; RouteStartLon = hereLon; Route.RemoveAt(0); }
             SmoothLog = (keepIndex >= 0 ? "replanned (mass/speed change): " : "") + sm;
             if (target != null)
             {
@@ -375,14 +445,23 @@ namespace KSPChatBridge
                 {
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
-                    RawRoute = Route; Plan(course, radius, ApproachProfile.Speed(stall), -1);
+                    if (Kind != "short")
+                    {   // join at the nearest safely-alignable fix/leg point for THIS plane; fall back to the computed long-final entry
+                        double jv = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = ApproachProfile.Radius(jv, ApproachProfile.Bank(BankDeg, jv)); string jw;
+                        var join = Chart.BestJoin(lat, lon, track, altitude, jv, jr, radius, out jw);
+                        if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
+                        JoinLog = join != null ? jw : jw + "; long final entry";
+                    }
+                    else JoinLog = "short final (head-on)";
+                    RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, lat, lon);
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
                 // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
-                if (RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, ApproachProfile.Speed(stall))) Plan(course, radius, ApproachProfile.Speed(stall), RouteIndex);
+                double nowV = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed));   // turns are flown at the speed we actually have
+                if (RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV)) Plan(course, radius, nowV, RouteIndex);
                 // join speed from the IAF onward = this craft's 1.5 x stall (Luke), so the planned arcs are what it flies
                 bool joined = RouteIndex > 0 || (Route.Count > 0 && NavigationMath.Distance(lat, lon, Route[0].Lat, Route[0].Lon, radius) < 2 * speed * speed / (9.81 * Math.Tan(BankDeg * Math.PI / 180)));
-                DesiredSpeed = joined ? PlanSpeed : Math.Max(PlanSpeed, Math.Min(150, speed));
+                DesiredSpeed = ApproachProfile.Speed(stall);
                 if (RouteIndex < Route.Count)
                 {
                     var wp = Route[RouteIndex];

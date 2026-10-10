@@ -209,7 +209,7 @@ namespace KSPChatBridge
         /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
         string PlaneLine(NativeFlightController.MapRunway rw, RunwayMission act)
         {
-            if (act != null && act.PlanSpeed > 0) return "This plane: " + Math.Round(act.PlanSpeed) + " m/s, bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km | " + act.SmoothLog;
+            if (act != null && act.PlanSpeed > 0) return "This plane: " + Math.Round(act.PlanSpeed) + " m/s, bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km | " + act.JoinLog + " | " + act.SmoothLog;
             if (rw == null || Time.realtimeSinceStartup < planeAt) return planeLine;
             planeAt = Time.realtimeSinceStartup + 1;
             double v = ApproachProfile.Speed(NativeFlightController.MapStall), b = ApproachProfile.Bank(20, v), crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);

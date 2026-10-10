@@ -1068,7 +1068,7 @@ class Program
                 var head = fly(90, 270, null);   // from the east, flying west: head-on to runway 27
                 Check(head.Why.StartsWith("ok") && head.Kind == "short", "0 deg (head-on) -> short final: " + head.Why);
                 var abeam = fly(0, 180, null);   // from the north, 90 deg to the runway
-                Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.RouteLog.Contains("downwind") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> downwind/base join, rolls out on centerline: " + abeam.Why);
+                Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> nearest safe join, rolls out on centerline: " + abeam.JoinLog + " / " + abeam.Why);
                 var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
                 Check(behind.Why.StartsWith("ok") && behind.RouteLog.Contains("base") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> downwind, base, long final (no circles): " + behind.Why);
                 var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
@@ -1280,6 +1280,27 @@ class Program
                 Check(rm.PlanSpeed == 60 && rm.SmoothLog.StartsWith("replanned") && NavigationMath.Distance(tgt.Lat, tgt.Lon, rm.Route[rm.RouteIndex].Lat, rm.Route[rm.RouteIndex].Lon, 600000) < 6000, "replan after fuel burn: new arcs, target kept nearby");
             }
             Console.WriteLine("Per-craft approach profile: 7 behavior checks passed.");
+            {   // Luke: join at the nearest fix/leg point this plane can safely align with (Dubins reach, altitude, terrain), shortest to touchdown
+                Check(Math.Abs(ApproachChart.Dubins(0, 0, 90, 5000, 0, 90, 1000) - 5000) < 1, "Dubins: aligned straight = distance");
+                double rev = ApproachChart.Dubins(0, 0, 90, 0, 0, 270, 1000);
+                Check(Math.Abs(ApproachChart.Dubins(0, 0, 90, 0, 2000, 270, 1000) - Math.PI * 1000) < 1 && rev > Math.PI * 1000 && rev < 4 * Math.PI * 1000, "Dubins: U-turn to 2r abeam = pi r; same-point reversal is a loop (" + Math.Round(rev) + " m)");
+                double thrLa = -.0485997, thrLo = -74.724375, v = ApproachProfile.Speed(45), r = ApproachProfile.Radius(v, 20);
+                var chj = ApproachChart.Build(thrLa, thrLo, 90.4, 69, v, 20, 600000, null);
+                string jw; double bLa, bLo; NavigationMath.Offset(chj.ApexLeft.Lat, chj.ApexLeft.Lon, 0, 3000, 600000, out bLa, out bLo);
+                var j1 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt, v, r, 600000, out jw);
+                Check(j1 != null && j1[0].Name != chj.DownLeftA.Name && j1[j1.Count - 1].Lat == chj.Long.Lat && j1[0].Name.EndsWith("run-in"), "near the left base heading south: joins late in the sequence, not at the first fix (" + jw + ")");
+                double sLa, sLo; NavigationMath.Offset(thrLa, thrLo, 270.4, 20000, 600000, out sLa, out sLo);
+                var j2 = chj.BestJoin(sLa, sLo, 90.4, chj.LongAlt, v, r, 600000, out jw);
+                Check(j2 != null && j2[j2.Count - 1].Lat == chj.Long.Lat && j2.Count == 2, "on the extended centerline 20 km out: straight to the FAF (" + jw + ")");
+                var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
+                Check(jw.Contains("altitude") && (j3 == null || j3[0].Name != chj.ApexLeft.Name), "4 km too high: close fixes rejected for descent (" + jw + ")");
+                var hill = ApproachChart.Build(thrLa, thrLo, 90.4, 69, v, 20, 600000, (la, lo) => 5000);
+                Check(hill.BestJoin(bLa, bLo, 180, 800, v, r, 600000, out jw) == null && jw.Contains("terrain"), "terrain in the way: no join, fall back to the long final (" + jw + ")");
+                var rmj = new RunwayMission { Lat = thrLa, Lon = thrLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
+                rmj.Step(bLa, bLo, 700, 700, v, false, 600000, 45, 180, 180);
+                Check(rmj.JoinLog.StartsWith("joined") && rmj.RawRoute != null && rmj.RawRoute[0].Name != rmj.Chart.DownLeftA.Name, "approach start uses the best join: " + rmj.JoinLog);
+            }
+            Console.WriteLine("Nearest safe join: 7 behavior checks passed.");
             Check(MapReveal.Zoom(30000, .5) == 15000 && MapReveal.Zoom(3000, .5) == 2000 && MapReveal.Zoom(200000, 2) == 300000 && Math.Abs(MapReveal.Zoom(MapReveal.Zoom(30000, .8), 1.25) - 30000) < 1e-6, "map zoom +/- and wheel, clamped 2-300 km");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
