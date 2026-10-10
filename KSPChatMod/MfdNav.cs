@@ -144,5 +144,6 @@ namespace KSPChatBridge
             var seen = new HashSet<int>(); foreach (var g in Groups(mj)) foreach (var it in g.Items) if (it.Panel >= 0) seen.Add(it.Panel);
             for (int i = 0; i < count; i++) if (!seen.Contains(i)) return false; return true;
         }
+        internal static string DefaultPage(int index) { var p = new[] { "map", "ils", "aircraft", "chart", "all" }; return p[((index % p.Length) + p.Length) % p.Length]; }
     }
 }

@@ -4,7 +4,7 @@
 // navigation as the outside MFD (MfdNav: HOME groups, paged items, BACK fixed bottom-left). Screen text fields (CHAT input,
 // flight plan editor) take the keyboard while focused, with ship controls locked; Enter submits, Esc unfocuses.
 // Added to stock cockpits by AICS_IVA.cfg (ModuleManager). RasterPropMonitor pages (AICS_RPM.cfg) are unaffected.
-using System;
+using System;using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -15,6 +15,21 @@ namespace KSPChatBridge
         [KSPField] public float width = .20f, height = .1625f, lift = .008f;
         [KSPField] public bool flipX = false, flipY = false, hideModel = true;
         [KSPField] public float refreshHz = 4;
+        [KSPField] public bool rpmHost = false, autoOrient = false, autoSize = false;   // set on RasterPropMonitorBasicMFD by AICS_IVA.cfg
+        internal bool Active { get { return built; } }
+        /// <summary>Default page per screen, in prop order: MAP / ILS / AP / CHART / COMMS, then repeat.</summary>
+        internal static string DefaultPage(int index) { return MfdNav.DefaultPage(index); }
+        /// <summary>Setting: leave RPM's own MFD screens in place (no AICS screen on them).</summary>
+        internal static bool KeepRpm
+        {
+            get { if (keepRpm == null) { try { keepRpm = File.Exists(KeepPath) && File.ReadAllText(KeepPath).Trim() == "1"; } catch (Exception) { keepRpm = false; } } return keepRpm.Value; }
+            set { keepRpm = value; try { File.WriteAllText(KeepPath, value ? "1" : "0"); } catch (Exception) { } }
+        }
+        static bool? keepRpm; static string KeepPath { get { return Path.Combine(AicsCore.PluginDataDirectory, "rpm_keep_screens.txt"); } }
+        void OpenItem(string id)
+        {
+            foreach (var g in MfdNav.Groups(Mj)) for (int pg = 0; pg < MfdNav.Pages(g); pg++) foreach (var it in MfdNav.PageItems(g, pg)) if (it.Id == id) { group = g.Id; item = id; page = pg; return; }
+        }
 
         const string LockId = "AICS_IvaTyping";
         static Font font; static Material fontMat, fillMat; const int FontPx = 32;
@@ -28,6 +43,7 @@ namespace KSPChatBridge
         void Start()
         {
             if (!HighLogic.LoadedSceneIsFlight || internalProp == null) return;
+            if (rpmHost && KeepRpm) { Debug.Log("[KSPChatBridge] IVA MFD: keeping RPM screen (setting)"); return; }
             try { Build(); built = true; Debug.Log("[KSPChatBridge] IVA MFD built in " + (internalProp.internalModel != null ? internalProp.internalModel.internalName : "?")); }
             catch (Exception ex) { Debug.LogError("[KSPChatBridge] IVA MFD build failed: " + ex); }
         }
@@ -35,7 +51,21 @@ namespace KSPChatBridge
         void Build()
         {
             // The host monitor model must be GONE, not just hidden (Luke 5:33 PM: the stock DOCKING MODE screen stayed on top of ours).
-            if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
+            Bounds hb = new Bounds(); bool hasB = false;
+            foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true))
+            {
+                var b = r.bounds; foreach (var corner in new[] { b.min, b.max, new Vector3(b.min.x, b.max.y, b.min.z), new Vector3(b.max.x, b.min.y, b.max.z) })
+                { var lp = internalProp.transform.InverseTransformPoint(corner); if (!hasB) { hb = new Bounds(lp, Vector3.zero); hasB = true; } else hb.Encapsulate(lp); }
+            }
+            if (rpmHost)
+            {   // runtime hide of RPM's screen: renderers + colliders off, RPM modules stopped (Luke 6:17 PM)
+                foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+                foreach (var cl in internalProp.GetComponentsInChildren<Collider>(true)) cl.enabled = false;
+                foreach (var m in internalProp.internalModules) if (!(m is AicsIvaMfd) && !(m is AicsRpmPages)) m.enabled = false;
+                int idx = 0; if (internalProp.internalModel != null) foreach (var pr in internalProp.internalModel.props) { if (pr == internalProp) break; foreach (var x in pr.internalModules) if (x is AicsIvaMfd) { idx++; break; } }
+                OpenItem(DefaultPage(idx)); Debug.Log("[KSPChatBridge] IVA MFD on RPM screen #" + idx + " -> " + item);
+            }
+            else if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
             if (font == null)
             {
                 font = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Lucida Console", "Courier New", "DejaVu Sans Mono", "Liberation Mono" }, FontPx);
@@ -45,6 +75,22 @@ namespace KSPChatBridge
             rt = new RenderTexture(IvaLayout.W, IvaLayout.H, 0, RenderTextureFormat.ARGB32) { filterMode = FilterMode.Bilinear, useMipMap = false }; rt.Create();
             face = new GameObject("AICS_MFD_face"); face.layer = internalProp.gameObject.layer == 0 ? 20 : internalProp.gameObject.layer;   // internal-space layer (16/20)
             face.transform.SetParent(internalProp.transform, false);
+            Transform seat0 = internalProp.internalModel != null && internalProp.internalModel.seats != null && internalProp.internalModel.seats.Count > 0 ? internalProp.internalModel.seats[0].seatTransform : null;
+            Vector3 nL = Vector3.up, uL = Vector3.back;
+            if (autoOrient && seat0 != null)
+            {   // RPM's screen faces along a different local axis (the 90 deg error): pick the prop axis that faces the pilot, up = closest to the pilot's up
+                var axes = new[] { Vector3.right, Vector3.left, Vector3.up, Vector3.down, Vector3.forward, Vector3.back };
+                Vector3 toSeat = (seat0.position - internalProp.transform.position).normalized; float best = -2;
+                foreach (var a in axes) { float d = Vector3.Dot(internalProp.transform.TransformDirection(a), toSeat); if (d > best) { best = d; nL = a; } }
+                best = -2; foreach (var a in axes) { if (Mathf.Abs(Vector3.Dot(a, nL)) > .5f) continue; float d = Vector3.Dot(internalProp.transform.TransformDirection(a), seat0.up); if (d > best) { best = d; uL = a; } }
+                face.transform.localRotation = Quaternion.LookRotation(-uL, nL);   // quad: normal +Y, texture up -Z
+            }
+            if (autoSize && hasB)
+            {
+                Vector3 rL = Vector3.Cross(nL, uL); float w = Mathf.Abs(Vector3.Dot(hb.size, rL)), h = Mathf.Abs(Vector3.Dot(hb.size, uL));
+                if (w > .02f && h > .02f) { width = w * .92f; height = h * .92f; }
+                face.transform.localPosition = hb.center + nL * (Mathf.Abs(Vector3.Dot(hb.extents, nL)) - lift * .5f);
+            }
             var mesh = new Mesh(); float sx = flipX ? 1 : -1;   // prop face normal = local +Y; texture right = local -X, up = local -Z
             var v = new List<Vector3>(); var uv = new List<Vector2>();
             foreach (var c in new[] { new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1), new Vector2(0, 1) })
@@ -56,7 +102,7 @@ namespace KSPChatBridge
             col = face.AddComponent<MeshCollider>(); col.sharedMesh = mesh;
             // Face the pilot: if the seat is behind the face normal, turn the quad 180 deg about its up axis (rigid, text stays readable).
             Transform seat = internalProp.internalModel != null && internalProp.internalModel.seats != null && internalProp.internalModel.seats.Count > 0 ? internalProp.internalModel.seats[0].seatTransform : null;
-            if (seat != null && Vector3.Dot(face.transform.up, seat.position - face.transform.position) < 0) face.transform.localRotation = Quaternion.Euler(0, 0, 180);
+            if (!autoOrient && seat != null && Vector3.Dot(face.transform.up, seat.position - face.transform.position) < 0) face.transform.localRotation = Quaternion.Euler(0, 0, 180);
             Debug.Log("[KSPChatBridge] IVA MFD face: pos=" + face.transform.position.ToString("F4") + " normal=" + face.transform.up.ToString("F3") + " size=" + width + "x" + height + " lossyScale=" + face.transform.lossyScale.ToString("F2")
                 + " layer=" + face.layer + " shader=" + mr.material.shader.name + " seat=" + (seat == null ? "none" : seat.position.ToString("F3") + " dot=" + Vector3.Dot(face.transform.up, seat.position - face.transform.position).ToString("F3")));
             face.AddComponent<AicsIvaClick>().Owner = this;

@@ -22,7 +22,7 @@ namespace KSPChatBridge
         static string ModePath { get { return Path.Combine(AicsCore.PluginDataDirectory, "rpm_pages.txt"); } }
         bool NativeHere()
         {
-            try { var m = internalProp != null ? internalProp.internalModel : null; if (m == null) return false; foreach (var p in m.props) foreach (var x in p.internalModules) if (x is AicsIvaMfd) return true; } catch (Exception) { }
+            try { var m = internalProp != null ? internalProp.internalModel : null; if (m == null) return false; foreach (var p in m.props) foreach (var x in p.internalModules) if (x is AicsIvaMfd && ((AicsIvaMfd)x).Active) return true; } catch (Exception) { }
             return false;
         }
         string Seen(string page, string text)

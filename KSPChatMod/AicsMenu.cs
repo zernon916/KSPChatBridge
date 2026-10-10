@@ -798,6 +798,7 @@ namespace KSPChatBridge
             opacity = Mathf.Round(GUILayout.HorizontalSlider(opacity, 0.2f, 1f) * 20f) / 20f;
             GUILayout.EndHorizontal();
             if (GUILayout.Button("RPM AICS pages: " + AicsRpmPages.Mode + "  (auto = hidden in cockpits with the native AICS MFD)")) AicsRpmPages.Mode = AicsRpmPages.Mode == "auto" ? "on" : AicsRpmPages.Mode == "on" ? "off" : "auto";
+                if (GUILayout.Button("RPM MFD screens: " + (AicsIvaMfd.KeepRpm ? "KEEP RPM" : "AICS replaces them") + "  (applies on next IVA load)")) AicsIvaMfd.KeepRpm = !AicsIvaMfd.KeepRpm;
                 if (GUILayout.Button("Reset MFD position / size")) { mfdRect = new Rect(-1, 60, 780, 600); Save(); }
         }
 
