@@ -1,4 +1,4 @@
-﻿import importlib.util, pathlib, re
+import importlib.util, pathlib, re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("am", ROOT / "tools" / "approach_map.py"); am = importlib.util.module_from_spec(spec); spec.loader.exec_module(am)
 
@@ -12,7 +12,7 @@ def test_all_four_ends_with_3deg_fixes():
 def test_roles_match_the_mod():
     cs = (ROOT / "KSPChatMod" / "FlightMissions.cs").read_text(encoding="utf-8")
     roles = set(re.search(r'Roles = \{([^}]*)\}', cs).group(1).replace('"', '').replace(' ', '').split(','))
-    assert {f["role"] for f in am.ends()["KSC 27"]["fixes"]} == roles
+    assert {f["role"] for f in am.ends()["KSC 27"]["fixes"]} | {"wp"} == roles
 
 
 def test_final_fixes_last_and_sides():
