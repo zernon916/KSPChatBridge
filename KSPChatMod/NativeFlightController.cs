@@ -821,6 +821,6 @@ namespace KSPChatBridge
             holdAltitude = holdHeading = holdSpeed = true; directVs = directPitch = directBank = null;
             takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); return StartRotorMode("takeoff");
         }
-        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
+        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
     }
 }

@@ -771,6 +771,22 @@ class Program
             Check(NativeCommands.IsPorted("fuel_check_return") && ToolRouter.Rank("bingo fuel return home", ToolRouter.Descriptions, "plane")[0].Key == "fuel_check_return", "fuel_check_return registered + routed");
         }
         Console.WriteLine("fuel_check_return: 7 behavior checks passed.");
+        // ---- POST-TESTING: formation ----
+        {
+            double R = 600000, mPerDeg = Math.PI / 180 * R, al, cr;
+            FlightExtrasPolicy.SlotError(0, 0, 0, -60 / mPerDeg, 60 / mPerDeg, 60, 1, R, out al, out cr);
+            Check(Math.Abs(al) < .5 && Math.Abs(cr) < .5, "in the right echelon slot: zero error");
+            FlightExtrasPolicy.SlotError(0, 0, 90, 0, -500 / mPerDeg, 60, 1, R, out al, out cr);
+            Check(Math.Abs(al - 440) < 1 && Math.Abs(cr - 60) < 1, "lead heading east, wing 500 m behind: slot 440 m ahead, 60 m right");
+            Check(FlightExtrasPolicy.WingHeading(90, 1000, 0) == 120 && FlightExtrasPolicy.WingHeading(90, 0, 0) == 90, "steer toward slot, capped 30 deg off lead");
+            Check(FlightExtrasPolicy.WingSpeed(150, 1000) == 175 && FlightExtrasPolicy.WingSpeed(150, -100) == 142, "close on the slot +-25 m/s");
+            Check(FlightExtrasPolicy.WingBank(90, 150) == 20 && FlightExtrasPolicy.WingBank(-90, 250) == -10, "wing bank obeys 20/10 rule");
+            Check(FlightExtrasPolicy.ThrottleStep(.5, 20, 1) == .5 && Math.Abs(FlightExtrasPolicy.ThrottleStep(.5, 20, 3) - .55) < 1e-9, "throttle: 5% steps, waits 2.5 s");
+            Check(Math.Abs(FlightExtrasPolicy.ThrottleStep(.05, -20, 3) - .05) < 1e-9, "never 0 throttle in flight");
+            Check(FlightExtrasPolicy.HeadingError(10, 350) == 20 && FlightExtrasPolicy.WingVs(1000) == 15, "heading wrap + capped climb");
+            Check(NativeCommands.IsPorted("formation") && ToolRouter.Rank("wingman join formation", ToolRouter.Descriptions, "plane")[0].Key == "formation", "formation registered + routed");
+        }
+        Console.WriteLine("formation: 9 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

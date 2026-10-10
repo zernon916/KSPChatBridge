@@ -26,6 +26,7 @@ namespace KSPChatBridge
             {
                 case "follow_terrain": return FollowTerrain(a);
                 case "fuel_check_return": return FuelReturnArm(a);
+                case "formation": return Formation(a);
                 case "hold_pattern": return HoldPattern(a);
             }
             return null;
@@ -69,8 +70,10 @@ namespace KSPChatBridge
             }
             TerrainTick();
             FuelReturnTick();
+            FormationTick();
         }
         partial void TerrainTick();
         partial void FuelReturnTick();
+        partial void FormationTick();
     }
 }

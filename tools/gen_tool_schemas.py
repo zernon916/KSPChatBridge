@@ -12,6 +12,8 @@ NATIVE_ONLY = {
                      {"name": "string", "altitude_m": "number", "radius_m": "number", "direction": "string"}, []),
     "fuel_check_return": ("Watch fuel and fly home automatically (then land) when what's left only just covers the trip home; off=true disarms.",
                           {"home": "string", "reserve_pct": "number", "off": "boolean"}, []),
+    "formation": ("AI wingman: a second loaded plane (within ~2.3 km) flies echelon on us; off=true releases it.",
+                  {"wingman": "string", "side": "string", "spacing_m": "number", "off": "boolean"}, []),
     "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }
 

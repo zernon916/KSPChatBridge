@@ -262,3 +262,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** fuel_check_return(home=KSC, reserve_pct=15, off). Every 2 s: smoothed burn rate from fuel samples (LiquidFuel, else LF/Ox/Mono), range = time left x groundspeed. When range <= distance home x (1+reserve) + 15 km approach margin, the pilot calls 'Bingo fuel, Captain' and does fly_to home, then lands there (land where=home) once fly_to arrives and circles. Unknown range never triggers. Home is a saved spot, KSC, or a runway alias.
 **Tests run:** C# 'fuel_check_return: 7'; pytest 494; Release 0 errors.
 **Still needs live check:** trigger timing on a real jet (throttle changes vs smoothing), auto-land handoff.
+
+## formation - DONE (tests; needs live check)
+**Changed:** formation(wingman, side, spacing_m 30-300, off). Picks the named (or nearest) other loaded, airborne, unpacked craft within 2.3 km. Hooks THAT vessel's OnFlyByWire (SAS off) and flies a 60 m echelon slot: heading toward the slot (<=30 deg off lead), speed lead +-25 m/s, lead altitude via a capped VS target. Luke's rules: bank cap 20/10, throttle 5% steps at most every 2.5 s, never below 5% in flight. Auto-releases at >2.3 km, unload/pack, landing, death, or controller destroy.
+**Tests run:** C# 'formation: 9'; pytest 494; Release 0 errors.
+**Still needs live check:** whether KSP feeds OnFlyByWire for a non-active loaded vessel (the main risk); control gains/oscillation; roll sign on the wing's ReferenceTransform.

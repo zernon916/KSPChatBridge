@@ -17,7 +17,7 @@ namespace KSPChatBridge
         { "abort", "abort_ag", "stage", "recover_vessel", "eject_kerbal", "cut_engines", "deorbit_burn", "launch_craft", "reset_experiments",
           "mechjeb_ascent", "launch_to_target_plane", "transfer_to", "station_keep", "dock_with", "deploy_parachutes", "set_engines", "action_group" };
 
-        static readonly HashSet<string> PlaneOnly = new HashSet<string> { "plane_hold", "hold_pattern", "follow_terrain", "fuel_check_return", "takeoff", "land_plane", "land_at_spot", "touch_and_go", "go_around", "circle_here", "plane_pitch", "flaps", "taxi_to", "land_at_ksc", "set_trim", "auto_trim_now", "trim", "get_trim_state", "afterburner" };
+        static readonly HashSet<string> PlaneOnly = new HashSet<string> { "plane_hold", "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "takeoff", "land_plane", "land_at_spot", "touch_and_go", "go_around", "circle_here", "plane_pitch", "flaps", "taxi_to", "land_at_ksc", "set_trim", "auto_trim_now", "trim", "get_trim_state", "afterburner" };
         static readonly HashSet<string> HeliOnly = new HashSet<string> { "heli_control", "prop_control" };
         static readonly HashSet<string> SpaceOnly = new HashSet<string> { "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis", "change_periapsis",
           "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with", "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude", "land_at" };
@@ -47,7 +47,7 @@ namespace KSPChatBridge
             { "run_science", "science experiment experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
             { "fly_to", "fly to go to head to navigate" }, { "how_far", "how far distance" }, { "get_landing_eta", "eta how long arrive arrival" },
             { "transfer_to", "transfer mun minmus duna go to moon" }, { "warp_to_apoapsis", "warp apoapsis ap" }, { "change_apoapsis", "apoapsis raise ap" },
-            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
+            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
         };
 
         static readonly Regex Word = new Regex(@"[a-z0-9]+");
