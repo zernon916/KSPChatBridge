@@ -21,7 +21,7 @@ namespace KSPChatBridge
             var g = new List<Group>();
             Func<string, string, bool, Item[], Group> G = (id, l, m, it) => { var x = new Group { Id = id, Label = l, NeedsMj = m }; x.Items.AddRange(it); return x; };
             g.Add(G("ap", "AUTOPILOT", false, new[] { new Item("aircraft", "AIRCRAFT", 0), new Item("approach", "APPROACH", 1), new Item("guidance", "LAND GUID", 2), new Item("taxi", "TAXI", 12),
-                new Item("trim", "TRIM"), new Item("abort", "ABORT/STAT", 13), new Item("orbitap", "ORBITAL AP", 7), new Item("capture", "CAPTURE", 5), new Item("docking", "DOCKING", 6), new Item("sunlock", "SUN LOCK", 8) }));
+                new Item("about", "ABOUT PLANE"), new Item("trim", "TRIM"), new Item("abort", "ABORT/STAT", 13), new Item("orbitap", "ORBITAL AP", 7), new Item("capture", "CAPTURE", 5), new Item("docking", "DOCKING", 6), new Item("sunlock", "SUN LOCK", 8) }));
             g.Add(G("map", "MAP", false, new[] { new Item("map", "MAP"), new Item("chart", "CHART"), new Item("ils", "ILS") }));
             g.Add(G("plan", "PLAN", false, new[] { new Item("flightplan", "FLIGHT PLAN", 3), new Item("orbitplan", "ORBIT PLAN", 4) }));
             g.Add(G("comms", "COMMS", false, new[] { new Item("intercom", "INTERCOM"), new Item("system", "SYSTEM"), new Item("pilot", "PILOT"), new Item("all", "ALL") }));
@@ -73,7 +73,7 @@ namespace KSPChatBridge
                 case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
-                case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", null };
+                case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
                 case "trim": return new[] { "TRIM WIN", "AUTO TRIM", null, null, null, null };

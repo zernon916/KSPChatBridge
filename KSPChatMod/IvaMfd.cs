@@ -306,6 +306,7 @@ namespace KSPChatBridge
                 case "map": o.AddRange(AicsRpmPages.MapText(cols, rows - 1, span).Split('\n')); o.Add("span " + (span / 1000).ToString("0") + " km"); return o;
                 case "ils": o.AddRange(AicsRpmPages.IlsText(Math.Max(10, cols / 2), rows).Split('\n')); return o;   // data block right of the needles
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) o.AddRange(W(l)); return o;
+                case "about": foreach (var l in NativeFlightController.AboutLines()) o.AddRange(W(l)); if (NativeFlightController.LearnStatus.Length > 0) o.AddRange(W(NativeFlightController.LearnStatus)); return o;
                 case "systems": o.Add(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW"); foreach (var r in StatusWindow.SystemRows()) o.AddRange(W((r[0] == "fail" ? "! " : r[0] == "caution" ? "* " : "  ") + r[1] + ": " + r[2])); return o;
                 case "status": foreach (var r in StatusWindow.StatusRows()) o.AddRange(W(r[0] + ": " + r[1])); return o;
                 case "mjatt": case "mjguide": o.Add(it == "mjatt" ? "MECHJEB SMARTASS" : "MECHJEB GUIDANCE"); o.AddRange(W(NativeFlightController.MjStatusNow)); return o;

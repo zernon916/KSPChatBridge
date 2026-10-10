@@ -106,6 +106,7 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^lights? (on|off)$")) return R("set_lights", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^sas (on|off)$")) return R("set_sas", "{\"enabled\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^rcs (on|off)$")) return R("set_rcs", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
+            if (Regex.IsMatch(m, @"^(learn (this|the) (plane|aircraft|craft)|test fly this plane|learn plane)$")) return R("learn_plane", "{}");
             if (Regex.IsMatch(m, @"^(fly gentle|gentle mode|airliner mode|heavy mode)$")) return R("craft_class", "{\"mode\":\"gentle\"}");
             if (Regex.IsMatch(m, @"^(fighter mode|fly fighter|fly aggressive)$")) return R("craft_class", "{\"mode\":\"fighter\"}");
             if (Regex.IsMatch(m, @"^(auto class|craft class auto|normal mode)$")) return R("craft_class", "{\"mode\":\"auto\"}");

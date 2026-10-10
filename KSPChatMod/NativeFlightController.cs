@@ -242,7 +242,7 @@ namespace KSPChatBridge
             { object so; var sc = settingsData.TryGetValue("stall_learn", out so) ? so as Dictionary<string, object> : null; object lo2 = null; if (sc != null) sc.TryGetValue(vessel.vesselName, out lo2); learner = StallLearner.Load(lo2 as Dictionary<string, object>); }
             ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "stall inputs: m={0:0.0} t, liftCoeff={1:0.00} -> S={2:0.0} m2, rho={3}, CLmax={4}, Vs est={5:0.0} m/s, heavy floor={6:0}, liftoff={7:0}",
                 vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
-            ConfigureInertia();
+            ConfigureInertia(); LoadProfile();
             stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.CoM, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
@@ -536,6 +536,7 @@ namespace KSPChatBridge
                         directVs = FlightPolicy.Clamp((altitude - vessel.altitude) * .15, -3, 3);
                     }
                 }
+                if (learn != null) LearnTick(c, dt, pitch);
                 if (mode == "landing" && (stallStudy == null || stallStudy.Finished))
                 {
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
@@ -685,6 +686,7 @@ namespace KSPChatBridge
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
                 if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) throttle = 1;   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 if (holdSpeed) c.mainThrottle = (float)throttle;
+            LearnApply(c);
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
                     var samples = props.Sample(); double rpm = double.PositiveInfinity;

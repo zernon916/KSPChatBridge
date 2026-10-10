@@ -310,6 +310,7 @@ namespace KSPChatBridge
             {
                 case "trim": GUILayout.Label("TRIM WIN opens the trim window (pitch / roll / yaw trim). AUTO TRIM trims now.", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) GUILayout.Label(l, scrText); break;
+                case "about": foreach (var l in NativeFlightController.AboutLines()) GUILayout.Label(l, scrText); if (NativeFlightController.LearnStatus.Length > 0) GUILayout.Label(NativeFlightController.LearnStatus, scrText); break;
                 case "systems":
                     GUILayout.Label(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW", scrHead);
                     foreach (var r in StatusWindow.SystemRows())
@@ -378,7 +379,7 @@ namespace KSPChatBridge
             switch (key)
             {
                 case "TAKEOFF": Tool("takeoff", "{}"); break; case "LAND": Tool("land", "{}"); break; case "GO AROUND": Tool("go_around", "{}"); break;
-                case "ABORT": Tool("abort", "{}"); break; case "STOP": Tool("stop_current", "{}"); break; case "STATUS": Tool("autopilot_status", "{}"); break;
+                case "ABORT": Tool("abort", "{}"); break; case "STOP": Tool("stop_current", "{}"); break; case "STATUS": Tool("autopilot_status", "{}"); break; case "LEARN": Tool("learn_plane", "{}"); break;
             }
         }
     }

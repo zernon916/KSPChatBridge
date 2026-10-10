@@ -242,6 +242,33 @@ class Program
             double withLag = run(true), noLag = run(false);
             Check(withLag < 4 && withLag <= noLag + .5, "lag-aware speed hold: overshoot " + withLag.ToString("0.0") + " m/s (without lag model " + noLag.ToString("0.0") + ")");
         }
+        {   // LEARN THIS PLANE (Luke 7:06 PM): full test flight on a crude point-mass plane (stall 60 m/s, 20 t).
+            var lf = new LearnFlight(); double T = 0, v = 0, alt = 70, vs = 0, pit = 0, fuel = 1; bool landed = true; int lguard = 0;
+            while (!lf.Done && lguard++ < 200000)
+            {
+                var li = new LearnIn { T = T, Speed = v, Alt = alt, Agl = alt - 70, Vs = vs, Pitch = pit, G = 1, GLimit = 8, FuelFrac = fuel, FuelRate = .5, Stress = .3, TurnRate = 3, Throttle = .7, Liftoff = double.NaN, StallGuess = 60, Mass = 20, Landed = landed };
+                lf.Step(li);
+                double thr = double.IsNaN(lf.Throttle) ? 1 : lf.Throttle, want = !double.IsNaN(lf.Elevator) ? (v > 60 ? pit + lf.Elevator * .5 : -15) : double.IsNaN(lf.Pitch) ? (landed ? 0 : 10) : lf.Pitch;
+                if (landed && v > 70) { landed = false; pit = 8; }
+                pit += FlightPolicy.Clamp(want - pit, -2, 2) * .1; if (landed) pit = 0;
+                v = Math.Max(0, v + (4 * thr - .0003 * v * v - 9.81 * Math.Sin(pit * Math.PI / 180)) * .1);
+                vs = landed ? 0 : v * Math.Sin(pit * Math.PI / 180) - (v < 60 ? 15 : 0); alt = Math.Max(70, alt + vs * .1); fuel -= .00001; T += .1;
+            }
+            var pp = lf.P;
+            Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
+                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
+            // abort rules: fuel < 40 %, part lost, stress, g
+            Func<LearnIn, string> ab = x => { var l2 = new LearnFlight(); l2.Step(new LearnIn { T = 0, Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }); x.T = 1; l2.Step(x); return l2.Aborted ? l2.Reason : ""; };
+            var ok = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 };
+            var lowF = ok; lowF.FuelFrac = .39; var lost = ok; lost.PartLost = true; var hot = ok; hot.Stress = .95; var hiG = ok; hiG.G = 7.5;
+            Check(ab(ok) == "" && ab(lowF).StartsWith("fuel") && ab(lost) == "part lost" && ab(hot).StartsWith("structural") && ab(hiG).StartsWith("g "), "learn abort rules: fuel <40%, part loss, stress, g");
+            // weight scaling + round trip
+            var sp = new PlaneProfile { M0 = 40, Stall = 70, Decel = .8, Accel = 1.2, Lag = 3 };
+            Check(Math.Abs(sp.StallAt(50) - 70 * Math.Sqrt(50.0 / 40)) < 1e-6 && Math.Abs(sp.DecelAt(50) - .64) < 1e-6 && Math.Abs(sp.AccelAt(20) - 2.4) < 1e-6, "profile scaling: speeds sqrt(m/m0), accels m0/m");
+            var rt2 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
+            Check(rt2 != null && Math.Abs(rt2.Stall - pp.Stall) < .01 && rt2.Complete, "profile saves and loads");
+            Check(DirectOrNull("learn this plane") == "learn_plane", "chat: 'learn this plane' starts the test flight");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
