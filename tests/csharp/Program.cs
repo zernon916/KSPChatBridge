@@ -1684,6 +1684,15 @@ class Program
             tx.Step(300, 0, 0, 90, 16, 600000, true, false, 2); Check(tx.Brakes && tx.Throttle == 0, "over speed: wheel brakes, idle");
             Console.WriteLine("Taxi speed: 4 behavior checks passed.");
         }
+        {   // measured deceleration drives the decel start (Luke 3:43 PM)
+            var dl = new DecelLearner(); for (int i = 0; i < 200; i++) dl.Learn("Aeris 3A", 60 + i % 60, 2.5, true);
+            double a = dl.Estimate("Aeris 3A", 104, 54, true); Check(Math.Abs(a - 2.5) < .01 && double.IsNaN(dl.Estimate("Unknown", 104, 54, true)), "decel learned per craft (" + a.ToString("0.00") + ")");
+            var back = DecelLearner.FromJson(dl.ToJson()); Check(Math.Abs(back.Estimate("Aeris 3A", 104, 54, true) - 2.5) < .01, "decel profile persists (JSON round trip)");
+            double fast = ApproachProfile.DecelStartDist(45, 2.5), slow = ApproachProfile.DecelStartDist(45, double.NaN), v1 = ApproachProfile.HiSpeed(45), v2 = ApproachProfile.AppSpeed(45);
+            Check(Math.Abs(fast - (2000 + (v1 * v1 - v2 * v2) / 5 + 500)) < 1 && slow > fast, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
+            Check(Math.Abs(ApproachProfile.FinalSchedule(fast, 45, 2.5) - v1) < .01 && Math.Abs(ApproachProfile.FinalSchedule(2000, 45, 2.5) - v2) < .01, "schedule: long-final speed until the decel point, approach speed by 2 km");
+            Console.WriteLine("Measured decel: 4 behavior checks passed.");
+        }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(cd);

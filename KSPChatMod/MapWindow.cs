@@ -216,6 +216,7 @@ namespace KSPChatBridge
                     var p = Proj(act.Route[i].Lat, act.Route[i].Lon); Dot(p, 5, Color.green);
                     if (i > 0) Line(Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
                 }
+            if (act != null) { double dla, dlo, crsD = NavigationMath.Bearing(act.Lat, act.Lon, act.EndLat, act.EndLon); NavigationMath.Offset(act.Lat, act.Lon, crsD + 180, act.DecelStartDist, body.Radius, out dla, out dlo); var dp = Proj(dla, dlo); Dot(dp, 9, new Color(1, .55f, 0)); GUI.Label(new Rect(dp.x + 6, dp.y - 20, 120, 18), "DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km"); }
             if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); Dot(jp, 11, Color.magenta); GUI.Label(new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
             var v = FlightGlobals.ActiveVessel;
             if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
@@ -281,6 +282,7 @@ namespace KSPChatBridge
             GUI.color = o;
             if (!valid) GUI.Label(new Rect(box.x + 8, box.y + 6, 200, 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
             double gs = v.horizontalSrfSpeed;
+            if (act != null) GUILayout.Label("decel at " + (act.DecelStartDist / 1000).ToString("0.0") + " km (" + (double.IsNaN(act.DecelA) ? "est. " + ApproachProfile.DefaultDecel.ToString("0.0") : "measured " + act.DecelA.ToString("0.0")) + " m/s2)" + (r.DmeM > act.DecelStartDist ? "" : "  DECELERATING"));
             GUILayout.Label("DME " + (r.DmeM / 1000).ToString("0.0") + " km to threshold   GS " + Math.Round(gs) + " m/s" + (gs > 1 ? "   ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
             GUILayout.Label("LOC " + r.LocDeg.ToString("+0.00;-0.00") + " deg   cross-track " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "right" : "left"));
             {   // status row + hand-flying guidance

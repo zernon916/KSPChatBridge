@@ -121,11 +121,17 @@ namespace KSPChatBridge
         internal static double SaneStall(double stall) { return FlightPolicy.Clamp(double.IsNaN(stall) ? UnmeasuredStallFloor : stall, 40, 120); }
         internal static double AppSpeed(double stall) { return 1.35 * SaneStall(stall); }
         /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150), linear decel to 1.35x stall by 2 km, then held to the flare.</summary>
-        internal static double FinalSchedule(double distToThreshold, double stall)
+        internal static double HiSpeed(double stall) { return Math.Max(AppSpeed(stall), Math.Min(150, 2.3 * SaneStall(stall))); }
+        internal const double DefaultDecel = 1.0, DecelMargin = 500, DecelEnd = 2000;
+        /// <summary>Distance needed to slow from v1 to v2 at a m/s^2: (v1^2 - v2^2) / 2a, plus margin.</summary>
+        internal static double DecelStartM(double v1, double v2, double a) { return Math.Max(0, v1 * v1 - v2 * v2) / (2 * Math.Max(.3, double.IsNaN(a) ? DefaultDecel : a)) + DecelMargin; }
+        /// <summary>Distance to the threshold where the decel from the long-final speed starts (ends at 2 km).</summary>
+        internal static double DecelStartDist(double stall, double a) { return DecelEnd + DecelStartM(HiSpeed(stall), AppSpeed(stall), a); }
+        internal static double FinalSchedule(double distToThreshold, double stall, double decelA = double.NaN)
         {
-            double hi = Math.Max(AppSpeed(stall), Math.Min(150, 2.3 * SaneStall(stall))), app = AppSpeed(stall);
-            if (distToThreshold >= 4000) return hi; if (distToThreshold <= 2000) return app;
-            return app + (hi - app) * (distToThreshold - 2000) / 2000;
+            double hi = HiSpeed(stall), app = AppSpeed(stall), start = DecelStartDist(stall, decelA);
+            if (distToThreshold >= start) return hi; if (distToThreshold <= DecelEnd) return app;
+            return Math.Sqrt(app * app + (hi * hi - app * app) * (distToThreshold - DecelEnd) / (start - DecelEnd));   // constant decel at the measured rate
         }
         internal static double Bank(double chartBank, double speed) { return chartBank > 20 ? chartBank : Math.Min(Math.Max(5, chartBank), FlightPolicy.BankLimit(speed)); }   // explicit "bank 60" wins
         internal static double Radius(double speed, double bank) { return speed * speed / (9.81 * Math.Tan(bank * Math.PI / 180)); }
@@ -174,6 +180,51 @@ namespace KSPChatBridge
         }
         /// <summary>Elevator feed-forward for the commanded load factor (0..0.3).</summary>
         internal static double ElevatorFF(double bankCmdDeg) { return Math.Abs(bankCmdDeg) >= 80 ? 0 : FlightPolicy.Clamp(.04 * (N(bankCmdDeg) - 1), 0, .3); }
+    }
+
+    /// <summary>Per-craft deceleration at idle (and idle + airbrakes) vs speed, learned in flight, persisted (Luke). Pure; tested.</summary>
+    internal sealed class DecelLearner
+    {
+        internal const double Bin = 20; const int Bins = 16;
+        readonly Dictionary<string, double[][]> craft = new Dictionary<string, double[][]>();
+        internal bool Dirty;
+        double[][] Of(string name) { double[][] t; if (!craft.TryGetValue(name ?? "", out t)) { t = new[] { new double[Bins], new double[Bins] }; for (int k = 0; k < 2; k++) for (int i = 0; i < Bins; i++) t[k][i] = double.NaN; craft[name ?? ""] = t; } return t; }
+        internal void Learn(string name, double speed, double decel, bool brakes)
+        {
+            if (double.IsNaN(decel) || decel <= .05 || decel > 15 || speed < 20) return;
+            var t = Of(name)[brakes ? 1 : 0]; int i = Math.Min(Bins - 1, (int)(speed / Bin));
+            t[i] = double.IsNaN(t[i]) ? decel : t[i] + .03 * (decel - t[i]); Dirty = true;
+        }
+        /// <summary>Mean decel over the speed range (brakes table preferred when available); NaN = unmeasured.</summary>
+        internal double Estimate(string name, double vHi, double vLo, bool brakes)
+        {
+            double[][] t; if (!craft.TryGetValue(name ?? "", out t)) return double.NaN;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                var row = t[pass == 0 && brakes ? 1 : 0]; double s = 0; int n = 0;
+                for (int i = Math.Max(0, (int)(vLo / Bin)); i <= Math.Min(Bins - 1, (int)(vHi / Bin)); i++) if (!double.IsNaN(row[i])) { s += row[i]; n++; }
+                if (n > 0) return s / n;
+                if (!brakes) break;
+            }
+            return double.NaN;
+        }
+        internal string ToJson()
+        {
+            var d = new Dictionary<string, object>();
+            foreach (var kv in craft) { var rows = new List<object>(); foreach (var r in kv.Value) { var l = new List<object>(); foreach (var x in r) l.Add(double.IsNaN(x) ? -1 : Math.Round(x, 3)); rows.Add(l); } d[kv.Key] = new Dictionary<string, object> { { "bin_ms", Bin }, { "idle", rows[0] }, { "airbrakes", rows[1] } }; }
+            return MiniJson.Serialize(d);
+        }
+        internal static DecelLearner FromJson(string json)
+        {
+            var o = new DecelLearner(); Dictionary<string, object> d = null; try { d = MiniJson.Deserialize(json); } catch (Exception) { }
+            if (d == null) return o;
+            foreach (var kv in d)
+            {
+                var e = kv.Value as Dictionary<string, object>; if (e == null) continue; var t = o.Of(kv.Key); int k = 0;
+                foreach (var key in new[] { "idle", "airbrakes" }) { object v; var l = e.TryGetValue(key, out v) ? v as System.Collections.IList : null; if (l != null) for (int i = 0; i < Math.Min(Bins, l.Count); i++) { double x = Convert.ToDouble(l[i]); t[k][i] = x < 0 ? double.NaN : x; } k++; }
+            }
+            return o;
+        }
     }
 
     /// <summary>Pitch-command shaping (crash 047208f: 9.5 g at the takeoff->climb handoff). S-curve + pitch-rate limit; high g only
@@ -485,6 +536,8 @@ namespace KSPChatBridge
         internal bool Gear, Brakes; int replanHold;
         internal double Distance;
         internal const double FastAtShort = 15, FastAtGate = 10;
+        internal double DecelA = double.NaN, LastStallEst = 45;   // measured idle(+airbrake) decel for this craft; NaN = conservative default
+        internal double DecelStartDist { get { return ApproachProfile.DecelStartDist(LastStallEst, DecelA); } }
         internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
         internal double Cross, Along;
         internal string Why = "";
@@ -555,7 +608,7 @@ namespace KSPChatBridge
             Cross = cross; Along = along;
             Distance = Math.Max(0, -along);
             double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
-            LastStall = stall;
+            LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
             TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(ApproachProfile.LoadFactor(Phase == "entry" ? ApproachProfile.JoinG : ApproachProfile.FinalG, speed, stall));
             if (Phase == "entry")
@@ -605,7 +658,7 @@ namespace KSPChatBridge
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
-                DesiredSpeed = Math.Min(ApproachProfile.Speed(stall), ApproachProfile.FinalSchedule(Distance, stall));   // intercept: join speed, never above the final schedule
+                DesiredSpeed = Math.Min(ApproachProfile.Speed(stall), ApproachProfile.FinalSchedule(Distance, stall, DecelA));   // intercept: join speed, never above the final schedule
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
@@ -622,7 +675,7 @@ namespace KSPChatBridge
                 DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
                 DesiredAltitude = GsCoupled ? altitude - Ils.AboveGsM : Chart != null ? Math.Max(Chart.GlideAlt(-along + TouchdownM), altitude - Ils.AboveGsM) : Elevation + Math.Max(3, (TouchdownM - along) * Math.Tan(3 * Math.PI / 180));   // before GS capture: never below the ILS path
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
-                DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
+                DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall, DecelA);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
                 double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
@@ -630,7 +683,7 @@ namespace KSPChatBridge
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
                 if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s
-                double fastBy = speed - ApproachProfile.FinalSchedule(Distance + 1500, stall);   // decel lag allowance   // gates follow the schedule, only inside the short final
+                double fastBy = speed - ApproachProfile.FinalSchedule(Distance + 1500, stall, DecelA);   // decel lag allowance   // gates follow the schedule, only inside the short final
                 if (Phase == "final" && Distance < ApproachChart.ShortFix && Distance > GateDistance && fastBy > FastAtShort) { Phase = "go around"; Why = "too fast at the short final (+" + fastBy.ToString("0") + " m/s)"; }
                 if (Phase == "final" && Distance <= GateDistance && Distance > 100 && speed - ApproachProfile.AppSpeed(stall) > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + (speed - ApproachProfile.AppSpeed(stall)).ToString("0") + " m/s)"; }
                 if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }

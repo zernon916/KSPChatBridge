@@ -172,6 +172,18 @@ namespace KSPChatBridge
         /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
         internal static bool AirbrakesByAutopilot;
         float nextChartPoll;
+        static DecelLearner decelStore; double decelPrevV = -1; float decelSaveAt;
+        static string DecelPath { get { return System.IO.Path.Combine(BridgeLauncher.PluginDataDirectory, "decel_profiles.json"); } }
+        internal static DecelLearner Decel { get { if (decelStore == null) { try { decelStore = System.IO.File.Exists(DecelPath) ? DecelLearner.FromJson(System.IO.File.ReadAllText(DecelPath)) : new DecelLearner(); } catch (Exception) { decelStore = new DecelLearner(); } } return decelStore; } }
+        /// <summary>Measure this craft's deceleration at idle (+airbrakes) in level-ish flight; saved per craft name in PluginData/decel_profiles.json.</summary>
+        void LearnDecel(double dt)
+        {
+            if (vessel.LandedOrSplashed || dt <= 0) { decelPrevV = -1; return; }
+            double v = vessel.srfSpeed; bool idle = vessel.ctrlState.mainThrottle <= .06f, level = Math.Abs(vessel.verticalSpeed) < 5;
+            if (decelPrevV > 0 && idle && level) Decel.Learn(vessel.vesselName, v, (decelPrevV - v) / dt, vessel.ActionGroups[KSPActionGroup.Brakes]);
+            decelPrevV = v;
+            if (Decel.Dirty && Time.realtimeSinceStartup > decelSaveAt) { decelSaveAt = Time.realtimeSinceStartup + 30; Decel.Dirty = false; try { AtomicFile.Write(DecelPath, Decel.ToJson()); } catch (Exception) { } }
+        }
         /// <summary>From the FAF/ILS inbound (intercept/final/flare) the approach speed is forced; chat speed targets are refused.</summary>
         bool ApproachSpeedLocked { get { return mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare"); } }
         /// <summary>Hot-swap: charts/ mtimes every ~2 s; a changed chart reloads live (bad JSON keeps the old one) and an active approach replans from here.</summary>
@@ -428,6 +440,7 @@ namespace KSPChatBridge
                 if (mode == "landing" && (stallStudy == null || stallStudy.Finished))
                 {
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
+                    if (landMass0 > 0) runway.DecelA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true);   // measured decel (NaN = conservative default)
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(landStall0, landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
                 if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
@@ -540,6 +553,7 @@ namespace KSPChatBridge
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = 1;   // full power for the roll
+            LearnDecel(dt);
             bool speedLock = ApproachSpeedLocked;
             if (speedLock && !vessel.LandedOrSplashed) { throttle = PilotPolicy.ApproachThrottle(throttle, vessel.srfSpeed, runway.DesiredSpeed, dt); speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
