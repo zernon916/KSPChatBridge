@@ -620,7 +620,25 @@ namespace KSPChatBridge
                     }
                 }
             }
-            why = (best != null ? bestWhy : "no safe join point") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable]";
+            int nFallback = 0;
+            if (best == null)
+            {   // Luke 5:56 PM (heavy craft, 330/330 unreachable): fall back to the nearest reachable point on the extended
+                // centerline (long final line), far enough out to roll out aligned with this plane's turn radius; no intercept limit.
+                double minD = RunwayMission.FafDistance + 2 * turnR + 2000;
+                for (double d = minD; d <= Math.Max(minD, 45000); d += 1000)
+                {
+                    double la, lo; NavigationMath.Offset(ThrLat, ThrLon, Course + 180, d, radius, out la, out lo); var jp = xy(la, lo);
+                    double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], Course, turnR); if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) continue;
+                    double jAlt = Math.Max(LongAlt, GlideAlt(d)); bool clr = true;
+                    for (int s = 1; s <= 8 && clr; s++) { double sla = lat + (la - lat) * s / 8, slo = lon + (lo - lon) * s / 8, g = T(sla, slo), path = altitude + (jAlt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clr = false; }
+                    if (!clr) { nTerr++; continue; }   // terrain still rules the fallback out
+                    if (jAlt - altitude > reach * 15 / Math.Max(30, speed)) { nAlt++; continue; }   // nor a climb it cannot make
+                    nFallback++; double cost = reach + d;
+                    if (cost < bestCost) { bestCost = cost; var j = new Wp { Name = "long final -" + (d / 1000).ToString("0") + " km", Lat = la, Lon = lo, Alt = jAlt };
+                        best = new List<Wp> { j }; JoinPoint = j; bestWhy = "fallback: joined the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m)"; }
+                }
+            }
+            why = (best != null ? bestWhy : "no safe join point") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable" + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]";
             return best;
         }
 
@@ -653,7 +671,7 @@ namespace KSPChatBridge
         internal double Lat, Lon, EndLat, EndLon, Elevation;
         internal string Phase = "entry";
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
-        internal bool Gear, Brakes; int replanHold;
+        internal bool Gear, Brakes; int replanHold, sinceReplan = 100000;
         internal double Distance;
         internal const double FastAtShort = 15, FastAtGate = 10;
         internal double DecelA = double.NaN, LastStallEst = 45;   // measured idle(+airbrake) decel for this craft; NaN = conservative default
@@ -752,8 +770,9 @@ namespace KSPChatBridge
                 }
                 // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
                 double nowV = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed));   // turns are flown at the speed we actually have
-                replanHold = RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV) ? replanHold + 1 : 0;   // no replans on transient speed: must persist ~10 s
-                if (replanHold > 500) { replanHold = 0; Plan(course, radius, nowV, RouteIndex); }
+                replanHold = RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV) ? replanHold + 1 : 0;   // no replans on transient speed: must persist ~20 s
+                sinceReplan++;
+                if (replanHold > 1000 && sinceReplan > 3000) { replanHold = 0; sinceReplan = 0; Plan(course, radius, nowV, RouteIndex); }   // and at most one replan per ~60 s (no churn)
                 // join speed from the IAF onward = this craft's 1.5 x stall (Luke), so the planned arcs are what it flies
                 bool joined = RouteIndex > 0 || (Route.Count > 0 && NavigationMath.Distance(lat, lon, Route[0].Lat, Route[0].Lon, radius) < 2 * speed * speed / (9.81 * Math.Tan(BankDeg * Math.PI / 180)));
                 DesiredSpeed = ApproachProfile.Speed(stall);

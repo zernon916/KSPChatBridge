@@ -176,6 +176,7 @@ class Program
         Check(PilotPolicy.ApproachFloorVs("final", 18800, 200, 200, double.NaN, -10, -24, false) >= 3 && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -24, true) >= 3
             && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -5, false) == -10 && PilotPolicy.FloorAgl(-24, true) == 360, "5:50 PM water landing: floor = max(150 m, 10-15 s of sink) recovers a -24 m/s dive at 200-300 m");
         Check(MfdNav.ApStatus("idle", false, false) == "AP OFF" && MfdNav.ApStatus("landing", true, true) == "AP ENGAGED APPROACH LOC GS" && MfdNav.ApStatus("hold", false, false) == "AP ENGAGED HOLD" && MfdNav.FuelStatus(0, 100) == "!Empty!" && MfdNav.FuelStatus(85, 100) == "LF 85%" && MfdNav.FuelStatus(0, 0) == "", "MAP/CHART status line: AP annunciator + fuel");
+        Check(NativeRecovery.InOwnGrace(10, 9) && !NativeRecovery.InOwnGrace(13.5, 10) && !NativeRecovery.InOwnGrace(5, double.NegativeInfinity), "own trim/flap/airbrake actuations whitelisted for 3 s (no self-tamper alarm)");
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
@@ -1353,6 +1354,11 @@ class Program
                 double sLa, sLo; NavigationMath.Offset(thrLa, thrLo, 270.4, 20000, 600000, out sLa, out sLo);
                 var j2 = chj.BestJoin(sLa, sLo, 90.4, chj.LongAlt, v, r, 600000, out jw);
                 Check(j2 != null && j2[j2.Count - 1].Lat == chj.Long.Lat && j2.Count <= 2, "on the extended centerline 20 km out: straight to the FAF (" + jw + ")");
+                {   // Luke 5:56 PM heavy craft: 330/330 'unreachable' -> fall back to a reachable point on the long final line
+                    double hv = 120, hr = ApproachProfile.Radius(hv, CraftClass.HeavyBank), hLa, hLo; NavigationMath.Offset(thrLa, thrLo, 120, 28000, 600000, out hLa, out hLo);
+                    var jh = chj.BestJoin(hLa, hLo, 30, chj.LongAlt, hv, hr, 600000, out jw);
+                    Check(jh != null && jh.Count >= 1, "heavy craft far off-axis always gets a reachable join (" + jw + ")");
+                }
                 var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
                 Check(jw.Contains("altitude") && (j3 == null || j3[0].Name != chj.ApexLeft.Name), "4 km too high: close fixes rejected for descent (" + jw + ")");
                 {   // Luke 3:12 PM bug: joins along the LINE, forward in chart order only, prefer the leg we are on, no 40 g structure

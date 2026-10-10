@@ -58,15 +58,23 @@ namespace KSPChatBridge
                         Restore = () => { if (multi.runningPrimary != forwardPrimary.Value) multi.ToggleMode(); } };
                 }
             }
+            ownPending = false;   // the initial baseline is not an actuation
         }
+        // Luke 5:56 PM: our own trim / flap / airbrake / action-group actuations must whitelist themselves. Stock surfaces can
+        // follow an action group (deploy bound to Brakes) or settle a frame later, so for 3 s after any own actuation a changed
+        // control surface is re-snapshotted as ours instead of being flagged as tampering.
+        bool ownPending; double ownAt = double.NegativeInfinity; internal const double OwnGraceS = 3;
+        internal static bool InOwnGrace(double now, double ownAt) { return now - ownAt >= 0 && now - ownAt < OwnGraceS; }
         internal void AcceptGroup(Vessel vessel, KSPActionGroup group, bool value)
         {
+            ownPending = true;
             Entry existing; if (entries.TryGetValue(group, out existing) && existing.Desired == value) return;
             entries[group] = new Entry { Desired = value, Alive = () => true, Changed = () => vessel.ActionGroups[group] != value,
                 Restore = () => vessel.ActionGroups.SetGroup(group, value) };
         }
         internal void AcceptSurface(ModuleControlSurface surface)
         {
+            ownPending = true;
             float angle = surface.deployAngle, authority = surface.authorityLimiter;
             bool deploy = surface.deploy, invert = surface.deployInvert, partInvert = surface.partDeployInvert,
                 pitch = surface.ignorePitch, roll = surface.ignoreRoll, yaw = surface.ignoreYaw;
@@ -83,11 +91,15 @@ namespace KSPChatBridge
         {
             Noticed.Clear();
             int restored = 0;
+            if (ownPending) { ownAt = now; ownPending = false; }
+            bool grace = InOwnGrace(now, ownAt);
             foreach (var pair in new List<KeyValuePair<object, Entry>>(entries))
             {
                 var entry = pair.Value;
                 if (entry.Alive != null ? !entry.Alive() : entry.Module == null || entry.Module.part.vessel != vessel) { entries.Remove(pair.Key); continue; }
                 if (!enabled) { entry.Gate.Reset(); continue; }
+                var cs = entry.Module as ModuleControlSurface;
+                if (grace && cs != null && entry.Changed()) { AcceptSurface(cs); ownPending = false; continue; }   // our own actuation settling
                 bool due = entry.Gate.Tick(entry.Changed(), now);
                 if (entry.Gate.JustNoticed) Noticed.Add(entry.Module != null && entry.Module.part != null && entry.Module.part.partInfo != null ? entry.Module.part.partInfo.title : pair.Key.ToString());
                 if (due) { entry.Restore(); entry.Gate.Reset(); restored++; }
