@@ -177,6 +177,21 @@ class Program
             && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -5, false) == -10 && PilotPolicy.FloorAgl(-24, true) == 360, "5:50 PM water landing: floor = max(150 m, 10-15 s of sink) recovers a -24 m/s dive at 200-300 m");
         Check(MfdNav.ApStatus("idle", false, false) == "AP OFF" && MfdNav.ApStatus("landing", true, true) == "AP ENGAGED APPROACH LOC GS" && MfdNav.ApStatus("hold", false, false) == "AP ENGAGED HOLD" && MfdNav.FuelStatus(0, 100) == "!Empty!" && MfdNav.FuelStatus(85, 100) == "LF 85%" && MfdNav.FuelStatus(0, 0) == "", "MAP/CHART status line: AP annunciator + fuel");
         Check(NativeRecovery.InOwnGrace(10, 9) && !NativeRecovery.InOwnGrace(13.5, 10) && !NativeRecovery.InOwnGrace(5, double.NegativeInfinity), "own trim/flap/airbrake actuations whitelisted for 3 s (no self-tamper alarm)");
+        {   // Luke 5:59 PM: in-flight stall learning from AoA vs CL (no stalling)
+            double m = 20000, A = 10, trueVs = Math.Sqrt(2 * m * 9.81 / (1.225 * A * (.08 * 13 + .1)));
+            foreach (double sgn in new[] { 1.0, -1.0 })
+            {
+                var L = new StallLearner(); var rnd = new Random(1);
+                for (int i = 0; i < 300; i++) { double a = 1 + 5 * rnd.NextDouble(), cl = .08 * a + .1, q = m * 9.81 / (A * cl); L.Add(sgn * a, q, m, 1, A, 2, .5); }
+                double ms = L.MeasuredStall(m, A);
+                Check(Math.Abs(ms - trueVs) / trueVs < .01 && L.Confidence > .99, "stall learned from level flight (" + ms.ToString("0.0") + " vs " + trueVs.ToString("0.0") + " m/s, sign " + sgn + ")");
+                var L2 = StallLearner.Load(L.Save()); Check(Math.Abs(L2.MeasuredStall(m, A) - ms) < 1e-6, "stall learning persists per craft");
+            }
+            var few = new StallLearner(); for (int i = 0; i < 5; i++) few.Add(3, 5000, m, 1, A, 0, 0);
+            Check(double.IsNaN(few.MeasuredStall(m, A)) && !few.Add(3, 5000, m, 1, A, 40, 0) && !few.Add(3, 100, m, 1, A, 0, 0), "too few / unsteady samples are not used");
+            Check(StallLearner.Effective(60, 50, .3) == 60 && StallLearner.Effective(50, 60, .3) == 60 && StallLearner.Effective(60, 50, .9) == 50 && StallLearner.Effective(60, double.NaN, 1) == 60, "conservative: higher estimate until confident");
+            Console.WriteLine("Stall learning: 7 checks passed.");
+        }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

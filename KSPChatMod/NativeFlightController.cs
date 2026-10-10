@@ -73,6 +73,15 @@ namespace KSPChatBridge
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
         TakeoffMission takeoff; TakeoffGround tground; bool landFloor;
+        StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
+        double LearnedStall() { return learner == null || vessel == null ? stallGuess : FlightPolicy.Clamp(StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence), 20, 200); }
+        internal static string StallLabel { get { var i = instance; return i == null || i.learner == null || i.vessel == null ? "" : StallLearner.Label(i.stallGuess, i.learner.MeasuredStall(i.vessel.GetTotalMass() * 1000, i.liftArea), i.learner.Confidence); } }
+        void SaveLearner()
+        {
+            object so; var sc = settingsData.TryGetValue("stall_learn", out so) ? so as Dictionary<string, object> : null;
+            if (sc == null) settingsData["stall_learn"] = sc = new Dictionary<string, object>();
+            sc[vessel.vesselName] = learner.Save(); try { Save(); } catch (Exception) { }
+        }
         string craftAuto = "light", craftOverride = "auto"; string CraftCls { get { return CraftClass.Effective(craftAuto, craftOverride); } }
         internal static string CraftLabel { get { return instance == null ? "" : CraftClass.Label(instance.CraftCls, instance.craftOverride); } }
         internal string CraftClassCmd(string m)
@@ -184,6 +193,9 @@ namespace KSPChatBridge
             catch (Exception) { stall = 45; ChatWindow.Notice("Invalid saved stall speed ignored for this craft."); }
             { object lo; var lc = settingsData.TryGetValue("liftoff_speeds", out lo) ? lo as Dictionary<string, object> : null; liftoffSpeed = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); }
             partCount = vessel.parts.Count;
+            stallGuess = stall; liftArea = liftSum;
+            { object so; var sc = settingsData.TryGetValue("stall_learn", out so) ? so as Dictionary<string, object> : null; object lo2 = null; if (sc != null) sc.TryGetValue(vessel.vesselName, out lo2); learner = StallLearner.Load(lo2 as Dictionary<string, object>); }
+            stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.CoM, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
               ApproachProfile.JoinG = CraftClass.JoinG(CraftCls, ApproachProfile.JoinG); ApproachProfile.FinalG = CraftClass.JoinG(CraftCls, ApproachProfile.FinalG);
@@ -401,6 +413,16 @@ namespace KSPChatBridge
                 double pitch = Pitch(), roll = Roll(), kin = FlightPolicy.Clamp(Math.Pow(10 / Math.Max(1, vessel.GetTotalMass()), .4), .3, 1.3);
                 double q = FlightPolicy.Wrap(pitch - prevPitch) / dt, p = FlightPolicy.Wrap(roll - prevRoll) / dt;
                 prevPitch = pitch; prevRoll = roll;
+                if (!vessel.LandedOrSplashed && mode != "takeoff" && Time.realtimeSinceStartup >= nextStallSample && learner != null)
+                {   // in-flight stall learning: steady level-ish samples of AoA vs CL (no stalling needed)
+                    nextStallSample = Time.realtimeSinceStartup + .5f; var tr = vessel.ReferenceTransform; Vector3d vel = vessel.srf_velocity;
+                    if (tr != null && vel.magnitude > 20)
+                    {
+                        double aoa = Math.Atan2(Vector3d.Dot(vel, tr.forward), Vector3d.Dot(vel, tr.up)) * 180 / Math.PI;
+                        learner.Add(aoa, vessel.dynamicPressurekPa * 1000, vessel.GetTotalMass() * 1000, vessel.geeForce, liftArea, roll, vessel.verticalSpeed);
+                    }
+                    if (Time.realtimeSinceStartup >= nextStallSave) { nextStallSave = Time.realtimeSinceStartup + 20; stall = LearnedStall(); SaveLearner(); }
+                }
                 if (mode == "takeoff")
                 {
                     if (NativeSafety.ReleaseForTakeoff(mode, takeoff.Phase, vessel.LandedOrSplashed, vessel.ActionGroups[KSPActionGroup.Brakes])) { parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false); }
@@ -450,7 +472,7 @@ namespace KSPChatBridge
                         needStallStudy = false;
                         if (stallStudy.Measured.HasValue)
                         {
-                            stall = stallStudy.Measured.Value;
+                            stall = stallGuess = stallStudy.Measured.Value;
                             object cacheObject;
                             var cache = settingsData.TryGetValue("stall_speeds", out cacheObject) ? cacheObject as Dictionary<string, object> : null;
                             if (cache == null) settingsData["stall_speeds"] = cache = new Dictionary<string, object>();

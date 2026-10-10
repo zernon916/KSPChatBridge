@@ -99,6 +99,58 @@ namespace KSPChatBridge
         internal static double Ahead(double kBehind, double kNext, double remaining, double speed) { return remaining <= LookAheadS * speed ? kNext : kBehind; }
     }
 
+    /// <summary>Luke 5:59 PM: learn the stall speed in flight without stalling. Steady level-ish samples give the lift
+    /// coefficient CL = n m g / (q S) against AoA; a least-squares line gives the CL slope; CLmax = CL at a conservative max-lift
+    /// AoA (13 deg for stock wings); Vs = sqrt(2 m g / (rho0 S CLmax)). S is the same reference area (sum of the wings' lift
+    /// coefficients) in both steps, so it cancels. Sufficient statistics persist per craft. Until confidence is high the higher of
+    /// the measured and weight-based estimates is used (conservative). Pure; tested.</summary>
+    internal sealed class StallLearner
+    {
+        internal const double AoaMax = 13, Rho0 = 1.225, G0 = 9.81, ConfidentAt = .7;
+        internal double N, Sx, Sy, Sxx, Sxy, Xmin = double.MaxValue, Xmax = double.MinValue;
+        /// <summary>Accept one sample; false = not steady/valid.</summary>
+        internal bool Add(double aoaDeg, double qPa, double massKg, double nz, double area, double bankDeg, double vs)
+        {
+            if (qPa < 300 || area <= 0 || massKg <= 0 || Math.Abs(bankDeg) > 15 || Math.Abs(vs) > 8 || nz < .7 || nz > 1.4 || Math.Abs(aoaDeg) > 14) return false;
+            double cl = nz * massKg * G0 / (qPa * area);
+            N++; Sx += aoaDeg; Sy += cl; Sxx += aoaDeg * aoaDeg; Sxy += aoaDeg * cl; Xmin = Math.Min(Xmin, aoaDeg); Xmax = Math.Max(Xmax, aoaDeg);
+            return true;
+        }
+        internal double Spread { get { return N < 2 ? 0 : Xmax - Xmin; } }
+        internal double Confidence { get { return FlightPolicy.Clamp(N / 200, 0, 1) * FlightPolicy.Clamp(Spread / 4, 0, 1); } }
+        /// <summary>CL = Slope * aoa + Intercept (aoa sign normalised so lift rises with AoA).</summary>
+        internal bool Fit(out double slope, out double intercept)
+        {
+            slope = intercept = double.NaN; double d = N * Sxx - Sx * Sx;
+            if (N < 10 || Math.Abs(d) < 1e-9) return false;
+            slope = (N * Sxy - Sx * Sy) / d; intercept = (Sy - slope * Sx) / N;
+            return !double.IsNaN(slope) && Math.Abs(slope) > 1e-4;
+        }
+        internal double ClMax { get { double a, b; if (!Fit(out a, out b)) return double.NaN; if (a < 0) a = -a; double c = a * AoaMax + b; return c > 0 ? c : double.NaN; } }
+        internal double MeasuredStall(double massKg, double area)
+        {
+            double c = ClMax; return double.IsNaN(c) || area <= 0 ? double.NaN : Math.Sqrt(2 * massKg * G0 / (Rho0 * area * c));
+        }
+        /// <summary>Speed to fly by: the higher (conservative) until confident, then the measured value.</summary>
+        internal static double Effective(double guess, double measured, double confidence)
+        {
+            if (double.IsNaN(measured)) return guess;
+            if (confidence < ConfidentAt) return Math.Max(guess, measured);
+            return measured;
+        }
+        internal static string Label(double guess, double measured, double confidence)
+        {
+            return "Vs " + Math.Round(Effective(guess, measured, confidence)) + " (est " + Math.Round(guess) + (double.IsNaN(measured) ? "" : ", meas " + Math.Round(measured)) + ", conf " + Math.Round(100 * confidence) + "%)";
+        }
+        internal Dictionary<string, object> Save() { return new Dictionary<string, object> { { "n", N }, { "sx", Sx }, { "sy", Sy }, { "sxx", Sxx }, { "sxy", Sxy }, { "xmin", Xmin }, { "xmax", Xmax } }; }
+        internal static StallLearner Load(Dictionary<string, object> d)
+        {
+            var l = new StallLearner(); if (d == null) return l;
+            Func<string, double, double> g = (k, def) => { object o; return d.TryGetValue(k, out o) && o != null ? Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture) : def; };
+            l.N = g("n", 0); l.Sx = g("sx", 0); l.Sy = g("sy", 0); l.Sxx = g("sxx", 0); l.Sxy = g("sxy", 0); l.Xmin = g("xmin", double.MaxValue); l.Xmax = g("xmax", double.MinValue); return l;
+        }
+    }
+
     internal sealed class TakeoffGround
     {
         internal double Lat0, Lon0, Hdg0, Wheel, Yaw; double released = double.NaN;
