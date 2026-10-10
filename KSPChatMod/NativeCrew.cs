@@ -31,7 +31,7 @@ namespace KSPChatBridge
             var crew = CrewOf(v);
             var pilot = CrewVoice.Pilot(crew);
             string speaker = CrewVoice.Speaker(crew, AiName);
-            if (pilot == null) return new KeyValuePair<string, string>(speaker, "");
+            if (pilot == null || speaker == CrewVoice.Autopilot) return new KeyValuePair<string, string>(speaker, "");
             string desc = "";
             try { desc = KerbalPersonality.Describe(pilot.Value.Key, pilot.Value.Value); } catch (Exception) { }
             return new KeyValuePair<string, string>(speaker, CrewVoice.Persona(pilot.Value.Key, pilot.Value.Value, desc, v.vesselName));

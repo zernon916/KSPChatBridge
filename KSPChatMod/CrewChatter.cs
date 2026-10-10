@@ -6,6 +6,7 @@ namespace KSPChatBridge
     /// <summary>Who voices replies in native mode (bridge chat.py: the kerbal at the controls speaks the AI's replies).</summary>
     internal static class CrewVoice
     {
+        internal static bool HasPilot(IList<KeyValuePair<string, string>> crew) { if (crew != null) foreach (var c in crew) if (IntercomTalk.NormTrait(c.Value) == "pilot") return true; return false; }
         /// <summary>Pilot-trait crew first, else the first crew member; null with no crew.</summary>
         internal static KeyValuePair<string, string>? Pilot(IList<KeyValuePair<string, string>> crew)
         {
@@ -14,9 +15,12 @@ namespace KSPChatBridge
             return crew[0];
         }
 
-        /// <summary>Name shown for a reply: pilot first name, else the AI name, else "AICS".</summary>
+        internal const string Autopilot = "AUTOPILOT";
+        /// <summary>Name shown for a reply: Pilot-trait first name; crew aboard but no Pilot -> "AUTOPILOT" (system voice; the
+        /// others still chatter on the intercom); no crew -> the AI name, else "AICS".</summary>
         internal static string Speaker(IList<KeyValuePair<string, string>> crew, string aiName)
         {
+            if (crew != null && crew.Count > 0 && !HasPilot(crew)) return Autopilot;
             var p = Pilot(crew);
             if (p != null && IntercomTalk.First(p.Value.Key).Length > 0) return IntercomTalk.First(p.Value.Key);
             return string.IsNullOrEmpty(aiName) ? "AICS" : aiName;
@@ -35,7 +39,7 @@ namespace KSPChatBridge
         internal static string Line(string speaker, string reply)
         {
             string s = string.IsNullOrEmpty(speaker) ? "AICS" : speaker;
-            return s + ": " + (s == "AICS" ? reply : Captainize(reply));
+            return s + ": " + (s == "AICS" || s == Autopilot ? reply : Captainize(reply));
         }
 
         /// <summary>System-prompt lines that put the model in the pilot's seat (empty with no crew).</summary>

@@ -169,7 +169,11 @@ class Program
             Check(cnt > 0 && Math.Abs(sum / cnt) < 10 && sumAbs / cnt < 10, "arc: mean cross-track < 10 m, no outside bias (bias " + (sum / Math.Max(1, cnt)).ToString("0.0") + " m, mean |e| " + (sumAbs / Math.Max(1, cnt)).ToString("0.0") + " m)");
             Check(PathCurvature.AtVertex(90, 180, 5000, 5000) == 0 && PathCurvature.Ahead(0, .001, 100, 120) == .001 && PathCurvature.Ahead(0, .001, 1000, 120) == 0, "corners between long legs aren't arcs; 1.5 s look-ahead");
             Console.WriteLine("Arc feed-forward: 2 checks passed.");
-        }        Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
+        }        { var crew1 = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Sidry Kerman", "Pilot") };
+            { var noPilot = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Bill Kerman", "Engineer"), new KeyValuePair<string, string>("Bob Kerman", "Scientist") };
+              Check(CrewVoice.Speaker(noPilot, "Max") == "AUTOPILOT" && CrewVoice.Line("AUTOPILOT", "Gear down.") == "AUTOPILOT: Gear down." && CrewVoice.Speaker(crew1, "") == "Sidry", "no Pilot aboard: AUTOPILOT voices flight replies"); }
+        }
+        Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);
