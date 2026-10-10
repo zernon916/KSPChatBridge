@@ -42,12 +42,24 @@ menus and autopilots still work locally.
 1. **Via CKAN** (once listed): search for *KSP Chat Bridge* (`KSPChatBridge`).
    **Manual**: unzip `KSPChatBridge-<version>.zip` from the GitHub releases into the KSP folder so you get
    `GameData/KSPChatBridge/Plugins/KSPChatBridge.dll`.
-2. Start KSP and load a save. Open the chat with Alt+K (or the toolbar button) and the AICS menu with Alt+J.
+2. Start KSP and load a save. Open the chat with Alt+K (or the toolbar button) and the **AICS MFD** with Alt+J (or right-click the toolbar button).
 
 Your data (`.env` with API keys, `native_settings.json`, `aics.cfg`, charts, `kerbal_personalities.json`,
 `playstyle_notes.md`, `logs/`) lives in `GameData/KSPChatBridge/PluginData/`, which updates and CKAN leave alone.
 Upgrading from a bridge build (0.1.x): the old `Bridge/` folder and `bridge.cfg` are no longer used and can be deleted;
 `ai_enabled` and the science setting carry over.
+
+### AICS MFD
+
+One movable, resizable cockpit-style panel (drag the top bezel, resize from the bottom-right corner) replaces the old AICS
+menu bar and the Map & Charts window; the chat window stays separate (CHAT key in the header).
+HOME soft keys: AUTOPILOT, MAP, PLAN, CREW, MECHJEB (only with MechJeb2), SYS, SETTINGS. In a group the left keys pick the
+page (PREV / NEXT on the bottom row when there are more than six), the right column and bottom keys are that page's
+context keys, and **BACK is always the bottom-left key**. Examples: AUTOPILOT > TAXI > HANGAR / RWY 09 / RWY 27;
+MAP > MAP: ZOOM, CENTER, RWY, arrow keys pan; MECHJEB > SMARTASS / GUIDANCE.
+
+Taxi routes are ground charts (`PluginData/charts/TAXI_*.json`, one directional route per file, hot-reloaded, drawn on
+the map). `taxi to hangar` / `taxi to runway 09` joins the nearest point ahead on the line and follows its centerline.
 
 ## Backends and models
 | Settings dropdown | id (`/ai <id>`) | Needs | Default model |
@@ -107,7 +119,7 @@ The AI does the same by chat: "land at Island Airfield", "save this spot as Mun 
 AICS > Approach & Autoland flies a published-style approach to KSC 09/27 or the Island runway: join on the chart's
 line, stabilized speed schedule (deceleration measured per craft), coupled localizer + glideslope on the true runway
 centerline, flare, rollout, taxi. Charts are per-runway-end JSON files in `PluginData/charts/` (`KSC_09.json`,
-`KSC_09_tight.json`, ...), hot-reloaded when they change; edit them in the in-game **Map & Charts** window or the HTML
+`KSC_09_tight.json`, ...), hot-reloaded when they change; edit them in the MFD **MAP** group (MAP / CHART / ILS pages) or the HTML
 editor (`python tools/approach_map.py`). The window's ILS tab shows deviations, status and hand-flying guidance.
 
 ## Science watcher

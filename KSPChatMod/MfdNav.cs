@@ -1,0 +1,111 @@
+using System;
+using System.Collections.Generic;
+
+namespace KSPChatBridge
+{
+    /// <summary>AICS MFD navigation (Luke): HOME has the group keys; each group is paged (6 item keys per page on the left, PREV /
+    /// NEXT on the bottom row when there are more); the right column and bottom keys 1-4 are the selected item's context keys;
+    /// BACK is always bottom key 0 on every page except HOME. Every former menu item has a key. Pure; tested.</summary>
+    internal static class MfdNav
+    {
+        internal const int Side = 6, BottomCount = 7, BackKey = 0, PrevKey = 5, NextKey = 6;
+        internal sealed class Item
+        {
+            internal string Id, Label; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
+            internal Item(string id, string label, int panel = -1) { Id = id; Label = label; Panel = panel; }
+        }
+        internal sealed class Group { internal string Id, Label; internal bool NeedsMj; internal List<Item> Items = new List<Item>(); }
+
+        internal static List<Group> Groups(bool mj)
+        {
+            var g = new List<Group>();
+            Func<string, string, bool, Item[], Group> G = (id, l, m, it) => { var x = new Group { Id = id, Label = l, NeedsMj = m }; x.Items.AddRange(it); return x; };
+            g.Add(G("ap", "AUTOPILOT", false, new[] { new Item("aircraft", "AIRCRAFT", 0), new Item("approach", "APPROACH", 1), new Item("guidance", "LAND GUID", 2), new Item("taxi", "TAXI", 12),
+                new Item("trim", "TRIM"), new Item("abort", "ABORT/STAT", 13), new Item("orbitap", "ORBITAL AP", 7), new Item("capture", "CAPTURE", 5), new Item("docking", "DOCKING", 6), new Item("sunlock", "SUN LOCK", 8) }));
+            g.Add(G("map", "MAP", false, new[] { new Item("map", "MAP"), new Item("chart", "CHART"), new Item("ils", "ILS") }));
+            g.Add(G("plan", "PLAN", false, new[] { new Item("flightplan", "FLIGHT PLAN", 3), new Item("orbitplan", "ORBIT PLAN", 4) }));
+            g.Add(G("crew", "CREW", false, new[] { new Item("crew", "CREW / EVA", 11), new Item("science", "SCIENCE", 10) }));
+            if (mj) g.Add(G("mj", "MECHJEB", true, new[] { new Item("mjatt", "SMARTASS"), new Item("mjguide", "GUIDANCE") }));
+            g.Add(G("sys", "SYS", false, new[] { new Item("power", "POWER", 9), new Item("status", "STATUS WIN"), new Item("systems", "SYSTEMS WIN") }));
+            g.Add(G("settings", "SETTINGS", false, new[] { new Item("settings", "SETTINGS", 14) }));
+            return g;
+        }
+
+        internal static int Pages(Group g) { return Math.Max(1, (g.Items.Count + Side - 1) / Side); }
+        internal static List<Item> PageItems(Group g, int page)
+        {
+            page = Math.Max(0, Math.Min(page, Pages(g) - 1)); var r = new List<Item>();
+            for (int i = page * Side; i < Math.Min(g.Items.Count, (page + 1) * Side); i++) r.Add(g.Items[i]);
+            return r;
+        }
+
+        /// <summary>HOME: group keys down the left, then the right column.</summary>
+        internal static string[] HomeKeys(bool mj)
+        {
+            var gs = Groups(mj); var k = new string[Side * 2];
+            for (int i = 0; i < gs.Count && i < k.Length; i++) k[i] = gs[i].Label;
+            return k;
+        }
+
+        /// <summary>Right-column context keys for an item (null slots blank).</summary>
+        internal static string[] Right(string item)
+        {
+            switch (item)
+            {
+                case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
+                case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "ADD WP", "REMOVE", "SAVE" };
+                case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
+                case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", null };
+                case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
+                case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
+                case "trim": return new[] { "TRIM WIN", "AUTO TRIM", null, null, null, null };
+                case "abort": return new[] { "ABORT", "STOP", "STATUS", null, null, null };
+                case "mjatt": return new[] { "PROGRADE", "RETRO", "NORMAL+", "NORMAL-", "RAD+", "RAD-" };
+                case "mjguide": return new[] { "ASCENT", "LAND", "EXEC NODE", "RENDEZV", "DOCK", "AIRCRAFT" };
+                case "flightplan": return new[] { "CHECK", "FLY", "STOP", null, null, null };
+                case "status": case "systems": return new[] { "TOGGLE", null, null, null, null, null };
+                default: return new string[Side];
+            }
+        }
+
+        /// <summary>Bottom keys 1-4 (context); 0 = BACK, 5/6 = PREV/NEXT are added by Bottom().</summary>
+        internal static string[] BottomContext(string item)
+        {
+            switch (item)
+            {
+                case "map": return new[] { "\u2190", "\u2193", "\u2191", "\u2192" };
+                case "chart": return new[] { "RESET", "DETAILS", "ZOOM+", "ZOOM-" };
+                case "mjatt": return new[] { "KILLROT", "NODE", "TARGET+", "OFF" };
+                case "mjguide": return new[] { "SPACEPLN", "STATUS", "ALL OFF", null };
+                default: return new string[4];
+            }
+        }
+
+        /// <summary>The whole bottom row for the current page: BACK fixed at key 0 (blank on HOME), PREV/NEXT at 5/6 when paged.</summary>
+        internal static string[] Bottom(bool home, string item, int page, int pages)
+        {
+            var b = new string[BottomCount]; if (home) return b;
+            b[BackKey] = "BACK"; var c = BottomContext(item); for (int i = 0; i < 4; i++) b[1 + i] = c[i];
+            if (pages > 1) { b[PrevKey] = page > 0 ? "PREV" : null; b[NextKey] = page < pages - 1 ? "NEXT" : null; }
+            return b;
+        }
+
+        /// <summary>SmartASS mode for a MECHJEB attitude key.</summary>
+        internal static string SmartMode(string key)
+        {
+            switch (key)
+            {
+                case "PROGRADE": return "PROGRADE"; case "RETRO": return "RETROGRADE"; case "NORMAL+": return "NORMAL_PLUS"; case "NORMAL-": return "NORMAL_MINUS";
+                case "RAD+": return "RADIAL_PLUS"; case "RAD-": return "RADIAL_MINUS"; case "KILLROT": return "KILLROT"; case "NODE": return "NODE"; case "TARGET+": return "TARGET_PLUS"; case "OFF": return "OFF";
+            }
+            return null;
+        }
+
+        /// <summary>Every panel index 0..14 reachable from some item (pinned by a test).</summary>
+        internal static bool CoversPanels(int count, bool mj)
+        {
+            var seen = new HashSet<int>(); foreach (var g in Groups(mj)) foreach (var it in g.Items) if (it.Panel >= 0) seen.Add(it.Panel);
+            for (int i = 0; i < count; i++) if (!seen.Contains(i)) return false; return true;
+        }
+    }
+}

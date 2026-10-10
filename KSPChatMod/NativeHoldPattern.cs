@@ -31,7 +31,9 @@ namespace KSPChatBridge
                 case "formation": return Formation(a);
                 case "drive_to_building": return DriveToBuilding(a);
                 case "hold_pattern": return HoldPattern(a);
+                case "taxi_route": return TaxiRouteCmd(a);
             }
+            if (name.StartsWith("mj_")) return MechJebCmd(name, a);
             return null;
         }
 

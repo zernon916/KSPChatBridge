@@ -21,6 +21,7 @@ namespace KSPChatBridge
             return coreType;
         }
 
+        internal static bool Installed { get { return CoreType() != null; } }
         internal static object Core(Vessel v)
         {
             var t = CoreType(); if (t == null || v == null) return null;

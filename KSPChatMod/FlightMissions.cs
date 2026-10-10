@@ -227,6 +227,29 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>Derotation after main-gear contact (Luke: the nose gear bounced). Hold the touchdown attitude briefly, then lower the
+    /// nose at a limited rate (2.5 deg/s) to nose-gear contact with no forward-stick spike (elevator floor -0.1); wheel brakes only
+    /// once the nose wheel is down. Pure; tested.</summary>
+    internal sealed class Derotation
+    {
+        internal const double Rate = 2.5, HoldS = .8, MinElevator = -.1;
+        double cmd = double.NaN, held; internal bool NoseDown;
+        internal double Command { get { return cmd; } }
+        internal void Reset() { cmd = double.NaN; held = 0; NoseDown = false; }
+        /// <summary>Pitch command (deg) for this frame; noseGrounded from the nose wheel.</summary>
+        internal double Step(double pitch, double dt, bool noseGrounded)
+        {
+            if (double.IsNaN(cmd)) cmd = pitch;
+            if (noseGrounded && held > HoldS) NoseDown = true;
+            held += dt;
+            if (held > HoldS) cmd = Math.Max(-1, cmd - Rate * dt);
+            return cmd;
+        }
+        /// <summary>Elevator: track the command, damp pitch rate, never push hard forward (no nose slam / bounce).</summary>
+        internal double Elevator(double pitch, double q) { return FlightPolicy.Clamp(.03 * (cmd - pitch) - .04 * q, NoseDown ? -.2 : MinElevator, .5); }
+        internal bool BrakesAllowed { get { return NoseDown; } }
+    }
+
     /// <summary>Pitch-command shaping (crash 047208f: 9.5 g at the takeoff->climb handoff). S-curve + pitch-rate limit; high g only
     /// in commanded turns/joins (|bank| > 15), otherwise ClimbG; turn back-pressure only when banked; Reset() from the current
     /// state at every mode change so no stale filter/rate state produces a jump.</summary>

@@ -15,14 +15,12 @@ using UnityEngine;
 namespace KSPChatBridge
 {
     [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
-    public class AicsMenu : MonoBehaviour
+    public partial class AicsMenu : MonoBehaviour
     {
-        const int MenuId = 0x4B434241;
         static readonly string[] Items = {
             "Aircraft Autopilot", "Approach & Autoland", "Landing Guidance", "Flight Plan", "Orbit Plan",
             "Capture Assist", "Docking", "Orbital Autopilot", "Sun Lock", "Power", "Science",
             "Crew / Station / EVA", "Taxi / Base Run", "Abort / Status", "Settings" };
-        static readonly string[] Tags = { "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W", "W" };
         static readonly bool[] Open = new bool[Items.Length];
         // which controller mode lights the indicator next to each item (null = not an autopilot / mode)
         static readonly string[] IndKeys = { "ind_holds", "ind_autoland", "ind_lander", "ind_flightplan", "ind_mechjeb", null,
@@ -31,18 +29,11 @@ namespace KSPChatBridge
         // MechJeb-style: a sticky collapsed tab at the top of the screen ("▲ AICS ▲"); right-click (or click) it to
         // expand the two-column menu, right-click the menu (or the tab) to collapse. Each item opens its own window.
         internal static bool Expanded;
-        static bool showTab = true;
-        static float tabX = -1f;
-        static Rect menuRect = new Rect(-1, 24, 420, 60);
-        static readonly Rect[] panelRects = new Rect[Items.Length];
         static bool loaded;
         static string cfgFile;
         static GUISkin skin;
         static GUIStyle hdr, small, green, grey, tagW, tagP, tagS, tabStyle, itemOn, itemOff, warnStyle, tabWarn;
         static bool? mj;
-        const float TabW = 132f, TabH = 22f;
-        static bool dragging, dragMoved;
-        static float dragOff;
 
         // Optional: MechJeb2 (orbital autopilots say so when it is missing).
         static string missingMods;          // null = not checked yet, "" = all present
@@ -110,7 +101,7 @@ namespace KSPChatBridge
         static volatile string landing = "";
         float nextSample;
 
-        public static void Toggle() { Expanded = !Expanded; showTab = true; Save(); }
+        public static void Toggle() { Expanded = !Expanded; Save(); }
 
         void Start()
         {
@@ -132,7 +123,6 @@ namespace KSPChatBridge
         // Block KSP camera orbit/zoom (and KSC building clicks) while the mouse is on AICS or a right-drag started there.
         const string LockId = "AICS_UiLock";
         static bool camLocked, rmbOnUi;
-        static Rect lastTab;
         static void SetCamLock(bool on)
         {
             if (on == camLocked) return;
@@ -143,9 +133,7 @@ namespace KSPChatBridge
         static bool MouseOverUi()
         {
             Vector2 m = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-            if ((showTab || Expanded) && lastTab.Contains(m)) return true;
-            if (Expanded && menuRect.Contains(m)) return true;
-            for (int i = 0; i < Open.Length; i++) if (Open[i] && panelRects[i].Contains(m)) return true;
+            if (Expanded && mfdRect.Contains(m)) return true;
             if (TrimWindow.ContainsPoint(m)) return true;
             return false;
         }
@@ -155,7 +143,7 @@ namespace KSPChatBridge
             bool over = MouseOverUi();
             if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0)) rmbOnUi = over;
             if (!Input.GetMouseButton(1) && !Input.GetMouseButton(0)) rmbOnUi = false;
-            SetCamLock(over || dragging || rmbOnUi);
+            SetCamLock(over || mfdResizing || rmbOnUi);
             if (!Open.Any(o => o)) SetTypeLock(false);
             bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             if (alt && Input.GetKeyDown(KeyCode.J)) Toggle();
@@ -177,124 +165,15 @@ namespace KSPChatBridge
 
         void OnGUIInner()
         {
-            if (!showTab && !Expanded && !Open.Any(o => o) && !picking) return;
-            if (skin == null || Mathf.Abs(skinOpacity - opacity) > 0.01f) BuildSkin();
+            if (!Expanded && !picking) return;
+            if (skin == null || Mathf.Abs(skinOpacity - opacity) > 0.01f) { BuildSkin(); mfdSkin = null; }
             GUI.skin = skin;
-            if (tabX < 0) tabX = Screen.width / 2f - TabW / 2f;
-            Rect tab = new Rect(Mathf.Clamp(tabX, 0, Screen.width - TabW), 0, TabW, TabH);
-            lastTab = tab;
             GUI.depth = -1000;  // draw above other mods' windows
             Event e = Event.current;
-            // left-click: toggle. right-click: toggle on release; right-click-HOLD + move: drag the tab (menu follows)
-            if (e.type == EventType.MouseDown && tab.Contains(e.mousePosition))
-            {
-                if (e.button == 0) { Expanded = !Expanded; Save(); e.Use(); }
-                else if (e.button == 1) { dragging = true; dragMoved = false; dragOff = e.mousePosition.x - tab.x; e.Use(); }
-            }
-            if (dragging)
-            {
-                if (e.type == EventType.MouseDrag || (e.type == EventType.Repaint && Input.GetMouseButton(1)))
-                {
-                    float nx = Mathf.Clamp(e.mousePosition.x - dragOff, 0, Screen.width - TabW);
-                    if (Mathf.Abs(nx - tabX) > 3f || dragMoved) { dragMoved = true; tabX = nx; }
-                }
-                if (e.type == EventType.MouseUp || !Input.GetMouseButton(1))
-                {
-                    dragging = false;
-                    if (!dragMoved) Expanded = !Expanded;
-                    Save();
-                }
-            }
-            bool depsBad = MissingNow != null && MissingNow != "";
-            GUI.Box(tab, (Expanded ? "▼ AICS" : "▲ AICS") + (depsBad ? " ⚠ " : " ") + (Expanded ? "▼" : "▲"), depsBad ? tabWarn : tabStyle);
-            if (Expanded)
-            {
-                // sticky: the menu hangs right under the tab and follows it
-                menuRect.x = Mathf.Clamp(tab.x + TabW / 2f - menuRect.width / 2f, 0, Screen.width - menuRect.width);
-                menuRect.y = TabH;
-                menuRect = GUILayout.Window(MenuId, menuRect, DrawMenu, "AICS  (right-click to collapse)", GUILayout.Width(menuRect.width));
-                GUI.BringWindowToFront(MenuId);  // always on top
-            }
-            for (int i = 0; i < Items.Length; i++)
-            {
-                if (!Open[i]) continue;
-                if (panelRects[i].width < 10)
-                    panelRects[i] = new Rect(Mathf.Min(Screen.width - 380, menuRect.x + menuRect.width + 8 + 24 * (i % 5)),
-                                             menuRect.y + 30 * (i % 8), 360, 80);
-                int idx = i;
-                panelRects[i] = GUILayout.Window(MenuId + 1 + i, panelRects[i], id => DrawPanelWindow(idx), Items[i],
-                                                 GUILayout.Width(panelRects[i].width));
-            }
+            if (Expanded) DrawMfdWindow();
             if (picking) MapPick(e);
             if (e.type == EventType.Repaint) SetTypeLock((GUI.GetNameOfFocusedControl() ?? "").StartsWith("aics_"));
             GUI.skin = null;
-        }
-
-        void DrawMenu(int id)
-        {
-            GUI.color = GUI.contentColor = Color.white;
-            Event e = Event.current;
-            if (e.type == EventType.MouseDown && e.button == 1) { Expanded = false; Save(); e.Use(); return; }
-            GUILayout.BeginHorizontal();
-            if (mj == null) mj = AssemblyLoader.loadedAssemblies.Any(a => a.name.StartsWith("MechJeb2"));
-            GUILayout.Label(mj.Value ? "MJ" : "no MJ", mj.Value ? green : grey, GUILayout.Width(44));
-            GUILayout.Label("Opacity", small, GUILayout.Width(48));
-            float no = GUILayout.HorizontalSlider(opacity, 0.2f, 1f);
-            opacity = Mathf.Round(no * 20f) / 20f;  // 5 % steps (bounded texture cache)
-            // toggle buttons that show their window's state (pressed = open); 'chat' used to only ever "show" (never
-            // closed it, and the window could open behind this menu)
-            bool chatOn = ChatWindow.IsVisible, stOn = StatusWindow.StatusVisible, syOn = StatusWindow.SystemsVisible, trOn = TrimWindow.TrimVisible;
-            if (GUILayout.Toggle(chatOn, "chat", GUI.skin.button, GUILayout.Width(40)) != chatOn) ChatWindow.ToggleChat();
-            if (GUILayout.Toggle(stOn, "status", GUI.skin.button, GUILayout.Width(50)) != stOn) StatusWindow.ToggleStatus();     // live autopilot state window
-            if (GUILayout.Toggle(syOn, "systems", GUI.skin.button, GUILayout.Width(60)) != syOn) StatusWindow.ToggleSystems();   // parts / emergency dashboard
-            if (GUILayout.Toggle(trOn, "trim", GUI.skin.button, GUILayout.Width(44)) != trOn) TrimWindow.ToggleTrim(); if (HighLogic.LoadedSceneIsFlight && GUILayout.Toggle(MapWindow.MapVisible, "map", GUI.skin.button, GUILayout.Width(40)) != MapWindow.MapVisible) MapWindow.ToggleMap();
-            GUILayout.EndHorizontal();
-            DepsWarning();
-            // two columns of module toggles (MechJeb style); each opens its own window
-            int half = (Items.Length + 1) / 2;
-            GUILayout.BeginHorizontal();
-            for (int col = 0; col < 2; col++)
-            {
-                GUILayout.BeginVertical(GUILayout.Width(menuRect.width / 2 - 10));
-                for (int i = col * half; i < Math.Min(Items.Length, (col + 1) * half); i++)
-                {
-                    GUILayout.BeginHorizontal();
-                    // active-mode indicator (controller mode): green filled = engaged, grey empty = not
-                    if (IndKeys[i] != null)
-                    {
-                        bool act = StatusWindow.Active(IndKeys[i]);
-                        GUILayout.Label(act ? "\u25CF" : "\u25CB", act ? green : grey, GUILayout.Width(14));
-                    }
-                    else GUILayout.Space(18);
-                    GUI.enabled = DepsOk || LocalOnly[i] || Open[i];
-                    bool on = GUILayout.Toggle(Open[i], Items[i], Open[i] ? itemOn : itemOff);
-                    GUI.enabled = true;
-                    if (on != Open[i]) { Open[i] = on; Save(); }
-                    GUILayout.Label(Tags[i], Tags[i] == "W" ? tagW : Tags[i] == "P" ? tagP : tagS, GUILayout.Width(14));
-                    GUILayout.EndHorizontal();
-                }
-                GUILayout.EndVertical();
-            }
-            GUILayout.EndHorizontal();
-            GUILayout.Label("Right-click here or the tab to collapse; right-click-hold the tab and drag to move it; Alt+J.", small);
-        }
-
-        void DrawPanelWindow(int i)
-        {
-            GUI.color = GUI.contentColor = Color.white;
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("x", GUILayout.Width(20))) { Open[i] = false; Save(); }
-            GUILayout.EndHorizontal();
-            if (!LocalOnly[i] && !DepsOk)
-            {
-                DepsWarning();
-                GUI.enabled = false;
-            }
-            try { DrawPanel(i); }
-            catch (Exception ex) { GUILayout.Label("panel error: " + ex.Message, small); }
-            GUI.enabled = true;
-            GUI.DragWindow();
         }
 
         void DrawPanel(int i)
@@ -913,12 +792,11 @@ namespace KSPChatBridge
             GUILayout.Label("MechJeb2: " + (mj == true ? "installed" : "not installed (orbital autopilots that need it will say so)"), small);
             if (GUILayout.Button("Re-check dependencies")) { missingMods = null; mj = null; }
             preferMj = GUILayout.Toggle(preferMj, "Prefer MechJeb when available");
-            showTab = GUILayout.Toggle(showTab, "Show the collapsed ▲ AICS ▲ tab at the top");
             GUILayout.BeginHorizontal();
             GUILayout.Label("Opacity", small, GUILayout.Width(52));
             opacity = Mathf.Round(GUILayout.HorizontalSlider(opacity, 0.2f, 1f) * 20f) / 20f;
             GUILayout.EndHorizontal();
-            if (GUILayout.Button("Reset menu / tab position")) { menuRect.x = -1; menuRect.y = 24; tabX = -1; }
+            if (GUILayout.Button("Reset MFD position / size")) { mfdRect = new Rect(-1, 60, 780, 600); Save(); }
         }
 
         void DrawInModAiSettings()
@@ -1236,15 +1114,14 @@ namespace KSPChatBridge
                     float f; float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out f);
                     switch (kv[0].Trim())
                     {
-                        case "x": menuRect.x = f; break;
-                        case "y": menuRect.y = f; break;
-                        case "w": menuRect.width = Mathf.Max(300, f); break;
+                        case "mx": mfdRect.x = f; break;
+                        case "my": mfdRect.y = f; break;
+                        case "mw": mfdRect.width = Mathf.Max(MfdMinW, f); break;
+                        case "mh": mfdRect.height = Mathf.Max(MfdMinH, f); break;
+                        case "group": mfdGroup = kv[1].Trim().Length == 0 ? null : kv[1].Trim(); break;
+                        case "item": mfdItem = kv[1].Trim().Length == 0 ? null : kv[1].Trim(); break;
+                        case "page": mfdPage = (int)f; break;
                         case "visible": Expanded = kv[1].Trim() == "1"; break;
-                        case "tab": showTab = kv[1].Trim() != "0"; break;
-                        case "tabx": tabX = f; break;
-                        case "open":
-                            for (int i = 0; i < Items.Length && i < kv[1].Trim().Length; i++) Open[i] = kv[1].Trim()[i] == '1';
-                            break;
                         case "preferMj": preferMj = kv[1].Trim() != "0"; break;
                         case "opacity": opacity = Mathf.Clamp(f, 0.2f, 1f); break;
 
@@ -1261,9 +1138,8 @@ namespace KSPChatBridge
                 if (cfgFile == null) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(cfgFile));
                 File.WriteAllText(cfgFile, string.Format(CultureInfo.InvariantCulture,
-                    "x={0}\ny={1}\nw={2}\nvisible={3}\npreferMj={4}\nopacity={5}\ntab={6}\ntabx={7}\nopen={8}\n", menuRect.x, menuRect.y,
-                    menuRect.width, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, showTab ? 1 : 0, tabX,
-                    new string(Open.Select(o => o ? '1' : '0').ToArray())));
+                    "mx={0}\nmy={1}\nmw={2}\nmh={3}\nvisible={4}\npreferMj={5}\nopacity={6}\ngroup={7}\nitem={8}\npage={9}\n", mfdRect.x, mfdRect.y,
+                    mfdRect.width, mfdRect.height, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, mfdGroup ?? "", mfdItem ?? "", mfdPage));
             }
             catch (Exception ex) { Debug.Log("[KSPChatBridge] aics save: " + ex.Message); }
         }

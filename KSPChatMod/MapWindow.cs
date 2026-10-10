@@ -35,7 +35,36 @@ namespace KSPChatBridge
         List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int sel = -1; bool dragging; string note = "";
         double cLat, cLon, span; CelestialBody body;
 
-        internal static void ToggleMap() { MapVisible = !MapVisible; }
+        internal static void ToggleMap() { AicsMenu.ShowMfdItem("map"); }
+        internal static MapWindow Inst;
+        void Awake() { Inst = this; }
+        void OnDestroy() { if (Inst == this) Inst = null; MapVisible = false; }
+        List<TaxiRoute> taxiRoutes = new List<TaxiRoute>(); float taxiAt;
+
+        // ---- MFD soft-key actions (the AICS MFD hosts this page; no window of its own any more) ----
+        internal static void ZoomIn() { ViewSpan = Zoom(ViewSpan, .5); }
+        internal static void ZoomOut() { ViewSpan = Zoom(ViewSpan, 2); }
+        internal static void Recenter() { follow = true; centerRunway = false; }
+        internal static void ToggleCenterRunway() { centerRunway = !centerRunway; follow = true; }
+        internal static void ToggleGuidance() { guidance = !guidance; }
+        internal static void ToggleDetails() { details = !details; }
+        internal static void PanView(double bearing) { var m = Inst; if (m == null || m.body == null) return; if (follow) { fixLat = m.cLat; fixLon = m.cLon; follow = false; } MapReveal.Pan(ref fixLat, ref fixLon, bearing, m.span, m.body.Radius); }
+        internal static void RunwayStep(int d) { var m = Inst; if (m == null || m.runways.Count == 0) return; rwIdx = (rwIdx + d + m.runways.Count) % m.runways.Count; m.fixesFor = ""; }
+        internal static void NextVariant() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return; NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, ""); string cur = ChartStore.Active(rw.Key); ChartStore.SetActive(rw.Key, vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]); m.fixesFor = ""; }
+        internal static void AddWaypoint() { if (Inst != null) Inst.AddWp(); }
+        internal static void RemoveWaypoint() { var m = Inst; if (m == null) return; if (m.sel >= 0 && m.sel < m.fixes.Count && m.fixes[m.sel].Role != "faf" && m.fixes[m.sel].Role != "sf") { m.fixes.RemoveAt(m.sel); m.sel = -1; } else m.note = "Select a waypoint (FAF/SF are locked)."; }
+        internal static void ResetChart() { var m = Inst; if (m != null) { m.fixesFor = ""; m.note = "Reset to computed (SAVE to keep)."; } }
+        internal static void SaveChart() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw != null) m.Save(rw); }
+        internal static string Title { get { var m = Inst; var rw = m == null ? null : m.Rw(); var act = NativeFlightController.ActiveRunway; return act != null && !string.IsNullOrEmpty(act.Key) ? act.Key : rw != null ? rw.Key : ""; } }
+        NativeFlightController.MapRunway Rw() { return runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null; }
+        /// <summary>Draw the MAP / CHART / ILS page inside the MFD screen.</summary>
+        internal void DrawEmbedded(Rect area, int tab)
+        {
+            Tab = tab; rect.width = area.width + 20; rect.height = area.height + 40; Px = MapSide(rect.width, rect.height, Tab);
+            GUILayout.BeginArea(area);
+            try { if (body == null) GUILayout.Label("No map in this scene."); else DrawInner(); } catch (Exception ex) { GuiGuard.Log("MapWindow.Embedded", ex); }
+            GUILayout.EndArea();
+        }
 
         void Update()
         {
@@ -124,9 +153,9 @@ namespace KSPChatBridge
             var act = NativeFlightController.ActiveRunway; var v = FlightGlobals.ActiveVessel;
             if (act == null || v == null || ReferenceEquals(autoIlsFor, act)) return;
             var r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM);
-            if (Ils.InLocCaptureZone(r, RunwayMission.LocRange)) { autoIlsFor = act; Tab = 2; }
+            if (Ils.InLocCaptureZone(r, RunwayMission.LocRange)) { autoIlsFor = act; Tab = 2; AicsMenu.AutoIls(); }
         }
-        const float MinW = 350, MinH = 400; static bool sizeLoaded, resizing, details, guidance;
+        static bool details, guidance;
         /// <summary>Map/ILS display side for a window size: fills the width, leaves room for the rows below (pure; tested).</summary>
         internal static float MapSide(float w, float h, int tab) { return Mathf.Max(160, Mathf.Min(w - 20, h - (tab == 1 ? 250 : tab == 2 ? 170 : 140))); }
         static GUIStyle wrap;
@@ -135,16 +164,7 @@ namespace KSPChatBridge
         {
             if (!MapVisible || body == null) return;
             AutoIlsTab();
-            var skin = AicsMenu.EnsureSkin(); if (skin != null) GUI.skin = skin;
-            rect.x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, Screen.width - 80)); rect.y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, Screen.height - 40));
-            if (!sizeLoaded) { sizeLoaded = true; rect.width = Mathf.Max(MinW, PlayerPrefs.GetFloat("AICS.MapW", rect.width)); rect.height = Mathf.Max(MinH, PlayerPrefs.GetFloat("AICS.MapH", rect.height)); }
-            if (resizing)
-            {   // corner grip drag (like the chat window); size persisted
-                if (Input.GetMouseButton(0)) { Vector2 m = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y); rect.width = Mathf.Clamp(m.x - rect.x + 8, MinW, Screen.width); rect.height = Mathf.Clamp(m.y - rect.y + 8, MinH, Screen.height); }
-                else { resizing = false; PlayerPrefs.SetFloat("AICS.MapW", rect.width); PlayerPrefs.SetFloat("AICS.MapH", rect.height); PlayerPrefs.Save(); }
-            }
-            Px = MapSide(rect.width, rect.height, Tab);
-            rect = GUI.Window(WindowId, rect, Draw, "AICS Map & Charts  (x = close)");
+            // drawn inside the AICS MFD (AicsMfd.cs): no window of its own
         }
 
         static void Dot(Vector2 p, float s, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(new Rect(p.x - s / 2, p.y - s / 2, s, s), Texture2D.whiteTexture); GUI.color = o; }
@@ -154,18 +174,8 @@ namespace KSPChatBridge
             for (int i = 0; i <= n; i++) { var p = Vector2.Lerp(a, b, i / (float)n); if (p.x >= 0 && p.y >= 0 && p.x <= Px && p.y <= Px) Dot(p, 2, c); }
         }
 
-        void Draw(int id)
-        {
-            if (GUI.Button(new Rect(rect.width - 22, 2, 20, 16), "x")) { MapVisible = false; return; }
-            try { DrawInner(); } catch (Exception ex) { GuiGuard.Log("MapWindow.Draw", ex); }
-            Rect grip = new Rect(rect.width - 18, rect.height - 18, 16, 16); GUI.Label(grip, "//");
-            var ev = Event.current; if (ev.type == EventType.MouseDown && ev.button == 0 && grip.Contains(ev.mousePosition)) { resizing = true; ev.Use(); }
-            GUI.DragWindow();
-        }
-
         void DrawInner()
         {
-            Tab = GUILayout.Toolbar(Tab, Tabs);
             if (Tab == 2) { DrawIls(); return; }
             var rw = runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null;
             GUILayout.BeginHorizontal();
@@ -191,6 +201,12 @@ namespace KSPChatBridge
             GUI.BeginGroup(map);
             try {
             foreach (var r in runways) Line(Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
+            if (Time.realtimeSinceStartup > taxiAt) { taxiAt = Time.realtimeSinceStartup + 5; taxiRoutes = body.bodyName == "Kerbin" ? NativeFlightController.TaxiRoutes() : new List<TaxiRoute>(); }
+            foreach (var tr in taxiRoutes)
+            {   // ground charts (PluginData/charts/TAXI_*.json): amber dotted centerlines
+                for (int i = 1; i < tr.Points.Count; i++) Line(Proj(tr.Points[i - 1].Lat, tr.Points[i - 1].Lon), Proj(tr.Points[i].Lat, tr.Points[i].Lon), new Color(1, .75f, .2f), 3);
+                if (span <= 8000) foreach (var p in tr.Points) { var q = Proj(p.Lat, p.Lon); if (q.x > 0 && q.y > 0 && q.x < Px && q.y < Px) GUI.Label(new Rect(q.x + 4, q.y + 2, 110, 18), p.Name); }
+            }
             foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) GUI.Label(new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
             // chart legs: each side's join list, then FAF -> SF -> threshold
             if (Tab == 1 && rw != null && fixes.Count > 0)
@@ -268,7 +284,7 @@ namespace KSPChatBridge
             if (v == null) return;
             var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);   // single source of truth with the autopilot
             if (act != null) GUILayout.Label(act.Coupled ? (act.GsCoupled ? "COUPLED  LOC + GS" : "COUPLED  LOC  (GS armed)") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC armed" : "not coupled");
-            float S = Mathf.Max(160, Mathf.Min(rect.width - 30, rect.height - (guidance ? 300 : 250))); Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
+            float S = Ils.BoxSide(rect.width, rect.height, guidance); Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
             var o = GUI.color; GUI.color = new Color(.05f, .05f, .08f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
             Vector2 c = box.center;
             for (int i = -2; i <= 2; i++) { if (i == 0) continue; Dot(new Vector2(c.x + i * S * .2f, c.y), 5, Color.white); Dot(new Vector2(c.x, c.y + i * S * .2f), 5, Color.white); }

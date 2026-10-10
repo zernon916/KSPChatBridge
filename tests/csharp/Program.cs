@@ -1642,6 +1642,65 @@ class Program
             tx.Step(300, 0, 0, 90, 16, 600000, true, false, 2); Check(tx.Brakes && tx.Throttle == 0, "over speed: wheel brakes, idle");
             Console.WriteLine("Taxi speed: 4 behavior checks passed.");
         }
+        {   // taxi ground charts: join the nearest point ahead, follow the centerline, full stop (Luke 4:24 / 4:26 PM)
+            const double R = 600000; double sphLat = -.0915, sphLon = -74.6300, hubLat = -.0930, hubLon = -74.6000;
+            var defs = TaxiRoute.KscDefaults(sphLat, sphLon, hubLat, hubLon);
+            Check(defs.Count == 4 && defs.TrueForAll(r => r.Points.Count >= 4), "4 default KSC taxi charts (both runway ends <-> SPH)");
+            string why; var back = TaxiRoute.Parse(defs[0].ToJson(), out why);
+            Check(back != null && back.Points.Count == defs[0].Points.Count && TaxiRoute.Parse("{oops", out why) == null && TaxiRoute.Parse("{\"points\":[{\"lat\":0,\"lon\":0}]}", out why) == null, "taxi chart JSON round trip; bad file rejected (old route kept)");
+            Check(TaxiRoute.Pick("hangar", KscRunway.Lat, -74.55) == "RWY27_TO_SPH" && TaxiRoute.Pick("hangar", KscRunway.Lat, -74.68) == "RWY09_TO_SPH" && TaxiRoute.Pick("runway 27", sphLat, sphLon) == "SPH_TO_RWY27", "route picked from where the plane stopped (either runway end)");
+            var r27 = TaxiRoute.Parse(System.Linq.Enumerable.First(defs, d => d.Name == "RWY27_TO_SPH").ToJson(), out why);
+            int leg = r27.Join(KscRunway.Lat + .002, -74.55, R);   // stopped after a 27 landing, ~21 m off the centerline
+            Check(leg == 0, "joins the runway leg ahead (not the threshold behind)");
+            var tm = new TaxiMission(r27, leg, 9); double lat = KscRunway.Lat + .002, lon = -74.55, hdg = 270, v = 0, t = 0, maxCrossLate = 0; bool halted = false;
+            for (int i = 0; i < 6000 && !halted; i++)
+            {
+                tm.Step(t, lat, lon, hdg, v, R, true, false, 1); t += .1;
+                if (tm.Result != null) { halted = true; break; }
+                hdg = (hdg + FlightPolicy.Clamp(tm.Wheel * -40 * 0 + 0, -1, 1)) % 360;
+                double err = FlightPolicy.Wrap(NavigationMath.Bearing(lat, lon, lat, lon) - 0);
+                double acc = tm.Brakes ? -3 : tm.Throttle * 6 - .3; v = Math.Max(0, v + acc * .1);
+                // steer: heading follows the wheel command (simple kinematic model)
+                hdg = (hdg - tm.Wheel * 25 * .1 * Math.Min(1, v / 3) + 360) % 360;
+                double dl = v * .1 / (Math.PI / 180 * R); lat += dl * Math.Cos(hdg * Math.PI / 180); lon += dl * Math.Sin(hdg * Math.PI / 180) / Math.Cos(lat * Math.PI / 180);
+                if (tm.Leg == 0 && lon < -74.575 && lon > -74.598) maxCrossLate = Math.Max(maxCrossLate, Math.Abs(tm.Cross));
+            }
+            Check(halted && tm.Result.StartsWith("Taxi arrived") && tm.Brakes, "taxi follows the chart to the SPH apron and stops (" + (tm.Result ?? "running") + ")");
+            Check(maxCrossLate < 5, "on the runway leg the centerline is tracked (cross " + maxCrossLate.ToString("0.0") + " m)");
+            var d1 = ToolRouter.Direct("taxi to hangar", "plane"); var d2 = ToolRouter.Direct("taxi to runway 09", "plane");
+            Check(d1 != null && d1.Value.Key == "taxi_route" && d1.Value.Value.Contains("hangar") && d2 != null && d2.Value.Value.Contains("runway 09"), "chat: taxi to hangar / taxi to runway 09");
+            Console.WriteLine("Taxi ground charts: 7 behavior checks passed.");
+        }
+        {   // derotation: nose lowered at <= 2.5 deg/s, no forward-stick spike, brakes only after nose-wheel contact (Luke 4:26 PM)
+            var dr = new Derotation(); double pitch = 7, q = 0, maxRate = 0, minElev = 1; bool brakesEarly = false;
+            for (int i = 0; i < 200; i++)
+            {
+                bool nose = pitch < .3; double before = dr.Command; double c = dr.Step(pitch, .05, nose);
+                if (!double.IsNaN(before)) maxRate = Math.Max(maxRate, (before - c) / .05);
+                double e = dr.Elevator(pitch, q); if (!dr.NoseDown) { minElev = Math.Min(minElev, e); if (dr.BrakesAllowed) brakesEarly = true; }
+                q = FlightPolicy.Clamp(10 * (c - pitch), -3, 3); pitch = Math.Max(0, pitch + q * .05);
+            }
+            Check(maxRate <= Derotation.Rate + 1e-6, "nose lowered at <= 2.5 deg/s (" + maxRate.ToString("0.00") + ")");
+            Check(minElev >= Derotation.MinElevator - 1e-9, "no forward-stick spike before nose contact (min " + minElev.ToString("0.00") + ")");
+            Check(dr.NoseDown && dr.BrakesAllowed && !brakesEarly, "wheel brakes only after the nose wheel is down");
+            Console.WriteLine("Derotation: 3 behavior checks passed.");
+        }
+
+        {   // AICS MFD navigation (Luke 4:29 PM): HOME groups, paged items, BACK fixed bottom-left, every old menu item reachable
+            Check(MfdNav.CoversPanels(15, false) && MfdNav.CoversPanels(15, true), "all 15 former menu items have a soft key");
+            var hk = MfdNav.HomeKeys(true); var hn = MfdNav.HomeKeys(false);
+            Check(Array.IndexOf(hk, "MECHJEB") >= 0 && Array.IndexOf(hn, "MECHJEB") < 0 && Array.IndexOf(hk, "AUTOPILOT") == 0 && Array.IndexOf(hk, "SETTINGS") >= 0, "HOME groups; MECHJEB only when installed");
+            var ap = MfdNav.Groups(false)[0]; int pages = MfdNav.Pages(ap);
+            var b0 = MfdNav.Bottom(false, "aircraft", 0, pages); var b1 = MfdNav.Bottom(false, "orbitap", 1, pages); var bh = MfdNav.Bottom(true, null, 0, 1);
+            Check(pages == 2 && MfdNav.PageItems(ap, 1).Count == ap.Items.Count - 6 && b0[MfdNav.NextKey] == "NEXT" && b0[MfdNav.PrevKey] == null && b1[MfdNav.PrevKey] == "PREV", "groups with more items page with PREV / NEXT");
+            bool back = bh[MfdNav.BackKey] == null; foreach (var g in MfdNav.Groups(true)) foreach (var it in g.Items) back &= MfdNav.Bottom(false, it.Id, 0, MfdNav.Pages(g))[MfdNav.BackKey] == "BACK";
+            Check(back, "BACK at the same key (bottom-left) on every page except HOME");
+            Check(Array.IndexOf(MfdNav.Right("taxi"), "HANGAR") >= 0 && MfdNav.SmartMode("RETRO") == "RETROGRADE" && Array.IndexOf(MfdNav.Right("mjguide"), "EXEC NODE") >= 0, "context keys: taxi to hangar, MechJeb modes");
+            bool fits = true; foreach (var wh in new[] { new[] { 500f, 380f }, new[] { 900f, 700f }, new[] { 300f, 900f } }) { float S = Ils.BoxSide(wh[0], wh[1], true); fits &= S + 270 + 90 <= wh[1] + 1 || S == 90; fits &= S <= wh[0] - 30 || S == 90; }
+            Check(fits, "ILS needles shrink so the numbers stay visible at any size");
+            Console.WriteLine("AICS MFD: 6 behavior checks passed.");
+        }
+
         {   // repo checks ported from the removed Python suite (bridge removal, P5-8)
             string root = System.IO.Directory.GetCurrentDirectory();
             while (root != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root, "KSPChatMod"))) root = System.IO.Path.GetDirectoryName(root);

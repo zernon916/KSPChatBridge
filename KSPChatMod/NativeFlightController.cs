@@ -75,7 +75,7 @@ namespace KSPChatBridge
         RunwayMission runway;
         bool landingAfterTakeoff;
         NativeVerticalLanding verticalLanding;
-        TaxiMission taxi;
+        TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
         double stall = 45;
         NativePlan plan;
@@ -367,7 +367,7 @@ namespace KSPChatBridge
                 }
                 if (mode == "taxi")
                 {
-                    taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi, Twr());
+                    TaxiHotSwap(); taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi, Twr());
                     c.wheelSteer = (float)taxi.Wheel; c.wheelThrottle = (float)taxi.Drive; c.yaw = (float)taxi.Yaw;
                     c.mainThrottle = vessel.LandedOrSplashed ? (float)taxi.Throttle : Math.Max(.05f, c.mainThrottle);
                     SetGroup(vessel, KSPActionGroup.Brakes, taxi.Brakes);
@@ -452,10 +452,10 @@ namespace KSPChatBridge
                             c.mainThrottle = 0;
                             c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
-                            c.pitch = (float)FlightPolicy.Clamp(-.04 * q, -.2, .3);
+                            derot.Step(pitch, dt, NoseGearDown()); c.pitch = (float)derot.Elevator(pitch, q);   // derotation: hold attitude, lower nose at 2.5 deg/s, no forward spike
                             c.roll = (float)FlightPolicy.Clamp(-.02 * roll - .006 * p, -1, 1);
                             c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
-                            SetGroup(vessel, KSPActionGroup.Brakes, vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0));
+                            SetGroup(vessel, KSPActionGroup.Brakes, derot.BrakesAllowed && (vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0)));   // wheel brakes only once the nose wheel is down
                             return;
                         }
                     }
@@ -949,7 +949,7 @@ namespace KSPChatBridge
                         catch (Exception ex) { ChatLog.Write("approach", "chart unreadable (" + ex.Message + "); computed chart"); }
                     }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
-                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); derot.Reset(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
                     if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);
