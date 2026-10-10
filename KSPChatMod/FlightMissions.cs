@@ -393,7 +393,7 @@ namespace KSPChatBridge
                         double dz = j.Alt - altitude;
                         if (dz < -reach * 10 / speed || dz > reach * 15 / speed) { nAlt++; continue; }
                         bool clear = true;
-                        for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo); if (!double.IsNaN(g) && g + 150 > Math.Min(altitude, j.Alt)) clear = false; }
+                        for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo), path = altitude + (j.Alt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clear = false; }   // clearance vs the PATH flown (MSL climb/descent to the join), not the lower of now/join
                         if (!clear) { nTerr++; continue; }
                         double rest = 0; Wp prev = j;
                         var route = new List<Wp> { runIn, j };
@@ -422,20 +422,20 @@ namespace KSPChatBridge
         /// <summary>Luke: centerline within ~1 m, no swinging. Desired TRACK from a cross-track PID (P on cross, D via the track
         /// angle Tau s ahead, I per metre flown inside +-3 m), then crab-compensated: heading = track - (measured track - heading),
         /// low-passed over CrabTau s, so wind/sideslip/trim offsets are cancelled instead of integrated (no PI limit cycle).</summary>
-        internal static double CenterlineHeading(double cross, double track, double course, double speed, ref double crossI, double ds, double heading, ref double crab)
+        internal static double CenterlineHeading(double cross, double track, double course, double speed, ref double crossI, double ds, double heading, ref double crab, bool tight = false)
         {
             if (!double.IsNaN(track) && !double.IsNaN(heading)) crab += FlightPolicy.Clamp(ds / (Math.Max(1, speed) * CrabTau), 0, 1) * (FlightPolicy.Wrap(track - heading) - crab);
             crab = FlightPolicy.Clamp(crab, -20, 20);
             if (Math.Abs(cross) < IntBand) crossI = FlightPolicy.Clamp(crossI + cross * ds, -5000, 5000);
-            double u = Kp * PredictCross(cross, speed, track, course, Tau) + Ki * crossI;
-            return course - FlightPolicy.Clamp(Math.Atan2(u, Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, -15, 15) - crab;
+            double u = Kp * PredictCross(cross, speed, track, course, Tau) + (tight ? 1.5 : 1) * Ki * crossI;   // short final: harder integral toward +-1 m
+            return course - FlightPolicy.Clamp(Math.Atan2(u, Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, tight ? -8 : -15, tight ? 8 : 15) - crab;
         }
         internal static double PredictCross(double cross, double speed, double track, double course, double tau)
         { return double.IsNaN(track) ? cross : cross + tau * speed * Math.Sin(FlightPolicy.Wrap(track - course) * Math.PI / 180); }
         internal double Lat, Lon, EndLat, EndLon, Elevation;
         internal string Phase = "entry";
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
-        internal bool Gear, Brakes;
+        internal bool Gear, Brakes; int replanHold;
         internal double Distance;
         internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
         internal double Cross, Along;
@@ -521,7 +521,8 @@ namespace KSPChatBridge
                 }
                 // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
                 double nowV = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed));   // turns are flown at the speed we actually have
-                if (RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV)) Plan(course, radius, nowV, RouteIndex);
+                replanHold = RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV) ? replanHold + 1 : 0;   // no replans on transient speed: must persist ~10 s
+                if (replanHold > 500) { replanHold = 0; Plan(course, radius, nowV, RouteIndex); }
                 // join speed from the IAF onward = this craft's 1.5 x stall (Luke), so the planned arcs are what it flies
                 bool joined = RouteIndex > 0 || (Route.Count > 0 && NavigationMath.Distance(lat, lon, Route[0].Lat, Route[0].Lon, radius) < 2 * speed * speed / (9.81 * Math.Tan(BankDeg * Math.PI / 180)));
                 DesiredSpeed = ApproachProfile.Speed(stall);
@@ -547,7 +548,7 @@ namespace KSPChatBridge
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
-                DesiredSpeed = PlanSpeed > 0 ? PlanSpeed : ApproachProfile.Speed(stall);
+                DesiredSpeed = ApproachProfile.Speed(stall);   // stabilized: approach speed BEFORE the FAF, never the (fast) plan speed
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
@@ -556,18 +557,21 @@ namespace KSPChatBridge
             {
                 // Proportional + integral (per metre flown) centerline tracking: removes steady offsets (sideslip/wind/trim) to < 5 m
                 double ds = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along;
-                DesiredHeading = CenterlineHeading(cross, track, course, speed, ref CrossI, ds, heading, ref Crab);
+                DesiredHeading = CenterlineHeading(cross, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
                 DesiredAltitude = Chart != null ? Chart.GlideAlt(-along + (Override != null ? Override.TouchdownM : 350)) : Elevation + Math.Max(3, (350 - along) * Math.Tan(3 * Math.PI / 180));
-                DesiredSpeed = (agl < 30 ? 1.15 : 1.3) * stall;
-                double ff = Chart != null && agl > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
-                DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .2, Distance > 1500 ? -25 : Distance > 400 ? -15 : -4.5, 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
-                Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || agl < 80;   // only on an aligned short final
+                double hat = altitude - Elevation, low = Math.Min(hat, agl);   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
+                DesiredSpeed = (hat < 30 ? 1.15 : 1.3) * stall;
+                double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
+                double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
+                if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
+                DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, -maxSink, 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
+                Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
-                if (agl < fs) { Phase = "flare"; DesiredVs = agl > fs / 3 ? -Math.Max(fv, 2) : -fv; }
+                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Max(fv, 2) : -fv; }
                 if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
-                if (!grounded && along > length - 200 && agl > 3) Phase = "go around";
+                if (!grounded && along > length - 200 && hat > 3) { Phase = "go around"; Why = "overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"; }
                 if (grounded) Phase = "rollout";
             }
             if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); DesiredSpeed = 0; Gear = Brakes = true; if (speed < 1) Phase = "stopped"; }
