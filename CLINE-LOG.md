@@ -267,3 +267,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** formation(wingman, side, spacing_m 30-300, off). Picks the named (or nearest) other loaded, airborne, unpacked craft within 2.3 km. Hooks THAT vessel's OnFlyByWire (SAS off) and flies a 60 m echelon slot: heading toward the slot (<=30 deg off lead), speed lead +-25 m/s, lead altitude via a capped VS target. Luke's rules: bank cap 20/10, throttle 5% steps at most every 2.5 s, never below 5% in flight. Auto-releases at >2.3 km, unload/pack, landing, death, or controller destroy.
 **Tests run:** C# 'formation: 9'; pytest 494; Release 0 errors.
 **Still needs live check:** whether KSP feeds OnFlyByWire for a non-active loaded vessel (the main risk); control gains/oscillation; roll sign on the wing's ReferenceTransform.
+
+## tech_advisor - DONE (tests; needs live check)
+**Changed:** tech_advisor(goal). With no goal it asks Luke's plan. Goal -> stock tech targets (Mun landing, orbit, planes, science, docking, Duna/nuclear, rovers, power, heavy lift), falling back to node-title words for modded trees. Reads AssetBase.RnDTechTree.GetTreeNodes() + ResearchAndDevelopment state, then works out the cheapest path (any-parent nodes take the cheapest parent chain, others need all parents, parents first) with total science vs current. In the open R&D screen it turns on the stock searchHighlight for path nodes and opens the first one's panel. Works outside flight (handled before the flight-vessel check). API checked by reflection against Luke's 1.12.5 Assembly-CSharp.
+**Tests run:** C# 'tech_advisor: 6'; pytest 494; Release 0 errors.
+**Still needs live check:** chat in the R&D/KSC scene, highlight visibility, stock costs.

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -47,7 +47,7 @@ namespace KSPChatBridge
             { "run_science", "science experiment experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
             { "fly_to", "fly to go to head to navigate" }, { "how_far", "how far distance" }, { "get_landing_eta", "eta how long arrive arrival" },
             { "transfer_to", "transfer mun minmus duna go to moon" }, { "warp_to_apoapsis", "warp apoapsis ap" }, { "change_apoapsis", "apoapsis raise ap" },
-            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
+            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "tech_advisor", "tech tree research unlock node nodes r&d rnd science points" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
         };
 
         static readonly Regex Word = new Regex(@"[a-z0-9]+");

@@ -36,6 +36,7 @@
     <Compile Include="../../KSPChatMod/CrewChatter.cs"/>
     <Compile Include="../../KSPChatMod/ToolRouter.cs"/>
     <Compile Include="../../KSPChatMod/FlightExtrasPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/TechAdvisorPolicy.cs"/>
     <Compile Include="../../KSPChatMod/PersonalityPrompts.cs"/>
     <Compile Include="../../KSPChatMod/BridgeHttp.cs"/>
     <Compile Include="../../KSPChatMod/NativeToolSchemas.cs"/>

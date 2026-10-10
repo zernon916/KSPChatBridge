@@ -14,6 +14,8 @@ NATIVE_ONLY = {
                           {"home": "string", "reserve_pct": "number", "off": "boolean"}, []),
     "formation": ("AI wingman: a second loaded plane (within ~2.3 km) flies echelon on us; off=true releases it.",
                   {"wingman": "string", "side": "string", "spacing_m": "number", "off": "boolean"}, []),
+    "tech_advisor": ("R&D advice: call with no goal to ask Luke his plan; with a goal (Mun landing, planes, science...) returns the cheapest unlock path and highlights it.",
+                     {"goal": "string"}, []),
     "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }
 

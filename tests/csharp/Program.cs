@@ -787,6 +787,27 @@ class Program
             Check(NativeCommands.IsPorted("formation") && ToolRouter.Rank("wingman join formation", ToolRouter.Descriptions, "plane")[0].Key == "formation", "formation registered + routed");
         }
         Console.WriteLine("formation: 9 behavior checks passed.");
+        // ---- POST-TESTING: tech_advisor ----
+        {
+            Func<string, int, bool, bool, string[], TechAdvisorPolicy.Node> N = (id, c, u, any, ps) => { var n = new TechAdvisorPolicy.Node { Id = id, Cost = c, Unlocked = u, AnyParent = any }; n.Parents.AddRange(ps); return n; };
+            var tree = new Dictionary<string, TechAdvisorPolicy.Node>
+            {
+                { "start", N("start", 0, true, false, new string[0]) }, { "basicRocketry", N("basicRocketry", 5, true, false, new[] { "start" }) },
+                { "engineering101", N("engineering101", 5, false, false, new[] { "start" }) }, { "generalRocketry", N("generalRocketry", 20, false, false, new[] { "basicRocketry" }) },
+                { "stability", N("stability", 18, false, false, new[] { "engineering101" }) }, { "survivability", N("survivability", 15, false, false, new[] { "basicRocketry" }) },
+                { "advRocketry", N("advRocketry", 45, false, true, new[] { "generalRocketry", "survivability" }) },
+                { "landing", N("landing", 90, false, false, new[] { "advRocketry", "stability" }) },
+            };
+            int total; var path = TechAdvisorPolicy.Path(tree, new[] { "advRocketry" }, out total);
+            Check(string.Join(",", path.ToArray()) == "survivability,advRocketry" && total == 60, "any-parent: cheapest parent chain (15 < 20)");
+            path = TechAdvisorPolicy.Path(tree, new[] { "landing" }, out total);
+            Check(path.IndexOf("advRocketry") < path.IndexOf("landing") && path.Contains("stability") && path.Contains("engineering101") && total == 15 + 45 + 5 + 18 + 90, "all-parents node pulls every chain, parents first");
+            Check(TechAdvisorPolicy.Path(tree, new[] { "basicRocketry", "nope" }, out total).Count == 0 && total == 0, "researched / unknown targets cost nothing");
+            Check(TechAdvisorPolicy.Targets("I want a Mun landing").Contains("landing") && TechAdvisorPolicy.Targets("better planes").Contains("aviation"), "goal -> stock targets");
+            Check(TechAdvisorPolicy.Targets("hmm").Count == 0 && TechAdvisorPolicy.Ask.Contains("goal"), "vague goal -> asks");
+            Check(NativeCommands.IsPorted("tech_advisor") && ToolRouter.Rank("what should i research in the tech tree", ToolRouter.Descriptions, "")[0].Key == "tech_advisor", "tech_advisor registered + routed");
+        }
+        Console.WriteLine("tech_advisor: 6 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

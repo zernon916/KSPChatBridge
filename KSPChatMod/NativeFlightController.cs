@@ -571,6 +571,7 @@ namespace KSPChatBridge
             // AI-off autopilot, or in-mod chat tool dispatch (NativeChat) may call into the local command layer.
             bool allowed = OwnsControls;
             if (!allowed) return "Local mode is not ready.";
+            if (name == "tech_advisor") { try { return TechAdvisor.Run(MiniJson.Deserialize(argsJson ?? "{}")); } catch (Exception ex) { return "Tech advice failed: " + ex.Message; } }
             if (instance == null || FlightGlobals.ActiveVessel == null) return "No active flight vessel.";
             try { instance.Bind(); instance.ExtrasCancel(name); return instance.Command(name, MiniJson.Deserialize(argsJson ?? "{}")); }
             catch (Exception ex) { return "Local command failed: " + ex.Message; }
