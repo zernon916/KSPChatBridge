@@ -169,6 +169,8 @@ namespace KSPChatBridge
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
         }
         internal static bool OwnsControls { get { return NativeSafety.NativeOwns(BridgeLauncher.AiEnabled, BridgeLauncher.NativeReady, BridgeLauncher.NativeChat); } }
+        /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
+        internal static bool AirbrakesByAutopilot;
         float nextChartPoll;
         /// <summary>From the FAF/ILS inbound (intercept/final/flare) the approach speed is forced; chat speed targets are refused.</summary>
         bool ApproachSpeedLocked { get { return mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare"); } }
@@ -428,14 +430,14 @@ namespace KSPChatBridge
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(landStall0, landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
-                if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
+                if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
                     else if (runway.Phase == "stopped") { c.mainThrottle = 0; Stop(false); return; }
                     else
                     {
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
-                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && (vessel.srfSpeed > runway.DesiredSpeed + 8 || (on && vessel.srfSpeed > runway.DesiredSpeed + 2)); if (airPhase && want != on) SetGroup(vessel, KSPActionGroup.Brakes, want); }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
+                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && (vessel.srfSpeed > runway.DesiredSpeed + 8 || (on && vessel.srfSpeed > runway.DesiredSpeed + 2)); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
                         directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value);   // AGL floor: never sink into a hill on approach
                         if (runway.Phase == "entry" || runway.Phase == "intercept") landingGearDown = false; else if (runway.Gear && !landingGearDown) { SetGroup(vessel, KSPActionGroup.Gear, true); landingGearDown = true; ChatLog.Write("approach", "gear down on final"); }   // never fight the player on the outbound leg
                         if (TouchAndGoNow(runway.Phase)) return;
@@ -984,7 +986,7 @@ namespace KSPChatBridge
                 case "set_speed":
                 {
                     if (ApproachSpeedLocked) return "On approach, speed locked at " + Math.Round(runway.DesiredSpeed) + " m/s (approach speed). Say \"go around\" first to change it.";
-                    object req; if (!a.TryGetValue("speed", out req)) req = Bool(a, "max", false) ? "max" : null;
+                    object req; if (!a.TryGetValue("speed", out req) && !a.TryGetValue("value", out req) && !a.TryGetValue("speed_ms", out req) && !a.TryGetValue("target", out req)) req = Bool(a, "max", false) ? "max" : null;   // live 15:29: model sent {"value":2000}
                     if ("last".Equals(req)) { if (double.IsNaN(lastAskedSpeed)) return "No earlier speed to override; say e.g. set speed 400 override."; req = lastAskedSpeed; }
                     else { double asked; if (req != null && double.TryParse(Convert.ToString(req, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out asked)) lastAskedSpeed = asked; }
                     string reply; bool lifted;

@@ -69,7 +69,7 @@ namespace KSPChatBridge
             }
             resources.Append('}');
             rows.Add(new[] { "ok", "Gear", v.ActionGroups[KSPActionGroup.Gear] ? "Down" : "Up" });
-            rows.Add(new[] { flying && v.ActionGroups[KSPActionGroup.Brakes] ? "caution" : "ok", "Brakes", v.ActionGroups[KSPActionGroup.Brakes] ? "On" : "Off" });
+            bool brk = v.ActionGroups[KSPActionGroup.Brakes]; rows.Add(new[] { PilotPolicy.BrakesRowLevel(flying, brk, NativeFlightController.AirbrakesByAutopilot), "Brakes", brk ? (flying && NativeFlightController.AirbrakesByAutopilot ? "Airbrakes (AP)" : "On") : "Off" });
             rows.Add(new[] { hot >= .9 ? "fail" : hot >= .75 ? "caution" : "ok", "Temperature", F(hot * 100) + "% " + hottest });
             rows.Add(new[] { v.geeForce > 7 ? "fail" : v.geeForce > 5 ? "caution" : "ok", "G-load", F(v.geeForce) + " g" });
             string pilot = "No crew";

@@ -1632,6 +1632,24 @@ class Program
             Check(msg.Contains("step 3") && msg.Contains("barrel roll twice") && !msg.Contains("climb 2000"), "error names the exact bad step, no plan dump (" + msg + ")");
             Console.WriteLine("Distance plan steps: 8 behavior checks passed.");
         }
+        {   // 15:30 bugs: AP airbrakes are not tampering; duplicated result tails; ILS auto-tab zone
+            Check(PilotPolicy.BrakesRowLevel(true, true, true) == "ok" && PilotPolicy.BrakesRowLevel(true, true, false) == "caution" && PilotPolicy.BrakesRowLevel(false, true, false) == "ok", "airbrakes deployed by the approach logic: no Brakes caution");
+            string fin = InModChatSession.Final("Flying to KSC.", new List<string> { "Flying to KSC (30 km); will circle on arrival.", "Throttle 50%.", "Not on a local approach.", "Throttle 50%.", "Not on a local approach.", "Throttle 50%." });
+            Check(fin.Split(new[] { "[Throttle 50%.]" }, StringSplitOptions.None).Length == 2 && fin.Split(new[] { "[Not on a local approach.]" }, StringSplitOptions.None).Length == 2, "each tool result tail shown once (" + fin + ")");
+            double tLa = -.0485997, tLo = -74.724375, la, lo; double crs = NavigationMath.Bearing(tLa, tLo, -.0502119, -74.4903);
+            NavigationMath.Offset(tLa, tLo, crs + 180, 15000, 600000, out la, out lo);
+            Check(Ils.InLocCaptureZone(Ils.Compute(la, lo, 900, tLa, tLo, -.0502119, -74.4903, 69, 600000), RunwayMission.LocRange), "15 km out on the centerline: localizer capture zone");
+            NavigationMath.Offset(tLa, tLo, crs + 180, 30000, 600000, out la, out lo);
+            Check(!Ils.InLocCaptureZone(Ils.Compute(la, lo, 900, tLa, tLo, -.0502119, -74.4903, 69, 600000), RunwayMission.LocRange), "30 km out: not yet");
+            {   // ILS hand-flying guidance
+                double qLa, qLo; NavigationMath.Offset(tLa, tLo, crs + 180, 2500, 600000, out qLa, out qLo); NavigationMath.Offset(qLa, qLo, crs + 90, 100, 600000, out qLa, out qLo);
+                var rr = Ils.Compute(qLa, qLo, 69 + 180, tLa, tLo, -.0502119, -74.4903, 69, 600000, 350);
+                Check(FlightPolicy.Wrap(Ils.FdHeading(rr, 60) - crs) < -1 && Ils.FdVs(rr, 60) < -3, "100 m right, 30 m high: steer left, descend");
+                var co = Ils.Callouts(rr, 50, false, 80, 60); Check(co.Contains("GEAR") && co.Contains("TOO FAST") && co.Contains("MINIMUMS"), "callouts: " + string.Join(",", co.ToArray()));
+                Check(Ils.SpeedBand(62, 60) == "green" && Ils.SpeedBand(68, 60) == "amber" && Ils.SpeedBand(75, 60) == "red", "IAS band colours");
+            }
+            Console.WriteLine("Airbrakes/dedupe/ILS zone: 7 behavior checks passed.");
+        }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(cd);

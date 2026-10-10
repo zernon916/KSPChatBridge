@@ -127,6 +127,23 @@ namespace KSPChatBridge
             r.GsDeg = Math.Atan2(alt - elevation, Math.Max(1, toGs)) * 180 / Math.PI - GlideDeg; // + = above the glideslope (fly down)
             return r;
         }
+        /// <summary>Hand-flying flight director: heading to steer onto the localizer, VS to hold/capture the 3 deg path (pure; tested).</summary>
+        internal static double FdHeading(Reading r, double speed) { return (r.Course - FlightPolicy.Clamp(Math.Atan2(r.CrossM, Math.Max(1500, 10 * speed)) * 180 / Math.PI, -30, 30) + 360) % 360; }
+        internal static double FdVs(Reading r, double speed) { return FlightPolicy.Clamp(-speed * Math.Tan(GlideDeg * Math.PI / 180) - .1 * r.AboveGsM, -15, 3); }
+        /// <summary>IAS vs target approach speed: green within 5, amber within 10, else red.</summary>
+        internal static string SpeedBand(double ias, double target) { double d = Math.Abs(ias - target); return d <= 5 ? "green" : d <= 10 ? "amber" : "red"; }
+        /// <summary>Text callouts (no audio): GEAR inside 3 km gear up, TOO FAST/SLOW, GLIDESLOPE off the path, MINIMUMS at 60 m above the threshold.</summary>
+        internal static List<string> Callouts(Reading r, double hat, bool gearDown, double ias, double target)
+        {
+            var c = new List<string>(); if (!r.Front) return c;
+            if (!gearDown && r.DmeM < 3000) c.Add("GEAR");
+            if (ias > target + 10) c.Add("TOO FAST"); else if (ias < target - 5) c.Add("SLOW");
+            if (r.DmeM < 10000 && Math.Abs(r.AboveGsM) > Math.Max(15, .02 * r.DmeM)) c.Add("GLIDESLOPE");
+            if (hat < 60 && hat > 20) c.Add("MINIMUMS");
+            return c;
+        }
+        /// <summary>Localizer capture zone: in front, within range, inside the 35 deg ILS capture sector.</summary>
+        internal static bool InLocCaptureZone(Reading r, double range) { return r.Front && r.DmeM < range && Math.Abs(r.LocDeg) < 35; }
         /// <summary>Needle position -1..1 (full-scale deflection), sign as the deviation.</summary>
         internal static double Needle(double dev, double fullScale) { return FlightPolicy.Clamp(dev / fullScale, -1, 1); }
     }

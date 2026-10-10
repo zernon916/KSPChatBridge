@@ -24,7 +24,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class MapWindow : MonoBehaviour
     {
-        const int WindowId = 0x4B434D41, N = 96; const float Px = 384;
+        const int WindowId = 0x4B434D41, N = 96; static float Px = 384;   // map side: scales with the window (resizable)
         internal static bool MapVisible; internal static int Tab; static readonly string[] Tabs = { "Maps", "Charts", "ILS" };
         static Rect rect = new Rect(420, 120, Px + 20, Px + 210);
         internal static double ViewSpan = 30000;
@@ -117,11 +117,33 @@ namespace KSPChatBridge
 
         void OnGUI() { try { OnGUIInner(); } catch (System.Exception ex) { GuiGuard.Log(GetType().Name, ex); } }
 
+        object autoIlsFor;
+        /// <summary>Autoland only: switch to the ILS tab once per approach when entering localizer capture range; a manual tab change afterwards wins.</summary>
+        void AutoIlsTab()
+        {
+            var act = NativeFlightController.ActiveRunway; var v = FlightGlobals.ActiveVessel;
+            if (act == null || v == null || ReferenceEquals(autoIlsFor, act)) return;
+            var r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM);
+            if (Ils.InLocCaptureZone(r, RunwayMission.LocRange)) { autoIlsFor = act; Tab = 2; }
+        }
+        const float MinW = 350, MinH = 400; static bool sizeLoaded, resizing, details, guidance;
+        /// <summary>Map/ILS display side for a window size: fills the width, leaves room for the rows below (pure; tested).</summary>
+        internal static float MapSide(float w, float h, int tab) { return Mathf.Max(160, Mathf.Min(w - 20, h - (tab == 1 ? 250 : tab == 2 ? 170 : 140))); }
+        static GUIStyle wrap;
+        static GUIStyle Wrap { get { if (wrap == null || wrap.normal.textColor != GUI.skin.label.normal.textColor) wrap = new GUIStyle(GUI.skin.label) { wordWrap = true }; return wrap; } }
         void OnGUIInner()
         {
             if (!MapVisible || body == null) return;
+            AutoIlsTab();
             var skin = AicsMenu.EnsureSkin(); if (skin != null) GUI.skin = skin;
             rect.x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, Screen.width - 80)); rect.y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, Screen.height - 40));
+            if (!sizeLoaded) { sizeLoaded = true; rect.width = Mathf.Max(MinW, PlayerPrefs.GetFloat("AICS.MapW", rect.width)); rect.height = Mathf.Max(MinH, PlayerPrefs.GetFloat("AICS.MapH", rect.height)); }
+            if (resizing)
+            {   // corner grip drag (like the chat window); size persisted
+                if (Input.GetMouseButton(0)) { Vector2 m = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y); rect.width = Mathf.Clamp(m.x - rect.x + 8, MinW, Screen.width); rect.height = Mathf.Clamp(m.y - rect.y + 8, MinH, Screen.height); }
+                else { resizing = false; PlayerPrefs.SetFloat("AICS.MapW", rect.width); PlayerPrefs.SetFloat("AICS.MapH", rect.height); PlayerPrefs.Save(); }
+            }
+            Px = MapSide(rect.width, rect.height, Tab);
             rect = GUI.Window(WindowId, rect, Draw, "AICS Map & Charts  (x = close)");
         }
 
@@ -136,6 +158,8 @@ namespace KSPChatBridge
         {
             if (GUI.Button(new Rect(rect.width - 22, 2, 20, 16), "x")) { MapVisible = false; return; }
             try { DrawInner(); } catch (Exception ex) { GuiGuard.Log("MapWindow.Draw", ex); }
+            Rect grip = new Rect(rect.width - 18, rect.height - 18, 16, 16); GUI.Label(grip, "//");
+            var ev = Event.current; if (ev.type == EventType.MouseDown && ev.button == 0 && grip.Contains(ev.mousePosition)) { resizing = true; ev.Use(); }
             GUI.DragWindow();
         }
 
@@ -152,14 +176,16 @@ namespace KSPChatBridge
             GUILayout.Label((ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km", GUILayout.Width(48));
             if (GUILayout.Button("+", GUILayout.Width(24))) ViewSpan = Zoom(ViewSpan, .5);
             centerRunway = GUILayout.Toggle(centerRunway, "center rwy");
+            GUILayout.EndHorizontal();
             if (Tab == 1 && rw != null)
-            {   // chart variant selector (default = Luke's chart; e.g. "tight"); writes charts/active.json, hot-swap reloads it
+            {   GUILayout.BeginHorizontal();   // second row: never clipped   // chart variant selector (default = Luke's chart; e.g. "tight"); writes charts/active.json, hot-swap reloads it
                 NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, "");
                 string cur = ChartStore.Active(rw.Key);
                 if (vs.Count > 1 && GUILayout.Button("chart: " + (cur.Length == 0 ? "default" : cur), GUILayout.Width(110)))
                 { string next = vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]; ChartStore.SetActive(rw.Key, next); fixesFor = ""; }
+                details = GUILayout.Toggle(details, "details");
+                GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();
             }
-            GUILayout.EndHorizontal();
             Rect map = GUILayoutUtility.GetRect(Px, Px, GUILayout.Width(Px), GUILayout.Height(Px));
             if (tex != null) GUI.DrawTexture(map, tex);
             GUI.BeginGroup(map);
@@ -205,7 +231,7 @@ namespace KSPChatBridge
                 GUILayout.EndHorizontal();
             }
             if (Tab != 1) return;
-            GUILayout.Label(PlaneLine(rw, NativeFlightController.ActiveRunway));
+            GUILayout.Label(PlaneLine(rw, NativeFlightController.ActiveRunway), Wrap);
             if (sel >= 0 && sel < fixes.Count)
             {
                 var f = fixes[sel]; double g = NativeFlightController.MapTerrain(body, f.Lat, f.Lon); if (double.IsNaN(g)) g = 0;
@@ -221,7 +247,7 @@ namespace KSPChatBridge
             if (GUILayout.Button("Reset") && rw != null) { fixesFor = ""; note = "Reset to computed (Save to keep)."; }
             if (GUILayout.Button("Save") && rw != null) Save(rw);
             GUILayout.EndHorizontal();
-            GUILayout.Label(note);
+            GUILayout.Label(note, Wrap);   // auto-height
         }
 
         /// <summary>Cockpit-style ILS for the active approach runway end (or the selected one); works hand flying too.</summary>
@@ -235,13 +261,13 @@ namespace KSPChatBridge
             else { GUILayout.Label("No runway on this body."); return; }
             GUILayout.BeginHorizontal();
             if (act == null && GUILayout.Button("<", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + runways.Count - 1) % runways.Count;
-            GUILayout.Label("ILS " + label + (act != null ? "  (autoland active)" : "  (selected)"), GUILayout.Width(250));
+            GUILayout.Label("ILS " + label + (act != null ? "  (autoland active)" : "  (selected)"));
             if (act == null && GUILayout.Button(">", GUILayout.Width(24)) && runways.Count > 0) rwIdx = (rwIdx + 1) % runways.Count;
             GUILayout.EndHorizontal();
             if (v == null) return;
             var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);   // single source of truth with the autopilot
             if (act != null) GUILayout.Label(act.Coupled ? (act.GsCoupled ? "COUPLED  LOC + GS" : "COUPLED  LOC  (GS armed)") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC armed" : "not coupled");
-            const float S = 260; Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
+            float S = Mathf.Max(160, Mathf.Min(rect.width - 30, rect.height - (guidance ? 300 : 250))); Rect box = GUILayoutUtility.GetRect(S, S, GUILayout.Width(S), GUILayout.Height(S));
             var o = GUI.color; GUI.color = new Color(.05f, .05f, .08f); GUI.DrawTexture(box, Texture2D.whiteTexture); GUI.color = o;
             Vector2 c = box.center;
             for (int i = -2; i <= 2; i++) { if (i == 0) continue; Dot(new Vector2(c.x + i * S * .2f, c.y), 5, Color.white); Dot(new Vector2(c.x, c.y + i * S * .2f), 5, Color.white); }
@@ -257,6 +283,24 @@ namespace KSPChatBridge
             double gs = v.horizontalSrfSpeed;
             GUILayout.Label("DME " + (r.DmeM / 1000).ToString("0.0") + " km to threshold   GS " + Math.Round(gs) + " m/s" + (gs > 1 ? "   ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
             GUILayout.Label("LOC " + r.LocDeg.ToString("+0.00;-0.00") + " deg   cross-track " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "right" : "left"));
+            {   // status row + hand-flying guidance
+                bool gear = v.ActionGroups[KSPActionGroup.Gear], brk = v.ActionGroups[KSPActionGroup.Brakes]; double hat = v.altitude - elev, ias = v.indicatedAirSpeed;
+                double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);
+                var oc = GUI.contentColor; GUILayout.BeginHorizontal();
+                GUI.contentColor = !gear && r.Front && r.DmeM < 3000 ? Color.red : Color.white; GUILayout.Label("GEAR " + (gear ? "DOWN" : "UP"));
+                GUI.contentColor = Color.white; GUILayout.Label(brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : "brakes off");
+                GUILayout.Label("VS " + v.verticalSpeed.ToString("+0;-0"));
+                string band = Ils.SpeedBand(ias, tgt); GUI.contentColor = band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red;
+                GUILayout.Label("IAS " + Math.Round(ias) + "/" + Math.Round(tgt)); GUI.contentColor = Color.white;
+                GUILayout.Label("HAT " + Math.Round(hat) + " m"); GUILayout.FlexibleSpace(); GUI.contentColor = oc; GUILayout.EndHorizontal();
+                guidance = GUILayout.Toggle(guidance, "ILS guidance (hand-flying) " + (guidance ? "ON" : "OFF"));
+                if (guidance && valid)
+                {
+                    double fh = Ils.FdHeading(r, v.srfSpeed), fv = Ils.FdVs(r, v.srfSpeed), dh = FlightPolicy.Wrap(fh - FlightGlobals.ship_heading), dv = fv - v.verticalSpeed;
+                    GUILayout.Label((dh < -2 ? "<<< STEER LEFT" : dh > 2 ? "STEER RIGHT >>>" : "ON COURSE") + "   " + (dv > 2 ? "FLY UP" : dv < -2 ? "FLY DOWN" : "ON PATH") + "   HDG " + Math.Round(fh).ToString("000") + "  VS " + fv.ToString("0"), Wrap);
+                    var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) { GUI.contentColor = new Color(1, .7f, 0); GUILayout.Label(string.Join("  ", co.ToArray())); GUI.contentColor = oc; }
+                }
+            }
             GUILayout.Label("G/S " + r.GsDeg.ToString("+0.00;-0.00") + " deg   " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "above" : "below") + " the 3 deg path   course " + Math.Round(r.Course).ToString("000"));
         }
 
@@ -264,7 +308,7 @@ namespace KSPChatBridge
         /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
         string PlaneLine(NativeFlightController.MapRunway rw, RunwayMission act)
         {
-            if (act != null && act.PlanSpeed > 0) return "This plane: " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "; crew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g) -> bank " + Math.Round(act.PlanBank) + " (now " + Math.Round(act.TurnBank) + ")" + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km | " + act.JoinLog + " | " + act.SmoothLog;
+            if (act != null && act.PlanSpeed > 0) return "Plane " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km" + (details ? "\ncrew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g, bank now " + Math.Round(act.TurnBank) + "\n" + act.JoinLog + "\n" + act.SmoothLog : "");
             if (rw == null || Time.realtimeSinceStartup < planeAt) return planeLine;
             planeAt = Time.realtimeSinceStartup + 1;
             double v = ApproachProfile.Speed(NativeFlightController.MapStall), gN = ApproachProfile.LoadFactor(ApproachProfile.JoinG, v, NativeFlightController.MapStall), b = ApproachProfile.BankForG(gN), crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
@@ -277,7 +321,7 @@ namespace KSPChatBridge
                 string lg; ApproachChart.Smooth(seq, crs, rw.Lat, rw.Lon, v, b, body.Radius, out lg);
                 int t = lg.IndexOf("TIGHT"); if (t >= 0) tight += side[0] + ": " + lg.Substring(t + 15) + " ";
             }
-            planeLine = "This plane: " + Math.Round(v) + " m/s (1.5 x stall " + Math.Round(NativeFlightController.MapStall) + "), " + gN.ToString("0.0") + " g (" + ApproachProfile.Limit + ") -> bank " + Math.Round(b) + ", r " + (ApproachProfile.Radius(v, b) / 1000).ToString("0.0") + " km | " + (tight.Length > 0 ? "TIGHT " + tight : "all turns fit");
+            planeLine = "Plane " + Math.Round(v) + " m/s, " + gN.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(b) + ", r " + (ApproachProfile.Radius(v, b) / 1000).ToString("0.0") + " km, " + (tight.Length > 0 ? "TIGHT" + (details ? ": " + tight : " (details)") : "turns fit") + (details ? "\n1.5 x stall " + Math.Round(NativeFlightController.MapStall) + " m/s" : "");
             return planeLine;
         }
 
