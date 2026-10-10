@@ -59,6 +59,12 @@ namespace KSPChatBridge
         {
             if (chartsReady) return; chartsReady = true;
             ChartStore.Dir = Path.Combine(BridgeLauncher.PluginDataDirectory, "charts");
+            try
+            {   // shipped default charts (e.g. KSC_09_tight.json) are copied once, never over the player's files
+                string defs = Path.Combine(Path.GetDirectoryName(BridgeLauncher.PluginDataDirectory.TrimEnd('/', '\\')), "Defaults", "charts");
+                if (Directory.Exists(defs)) { Directory.CreateDirectory(ChartStore.Dir); foreach (var f in Directory.GetFiles(defs, "*.json")) { string to = Path.Combine(ChartStore.Dir, Path.GetFileName(f)); if (!File.Exists(to)) File.Copy(f, to); } }
+            }
+            catch (Exception ex) { ChatLog.Write("approach", "default charts not copied: " + ex.Message); }
             try { int n = ChartStore.Migrate(ApproachPath); if (n > 0) ChatLog.Write("approach", "migrated " + n + " charts from approaches.json to charts/ (backup approaches.json.premigrate.bak)"); }
             catch (Exception ex) { ChatLog.Write("approach", "chart migration failed: " + ex.Message); }
         }

@@ -56,6 +56,7 @@ $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null
 Copy-Item "$root\KSPChatMod\bin\Release\KSPChatBridge.dll" "$mod\Plugins\"
 Copy-Item "$root\KSPChatMod\AICS_RPM.cfg" $mod
+New-Item -ItemType Directory -Force "$mod\Defaults\charts" | Out-Null; Copy-Item "$root\tools\charts\*.json" "$mod\Defaults\charts\"   # default chart variants (copied into PluginData/charts on first run)
 Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md", "$root\personalities.txt" $mod
 New-Item -ItemType Directory -Force "$mod\templates" | Out-Null
 Copy-Item "$root\templates\env.example", "$root\playstyle_notes.example.md" "$mod\templates\"
