@@ -118,7 +118,7 @@ namespace KSPChatBridge
                 case "turn":
                     if (!Active) return "Engage local holds first.";
                     flying2 = false; directBank = null; holdHeading = true;
-                    heading = FlightResidualPolicy.Turn(heading, Str(a, "direction", "left"), Num(a, "degrees", 90));
+                    heading = FlightResidualPolicy.Turn(FlightGlobals.ship_heading, Str(a, "direction", "left"), Num(a, "degrees", 90));   // relative to where we point now, not a stale hold heading
                     return "Turning to heading " + heading.ToString("0", Inv) + ".";
                 case "plane_pitch":
                 {

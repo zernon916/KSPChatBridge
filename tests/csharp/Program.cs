@@ -1025,6 +1025,26 @@ class Program
                 Check(amb != null, "randomized ambient chatter with a full crew (2-6 min)");
             }
             Console.WriteLine("Round-4b circle/maxspeed/runway/crew: 19 behavior checks passed.");
+            // ---- Overnight audit: alert spam, override phrase, telemetry position, crew scene ----
+            {
+                var ag = new AlertGate();
+                Check(ag.Allow("caution", "G-load: 5.0 g", 0) && !ag.Allow("caution", "G-load: 6.2 g", 5) && ag.Allow("warning", "G-load: 8.3 g", 6) && !ag.Allow("warning", "G-load: 8.6 g", 20) && ag.Allow("caution", "G-load: 5.1 g", 40), "G-load alerts de-spammed (30 s, escalation passes)");
+                Check(ag.Allow("caution", "Low fuel: 10%", 7), "other alarm kinds independent");
+                var so = ToolRouter.Direct("set speed 250 Authorize, DO NOT GO SLOWER", "plane");
+                Check(so != null && so.Value.Key == "set_speed" && so.Value.Value.Contains("\"override\":true") && so.Value.Value.Contains("250"), "'authorize' passes the cap override");
+                bool lf; string rp; Check(PilotPolicy.ResolveSpeed(250, double.NaN, 900, true, out lf, out rp) == 250 && lf, "override honored: 250");
+                string tl = ChatTelemetry.Line(900, 850, 150, 90, 0, 2, .5, 0, false, false, "landing", TelemetryPos.Part(-0.04861, -74.72441, 12.34, -90));
+                Check(tl.Contains("lat=-0.0486 lon=-74.7244 rwy=12.3km brg=270"), "telemetry: lat/lon + runway distance/bearing: " + tl);
+                Check(!TelemetryPos.Part(1, 2, double.NaN, 0).Contains("rwy"), "no runway part when no target");
+                var names = new List<string> { "Sidry Kerman", "Bob Kerman", "Val Kerman" };
+                var sc = CrewScene.Parse("Sidry: Engine's out, working it.\n**Bob Kerman**: We're going to die!\nNarrator: the sky darkens\nSidry (Pilot): Got it half lit...\n- Val: Breathe, Bob.\nSidry: Fixed. All good.", names);
+                Check(sc.Count == 5 && sc[0].Key == "Sidry Kerman" && sc[1].Key == "Bob Kerman" && sc[3].Key == "Val Kerman" && sc[4].Value == "Fixed. All good.", "scene split into Name: lines, unknown speakers dropped");
+                Check(CrewScene.Parse("just one rambling paragraph", names).Count == 0, "unparseable scene -> canned fallback");
+                string sp = CrewScene.Prompt("an engine (Wheesley) just flamed out", "Sidry Kerman", new List<string> { "Bob Kerman" });
+                Check(sp.Contains("'Name: line'") && sp.Contains("partial fix") && sp.Contains("Bob Kerman") && sp.Contains("finally"), "scene prompt: announce, partial fix, update, final fix, others react");
+                var rg = new Random(1); double gp = CrewScene.Gap(rg); Check(gp >= 2 && gp <= 3, "scene lines 2-3 s apart");
+            }
+            Console.WriteLine("Overnight audit: 11 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

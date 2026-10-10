@@ -18,7 +18,9 @@ namespace KSPChatBridge
             if (vessel == null) return "no vessel";
             string ap = mode + (patternOn ? "/pattern" : "") + (directBank.HasValue ? "/bank" : "") + (plan != null && plan.Running ? "/plan" + (plan.Index + 1) : "");
             return ChatTelemetry.Line(vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, FlightGlobals.ship_heading, Roll(), Pitch(), vessel.ctrlState.mainThrottle,
-                vessel.verticalSpeed, vessel.ActionGroups[KSPActionGroup.Brakes], vessel.ActionGroups[KSPActionGroup.Gear], ap);
+                vessel.verticalSpeed, vessel.ActionGroups[KSPActionGroup.Brakes], vessel.ActionGroups[KSPActionGroup.Gear], ap,
+                TelemetryPos.Part(vessel.latitude, vessel.longitude, runway == null ? double.NaN : NavigationMath.Distance(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon, vessel.mainBody.Radius) / 1000,
+                    runway == null ? 0 : NavigationMath.Bearing(vessel.latitude, vessel.longitude, runway.Lat, runway.Lon)));
         }
 
         static string NearestBuiltIn(double lat, double lon)

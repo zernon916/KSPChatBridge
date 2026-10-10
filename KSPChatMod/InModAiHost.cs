@@ -106,7 +106,7 @@ namespace KSPChatBridge
         /// <summary>Model-written crew line: only when the model is idle and no player chat is waiting (never starves
         /// chat; a player message preempts a running crew line). false = say the canned line instead.
         /// done(text or null) runs on the main thread.</summary>
-        internal static bool TryCrewLine(string system, string prompt, Action<string> done)
+        internal static bool TryCrewLine(string system, string prompt, Action<string> done, int tokens = 0)
         {
             if (instance == null || !BridgeLauncher.AiEnabled || BridgeLauncher.UseBridge) return false;
             if (!ChatterPolicy.ModelFree(Volatile.Read(ref instance.busy) != 0, instance.queue.Pending)) return false;
@@ -116,7 +116,7 @@ namespace KSPChatBridge
             instance.queue.Enqueue(new ChatRequest
             {
                 Text = prompt, Provider = provider, Session = "crew", UserPriority = false, DeadlineUtc = DateTime.UtcNow.AddSeconds(3),
-                Run = () => { try { return CrewComplete(provider, system, prompt, CrewTimeoutMs, false); } finally { Interlocked.Exchange(ref crewRunning, 0); } },
+                Run = () => { try { return CrewComplete(provider, system, prompt, tokens > 0 ? 2 * CrewTimeoutMs : CrewTimeoutMs, false, tokens); } finally { Interlocked.Exchange(ref crewRunning, 0); } },
                 Done = done, Settled = () => Interlocked.Exchange(ref crewRunning, 0),
             });
             instance.Pump();
@@ -124,14 +124,14 @@ namespace KSPChatBridge
         }
 
         /// <summary>One short line from the current provider, no tools. null on any problem / timeout.</summary>
-        internal static string CrewComplete(string provider, string system, string prompt, int timeoutMs, bool allowLoad)
+        internal static string CrewComplete(string provider, string system, string prompt, int timeoutMs, bool allowLoad, int tokens = 0)
         {
             var ep = OpenAiBackend.Resolve(provider);
             if (!ep.Ok) return null;
             bool emb = ep.Url == OpenAiBackend.EmbeddedUrl;
             if (emb && !allowLoad && !EmbeddedLlm.Loaded) return null;
             var body = new Dictionary<string, object> {
-                { "model", ep.Model }, { "temperature", 0.9 }, { "stream", false }, { "max_tokens", CrewPrompts.MaxTokens },
+                { "model", ep.Model }, { "temperature", 0.9 }, { "stream", false }, { "max_tokens", (tokens > 0 ? tokens : CrewPrompts.MaxTokens) },
                 { "messages", new List<object> {
                     new Dictionary<string, object> { { "role", "system" }, { "content", system ?? "" } },
                     new Dictionary<string, object> { { "role", "user" }, { "content", prompt ?? "" } } } } };

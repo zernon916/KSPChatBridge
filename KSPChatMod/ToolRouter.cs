@@ -103,6 +103,8 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^sas (on|off)$")) return R("set_sas", "{\"enabled\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^rcs (on|off)$")) return R("set_rcs", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^(take ?off|takeoff)( now)?$")) return R("takeoff", "{}");
+            var so = Regex.Match(m, @"^set (?:the )?speed (?:to )?(\d{2,4})\b.*\b(authori[sz]e[ds]?|override)\b");
+            if (so.Success) return R("set_speed", "{\"speed\":" + so.Groups[1].Value + ",\"override\":true}");
             if (Regex.IsMatch(m, @"^(set )?(speed )?(to )?(max(imum)?|full) speed$|^(set )?speed (to )?(max(imum)?|full)$|^(go )?flat out$")) return R("set_speed", "{\"speed\":\"max\"}");
             if (Regex.IsMatch(m, @"^(please )?(turn|swing|come) (it |her )?around$|^(do a |make a )?u-?turn$|^turn 180$|^reverse course$")) return R("set_heading", "{\"relative\":180}");
             if (Regex.IsMatch(m, @"^(full|max(imum)?) (throttle|power)$|^throttle (up|full|max)$")) return R("set_throttle", "{\"value\":100}");

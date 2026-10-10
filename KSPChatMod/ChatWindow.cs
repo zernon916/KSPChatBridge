@@ -66,6 +66,7 @@ namespace KSPChatBridge
         public static void Notice(string line)
         {
             Debug.Log("[KSPChatBridge] " + line);
+            if (line != null && !line.StartsWith("[SYSTEM]") && !line.StartsWith("[INTERCOM]")) ChatLog.Write("notice", line);   // audit: every pilot notice (releases, pauses) reaches the chat log
             lock (Sync) Incoming.Enqueue(line);
         }
 

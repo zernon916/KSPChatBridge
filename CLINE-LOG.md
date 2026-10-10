@@ -301,3 +301,9 @@ Problem: silent sabotage reverts, plan pitch/bank/turn-around bank, set_speed ma
 Changed: 2-4 s fumble + pilot callout + [SYSTEM] + model context (PilotEvents); plan steps pitch/bank/turn around bank N; ResolveSpeed/VMax (max = vehicle max, cap note); tweaks no longer preempt plans; ThrottleFloor/SafeBank; approach turn radius from approach speed; built-in beats fuzzy spot, duplicate spot hidden; prompt number rule; 'turn around'/'max speed' aliases; problem events -> pilot then every kerbal, staggered; randomized ambient chatter 2-6 min with [chatter] skip logs.
 Tests run: pytest 494, C# suite green (Round-4 19 + Round-4b 19), Release build.
 Still needs live check: all of the above.
+
+## Overnight audit (2026-10-09)
+Problem (chat log): set_sas refused while autopilot active; turn 180 used stale hold heading (no-op); G-load alert spam; 'authorize' speed override ignored; autopilot releases not in chat log.
+Changed: SAS releases local control when asked; turn relative to ship heading; AlertGate (30 s per kind, escalation passes); router override phrase; notices logged; [T] lat/lon + runway dist/brg; multi-line crew scene (one model call, Name: lines, 2-3 s stagger, canned fallback).
+Tests run: pytest, C# suite (11 new), Release build.
+Still needs live check: all.

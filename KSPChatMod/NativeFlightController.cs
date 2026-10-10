@@ -40,6 +40,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1;
+        readonly AlertGate alertGate = new AlertGate();
         double planBank, prevSpd = -1; bool capLifted;
         double climbPitchMax = 15, descentPitchMin = -5;
         double? directVs, directPitch, directBank, pendingCircle; bool bankOverride; string loggedMode = ""; float nextTelemetry;
@@ -256,7 +257,7 @@ namespace KSPChatBridge
             if (LocalVesselState.AlarmSequence != lastAlarmSeq)   // round 3: system alerts reach the chat again (bridge parity)
             {
                 lastAlarmSeq = LocalVesselState.AlarmSequence;
-                if (LocalVesselState.Alarm.Length > 0) { string al = "[SYSTEM] " + LocalVesselState.Level.ToUpperInvariant() + ": " + LocalVesselState.Alarm; ChatWindow.Notice(al); ChatLog.Write("alert", al); CrewEmergency("alarm", LocalVesselState.Alarm); }
+                if (LocalVesselState.Alarm.Length > 0 && alertGate.Allow(LocalVesselState.Level, LocalVesselState.Alarm, Time.realtimeSinceStartup)) { string al = "[SYSTEM] " + LocalVesselState.Level.ToUpperInvariant() + ": " + LocalVesselState.Alarm; ChatWindow.Notice(al); ChatLog.Write("alert", al); CrewEmergency("alarm", LocalVesselState.Alarm); }
             }
             try { EngineWatchTick(now, flying); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] engine watch: " + ex.Message); }
             try { engines.Tick(vessel, now); }
@@ -745,7 +746,7 @@ namespace KSPChatBridge
                 case "set_brakes": parkingReleased = !Bool(a, "on", true); SetGroup(vessel, KSPActionGroup.Brakes, !parkingReleased); return "Brakes set.";
                 case "set_lights": SetGroup(vessel, KSPActionGroup.Light, Bool(a, "on", true)); return "Lights set.";
                 case "set_rcs": SetGroup(vessel, KSPActionGroup.RCS, Bool(a, "on", true)); return "RCS set.";
-                case "set_sas": if (Active) return "Stop local control before enabling SAS."; SetGroup(vessel, KSPActionGroup.SAS, Bool(a, "enabled", true)); return "SAS set.";
+                case "set_sas": if (Active && Bool(a, "enabled", true)) { if (plan != null) plan.Pause(); Stop(); ChatLog.Write("ap", "released for SAS (player asked)"); } SetGroup(vessel, KSPActionGroup.SAS, Bool(a, "enabled", true)); return "SAS set.";
                 case "get_trim_state":
                     var trim = new Dictionary<string, object> { { "pitch", vessel.ctrlState.pitchTrim }, { "roll", vessel.ctrlState.rollTrim }, { "yaw", vessel.ctrlState.yawTrim }, { "craft", vessel.vesselName }, { "heli", props.HasLift(vessel) }, { "notes_saved", false } };
                     trim["collective"] = props.CollectiveValue;

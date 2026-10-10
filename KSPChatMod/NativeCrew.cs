@@ -104,7 +104,34 @@ namespace KSPChatBridge
             var crew = CrewOf(instance.vessel); var p = CrewVoice.Pilot(crew);
             ChatLog.Write("chatter", "event " + kind + " (" + part + ")");
             PilotEvents.Add(kind + ": " + part, PilotEvents.Now);
-            instance.SpeakAll(instance.chatter.Emergency(kind, part, crew, p == null ? "" : p.Value.Key, Time.realtimeSinceStartup, instance.vessel.geeForce));
+            var lines = instance.chatter.Emergency(kind, part, crew, p == null ? "" : p.Value.Key, Time.realtimeSinceStartup, instance.vessel.geeForce);
+            if (lines.Count == 0) { ChatLog.Write("chatter", "skip: rate-limited (" + kind + ")"); return; }
+            var names = new List<string>(); foreach (var c in crew) names.Add(c.Key);
+            string pilot = lines[0].Name; var others = new List<string>(); foreach (var n in names) if (n != pilot) others.Add(n);
+            string facts = CrewPrompts.FactsFor(kind, part, instance.vessel.geeForce);
+            Action canned = () => PostScene(lines.ConvertAll(l => new KeyValuePair<string, string>(l.Name, l.Canned)), crew, "canned");
+            bool asked = InModAiHost.TryCrewLine("You write short, characterful Kerbal crew intercom lines.", CrewScene.Prompt(facts, pilot, others), txt =>
+            {
+                var scene = CrewScene.Parse(txt, names);
+                if (scene.Count > 0) PostScene(scene, crew, "model scene"); else canned();
+            }, 220);
+            if (!asked) canned();
+        }
+
+        static readonly System.Random sceneRng = new System.Random();
+        /// <summary>Post scene lines staggered 2-3 s apart (thread-safe: Notice is a queue).</summary>
+        static void PostScene(List<KeyValuePair<string, string>> scene, List<KeyValuePair<string, string>> crew, string how)
+        {
+            double t = 0;
+            foreach (var kv in scene)
+            {
+                string trait = "pilot"; foreach (var c in crew) if (c.Key == kv.Key) trait = c.Value;
+                string text = IntercomTalk.Fmt(kv.Key, trait, kv.Value);
+                int ms = (int)(t * 1000);
+                if (ms == 0) { ChatWindow.Notice(text); ChatLog.Write("chatter", text + " (" + how + ")"); }
+                else { System.Threading.Timer tm = null; tm = new System.Threading.Timer(_ => { ChatWindow.Notice(text); ChatLog.Write("chatter", text + " (" + how + ")"); tm.Dispose(); }, null, ms, System.Threading.Timeout.Infinite); }
+                lock (sceneRng) t += CrewScene.Gap(sceneRng);
+            }
         }
 
         void ChatterTick()
