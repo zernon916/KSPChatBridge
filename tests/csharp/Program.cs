@@ -922,7 +922,7 @@ class Program
             Check(!double.IsNaN(crossAt1k) && crossAt1k < RunwayMission.GateCross && trkAt1k < RunwayMission.GateHeading, "aligned at 1 km: " + crossAt1k.ToString("0") + " m / " + trkAt1k.ToString("0.0") + " deg");
             var gate = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
             double gl, gn; NavigationMath.Offset(gate.Lat, gate.Lon, course + 180, 800, R, out gl, out gn); NavigationMath.Offset(gl, gn, course + 90, 120, R, out gl, out gn);
-            gate.Step(gl, gn, 120, 50, 70, false, R, 45, course + 20);
+            gate.Step(gl, gn, 120, 50, 62, false, R, 45, course + 20);   // on speed (1.3 Vs + 3): the alignment gate fires
             Check(gate.Phase == "go around" && gate.Why.Contains("not lined up"), "misaligned at 1 km -> go around (" + gate.Why + ")");
         }
         {
@@ -1059,7 +1059,7 @@ class Program
                         if (m.Phase == "final" && m.Distance < 3000) { final = true; worstCross = Math.Abs(m.Cross); break; }
                         double err = FlightPolicy.Wrap(m.DesiredHeading - h), rate = 9.81 * Math.Tan(Math.Min(m.TurnBank > 0 ? m.TurnBank : 20, 70) * Math.PI / 180) / v * 180 / Math.PI;   // the plane flies the bank the autopilot commands
                         double dh = FlightPolicy.Clamp(err, -rate, rate); h = (h + dh + 360) % 360; turned += Math.Abs(dh);
-                        alt += FlightPolicy.Clamp(m.DesiredVs, -25, 12);
+                        alt += FlightPolicy.Clamp(m.DesiredVs, -25, 12); if (m.Phase == "final") v = Math.Max(m.DesiredSpeed, v - 4);   // the craft slows to the forced approach speed
                         NavigationMath.Offset(la, lo, h, v, R0, out la, out lo);
                     }
                     m.Why = (final ? "ok" : "noFinal") + " turned=" + turned.ToString("0") + " cross=" + worstCross.ToString("0") + " " + m.RouteLog + " T: " + trace;
@@ -1212,10 +1212,10 @@ class Program
                     for (int i = 0; i < 400; i++)
                     {
                         double tr = hh + bias;
-                        rf.Step(fla, flo, rf.Elevation + 300, 300, 75, false, 600000, 45, tr, hh);
+                        rf.Step(fla, flo, rf.Elevation + 300, 300, 62, false, 600000, 45, tr, hh);
                         if (rf.Phase != "final") { ph = rf.Phase + " " + rf.Why; break; }
                         hh += FlightPolicy.Clamp(FlightPolicy.Wrap(rf.DesiredHeading - hh), -3, 3);
-                        NavigationMath.Offset(fla, flo, tr, 75, 600000, out fla, out flo);
+                        NavigationMath.Offset(fla, flo, tr, 62, 600000, out fla, out flo);
                         if (double.IsNaN(at1k) && rf.Distance < 1500) at1k = rf.Cross;
                         if (rf.Distance < 300) break;
                     }
@@ -1588,6 +1588,33 @@ class Program
             Check(Math.Abs(rmI.DesiredAltitude - (gAlt - rmI.Ils.AboveGsM)) < .01 && FlightPolicy.Wrap(rmI.DesiredHeading - crsI) < 0, "GS path and a left correction come from the ILS reading");
             rmI.GoAroundReset(); Check(!rmI.Coupled && !rmI.GsCoupled, "go-around uncouples");
             Console.WriteLine("Coupled ILS: 4 behavior checks passed.");
+        }
+        {   // crash 15:18: 200 m/s at the FAF. Forced approach speed (idle + airbrakes), speed gates, soft flare
+            Func<double, string> sim = (dragK) =>
+            {
+                double tLa = -.0485997, tLo = -74.724375, el = 69.1; var m = new RunwayMission { Lat = tLa, Lon = tLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = el };
+                double crs = NavigationMath.Bearing(tLa, tLo, m.EndLat, m.EndLon), la, lo; NavigationMath.Offset(tLa, tLo, crs + 180, 12000, 600000, out la, out lo);
+                double alt = el + 12350 * Math.Tan(3 * Math.PI / 180), v = 200, vs = 0, thr = .6, dt = .05, touchVs = double.NaN, fastAt1k = double.NaN; m.Phase = "final"; m.Kind = "long";
+                for (int i = 0; i < 20000; i++)
+                {
+                    bool gnd = alt <= el + .01;
+                    m.Step(la, lo, alt, alt - el, v, gnd, 600000, 45, crs, crs);
+                    if (m.Phase == "go around") return "GA " + m.Why;
+                    if (gnd) { touchVs = vs; break; }
+                    if (m.Distance < 1000 && double.IsNaN(fastAt1k)) fastAt1k = v - 1.3 * 45;
+                    thr = PilotPolicy.ApproachThrottle(thr, v, m.DesiredSpeed, dt); bool brakes = v > m.DesiredSpeed + 8;
+                    vs += FlightPolicy.Clamp(m.DesiredVs - vs, -3 * dt, 3 * dt);
+                    double a = 6 * thr - dragK * v * v * (brakes ? 2 : 1) - 9.81 * vs / Math.Max(30, v);
+                    v = Math.Max(20, v + a * dt); alt = Math.Max(el, alt + vs * dt);
+                    NavigationMath.Offset(la, lo, crs, v * dt, 600000, out la, out lo);
+                }
+                return "touch " + touchVs.ToString("0.0") + " fast1k " + fastAt1k.ToString("0");
+            };
+            string draggy = sim(.00012), slick = sim(.000005);
+            Check(draggy.StartsWith("touch") && double.Parse(draggy.Split(' ')[3]) <= 10 && Math.Abs(double.Parse(draggy.Split(' ')[1])) < 2, "200 m/s at the FAF, idle + airbrakes: stabilized by 1 km, touchdown sink < 2 m/s (" + draggy + ")");
+            Check(slick.StartsWith("GA too fast"), "slick craft still fast: go-around at the speed gate, never a fast landing (" + slick + ")");
+            Check(PilotPolicy.ApproachThrottle(.6, 80, 60, .05) == 0 && PilotPolicy.ApproachThrottle(.2, 50, 60, 1) > .2, "approach throttle: idle when fast, spools when slow");
+            Console.WriteLine("Forced approach speed: 3 behavior checks passed.");
         }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));

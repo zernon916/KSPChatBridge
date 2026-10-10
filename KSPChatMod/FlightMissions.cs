@@ -474,6 +474,7 @@ namespace KSPChatBridge
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
         internal bool Gear, Brakes; int replanHold;
         internal double Distance;
+        internal const double FastAtShort = 15, FastAtGate = 10;
         internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
         internal double Cross, Along;
         internal string Why = "";
@@ -618,7 +619,10 @@ namespace KSPChatBridge
                 DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, -maxSink, 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
-                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Max(fv, 2) : -fv; }
+                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s
+                double fastBy = speed - 1.3 * stall;   // stabilized-approach speed gates
+                if (Phase == "final" && Distance < ApproachChart.ShortFix && Distance > GateDistance && fastBy > FastAtShort) { Phase = "go around"; Why = "too fast at the short final (+" + fastBy.ToString("0") + " m/s)"; }
+                if (Phase == "final" && Distance <= GateDistance && Distance > 100 && fastBy > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + fastBy.ToString("0") + " m/s)"; }
                 if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);

@@ -210,6 +210,15 @@ namespace KSPChatBridge
         }
         /// <summary>G limit (Luke: no violent maneuvering): max pitch-attitude rate for a load factor limit at this speed.</summary>
         internal static double MaxPitchRate(double speed, double gLimit = 3) { return (gLimit - 1) * 9.81 / Math.Max(30, speed) * 180 / Math.PI; }
+        /// <summary>Approach speed hold (crash 15:18: 192 m/s at 0.6 km): idle when >5 m/s fast, fast spool up when slow (10%/s), trim inside the band.</summary>
+        internal static double ApproachThrottle(double thr, double speed, double target, double dt)
+        {
+            if (speed > target + 5) return 0;
+            if (speed > target + 1.5) return Math.Max(0, thr - .2 * dt);
+            if (speed < target - 3) return Math.Min(1, thr + .1 * dt);
+            if (speed < target - .5) return Math.Min(1, thr + .03 * dt);
+            return thr;
+        }
         /// <summary>"follow/fly/run/resume/continue/start/execute the (flight) plan" = run the EXISTING plan; only "make/new/clear plan" replaces it.</summary>
         internal static bool IsFollowPlan(string message)
         {

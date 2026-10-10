@@ -170,6 +170,8 @@ namespace KSPChatBridge
         }
         internal static bool OwnsControls { get { return NativeSafety.NativeOwns(BridgeLauncher.AiEnabled, BridgeLauncher.NativeReady, BridgeLauncher.NativeChat); } }
         float nextChartPoll;
+        /// <summary>From the FAF/ILS inbound (intercept/final/flare) the approach speed is forced; chat speed targets are refused.</summary>
+        bool ApproachSpeedLocked { get { return mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare"); } }
         /// <summary>Hot-swap: charts/ mtimes every ~2 s; a changed chart reloads live (bad JSON keeps the old one) and an active approach replans from here.</summary>
         void PollCharts()
         {
@@ -536,9 +538,11 @@ namespace KSPChatBridge
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = 1;   // full power for the roll
+            bool speedLock = ApproachSpeedLocked;
+            if (speedLock && !vessel.LandedOrSplashed) { throttle = PilotPolicy.ApproachThrottle(throttle, vessel.srfSpeed, runway.DesiredSpeed, dt); speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
-            if (mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
+            if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
                 throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall);   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 if (holdSpeed) c.mainThrottle = (float)throttle;
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
@@ -936,7 +940,7 @@ namespace KSPChatBridge
                         catch (Exception ex) { ChatLog.Write("approach", "chart unreadable (" + ex.Message + "); computed chart"); }
                     }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
-                goArounds = 0; landMass0 = 0; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
                     if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);
@@ -979,6 +983,7 @@ namespace KSPChatBridge
                 }
                 case "set_speed":
                 {
+                    if (ApproachSpeedLocked) return "On approach, speed locked at " + Math.Round(runway.DesiredSpeed) + " m/s (approach speed). Say \"go around\" first to change it.";
                     object req; if (!a.TryGetValue("speed", out req)) req = Bool(a, "max", false) ? "max" : null;
                     if ("last".Equals(req)) { if (double.IsNaN(lastAskedSpeed)) return "No earlier speed to override; say e.g. set speed 400 override."; req = lastAskedSpeed; }
                     else { double asked; if (req != null && double.TryParse(Convert.ToString(req, CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out asked)) lastAskedSpeed = asked; }
