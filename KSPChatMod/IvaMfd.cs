@@ -12,7 +12,7 @@ namespace KSPChatBridge
 {
     public class AicsIvaMfd : InternalModule
     {
-        [KSPField] public float width = .20f, height = .1625f, lift = .004f;
+        [KSPField] public float width = .20f, height = .1625f, lift = .008f;
         [KSPField] public bool flipX = false, flipY = false, hideModel = true;
         [KSPField] public float refreshHz = 4;
 
@@ -34,7 +34,8 @@ namespace KSPChatBridge
 
         void Build()
         {
-            if (hideModel) foreach (var r in internalProp.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+            // The host monitor model must be GONE, not just hidden (Luke 5:33 PM: the stock DOCKING MODE screen stayed on top of ours).
+            if (hideModel) { var kids = new List<GameObject>(); foreach (Transform k in internalProp.transform) kids.Add(k.gameObject); foreach (var k in kids) { k.SetActive(false); Destroy(k); } }
             if (font == null)
             {
                 font = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Lucida Console", "Courier New", "DejaVu Sans Mono", "Liberation Mono" }, FontPx);
@@ -42,7 +43,7 @@ namespace KSPChatBridge
                 fillMat = new Material(Shader.Find("Hidden/Internal-Colored")); fillMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always); fillMat.SetInt("_Cull", 0); fillMat.SetInt("_ZWrite", 0);
             }
             rt = new RenderTexture(IvaLayout.W, IvaLayout.H, 0, RenderTextureFormat.ARGB32) { filterMode = FilterMode.Bilinear, useMipMap = false }; rt.Create();
-            face = new GameObject("AICS_MFD_face"); face.layer = internalProp.gameObject.layer;
+            face = new GameObject("AICS_MFD_face"); face.layer = internalProp.gameObject.layer == 0 ? 20 : internalProp.gameObject.layer;   // internal-space layer (16/20)
             face.transform.SetParent(internalProp.transform, false);
             var mesh = new Mesh(); float sx = flipX ? 1 : -1;   // prop face normal = local +Y; texture right = local -X, up = local -Z
             var v = new List<Vector3>(); var uv = new List<Vector2>();
@@ -53,12 +54,17 @@ namespace KSPChatBridge
             face.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = face.AddComponent<MeshRenderer>(); mr.material = FaceMaterial(rt);
             col = face.AddComponent<MeshCollider>(); col.sharedMesh = mesh;
+            // Face the pilot: if the seat is behind the face normal, turn the quad 180 deg about its up axis (rigid, text stays readable).
+            Transform seat = internalProp.internalModel != null && internalProp.internalModel.seats != null && internalProp.internalModel.seats.Count > 0 ? internalProp.internalModel.seats[0].seatTransform : null;
+            if (seat != null && Vector3.Dot(face.transform.up, seat.position - face.transform.position) < 0) face.transform.localRotation = Quaternion.Euler(0, 0, 180);
+            Debug.Log("[KSPChatBridge] IVA MFD face: pos=" + face.transform.position.ToString("F4") + " normal=" + face.transform.up.ToString("F3") + " size=" + width + "x" + height + " lossyScale=" + face.transform.lossyScale.ToString("F2")
+                + " layer=" + face.layer + " shader=" + mr.material.shader.name + " seat=" + (seat == null ? "none" : seat.position.ToString("F3") + " dot=" + Vector3.Dot(face.transform.up, seat.position - face.transform.position).ToString("F3")));
             face.AddComponent<AicsIvaClick>().Owner = this;
         }
 
         static Material FaceMaterial(Texture t)
         {
-            Shader sh = null; foreach (var n in new[] { "KSP/Alpha/Unlit Transparent", "Unlit/Texture", "KSP/Emissive/Diffuse" }) { sh = Shader.Find(n); if (sh != null) break; }
+            Shader sh = null; foreach (var n in new[] { "KSP/Unlit", "Unlit/Texture", "KSP/Emissive/Diffuse" }) { sh = Shader.Find(n); if (sh != null) break; }
             var m = new Material(sh) { mainTexture = t };
             if (m.HasProperty("_Emissive")) { m.SetTexture("_Emissive", t); m.SetColor("_EmissiveColor", Color.white); }
             if (m.HasProperty("_Color")) m.SetColor("_Color", Color.white);
