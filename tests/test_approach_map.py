@@ -13,3 +13,10 @@ def test_roles_match_the_mod():
     cs = (ROOT / "KSPChatMod" / "FlightMissions.cs").read_text(encoding="utf-8")
     roles = set(re.search(r'Roles = \{([^}]*)\}', cs).group(1).replace('"', '').replace(' ', '').split(','))
     assert {f["role"] for f in am.ends()["KSC 27"]["fixes"]} == roles
+
+
+def test_final_fixes_last_and_sides():
+    fx = am.ends()['KSC 09']['fixes']
+    assert [f['role'] for f in fx[-2:]] == ['faf', 'sf']
+    assert all(f['side'] in ('left', 'right', 'both') for f in fx)
+

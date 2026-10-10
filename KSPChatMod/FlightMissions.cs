@@ -58,10 +58,11 @@ namespace KSPChatBridge
     /// <summary>One runway end's edited chart from PluginData/approaches.json (validated; invalid -> null = computed defaults).</summary>
     internal sealed class ApproachOverride
     {
-        internal sealed class Fix { internal string Role, Name; internal double Lat, Lon, Alt; }
+        internal sealed class Fix { internal string Role, Name, Side; internal double Lat, Lon, Alt; }
         internal readonly List<Fix> Fixes = new List<Fix>();
         internal double FlareStartM = 15, FlareSinkMs = 1, TouchdownM = 350, TchM = 15;
-        internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right" };
+        internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "wp" };
+        internal const int MaxFixes = 16;
         static double N(Dictionary<string, object> d, string k, double def) { object v; return d != null && d.TryGetValue(k, out v) && v != null ? Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture) : def; }
         /// <summary>Parse one end. Fixes must sit within 60 km of the threshold, 0-6000 m above the runway; flare/touchdown in sane ranges.</summary>
         internal static ApproachOverride Parse(object raw, double thrLat, double thrLon, double elevation, double radius, out string why)
@@ -77,7 +78,10 @@ namespace KSPChatBridge
                         var fd = x as Dictionary<string, object>; if (fd == null) { why = "bad fix"; return null; }
                         object r; string role = fd.TryGetValue("role", out r) ? Convert.ToString(r) : "";
                         if (Array.IndexOf(Roles, role) < 0) { why = "unknown fix role " + role; return null; }
-                        object nm; var f = new Fix { Role = role, Name = fd.TryGetValue("name", out nm) ? Convert.ToString(nm) : role, Lat = N(fd, "lat", double.NaN), Lon = N(fd, "lon", double.NaN), Alt = N(fd, "alt", double.NaN) };
+                        object sd; string side = fd.TryGetValue("side", out sd) ? Convert.ToString(sd) : role.EndsWith("_left") ? "left" : role.EndsWith("_right") ? "right" : "both";
+                        if (side != "left" && side != "right" && side != "both") { why = role + ": side must be left/right/both"; return null; }
+                        if (o.Fixes.Count >= MaxFixes) { why = "more than " + MaxFixes + " fixes"; return null; }
+                        object nm; var f = new Fix { Role = role, Side = side, Name = fd.TryGetValue("name", out nm) ? Convert.ToString(nm) : role, Lat = N(fd, "lat", double.NaN), Lon = N(fd, "lon", double.NaN), Alt = N(fd, "alt", double.NaN) };
                         if (double.IsNaN(f.Lat) || double.IsNaN(f.Lon) || double.IsNaN(f.Alt)) { why = role + ": lat/lon/alt missing"; return null; }
                         if (NavigationMath.Distance(thrLat, thrLon, f.Lat, f.Lon, radius) > 60000) { why = role + ": more than 60 km from the threshold"; return null; }
                         if (f.Alt < elevation || f.Alt > elevation + 6000) { why = role + ": altitude outside runway..+6000 m"; return null; }
@@ -136,9 +140,25 @@ namespace KSPChatBridge
             return Elevation + Math.Max(Tch, (fixAlt - Elevation) * Math.Max(0, d) / fixD);
         }
         internal double RouteFixD, Tch = 3;
+        internal List<Wp> CustomLeft, CustomRight;
         /// <summary>Luke's edited chart (approaches.json): moves named fixes by role and sets threshold crossing height.</summary>
         internal void Apply(ApproachOverride o)
         {
+            // Waypoints added/removed in the editor -> fly the listed join sequence per side (in file order) instead of the computed one.
+            bool custom = false;
+            foreach (var role in new[] { "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "wp" })
+                if (o.Fixes.Exists(f => f.Role == role) == (role == "wp")) custom = true;
+            if (custom && o.Fixes.Count > 0)
+            {
+                CustomLeft = new List<Wp>(); CustomRight = new List<Wp>();
+                foreach (var f in o.Fixes)
+                {
+                    if (f.Role == "faf" || f.Role == "sf") continue;
+                    var w = new Wp { Name = string.IsNullOrEmpty(f.Name) ? f.Role : f.Name, Lat = f.Lat, Lon = f.Lon, Alt = f.Alt };
+                    if (f.Side != "right") CustomLeft.Add(w);
+                    if (f.Side != "left") CustomRight.Add(w);
+                }
+            }
             foreach (var f in o.Fixes)
             {
                 Wp w = f.Role == "faf" ? Long : f.Role == "sf" ? Short : f.Role == "dw_left" ? DownLeftA : f.Role == "dwend_left" ? DownLeftB : f.Role == "base_left" ? ApexLeft
@@ -170,8 +190,10 @@ namespace KSPChatBridge
             else
             {
                 bool right = cross >= 0;
-                if (behind < LongFix - TurnRadius) { if (behind < 0) r.Add(right ? DownRightA : DownLeftA); r.Add(right ? DownRightB : DownLeftB); }
-                r.Add(right ? ApexRight : ApexLeft); r.Add(Long);
+                var cl = right ? CustomRight : CustomLeft;
+                if (cl != null) { r.AddRange(cl); r.Add(Long); }
+                else if (behind < LongFix - TurnRadius) { if (behind < 0) r.Add(right ? DownRightA : DownLeftA); r.Add(right ? DownRightB : DownLeftB); }
+                if (cl == null) { r.Add(right ? ApexRight : ApexLeft); r.Add(Long); }
             }
             var outp = new List<Wp>(); double la0 = lat, lo0 = lon;
             foreach (var w in r)

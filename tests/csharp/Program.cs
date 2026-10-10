@@ -1124,6 +1124,19 @@ class Program
                 Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"flare_start_m\":500}"), -.0486, -74.7244, 69, 600000, out why) == null && ApproachOverride.Parse("x", 0, 0, 0, 600000, out why) == null, "bad flare / garbage rejected");
             }
             Console.WriteLine("Editable approach charts: 4 behavior checks passed.");
+            {
+                string why2; var thr = new[] { -.0486, -74.7244 };
+                string js = "{\"fixes\":[{\"role\":\"dw_left\",\"lat\":-.12,\"lon\":-74.72,\"alt\":700},{\"role\":\"wp\",\"name\":\"EXTRA\",\"side\":\"left\",\"lat\":-.12,\"lon\":-74.83,\"alt\":700},{\"role\":\"faf\",\"lat\":-.0478,\"lon\":-74.832,\"alt\":700},{\"role\":\"sf\",\"lat\":-.0483,\"lon\":-74.760,\"alt\":280}]}";
+                var ov2 = ApproachOverride.Parse(MiniJson.Deserialize(js), thr[0], thr[1], 69, 600000, out why2);
+                Check(ov2 != null && ov2.Fixes.Count == 4, "added waypoint parsed: " + why2);
+                var c2 = ApproachChart.Build(thr[0], thr[1], 90.4, 69, 150, 20, 600000, null); c2.Apply(ov2);
+                var rt = c2.Route(.05, -74.70, 270, "long", 600000);
+                Check(rt.Count == 3 && rt[1].Name == "EXTRA" && rt[2].Lat == c2.Long.Lat, "custom route: dw_left, EXTRA, FAF (removed base/dwend not flown): " + c2.Describe(rt));
+                Check(ApproachOverride.Parse(MiniJson.Deserialize("{\"fixes\":[{\"role\":\"wp\",\"side\":\"up\",\"lat\":-.05,\"lon\":-74.8,\"alt\":700}]}"), thr[0], thr[1], 69, 600000, out why2) == null, "bad side rejected");
+                var c3 = ApproachChart.Build(thr[0], thr[1], 90.4, 69, 150, 20, 600000, null); c3.Apply(ApproachOverride.Parse(MiniJson.Deserialize("{\"flare_start_m\":20}"), thr[0], thr[1], 69, 600000, out why2));
+                Check(c3.CustomLeft == null, "no fix list -> computed joins kept");
+            }
+            Console.WriteLine("Chart waypoint add/remove: 4 behavior checks passed.");
         // ---- Luke's approach rules: short vs long final, nearest runway + best end ----
         {
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");

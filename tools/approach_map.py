@@ -1,4 +1,4 @@
-﻿"""Generate tools/approach_map.html: editable instrument-approach charts (plates) for KSC/Island runway ends,
+"""Generate tools/approach_map.html: editable instrument-approach charts (plates) for KSC/Island runway ends,
 mirroring KSPChatMod/FlightMissions.cs ApproachChart, with today's flight track from the chat log [T] lines.
 SAVE downloads approaches.json (put it in GameData/KSPChatBridge/PluginData; tools/import_approaches.ps1 copies it)."""
 import json, math, re, sys, glob, os, datetime
@@ -23,13 +23,13 @@ def chart(thr, end, elev, speed=150.0, bank=20.0):
         return la, lo
     fixes = []
     def add(role, name, behind, side, alt):
-        la, lo = at(behind, side); fixes.append({"role": role, "name": name, "lat": round(la, 5), "lon": round(lo, 5), "alt": round(alt)})
+        la, lo = at(behind, side); fixes.append({"role": role, "side": "left" if role.endswith("_left") else "right" if role.endswith("_right") else "both", "name": name, "lat": round(la, 5), "lon": round(lo, 5), "alt": round(alt)})
     longAlt, shortAlt = elev + 12000 * tg, elev + 4000 * tg
-    add("faf", "FAF (long final 12 km)", 12000, 0, longAlt); add("sf", "SF (short final 4 km)", 4000, 0, shortAlt)
     for s, nm in ((-1, "L"), (1, "R")):
         add("dw_" + ("left" if s < 0 else "right"), "IAF-%s (downwind)" % nm, 0, 2*r*s, longAlt)
         add("dwend_" + ("left" if s < 0 else "right"), "DW-%s (downwind end)" % nm, 12000, 2*r*s, longAlt)
         add("base_" + ("left" if s < 0 else "right"), "IF-%s (base)" % nm, 12000 + r, r*s, longAlt)
+    add("faf", "FAF (long final 12 km)", 12000, 0, longAlt); add("sf", "SF (short final 4 km)", 4000, 0, shortAlt)
     return {"course": round(crs, 1), "elev": elev, "thr": thr, "end": end, "radius_m": round(r), "fixes": fixes,
             "flare_start_m": 15, "flare_sink_ms": 1, "touchdown_m": 350, "tch_m": 15}
 def ends():
