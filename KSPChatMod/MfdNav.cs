@@ -56,6 +56,15 @@ namespace KSPChatBridge
             if (item == "map" || item == "chart") return Pad(new[] { "\u2190", "\u2193", "\u2191", "\u2192", "CENTER", "ZOOM+", "ZOOM-" }, TopCount);
             return new string[TopCount];
         }
+        /// <summary>AP annunciator: "AP ENGAGED APPROACH LOC GS" (green) or "AP OFF" (amber).</summary>
+        internal static string ApStatus(string mode, bool loc, bool gs)
+        {
+            if (string.IsNullOrEmpty(mode) || mode == "idle") return "AP OFF";
+            string m = mode == "landing" ? "APPROACH" : mode.ToUpperInvariant();
+            return "AP ENGAGED " + m + (loc ? " LOC" : "") + (gs ? " GS" : "");
+        }
+        /// <summary>RPM-style fuel field: "LF 85%", "!Empty!" below 1%, "" when the craft carries none.</summary>
+        internal static string FuelStatus(double amount, double cap) { if (cap <= 0) return ""; double f = amount / cap; return f < .01 ? "!Empty!" : "LF " + (100 * f).ToString("0") + "%"; }
         internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
         static string[] RightKeys(string item)
         {

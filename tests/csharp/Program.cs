@@ -175,6 +175,7 @@ class Program
         }
         Check(PilotPolicy.ApproachFloorVs("final", 18800, 200, 200, double.NaN, -10, -24, false) >= 3 && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -24, true) >= 3
             && PilotPolicy.ApproachFloorVs("entry", 20000, 300, 300, double.NaN, -10, -5, false) == -10 && PilotPolicy.FloorAgl(-24, true) == 360, "5:50 PM water landing: floor = max(150 m, 10-15 s of sink) recovers a -24 m/s dive at 200-300 m");
+        Check(MfdNav.ApStatus("idle", false, false) == "AP OFF" && MfdNav.ApStatus("landing", true, true) == "AP ENGAGED APPROACH LOC GS" && MfdNav.ApStatus("hold", false, false) == "AP ENGAGED HOLD" && MfdNav.FuelStatus(0, 100) == "!Empty!" && MfdNav.FuelStatus(85, 100) == "LF 85%" && MfdNav.FuelStatus(0, 0) == "", "MAP/CHART status line: AP annunciator + fuel");
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };

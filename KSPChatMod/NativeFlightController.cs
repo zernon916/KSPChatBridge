@@ -12,6 +12,7 @@ namespace KSPChatBridge
     {
         static NativeFlightController instance;
         internal static bool Active { get { return instance != null && instance.mode != "idle"; } }
+        internal static string ApLine { get { if (instance == null) return MfdNav.ApStatus("idle", false, false); var r = instance.runway; bool fin = instance.mode == "landing" && r != null && r.Phase == "final"; return MfdNav.ApStatus(instance.mode, fin && r.LocCoupled, fin && r.GsCoupled); } }
         internal static bool Busy { get { return Active || (instance != null && instance.plan != null && instance.plan.Running); } }
         internal static bool PlanRunning { get { return instance != null && instance.plan != null && instance.plan.Running; } }
         internal static string Phase { get { return instance == null ? "idle" : instance.mode; } }
