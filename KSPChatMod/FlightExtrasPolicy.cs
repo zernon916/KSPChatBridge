@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -9,6 +9,21 @@ namespace KSPChatBridge
     {
         internal const double FastSpeed = 200;   // m/s: above this, 10 deg bank cap
         internal static double MaxBank(double speed) { return speed > FastSpeed ? 10 : 20; }
+        internal const double MinAgl = 50, MaxAgl = 5000, DescentStep = 8;   // m per 1 s tick: descend gently, climb at once
+
+        /// <summary>follow_terrain altitude target (MSL): agl above the higher of the ground below and the highest ground ahead.
+        /// Climbs at once; descends at most DescentStep per tick from the previous target (never dive for speed).</summary>
+        internal static double TerrainTarget(double groundBelow, double highestAhead, double agl, double previous)
+        {
+            double ground = double.IsNaN(highestAhead) ? groundBelow : Math.Max(groundBelow, highestAhead);
+            double t = Math.Max(0, ground) + ClampAgl(agl);
+            if (!double.IsNaN(previous) && t < previous - DescentStep) t = previous - DescentStep;
+            return t;
+        }
+        internal static double ClampAgl(double agl) { return Math.Max(MinAgl, Math.Min(MaxAgl, agl)); }
+        /// <summary>The terrain-floor safety climb margin while following terrain (below the requested AGL so they don't fight).</summary>
+        internal static double FloorMargin(double agl) { return Math.Max(30, .6 * ClampAgl(agl)); }
+
         internal static double Norm(double h) { h %= 360; return h < 0 ? h + 360 : h; }
 
         /// <summary>Smallest circle the plane can fly within Luke's bank limit (+30% margin), never below 1.5 km.</summary>

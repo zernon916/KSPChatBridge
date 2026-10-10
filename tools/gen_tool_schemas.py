@@ -1,4 +1,4 @@
-﻿"""Generate KSPChatMod/NativeToolSchemas.cs: OpenAI tool schemas for every NativeCommands.Ported tool, from the
+"""Generate KSPChatMod/NativeToolSchemas.cs: OpenAI tool schemas for every NativeCommands.Ported tool, from the
 bridge's python signatures/docstrings (kspchat.ksp_actions.BY_NAME). Run: python tools/gen_tool_schemas.py"""
 import inspect, json, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +10,7 @@ TYPES = {float: "number", int: "integer", bool: "boolean", str: "string"}
 NATIVE_ONLY = {
     "hold_pattern": ("Circle a place (saved spot name, or here) at a set altitude until told otherwise.",
                      {"name": "string", "altitude_m": "number", "radius_m": "number", "direction": "string"}, []),
+    "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }
 
 

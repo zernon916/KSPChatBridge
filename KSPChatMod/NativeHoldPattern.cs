@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -24,6 +24,7 @@ namespace KSPChatBridge
         {
             switch (name)
             {
+                case "follow_terrain": return FollowTerrain(a);
                 case "hold_pattern": return HoldPattern(a);
             }
             return null;

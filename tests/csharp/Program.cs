@@ -748,6 +748,17 @@ class Program
             Check(NativeCommands.IsPorted("hold_pattern") && ToolRouter.Schemas.ContainsKey("hold_pattern") && ToolRouter.Fits("hold_pattern", "plane"), "hold_pattern registered + schema");
         }
         Console.WriteLine("hold_pattern: 7 behavior checks passed.");
+        // ---- POST-TESTING: follow_terrain ----
+        {
+            Check(FlightExtrasPolicy.TerrainTarget(100, 400, 200, double.NaN) == 600, "follow_terrain: agl above the highest ground ahead");
+            Check(FlightExtrasPolicy.TerrainTarget(300, double.NaN, 150, double.NaN) == 450, "no lookahead -> ground below");
+            Check(FlightExtrasPolicy.TerrainTarget(0, 0, 200, 900) == 892, "descends gently (8 m/tick), never dives");
+            Check(FlightExtrasPolicy.TerrainTarget(800, 0, 200, 300) == 1000, "climbs at once for rising ground");
+            Check(FlightExtrasPolicy.TerrainTarget(-50, double.NaN, 10, double.NaN) == 50, "sea: water level + clamped min AGL 50");
+            Check(FlightExtrasPolicy.FloorMargin(200) == 120 && FlightExtrasPolicy.FloorMargin(1000) == 600 && FlightExtrasPolicy.FloorMargin(50) == 30, "safety floor margin under the AGL");
+            Check(NativeCommands.IsPorted("follow_terrain") && ToolRouter.Rank("follow the terrain at 150 m", ToolRouter.Descriptions, "plane")[0].Key == "follow_terrain", "follow_terrain registered + routed");
+        }
+        Console.WriteLine("follow_terrain: 7 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

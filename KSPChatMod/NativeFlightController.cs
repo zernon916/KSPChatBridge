@@ -28,7 +28,7 @@ namespace KSPChatBridge
         string mode = "idle";
         double altitude, heading, speed = 150, band = 150, throttle, lastThrottle = -10, prevPitch, prevRoll, pitchIntegral, vsIntegral;
         double? capture;
-        double terrainFloor = double.NaN;
+        double terrainFloor = double.NaN, terrainAheadM = double.NaN, terrainMargin = 300;
         float nextTerrain;
         float nextTrim, watchTrimUntil;
         double trimBaselineVs, trimBaselinePitch;
@@ -205,7 +205,7 @@ namespace KSPChatBridge
                     var body = vessel.mainBody;
                     double highest = NavigationMath.TerrainAhead(vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, body.Radius,
                         (lat, lon) => body.pqsController == null ? double.NaN : Math.Max(0, body.pqsController.GetSurfaceHeight(body.GetRelSurfaceNVector(lat, lon)) - body.Radius));
-                    terrainFloor = double.IsNaN(highest) ? double.NaN : highest + 300;
+                    terrainAheadM = highest; terrainFloor = double.IsNaN(highest) ? double.NaN : highest + terrainMargin;
                 }
                 catch (Exception) { terrainFloor = double.NaN; }
             }

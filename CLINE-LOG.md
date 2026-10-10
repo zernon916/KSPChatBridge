@@ -252,3 +252,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** hold_pattern(name|here, altitude_m, radius_m, direction): plane_hold at altitude, then every 1 s steers the tangent of a circle around the spot with up to 45 deg radial correction. The radius is never tighter than Luke's bank limit allows (20 deg slow / 10 deg above 200 m/s, +30%). Ends when chat/menu takes navigation (turn, fly_to, land, takeoff, stop...). Native-only schema via gen_tool_schemas NATIVE_ONLY.
 **Tests run:** C# 'hold_pattern: 7'; pytest 494; Release 0 errors.
 **Still needs live check:** circle tracking and wind-free drift.
+
+## follow_terrain - DONE (tests; needs live check)
+**Changed:** follow_terrain(agl_m), with 0 = off. Planes in a local hold re-target altitude every 1 s to AGL (50-5000 m) above the higher of the ground below and the existing terrain lookahead. Climbs at once, descends at most 8 m/tick (never dives for speed). The safety terrain-floor margin drops to 60% of AGL so the two don't fight, and goes back to 300 m when off. Ends on set_altitude/level_off/land/takeoff/stop etc. Composes with hold_pattern.
+**Tests run:** C# 'follow_terrain: 7'; pytest 494; Release 0 errors.
+**Still needs live check:** low-AGL behaviour over mountains (lookahead timing) and the sea.
