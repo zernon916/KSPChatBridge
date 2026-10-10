@@ -10,6 +10,8 @@ TYPES = {float: "number", int: "integer", bool: "boolean", str: "string"}
 NATIVE_ONLY = {
     "hold_pattern": ("Circle a place (saved spot name, or here) at a set altitude until told otherwise.",
                      {"name": "string", "altitude_m": "number", "radius_m": "number", "direction": "string"}, []),
+    "fuel_check_return": ("Watch fuel and fly home automatically (then land) when what's left only just covers the trip home; off=true disarms.",
+                          {"home": "string", "reserve_pct": "number", "off": "boolean"}, []),
     "follow_terrain": ("Hold a fixed height above the ground (AGL, 50-5000 m); agl_m=0 turns it off.", {"agl_m": "number"}, ["agl_m"]),
 }
 

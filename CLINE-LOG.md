@@ -257,3 +257,8 @@ Delete bridge launch/watchdog/shutdown + obsolete HTTP polling from shipping plu
 **Changed:** follow_terrain(agl_m), with 0 = off. Planes in a local hold re-target altitude every 1 s to AGL (50-5000 m) above the higher of the ground below and the existing terrain lookahead. Climbs at once, descends at most 8 m/tick (never dives for speed). The safety terrain-floor margin drops to 60% of AGL so the two don't fight, and goes back to 300 m when off. Ends on set_altitude/level_off/land/takeoff/stop etc. Composes with hold_pattern.
 **Tests run:** C# 'follow_terrain: 7'; pytest 494; Release 0 errors.
 **Still needs live check:** low-AGL behaviour over mountains (lookahead timing) and the sea.
+
+## fuel_check_return - DONE (tests; needs live check)
+**Changed:** fuel_check_return(home=KSC, reserve_pct=15, off). Every 2 s: smoothed burn rate from fuel samples (LiquidFuel, else LF/Ox/Mono), range = time left x groundspeed. When range <= distance home x (1+reserve) + 15 km approach margin, the pilot calls 'Bingo fuel, Captain' and does fly_to home, then lands there (land where=home) once fly_to arrives and circles. Unknown range never triggers. Home is a saved spot, KSC, or a runway alias.
+**Tests run:** C# 'fuel_check_return: 7'; pytest 494; Release 0 errors.
+**Still needs live check:** trigger timing on a real jet (throttle changes vs smoothing), auto-land handoff.

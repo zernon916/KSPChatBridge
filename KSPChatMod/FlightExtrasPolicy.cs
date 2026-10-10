@@ -24,6 +24,29 @@ namespace KSPChatBridge
         /// <summary>The terrain-floor safety climb margin while following terrain (below the requested AGL so they don't fight).</summary>
         internal static double FloorMargin(double agl) { return Math.Max(30, .6 * ClampAgl(agl)); }
 
+        // ---- fuel_check_return ----
+        internal const double ApproachMargin = 15000;   // m of fuel-range kept for the approach/pattern at home
+
+        /// <summary>Smoothed burn rate (units/s) from two fuel samples dt seconds apart (refuel/no burn keeps the old rate).</summary>
+        internal static double BurnRate(double prevUnits, double units, double dt, double prevRate)
+        {
+            if (dt <= 0 || double.IsNaN(prevUnits)) return prevRate;
+            double r = (prevUnits - units) / dt;
+            if (r <= 0) return prevRate;
+            return double.IsNaN(prevRate) || prevRate <= 0 ? r : .8 * prevRate + .2 * r;
+        }
+        /// <summary>Still-air range left in metres (infinite when we can't tell yet).</summary>
+        internal static double Range(double units, double rate, double groundSpeed)
+        {
+            if (double.IsNaN(rate) || rate <= 1e-6 || groundSpeed < 1) return double.PositiveInfinity;
+            return units / rate * groundSpeed;
+        }
+        /// <summary>Turn for home when the range left only just covers the trip home (+reserve % + approach margin).</summary>
+        internal static bool ReturnNow(double range, double distHome, double reservePct)
+        {
+            return range <= distHome * (1 + Math.Max(0, reservePct) / 100) + ApproachMargin;
+        }
+
         internal static double Norm(double h) { h %= 360; return h < 0 ? h + 360 : h; }
 
         /// <summary>Smallest circle the plane can fly within Luke's bank limit (+30% margin), never below 1.5 km.</summary>

@@ -759,6 +759,18 @@ class Program
             Check(NativeCommands.IsPorted("follow_terrain") && ToolRouter.Rank("follow the terrain at 150 m", ToolRouter.Descriptions, "plane")[0].Key == "follow_terrain", "follow_terrain registered + routed");
         }
         Console.WriteLine("follow_terrain: 7 behavior checks passed.");
+        // ---- POST-TESTING: fuel_check_return ----
+        {
+            double rate = FlightExtrasPolicy.BurnRate(double.NaN, 100, 2, double.NaN);
+            Check(double.IsNaN(rate), "first sample: no burn rate yet");
+            rate = FlightExtrasPolicy.BurnRate(100, 99, 2, rate); Check(Math.Abs(rate - .5) < 1e-9, "burn rate from samples");
+            Check(Math.Abs(FlightExtrasPolicy.BurnRate(99, 97, 2, .5) - .6) < 1e-9 && FlightExtrasPolicy.BurnRate(97, 98, 2, .6) == .6, "smoothed; refuel keeps old rate");
+            Check(FlightExtrasPolicy.Range(100, .5, 150) == 30000 && double.IsPositiveInfinity(FlightExtrasPolicy.Range(100, double.NaN, 150)), "range = time left x groundspeed");
+            Check(!FlightExtrasPolicy.ReturnNow(100000, 50000, 15) && FlightExtrasPolicy.ReturnNow(72000, 50000, 15), "turn home when range ~ trip + 15% + approach margin");
+            Check(!FlightExtrasPolicy.ReturnNow(double.PositiveInfinity, 50000, 15), "unknown range never triggers");
+            Check(NativeCommands.IsPorted("fuel_check_return") && ToolRouter.Rank("bingo fuel return home", ToolRouter.Descriptions, "plane")[0].Key == "fuel_check_return", "fuel_check_return registered + routed");
+        }
+        Console.WriteLine("fuel_check_return: 7 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");
