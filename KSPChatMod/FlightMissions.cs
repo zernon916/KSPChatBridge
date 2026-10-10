@@ -117,6 +117,16 @@ namespace KSPChatBridge
         /// <summary>Wing-loading estimate when the craft has no measured stall: Vs = sqrt(2 m g / (rho0 * K * sum(lift coeff))), K calibrated to stock (6 t, 6 lift -> ~45 m/s).</summary>
         internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? UnmeasuredStallFloor : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (1.225 * 7.9 * liftCoeffSum)), UnmeasuredStallFloor, 200); }   // Luke 13:33: unfloored estimate gave 31 m/s -> 46 m/s joins, 586 m arcs flown at 70-260 m/s
         internal static double Speed(double stall) { return FlightPolicy.Clamp(JoinFactor * stall, MinSpeed, MaxSpeed); }
+        /// <summary>Stall estimate sanity floor for the approach schedule (live 15:4x: ~33 m/s gave a 43 m/s final from 20 km).</summary>
+        internal static double SaneStall(double stall) { return FlightPolicy.Clamp(double.IsNaN(stall) ? UnmeasuredStallFloor : stall, 40, 120); }
+        internal static double AppSpeed(double stall) { return 1.35 * SaneStall(stall); }
+        /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150), linear decel to 1.35x stall by 2 km, then held to the flare.</summary>
+        internal static double FinalSchedule(double distToThreshold, double stall)
+        {
+            double hi = Math.Max(AppSpeed(stall), Math.Min(150, 2.3 * SaneStall(stall))), app = AppSpeed(stall);
+            if (distToThreshold >= 4000) return hi; if (distToThreshold <= 2000) return app;
+            return app + (hi - app) * (distToThreshold - 2000) / 2000;
+        }
         internal static double Bank(double chartBank, double speed) { return chartBank > 20 ? chartBank : Math.Min(Math.Max(5, chartBank), FlightPolicy.BankLimit(speed)); }   // explicit "bank 60" wins
         internal static double Radius(double speed, double bank) { return speed * speed / (9.81 * Math.Tan(bank * Math.PI / 180)); }
         /// <summary>Luke: G-based turn rating (joins ~2 g, final corrections ~1.5 g; settable), never above the 3 g cap and
@@ -595,7 +605,7 @@ namespace KSPChatBridge
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 DesiredHeading = course - FlightPolicy.Clamp(Math.Atan2(PredictCross(cross, speed, track, course, 10), Math.Max(2000, 12 * speed)) * 180 / Math.PI, -30, 30);   // damped intercept (was overshooting S->N)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
-                DesiredSpeed = ApproachProfile.Speed(stall);   // stabilized: approach speed BEFORE the FAF, never the (fast) plan speed
+                DesiredSpeed = Math.Min(ApproachProfile.Speed(stall), ApproachProfile.FinalSchedule(Distance, stall));   // intercept: join speed, never above the final schedule
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; Why = "not aligned before the FAF; repositioning"; }   // never descend unaligned
@@ -612,7 +622,7 @@ namespace KSPChatBridge
                 DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
                 DesiredAltitude = GsCoupled ? altitude - Ils.AboveGsM : Chart != null ? Math.Max(Chart.GlideAlt(-along + TouchdownM), altitude - Ils.AboveGsM) : Elevation + Math.Max(3, (TouchdownM - along) * Math.Tan(3 * Math.PI / 180));   // before GS capture: never below the ILS path
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
-                DesiredSpeed = (hat < 30 ? 1.15 : 1.3) * stall;
+                DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
                 double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
@@ -620,9 +630,9 @@ namespace KSPChatBridge
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
                 if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s
-                double fastBy = speed - 1.3 * stall;   // stabilized-approach speed gates
+                double fastBy = speed - ApproachProfile.FinalSchedule(Distance + 1500, stall);   // decel lag allowance   // gates follow the schedule, only inside the short final
                 if (Phase == "final" && Distance < ApproachChart.ShortFix && Distance > GateDistance && fastBy > FastAtShort) { Phase = "go around"; Why = "too fast at the short final (+" + fastBy.ToString("0") + " m/s)"; }
-                if (Phase == "final" && Distance <= GateDistance && Distance > 100 && fastBy > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + fastBy.ToString("0") + " m/s)"; }
+                if (Phase == "final" && Distance <= GateDistance && Distance > 100 && speed - ApproachProfile.AppSpeed(stall) > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + (speed - ApproachProfile.AppSpeed(stall)).ToString("0") + " m/s)"; }
                 if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);

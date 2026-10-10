@@ -98,7 +98,7 @@ class Program
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);
-        Check(landing.Gear && landing.DesiredSpeed == 58.5 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
+        Check(landing.Gear && Math.Abs(landing.DesiredSpeed - ApproachProfile.AppSpeed(45)) < .01 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
         landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -1, "flare");
         landing.Step(0, .02, 70, 0, 40, true, 600000, 45); Check(landing.Phase == "rollout" && landing.Brakes, "touchdown");
         landing.Step(0, .04, 70, 0, .5, true, 600000, 45); Check(landing.Phase == "stopped", "stopped");
@@ -1600,7 +1600,7 @@ class Program
                 {
                     bool gnd = alt <= el + .01;
                     m.Step(la, lo, alt, alt - el, v, gnd, 600000, 45, crs, crs);
-                    if (m.Phase == "go around") return "GA " + m.Why;
+                    if (m.Phase == "go around") return "GA " + m.Why + " v=" + v.ToString("0") + " d=" + m.Distance.ToString("0") + " des=" + m.DesiredSpeed.ToString("0") + " vs=" + vs.ToString("0.0");
                     if (gnd) { touchVs = vs; break; }
                     if (m.Distance < 1000 && double.IsNaN(fastAt1k)) fastAt1k = v - 1.3 * 45;
                     thr = PilotPolicy.ApproachThrottle(thr, v, m.DesiredSpeed, dt); bool brakes = v > m.DesiredSpeed + 8;
@@ -1657,6 +1657,13 @@ class Program
                 Check(mp.Contains("^") && mp.Contains("=") && mp.Split('\n').Length >= 20, "MAP MFD page: plane and runway drawn");
             }
             Console.WriteLine("Airbrakes/dedupe/ILS zone/MFD: 9 behavior checks passed.");
+        }
+        {   // Luke 3:41 PM: final speed schedule (not 1.3x stall from 20 km)
+            Check(ApproachProfile.FinalSchedule(12000, 45) > 100 && ApproachProfile.FinalSchedule(12000, 45) <= 150 && ApproachProfile.FinalSchedule(8000, 80) == 150, "12->4 km: ~2.3x stall, cap 150");
+            double s3 = ApproachProfile.FinalSchedule(3000, 45), s2 = ApproachProfile.FinalSchedule(2000, 45);
+            Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - 1.35 * 45) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
+            Check(ApproachProfile.SaneStall(33) == 40 && ApproachProfile.SaneStall(double.NaN) >= 40, "stall estimate sanity floor");
+            Console.WriteLine("Final speed schedule: 3 behavior checks passed.");
         }
         {   // hot-swappable chart files
             string cd = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_charts_" + Guid.NewGuid().ToString("N"));
