@@ -61,6 +61,14 @@ MAP > MAP: ZOOM, CENTER, RWY, arrow keys pan; MECHJEB > SMARTASS / GUIDANCE.
 Taxi routes are ground charts (`PluginData/charts/TAXI_*.json`, one directional route per file, hot-reloaded, drawn on
 the map). `taxi to hangar` / `taxi to runway 09` joins the nearest point ahead on the line and follows its centerline.
 
+### IVA MFD (stock cockpits, no RasterPropMonitor needed)
+
+An AICS MFD screen is added by ModuleManager (`AICS_IVA.cfg`) to the Mk1 cockpit and Mk2 inline cockpit (in place of the
+stock docking monitor), the Mk1-3 pod, the Mk2 cockpit and the Mk1 inline cockpit. Click its soft keys in IVA: same pages
+and navigation as the outside MFD (BACK bottom-left). HOME right-bottom key / header key = CHAT. To type, click the chat
+input line (CHAT page) or the plan text (PLAN > FLIGHT PLAN): ship keys are locked while typing, Enter sends / checks
+(Shift+Enter = new line in the plan), Esc stops typing. Positions and `flipX` / `flipY` are tunable in `AICS_IVA.cfg`.
+
 ## Backends and models
 | Settings dropdown | id (`/ai <id>`) | Needs | Default model |
 |---|---|---|---|

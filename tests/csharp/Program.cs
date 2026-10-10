@@ -1701,6 +1701,24 @@ class Program
             Console.WriteLine("AICS MFD: 6 behavior checks passed.");
         }
 
+        {   // native IVA MFD (Phase 2, Luke 4:41 PM): typing fields, face layout / hit test, stock cockpits patched
+            var f = new MfdField(false); var r1 = f.Feed("helo\bp", false, false); var r2 = f.Feed(" me\n", false, false);
+            Check(r1 == MfdField.Result.None && r2 == MfdField.Result.Submit && f.Text.ToString() == "help me", "IVA chat field: type, backspace, Enter submits (" + f.Text + ")");
+            var pf = new MfdField(true); pf.Feed("takeoff", false, false); pf.Feed("\n", true, false); pf.Feed("land", false, false);
+            Check(pf.Text.ToString() == "takeoff\nland" && pf.Feed("", false, true) == MfdField.Result.Cancel, "plan field: Shift+Enter new line, Esc unfocuses");
+            var keys = IvaLayout.Keys(); int n = 0; bool apart = true;
+            foreach (var k in keys) { if (k.Id != "H0") n++; if (IvaLayout.Hit(k.X + k.Wd / 2, k.Y + k.Ht / 2) != k.Id) apart = false; }
+            var sc = IvaLayout.Screen;
+            Check(n == 19 && keys.Count == 20 && apart && IvaLayout.Hit(sc.X + 50, sc.Y + 50) == "S" && IvaLayout.Hit(2, 2) == null, "IVA face: 6+6+7 soft keys + CHAT, each hit-tests to itself; screen and bezel separate");
+            var bk = keys.Find(k => k.Id == "B0"); Check(bk.X < 20 && bk.Y > IvaLayout.H - 60, "IVA BACK key is bottom-left");
+            Check(IvaLayout.Wrap("one two three four", 9).Count == 3 && IvaLayout.Wrap("a\nb", 9).Count == 2, "screen text wraps to the columns");
+            string root2 = System.IO.Directory.GetCurrentDirectory(); while (root2 != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root2, "KSPChatMod"))) root2 = System.IO.Path.GetDirectoryName(root2);
+            string iva = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "AICS_IVA.cfg"));
+            bool all = true; foreach (var ii in new[] { "mk1CockpitInternal", "mk2InlineInternal", "Mk1-3", "mk2CockpitStandardInternals", "mk1InlineInternal" }) all &= iva.Contains("@INTERNAL[" + ii + "]");
+            Check(all && iva.Contains("name = AicsIvaMfd") && System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "tools", "package_release.ps1")).Contains("AICS_IVA.cfg"), "AICS_MFD prop patched into 5 stock cockpits and shipped");
+            Console.WriteLine("IVA MFD: 6 behavior checks passed.");
+        }
+
         {   // repo checks ported from the removed Python suite (bridge removal, P5-8)
             string root = System.IO.Directory.GetCurrentDirectory();
             while (root != null && !System.IO.Directory.Exists(System.IO.Path.Combine(root, "KSPChatMod"))) root = System.IO.Path.GetDirectoryName(root);

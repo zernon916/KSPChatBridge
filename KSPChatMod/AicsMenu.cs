@@ -386,7 +386,7 @@ namespace KSPChatBridge
                 catch (ArgumentException ex) { planMsg = ex.Message; }
         }
 
-        internal static string PlanText { get { return planText; } }
+        internal static string PlanText { get { return planText; } set { planText = value ?? ""; } }
         internal static void LoadPlan(string text) { planIncoming = (text ?? "").TrimEnd() + "\n"; planMsg = "Plan from chat loaded."; }
 
         static void PlanTemplate(string kind)

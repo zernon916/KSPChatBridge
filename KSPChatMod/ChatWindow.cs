@@ -380,6 +380,10 @@ namespace KSPChatBridge
         { NativeSpotsNow(); }
         internal static void ToolFromMenu(string name, string argsJson)
         { Notice(RunTool(name, argsJson)); }
+        /// <summary>IVA MFD chat field: Enter sends like the chat box.</summary>
+        internal static void SubmitText(string text) { if (inst != null) inst.Send(text); else ChatFromMenu(text); }
+        /// <summary>Last chat lines for the IVA MFD CHAT page.</summary>
+        internal static List<string> Recent(int n) { lock (Sync) { int k = Math.Max(0, History.Count - n); return History.GetRange(k, History.Count - k); } }
         internal static void ChatFromMenu(string text)
         {
             if (!AicsCore.AiEnabled) { Notice("AI off. Use the local control panels."); return; }

@@ -2,7 +2,7 @@
 #   dist/KSPChatBridge-<version>.zip
 #     GameData/KSPChatBridge/Plugins/KSPChatBridge.dll   (the only DLL: KSP loads every *.dll under GameData)
 #     GameData/KSPChatBridge/KSPChatBridge.version       (KSP-AVC)
-#     GameData/KSPChatBridge/AICS_RPM.cfg, Defaults/charts, personalities.txt, templates, LICENSE, README.md
+#     GameData/KSPChatBridge/AICS_RPM.cfg, AICS_IVA.cfg, Defaults/charts, personalities.txt, templates, LICENSE, README.md
 # PluginData (per-user settings, .env, logs, models) is never packaged; no PDB / build path is embedded in the DLL.
 # Writes SHA-256 sums to dist/SHA256SUMS-<version>.txt. Nothing is installed, tagged or uploaded.
 param([string]$Version = "", [string]$Suffix = "")
@@ -30,6 +30,7 @@ $mod = Join-Path $stage "GameData\KSPChatBridge"
 New-Item -ItemType Directory -Force "$mod\Plugins" | Out-Null
 Copy-Item "$root\KSPChatMod\bin\Release\KSPChatBridge.dll" "$mod\Plugins\"
 Copy-Item "$root\KSPChatMod\AICS_RPM.cfg" $mod
+Copy-Item "$root\KSPChatMod\AICS_IVA.cfg" $mod
 New-Item -ItemType Directory -Force "$mod\Defaults\charts" | Out-Null; Copy-Item "$root\tools\charts\*.json" "$mod\Defaults\charts\"   # default chart variants (copied into PluginData/charts on first run)
 Copy-Item "$root\KSPChatMod\KSPChatBridge.version", "$root\LICENSE", "$root\README.md", "$root\personalities.txt" $mod
 New-Item -ItemType Directory -Force "$mod\templates" | Out-Null

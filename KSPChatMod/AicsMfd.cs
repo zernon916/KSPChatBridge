@@ -222,7 +222,7 @@ namespace KSPChatBridge
             }
         }
 
-        void OnKey(string item, string key)
+        internal static void OnKey(string item, string key)
         {
             if (key == null) return;
             switch (item)
