@@ -17,7 +17,7 @@ namespace KSPChatBridge
         { "abort", "abort_ag", "stage", "recover_vessel", "eject_kerbal", "cut_engines", "deorbit_burn", "launch_craft", "reset_experiments",
           "mechjeb_ascent", "launch_to_target_plane", "transfer_to", "station_keep", "dock_with", "deploy_parachutes", "set_engines", "action_group" };
 
-        static readonly HashSet<string> PlaneOnly = new HashSet<string> { "plane_hold", "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "takeoff", "land_plane", "land_at_spot", "touch_and_go", "go_around", "circle_here", "plane_pitch", "flaps", "taxi_to", "land_at_ksc", "set_trim", "auto_trim_now", "trim", "get_trim_state", "afterburner" };
+        static readonly HashSet<string> PlaneOnly = new HashSet<string> { "plane_hold", "roll", "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "takeoff", "land_plane", "land_at_spot", "touch_and_go", "go_around", "circle_here", "plane_pitch", "flaps", "taxi_to", "land_at_ksc", "set_trim", "auto_trim_now", "trim", "get_trim_state", "afterburner" };
         static readonly HashSet<string> HeliOnly = new HashSet<string> { "heli_control", "prop_control" };
         static readonly HashSet<string> SpaceOnly = new HashSet<string> { "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis", "change_periapsis",
           "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with", "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude", "land_at" };
@@ -41,13 +41,13 @@ namespace KSPChatBridge
             { "land_plane", "land landing runway rwy" }, { "land_at_spot", "land spot runway rwy airfield" }, { "set_gear", "gear wheels undercarriage" },
             { "set_brakes", "brakes brake parking" }, { "flaps", "flaps flap" }, { "set_lights", "lights light lamps" }, { "set_sas", "sas stability" },
             { "set_rcs", "rcs thrusters" }, { "plane_hold", "hold altitude heading speed cruise autopilot climb descend" }, { "set_heading", "heading turn to course bearing" },
-            { "set_speed", "speed knots fast slow" }, { "set_altitude", "altitude climb descend feet meters height" }, { "set_throttle", "throttle power" },
+            { "set_speed", "speed knots fast slow" }, { "set_altitude", "altitude climb descend feet meters height" }, { "set_throttle", "throttle power full max idle percent" },
             { "heli_control", "hover helicopter heli rotor" }, { "taxi_to", "taxi drive runway hangar" }, { "fuel_check", "fuel tank remaining" },
             { "get_status", "status how are we doing report situation" }, { "circularize", "circularize circular orbit" }, { "sun_lock", "sun point solar" },
             { "run_science", "science experiment experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
             { "fly_to", "fly to go to head to navigate" }, { "how_far", "how far distance" }, { "get_landing_eta", "eta how long arrive arrival" },
             { "transfer_to", "transfer mun minmus duna go to moon" }, { "warp_to_apoapsis", "warp apoapsis ap" }, { "change_apoapsis", "apoapsis raise ap" },
-            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "tech_advisor", "tech tree research unlock node nodes r&d rnd science points" }, { "drive_to_building", "drive rover building buildings vab sph r&d tracking station mission control astronaut complex administration tour ksc" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
+            { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "tech_advisor", "tech tree research unlock node nodes r&d rnd science points" }, { "drive_to_building", "drive rover building buildings vab sph r&d tracking station mission control astronaut complex administration tour ksc" }, { "roll", "roll bank inverted upside down barrel wings level" }, { "autopilot", "autopilot ap engage disengage" }, { "make_flight_plan", "flight plan route mission out back turn around" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
         };
 
         static readonly Regex Word = new Regex(@"[a-z0-9]+");
@@ -88,8 +88,12 @@ namespace KSPChatBridge
         internal static KeyValuePair<string, string>? Direct(string message, string craft)
         {
             string m = (message ?? "").Trim().ToLowerInvariant().TrimEnd('.', '!', '?');
-            if (m.Length == 0 || m.Length > 60 || m.StartsWith("/") || m.Contains("?") || m.Contains(" and ") || m.Contains(" then ")) return null;
             Func<string, string, KeyValuePair<string, string>?> R = (t, a) => Fits(t, craft) && !Destructive.Contains(t) ? new KeyValuePair<string, string>(t, a) : (KeyValuePair<string, string>?)null;
+            if (Regex.IsMatch(m, @"^(make|write|create|build) (me )?(a )?(flight )?plan\b|^flight plan:|^plan:") && m.Length <= 400)
+                return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize(message.Trim()) + "}");
+            if (Regex.IsMatch(m, @"^(land and circle|circle and land|circle (the )?runway (and|then) land)") && m.Length <= 80)   // circle first, then land
+                return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize("circle 1 lap, land at KSC") + "}");
+            if (m.Length == 0 || m.Length > 60 || m.StartsWith("/") || m.Contains("?") || m.Contains(" and ") || m.Contains(" then ")) return null;
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
             if (Regex.IsMatch(m, @"^(brakes?|parking brake) on$|^(set|apply) (the )?brakes?$")) return R("set_brakes", "{\"on\":true}");
@@ -98,6 +102,16 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^sas (on|off)$")) return R("set_sas", "{\"enabled\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^rcs (on|off)$")) return R("set_rcs", "{\"on\":" + (m.EndsWith("on") ? "true" : "false") + "}");
             if (Regex.IsMatch(m, @"^(take ?off|takeoff)( now)?$")) return R("takeoff", "{}");
+            if (Regex.IsMatch(m, @"^(full|max(imum)?) (throttle|power)$|^throttle (up|full|max)$")) return R("set_throttle", "{\"value\":100}");
+            var tp = Regex.Match(m, @"^(?:set )?throttle (?:to )?(\d{1,3}) ?%?$"); if (tp.Success) return R("set_throttle", "{\"value\":" + Math.Max(5, Math.Min(100, int.Parse(tp.Groups[1].Value))) + "}");
+            if (Regex.IsMatch(m, @"^(roll|flip|go) (inverted|upside down)$|^invert$")) return R("roll", "{\"inverted\":true}");
+            if (Regex.IsMatch(m, @"^(roll|wings) level$|^level (the )?wings$")) return R("roll", "{\"level\":true}");
+            var rb = Regex.Match(m, @"^(?:roll|bank) (left|right)(?: (\d{1,3}))?(?: ?deg(?:rees)?)?( override)?$");
+            if (rb.Success) return R("roll", "{\"direction\":\"" + rb.Groups[1].Value + "\",\"degrees\":" + (rb.Groups[2].Success ? rb.Groups[2].Value : "15") + (rb.Groups[3].Success ? ",\"override\":true" : "") + "}");
+            if (Regex.IsMatch(m, @"^(turn (on|back on) (the )?autopilot|autopilot (on|engage)|engage (the )?autopilot)$")) return R("autopilot", "{\"on\":true}");
+            if (Regex.IsMatch(m, @"^(turn off (the )?autopilot|autopilot off|disengage (the )?autopilot)$")) return R("autopilot", "{\"on\":false}");
+            if (Regex.IsMatch(m, @"^land( at| on)? (the )?(nearest|closest)( runway)?$")) return R("land", "{\"where\":\"nearest runway\"}");
+            if (Regex.IsMatch(m, @"^circle( the)?( runway| here| field| ksc)?$")) return R("circle_here", "{}");
             var f = Regex.Match(m, @"^flaps? ([0-3]|up|full|down)$"); if (f.Success) return R("flaps", "{\"setting\":\"" + f.Groups[1].Value + "\"}");
             if (Regex.IsMatch(m, @"^(retract|raise) (the )?flaps$")) return R("flaps", "{\"setting\":\"up\"}");
             var l = Regex.Match(m, @"^land( (now|here))?$"); if (l.Success) return R("land", "{}");

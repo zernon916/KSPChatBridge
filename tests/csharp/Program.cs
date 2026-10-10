@@ -492,7 +492,7 @@ class Program
             toolLog = name + ":" + args;
             return "alt 5000 m";
         });
-        Check(fakeCalls == 2 && toolLog == "get_status:{}" && answer == "Altitude 5 km.", "in-mod tool loop");
+        Check(fakeCalls == 2 && toolLog == "get_status:{}" && answer == "Altitude 5 km. [alt 5000 m]", "in-mod tool loop (reply carries the tool result)");
         Console.WriteLine("In-mod AI stack: 7 behavior checks passed.");
         // ---- P5-1 foundation ----
         var cfgDefaults = BridgeConfigDefaults.Create();
@@ -824,6 +824,65 @@ class Program
             Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
         }
         Console.WriteLine("Rover drive-to-building: 7 behavior checks passed.");
+        // ---- Live test round 2: multi-turn replay (tool calls stop firing after the first) ----
+        {
+            var logDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-chatlog-" + Guid.NewGuid().ToString("N"));
+            ChatLog.Dir = logDir;
+            Func<string, string> Qwen = txt => EmbeddedPrompt.ToOpenAi(txt);
+            var bodies = new List<string>(); var script = new Queue<string>(new[]
+            {
+                "<tool_call>\n{\"name\": \"takeoff\", \"arguments\": {}}\n</tool_call>", "Taking off, Captain.",
+                "I will set the throttle to full for Aeris 3A.",                                                     // talks instead of acting
+                "<tool_call>\n{\"name\": \"set_throttle\", \"arguments\": {\"value\": 100}}\n</tool_call>", "Full throttle.",
+                "<tool_call>\n{\"name\": \"circle_here\", \"arguments\": {\"bank\": 25}}\n</tool_call>", "ok",
+            });
+            var s = new InModChatSession((ep, body) => { bodies.Add(body); return Qwen(script.Dequeue()); }) { Craft = "plane" };
+            var ran = new List<string>();
+            Func<string, string, string> exec = (n, x) => { ran.Add(n + " " + x); return n == "circle_here" ? "Engage local holds in flight first." : "done " + n; };
+            string r1 = s.Process("takeoff and circle", "groq", exec);
+            string r2 = s.Process("full throttle", "groq", exec);
+            string r3 = s.Process("increase bank to 25", "groq", exec);
+            Check(ran.Count == 3 && ran[0].StartsWith("takeoff") && ran[1].StartsWith("set_throttle") && ran[2].StartsWith("circle_here"), "replay: every turn's tool call fires (" + string.Join("|", ran.ToArray()) + ")");
+            Check(bodies.Exists(b => b.Contains("Do it now: call the set_throttle tool")), "talk-only reply -> one nudge with only the matching tool");
+            Check(!bodies[bodies.Count - 1].Contains("Taking off, Captain") && !bodies[bodies.Count - 1].Contains("I will set the throttle"), "old narrated replies are not fed back to the 3B model");
+            Check(r3.Contains("[Engage local holds in flight first.]") && r1.Contains("done takeoff"), "reply carries the real tool result (no bare 'ok')");
+            Check(bodies[0].Contains("MUST call a tool") && bodies[0].Contains("Craft: plane"), "system prompt: tool rule + craft");
+            string log = System.IO.File.ReadAllText(ChatLog.PathFor(DateTime.Now));
+            Check(log.Contains("[player] full throttle") && log.Contains("[tools]") && log.Contains("[raw]") && log.Contains("[call] set_throttle") && log.Contains("[reply]") && log.Contains("[nudge] set_throttle"), "chat log has player/tools/raw/call/reply/nudge");
+            Check(ChatLog.Redact("key sk-abcdefghijklmnop and Bearer abcdefghijkl123") == "key [redacted] and [redacted]" && ChatLog.Redact("\"api_key\": \"zzzzzzzzzz\"").Contains("[redacted]"), "chat log redacts keys");
+            ChatLog.Write("x", new string('a', 7000)); Check(new System.IO.FileInfo(ChatLog.PathFor(DateTime.Now)).Length < ChatLog.MaxBytes, "chat log capped");
+            Check(ChatTelemetry.Line(1020, 980, 182, 271, -12, 6, .65, 3, false, false, "circle") == "alt=1020m agl=980 spd=182 hdg=271 bank=-12 pit=6 thr=65% vs=+3 brk=0 gear=up ap=circle", "telemetry shorthand line");
+            ChatLog.Dir = null;
+            Check(PilotPolicy.FilterNotes("Luke's known playstyle preferences (respect these):\n- 80 km parking orbit\n- automate fuel transfers\n- likes 200 m/s cruise", "plane") == "Luke's known playstyle preferences (respect these):\n- likes 200 m/s cruise", "plane prompt drops orbit/transfer notes");
+            Check(PilotPolicy.FilterNotes("x\n- 80 km parking orbit", "rocket").Contains("parking orbit"), "rockets keep them");
+        }
+        Console.WriteLine("Round-2 multi-turn tool replay + chat log: 11 behavior checks passed.");
+        // ---- Live test round 2: Luke's exact circle-mission sequence, router, roll, plans, runways, engines ----
+        {
+            Func<string, string> D = m => { var d = ToolRouter.Direct(m, "plane"); return d == null ? "null" : d.Value.Key + " " + d.Value.Value; };
+            Check(D("full throttle") == "set_throttle {\"value\":100}" && D("throttle 50%") == "set_throttle {\"value\":50}", "direct: full throttle / throttle N%");
+            Check(D("roll inverted") == "roll {\"inverted\":true}" && D("roll level") == "roll {\"level\":true}" && D("bank left 30 override") == "roll {\"direction\":\"left\",\"degrees\":30,\"override\":true}", "direct: roll inverted / level / bank N override");
+            Check(D("Turn off autopilot") == "autopilot {\"on\":false}" && D("turn back on the autopilot") == "autopilot {\"on\":true}", "autopilot off AND back on");
+            Check(D("land at nearest runway") == "land {\"where\":\"nearest runway\"}" && D("Land and Circle Runway").StartsWith("make_flight_plan") && D("circle runway") == "circle_here {}", "land nearest; 'land and circle runway' = circle then land");
+            Check(D("make a flight plan fly 100km out, turn around, fly back, land at 27 ksp").StartsWith("make_flight_plan"), "plan request -> make_flight_plan");
+            foreach (string cmd in new[] { "circle_here", "set_throttle", "land", "land_plane", "fly_to", "roll", "autopilot", "stop_current", "set_altitude" })
+                Check(PilotPolicy.PreemptsPlan(cmd), "active mission is preempted by " + cmd);
+            Check(!PilotPolicy.PreemptsPlan("get_status") && !PilotPolicy.PreemptsPlan("flightplan/status"), "status reads don't stop the mission");
+            bool ov; double rt = PilotPolicy.RollTarget("right", 45, false, false, false, 150, out ov);
+            Check(rt == 20 && !ov && PilotPolicy.RollTarget("left", 45, false, false, true, 150, out ov) == -45 && ov, "roll: bank rule unless explicit override");
+            Check(PilotPolicy.RollTarget("left", 0, true, false, false, 150, out ov) == 180 && ov && PilotPolicy.ClampBank(180, 150, true) == 180 && PilotPolicy.ClampBank(40, 150, false) == 20, "inverted is an explicit override");
+            Check(PilotPolicy.PitchCommand(.3, 175) == -.3 && PilotPolicy.PitchCommand(.3, 10) == .3, "elevator reversed when inverted");
+            Check(PilotPolicy.CircleBank("right", 25, 150, true) == 25 && PilotPolicy.CircleBank("left", 25, 150, false) == -20 && PilotPolicy.CircleBank("left", 80, 150, true) == -45, "'increase bank to 25' honoured (max 45)");
+            Check(PilotPolicy.EngineWatch(true, false, false, true, false, true) == "restart" && PilotPolicy.EngineWatch(true, false, false, true, true, true) == "none" && PilotPolicy.EngineWatch(true, false, false, false, false, true) == "none", "engine watch: shut down in flight -> relight; ours/grounded -> no");
+            var rng = new Random(1); double f = PilotPolicy.FumbleSeconds(rng); Check(f >= 2 && f <= 4, "pilot fumbles 2-4 s");
+            string planTxt = PilotPolicy.PlanFromText("make a flight plan fly 100km out, turn around, fly back, land at 27 ksp", true);
+            Check(planTxt == "takeoff\nclimb 1000 m agl\ncruise for 100 km\nturn around\ncruise for 88 km\nland 27 ksp", "planTxt from chat: " + planTxt.Replace("\n", " | "));
+            var np = NativePlan.Parse(planTxt, name => false, route => false);
+            Check(np.Steps.Count == 6 && np.Steps[3].Op == "turnaround" && np.Steps[5].Op == "land", "native plan accepts turn around + fuzzy built-in runway");
+            Check(PilotPolicy.PlanFromText("circle 1 lap, land at KSC", false) == "circle 1 laps left bank 15\nland ksc", "circle then land");
+            Check(FlightResidualPolicy.BuiltInRunway("27 ksp", "").Item2 == "27" && FlightResidualPolicy.BuiltInRunway("nearest runway", "").Item1 == "nearest" && FlightResidualPolicy.RunwayAlias("land at the nearest runway") == "nearest runway", "runway: word order + nearest");
+        }
+        Console.WriteLine("Round-2 mission preemption / router / roll / plans / engines: 24 behavior checks passed.");
         // ---- P5-1.8: dashboard honesty ----
         var br = new List<string[]> { new[] { "autopilot", "BRIDGE hold" } };
         Check(DashboardRows.Choose(false, br, 1, "hold", "p")[1][1] == "Local hold", "AI off shows local rows");

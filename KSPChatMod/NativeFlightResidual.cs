@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
@@ -106,8 +106,13 @@ namespace KSPChatBridge
                     holdAltitude = holdHeading = holdSpeed = true;
                     return "Going around: climbing 500 m on runway heading.";
                 case "circle_here":
+                {
+                    bool ov = Num(a, "bank", 15) > FlightPolicy.BankLimit(vessel.srfSpeed);   // an explicit bank number is Luke's explicit ask (max 45)
+                    double cb = PilotPolicy.CircleBank(Str(a, "direction", "left"), Num(a, "bank", 15), vessel.srfSpeed, ov);
+                    if (mode == "takeoff") { pendingCircle = cb; bankOverride = ov; return "Will start circling as soon as we climb out (100 m AGL)."; }
                     if (!Active || vessel.LandedOrSplashed) return "Engage local holds in flight first.";
-                    flying2 = false; directBank = FlightResidualPolicy.CircleBank(Str(a, "direction", "left"), Num(a, "bank", 15), vessel.srfSpeed);
+                    flying2 = false; patternOn = false; directBank = cb; bankOverride = ov;
+                }
                     return "Circling " + (directBank > 0 ? "right" : "left") + " at " + Math.Abs(directBank.Value).ToString("0", Inv) + " deg bank.";
                 case "turn":
                     if (!Active) return "Engage local holds first.";
@@ -136,10 +141,11 @@ namespace KSPChatBridge
                     return "Levelling off at " + vessel.altitude.ToString("0", Inv) + " m.";
                 case "set_throttle":
                 {
-                    if (Active) return "Local autopilot owns throttle; stop_current first or use set_speed.";
+                    bool manualThr = Active; if (Active) holdSpeed = false;   // live bug: refused while holds were on
                     float t = (float)FlightResidualPolicy.Throttle(Num(a, "value", 0));
                     vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = t;
-                    return "Throttle " + (t * 100).ToString("0", Inv) + "%.";
+                    throttle = t;
+                    return "Throttle " + (t * 100).ToString("0", Inv) + "%." + (manualThr ? " Speed hold off (say set speed to hand it back)." : "");
                 }
                 case "set_engines": case "cut_engines":
                 {

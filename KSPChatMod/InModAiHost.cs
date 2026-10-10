@@ -25,6 +25,7 @@ namespace KSPChatBridge
             GameEvents.onGameSceneLoadRequested.Add(OnSceneRequested);
             try { string m = PluginDataMigration.Run(BridgeLauncher.PluginDataDirectory, DateTime.UtcNow); if (m != null) Debug.Log("[KSPChatBridge] " + m); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] PluginData migration skipped (data untouched): " + ex.Message); }
+            ChatLog.Dir = System.IO.Path.Combine(BridgeLauncher.PluginDataDirectory, "logs");
             Models = ModelManager.Instance;
             Runtime = new LlamaRuntimeManager(NativeLibraryLayout.NativeRoot(BridgeLauncher.PluginDataDirectory));
             EmbeddedLlm.ModelPath = () => Models.Ready ? Models.FinalPath : null;
@@ -65,11 +66,13 @@ namespace KSPChatBridge
             string craft = "";
             try { craft = NativeFlightController.CraftKind(); } catch (Exception) { }
             var direct = ToolRouter.Direct(text, craft);
+            ChatLog.Write("router", direct == null ? "model (" + text + ")" : "direct " + direct.Value.Key + " " + direct.Value.Value);
             if (direct != null && NativeFlightController.OwnsControls)   // clear command: no model round-trip
             {
                 string res;
                 try { res = NativeFlightController.Execute(direct.Value.Key, direct.Value.Value); } catch (Exception ex) { res = "Couldn't: " + ex.Message; }
                 ChatWindow.ReleasePendingChat();
+                ChatLog.Write("result", res);
                 ChatWindow.Notice(CrewVoice.Line(voice.Key, res));
                 return;
             }

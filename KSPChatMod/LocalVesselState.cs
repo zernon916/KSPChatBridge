@@ -23,6 +23,8 @@ namespace KSPChatBridge
             Available = false; Systems = new List<string[]>(); Flight = new List<string[]>();
             Level = Alarm = vesselId = ""; Json = "{}";
         }
+        static double PitchDeg(Vessel v) { var t = v.ReferenceTransform; return t == null ? 0 : Math.Asin(Math.Max(-1, Math.Min(1, Vector3d.Dot(t.up, v.upAxis)))) * 180 / Math.PI; }
+        static double BankDeg(Vessel v) { var t = v.ReferenceTransform; return t == null ? 0 : -Math.Atan2(Vector3d.Dot(t.right, v.upAxis), Vector3d.Dot(-t.forward, v.upAxis)) * 180 / Math.PI; }
         internal static void Sample(Vessel v)
         {
             var rows = new List<string[]>();
@@ -87,6 +89,7 @@ namespace KSPChatBridge
             Flight = new List<string[]> {
                 new[] { "alt", F(v.altitude) + " m MSL / " + F(v.radarAltitude) + " m AGL" },
                 new[] { "speed", F(v.srfSpeed) + " m/s" }, new[] { "V/S", F(v.verticalSpeed) + " m/s" },
+                new[] { "bank", F(BankDeg(v)) + " deg" }, new[] { "pitch", F(PitchDeg(v)) + " deg" },
                 new[] { "throttle", F(v.ctrlState.mainThrottle * 100) + "%" }, new[] { "pilot", pilot }
             };
             Json = "{\"resources\":" + resources + ",\"temperature\":" + N(hot) + ",\"hottest\":" + ChatWindow.JsonStr(hottest)

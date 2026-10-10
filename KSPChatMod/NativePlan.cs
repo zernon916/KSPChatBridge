@@ -45,6 +45,7 @@ namespace KSPChatBridge
                 else if (Regex.IsMatch(low, @"^cruise\b")) step.Op = "cruise";
                 else if (Regex.IsMatch(low, @"^circle\b")) step.Op = "circle";
                 else if (Regex.IsMatch(low, @"^wait\b")) step.Op = "wait";
+                else if (Regex.IsMatch(low, @"^turn\s+(around|back)$")) step.Op = "turnaround";
                 else if (Regex.IsMatch(low, @"^taxi\s+to\s+")) { step.Op = "taxi"; step.Destination = line.Substring(8).Trim(); }
                 else if (Regex.IsMatch(low, @"^land\b")) { step.Op = "land"; step.Destination = line.Substring(4).Trim(); }
                 else throw new ArgumentException("Local plan step not yet supported: " + line);
@@ -53,12 +54,13 @@ namespace KSPChatBridge
                 string holdOptions = @"(?:\s+(?:(?:hdg|heading|speed|vs)\s+" + number + @"|alt(?:itude)?\s+" + number + @"\s*(?:km|m|ft|feet)?(?:\s+(?:agl|msl))?))*";
                 string duration = number + @"\s*(?:s|sec(?:ond)?s?|min(?:ute)?s?)?";
                 string grammar = step.Op == "takeoff" ? @"take\s?off"
+                    : step.Op == "turnaround" ? @"turn\s+(?:around|back)"
                     : step.Op == "climb" ? @"(?:climb|descend)\s+" + altitudeOption + holdOptions
                     : step.Op == "cruise" ? "cruise" + holdOptions + @"(?:\s+for\s+(?:" + duration + "|" + number + @"\s*km))?"
                     : step.Op == "circle" ? @"circle(?:\s+" + number + @"(?:\s+laps?)?)?(?:\s+(?:left|right))?(?:\s+bank\s+" + number + ")?" + holdOptions
                     : step.Op == "wait" ? @"wait\s+" + duration
                     : step.Op == "taxi" && taxiRoute != null && taxiRoute(step.Destination) ? Regex.Escape(line)
-                    : step.Op == "land" && savedRunway != null && savedRunway(step.Destination) ? Regex.Escape(line)
+                    : step.Op == "land" && ((savedRunway != null && savedRunway(step.Destination)) || FlightResidualPolicy.BuiltInRunway(step.Destination, "") != null) ? Regex.Escape(line)
                     : @"land(?:\s+(?:KSC\s+)?Runway\s+(?:09|27)|\s+Island(?:\s+Runway(?:\s+(?:09|27))?)?)?";
                 if (!Regex.IsMatch(low, "^(?:" + grammar + ")$", RegexOptions.IgnoreCase))
                     throw new ArgumentException("Unsupported local plan syntax: " + line);

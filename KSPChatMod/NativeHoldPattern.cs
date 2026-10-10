@@ -23,6 +23,7 @@ namespace KSPChatBridge
 
         string ExtrasCommand(string name, Dictionary<string, object> a)
         {
+            string pc = PilotCommand(name, a); if (pc != null) return pc;
             switch (name)
             {
                 case "follow_terrain": return FollowTerrain(a);

@@ -532,7 +532,14 @@ namespace KSPChatBridge
         // AI fill / From chat: POST /flightplan/draft -> the normalized plan text replaces the editor content.
         static void PlanDraft(bool fromChat)
         {
-            if (!BridgeLauncher.UseBridge) { planMsg = BridgeLauncher.AiEnabled ? "Ask the chat to write a plan, or edit / use a local template." : "AI off: edit the plan or use a local template."; return; }
+            if (!BridgeLauncher.UseBridge)
+            {
+                string ask = fromChat ? ChatWindow.LastPlayerLine() : planAsk.Trim();
+                if (ask.Length == 0) ask = planAsk.Trim();
+                try { planIncoming = PilotPolicy.PlanFromText(ask, FlightGlobals.ActiveVessel != null && FlightGlobals.ActiveVessel.LandedOrSplashed) + "\n"; planMsg = "Plan from \"" + ask + "\" loaded - check it, then Fly."; }
+                catch (ArgumentException ex) { planMsg = ex.Message; }
+                return;
+            }
             planBusy = true;
             planMsg = fromChat ? "Converting the chat's plan..." : "AI is drafting the plan...";
             string json = "{\"model\":" + ChatWindow.JsonStr(ChatWindow.BackendId(ChatWindow.BackendIndex)) +
@@ -550,6 +557,8 @@ namespace KSPChatBridge
                 else planMsg = body;
             });
         }
+
+        internal static void LoadPlan(string text) { planIncoming = (text ?? "").TrimEnd() + "\n"; planMsg = "Plan from chat loaded."; }
 
         static void PlanTemplate(string kind)
         {

@@ -38,6 +38,8 @@
     <Compile Include="../../KSPChatMod/FlightExtrasPolicy.cs"/>
     <Compile Include="../../KSPChatMod/TechAdvisorPolicy.cs"/>
     <Compile Include="../../KSPChatMod/KscRoverPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/PilotPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/ChatLog.cs"/>
     <Compile Include="../../KSPChatMod/PersonalityPrompts.cs"/>
     <Compile Include="../../KSPChatMod/BridgeHttp.cs"/>
     <Compile Include="../../KSPChatMod/NativeToolSchemas.cs"/>

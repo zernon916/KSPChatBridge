@@ -364,6 +364,7 @@ namespace KSPChatBridge
 
         void RefreshSpots()
         {
+            if (!BridgeLauncher.UseBridge) { NativeSpotsNow(); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { spotsBody = HttpGet("spots?format=text", 3000); }
@@ -397,8 +398,11 @@ namespace KSPChatBridge
         internal static void ShowLanding() { SetVisible(true); landVisible = true; }
         internal static string Json(string s) { return JsonStr(s); }
         internal static List<string[]> SpotsSnapshot() { return new List<string[]>(Spots); }
+        static void NativeSpotsNow() { Spots.Clear(); Spots.AddRange(NativeFlightController.SpotRows()); if (spotSel >= Spots.Count) spotSel = -1; }
+        internal static string LastPlayerLine() { for (int i = History.Count - 1; i >= 0; i--) if (History[i].StartsWith("You: ")) return History[i].Substring(5); return ""; }
         internal static void RequestSpots()
         {
+            if (!BridgeLauncher.UseBridge) { NativeSpotsNow(); return; }
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { spotsBody = HttpGet("spots?format=text", 3000); }

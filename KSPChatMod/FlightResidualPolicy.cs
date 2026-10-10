@@ -31,11 +31,12 @@ namespace KSPChatBridge
         {
             var r = BuiltInRunway(where, "");
             if (r == null) return (where ?? "").Trim();
+            if (r.Item1 == "nearest") return "nearest runway" + (r.Item2.Length > 0 ? " " + r.Item2 : "");
             return (r.Item1 == "island" ? "Island Runway" : "KSC Runway") + (r.Item2.Length > 0 ? " " + r.Item2 : "");
         }
 
         static readonly System.Text.RegularExpressions.Regex DirRx = new System.Text.RegularExpressions.Regex(@"(?:^|[^0-9])(0?9|27)(?:[^0-9]|$)");
-        static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land" };
+        static readonly string[] SiteWords = { "ksc", "ksp", "kerbal", "space", "center", "centre", "runway", "rwy", "rw", "strip", "airstrip", "main", "home", "base", "the", "at", "to", "on", "island", "isle", "airfield", "field", "land", "nearest", "closest", "near", "program", "port", "airport", "spaceport", "please", "a", "runways" };
 
         /// <summary>Fuzzy built-in Kerbin runway: (site "ksc"|"island", direction "09"|"27"|"") or null when the name
         /// mentions something else (a saved spot). Accepts KSC 27, KSP 27, runway 27, rwy 27, 27, 09, island, Island Runway 09...</summary>
@@ -53,7 +54,8 @@ namespace KSPChatBridge
                 if (tok == "09" || tok == "9" || tok == "27") continue;
                 if (Array.IndexOf(SiteWords, tok) < 0) return null;   // other words: not a built-in runway
             }
-            return Tuple.Create(island ? "island" : "ksc", dir);
+            bool nearest = !island && (rest.Contains("nearest") || rest.Contains("closest") || rest.Contains("near"));
+            return Tuple.Create(island ? "island" : nearest ? "nearest" : "ksc", dir);
         }
 
         /// <summary>0..1 throttle; values above 1 are treated as percent.</summary>
