@@ -192,7 +192,7 @@ namespace KSPChatBridge
         internal readonly bool ManualMode;
         internal readonly List<int> Queue = new List<int>();
         internal readonly List<int> Ran = new List<int>();
-        int activeTest; bool setupDone; double waitSpeed = double.NaN;
+        int activeTest; bool setupDone, waitHere; readonly HashSet<int> setupUnchecked = new HashSet<int>(); double waitSpeed = double.NaN;
         internal int ActiveTest { get { return activeTest; } }
         internal int TestsDone { get; private set; }
         internal double HoldAlt = double.NaN, HoldHdg = double.NaN;
@@ -210,11 +210,22 @@ namespace KSPChatBridge
         internal string Request(int code)
         {
             if (!ManualMode || Done) return "No test flight running: press LEARN.";
-            if (code == 1 || code == 2) return "Takeoff and climb run automatically.";
+            if (code == 1 || code == 2)
+            {   // setup boxes toggle too: unchecking the running takeoff/climb = SKIP (climb skip waits right here); otherwise flip the mark
+                if (!setupDone && activeTest == 0 && StepNo == code)
+                {
+                    if (code == 2) { waitHere = true; string r = Skip(); waitHere = false; return r; }
+                    return Skip();
+                }
+                if (!setupUnchecked.Remove(code)) { setupUnchecked.Add(code); return CodeName(code) + " unchecked (" + (setupDone || StepNo > code ? "already flown; data kept" : "runs as setup") + ")."; }
+                return CodeName(code) + " checked.";
+            }
             if (code == 12) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; }
             if (!Pickable(code)) return "Unknown test.";
-            if (activeTest == code) return "Test " + CodeName(code) + " is running (SKIP ends it).";
-            if (Queue.Remove(code)) return "Test " + CodeName(code) + " unchecked.";
+            if (activeTest == code)
+                return "Unchecked the running test: " + Skip();
+            if (Queue.Remove(code)) return "Test " + CodeName(code) + " unchecked (removed from the queue).";
+            if (Ran.Remove(code)) return "Test " + CodeName(code) + " unchecked (data kept; check again to re-run).";
             Queue.Add(code);
             return Phase == "wait" ? "Starting test " + CodeName(code) + "." : !setupDone ? "Test " + CodeName(code) + " queued: runs once the climb is done." : "Test " + CodeName(code) + " queued: runs when the current test is done.";
         }
@@ -237,13 +248,13 @@ namespace KSPChatBridge
         /// (climbing back to 5 km first when low).</summary>
         string ManualRoute(string ph, LearnIn i, ref string status)
         {
-            if (ph == "climbback" || ph == "wait") { if (ph == "wait" && i.Alt < ClimbAlt - 500) ph = "climbback"; }
+            if (ph == "climbback" || ph == "wait") { if (ph == "wait" && i.Alt < ClimbAlt - 500 && !waitHere) ph = "climbback"; }
             else
             {
                 int k = StepOf(ph, idx);
                 if (!setupDone && activeTest == 0 && k <= 2) return ph;
                 if (activeTest != 0 && Array.IndexOf(ActiveSteps(activeTest), k) >= 0) return ph;
-                ph = i.Alt < ClimbAlt - 500 ? "climbback" : "wait";
+                ph = i.Alt < ClimbAlt - 500 && !waitHere ? "climbback" : "wait";
             }
             string pre = status ?? "";
             if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest) + " done. " + (status ?? ""); activeTest = 0; }
@@ -263,7 +274,7 @@ namespace KSPChatBridge
             for (int j = 0; j < Codes.Length; j++)
             {
                 int k = Codes[j]; string cur = j == cursor ? ">" : " ", ind = k == 91 || k == 101 ? "  " : "";
-                if (k == 1 || k == 2) { o.Add(cur + (setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k) + " (auto)"); continue; }
+                if (k == 1 || k == 2) { o.Add(cur + (setupUnchecked.Contains(k) ? "[ ] " : setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k) + " (auto)"); continue; }
                 if (k == 12) { o.Add(cur + "[ ] 12 Land KSC 27 + rollout (check to end)"); continue; }
                 string mark = activeTest == k ? "[>] " : Queue.Contains(k) || Ran.Contains(k) ? "[x] " : "[ ] ";
                 string extra = activeTest == k ? "" : Queue.Contains(k) ? " (queued)" : Ran.Contains(k) ? " (done)" : "";
@@ -422,12 +433,6 @@ namespace KSPChatBridge
             double vsT = double.IsNaN(target) ? 0 : FlightPolicy.Clamp((target - i.Alt) * .05, -15, 15);
             return FlightPolicy.Clamp(3 + (vsT - i.Vs) * .6, -10, 15);
         }
-        /// <summary>Full-power climb pitch for best climb speed (not the slow Level 15 m/s VS cap).</summary>
-        double BestClimbPitch(LearnIn i)
-        {
-            double vT = P.BestClimbSpeed(i.StallGuess, i.Mass), e = i.Speed - vT;
-            return FlightPolicy.Clamp(14 - e * .35, 6, 22);
-        }
         void SampleClimb(LearnIn i)
         {
             P.Perf.Ceiling(i.Alt, i.Vs, i.Mass);
@@ -578,7 +583,7 @@ namespace KSPChatBridge
             {
                 case "start":
                     if (i.Landed) { WantTakeoff = true; Go("takeoff", i, "takeoff at full power, recording rotate/liftoff speed."); }
-                    else Go("climb", i, "already airborne - climb to 5 km at full power, 20 deg pitch.");
+                    else Go("climb", i, "already airborne - climb to 5 km at full power, up to 30 deg pitch.");
                     return;
                 case "takeoff":
                     if (i.Landed && i.Speed > 1) { if (!double.IsNaN(rollPrevT)) rollM += i.GroundSpeed * (i.T - rollPrevT); rollPrevT = i.T; }
@@ -586,11 +591,11 @@ namespace KSPChatBridge
                     return;
                 case "pullback":
                     Throttle = .5; Pitch = 8; Bank = 0;
-                    if (dt > 3) Go("climb", i, "climb to 5 km at full power, 20 deg pitch, recording acceleration.");
+                    if (dt > 3) Go("climb", i, "climb to 5 km at full power, up to 30 deg pitch, recording acceleration.");
                     return;
                 case "climb":
                     if (n == 0) climbFuel0 = i.FuelFrac; SampleClimb(i);
-                    Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : BestClimbPitch(i); Bank = 0; gSum += i.Vs; n++;
+                    Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; gSum += i.Vs; n++;   // up to ~30 deg, easing toward 1.3x stall
                     if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); P.Curves.Accel.Add(P.ClimbAccel, i.Mass, (i.Speed + v0) / 2); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
                     return;
                 case "decel":

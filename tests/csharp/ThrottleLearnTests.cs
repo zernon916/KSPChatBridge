@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -131,7 +131,7 @@ internal static class ThrottleLearnTests
         q.T = 101; q.Speed = 150; lf.Step(q); Check(Near(lf.Throttle, 1) && lf.Pitch > 25 && lf.Pitch <= 30, "climb-back ~30 deg at full power (" + lf.Pitch.ToString("0.0") + ")");
         q.T = 102; q.Speed = 80; lf.Step(q); Check(lf.Pitch < 10, "climb-back pitch lowered near 1.3x stall (" + lf.Pitch.ToString("0.0") + " at 80 m/s, stall 60)");
         q.T = 103; q.Alt = 4950; lf.Step(q); Check(lf.Phase == "wait", "back at 5 km: waiting");
-        Check(lf.Request(1).Contains("automatically") && lf.Request(12).Contains("landing") && lf.Done && !lf.Aborted, "box 12 ends the flight (land)");
+        Check(lf.Request(1).Contains("unchecked") && lf.Request(12).Contains("landing") && lf.Done && !lf.Aborted, "box 12 ends the flight (land)");
         Check(Near(PilotPolicy.ClimbBackPitch(120, 60), 30) && PilotPolicy.ClimbBackPitch(78, 60) == 0 && PilotPolicy.ClimbBackPitch(85, 60) < PilotPolicy.ClimbBackPitch(90, 60), "ClimbBackPitch: 30 deg with margin, 0 at 1.3x stall");
         // queue from the pre-flight checklist (boxes checked before LEARN)
         var pf = new PlaneProfile(); LearnFlight.Toggle(pf, 5); var lq = new LearnFlight(pf, pf.Rerun, true);
@@ -153,6 +153,28 @@ internal static class ThrottleLearnTests
     // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
     static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
     static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    // live 16:59 (Aeris 3A): climb pitch 6 at 385 m/s; boxes would not uncheck
+    static void Oct11Live()
+    {
+        {   // Learn climb: fast plane noses up to ~30 deg (was BestClimbPitch floor 6, inverted: faster -> lower)
+            var lf = new LearnFlight(); var q = In(0, 1000); q.Speed = 385; q.StallGuess = 98; lf.Step(q); lf.Phase = "climb"; q.T = 1; lf.Step(q);
+            Check(Math.Abs(lf.Pitch - PilotPolicy.ClimbBackPitch(385, 98)) < 1e-9 && lf.Pitch >= 25, "learn climb at 385 m/s uses ClimbBackPitch (" + lf.Pitch.ToString("0.0") + " deg, was 6)");
+            q.Speed = 1.35 * 98; q.T = 2; lf.Step(q); Check(lf.Pitch < 10, "learn climb eases pitch near 1.3x stall (" + lf.Pitch.ToString("0.0") + ")");
+        }
+        {   // every box toggles in the manual picker
+            var lf = new LearnFlight(null, null, true); var q = In(0, 1000); lf.Step(q); q.T = 1; lf.Step(q);
+            Check(lf.Phase == "climb", "manual learn climbing (" + lf.Phase + ")");
+            string r = lf.Request(2); q.T = 2; lf.Step(q);
+            Check(lf.Phase == "wait" && Math.Abs(lf.HoldAlt - 1000) < 1 && r.Contains("Skipped"), "unchecking the running climb = skip, waits at the current altitude (" + lf.Phase + ", " + r + ")");
+            lf.Request(5); lf.Request(6); Check(lf.Queue.Count == 2, "two tests queued");
+            q.T = 3; lf.Step(q); Check(lf.ActiveTest == 5 && lf.Queue.Count == 1, "test 5 running, 6 queued");
+            string u6 = lf.Request(6); Check(lf.Queue.Count == 0 && u6.Contains("removed"), "unchecking a queued test removes it");
+            string u5 = lf.Request(5); q.T = 4; lf.Step(q); Check(lf.ActiveTest == 0 && (lf.Phase == "wait" || lf.Phase == "climbback") && u5.Contains("Skipped"), "unchecking the running test acts like SKIP (" + lf.Phase + ", " + u5 + ")");
+            string d5 = lf.Request(5); Check(!lf.Ran.Contains(5) && lf.Queue.Count == 0 && d5.Contains("unchecked"), "unchecking a done test clears its mark (" + d5 + ")");
+            string c1 = lf.Request(1); var cl = lf.ManualChecklist(-1); Check(c1.Contains("unchecked") && cl[0].Contains("[ ] 1"), "takeoff box toggles too (" + cl[0] + ")");
+        }
+    }
+
     // REPORT.7.9 (rewrite) items 1-17
     static LearnIn S9(double t, double alt, double vs, double spd = 76.8) { return new LearnIn { T = t, Speed = spd, Alt = alt, Agl = alt, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = vs, Throttle = .3 }; }
     static void Audit2()
