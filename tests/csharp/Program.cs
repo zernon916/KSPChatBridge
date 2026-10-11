@@ -2224,7 +2224,10 @@ class Program
             bool all = true; foreach (var ii in new[] { "mk1CockpitInternal", "mk2InlineInternal", "PodCockpit", "mk2CockpitStandardInternals", "mk1InlineInternal", "MK3_Cockpit_Int" }) all &= iva.Contains("@INTERNAL[" + ii + "]");
             Check(iva.Contains("@PROP[RasterPropMonitorBasicMFD]:NEEDS[RasterPropMonitor]:FINAL") && ivaSa.Contains("@INTERNAL[MK3_Cockpit_Int]:NEEDS[!RasterPropMonitor]") && System.Text.RegularExpressions.Regex.Matches(ivaSa, "name = AICS_MFD_RPMPOS\\r?\\n\\s*position").Count >= 40, "IVA: generic RPM-screen patch + standalone RPM positions without RPM");
             Check(all && iva.Contains("name = AicsIvaMfd") && System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "tools", "package_release.ps1")).Contains("AICS_IVA.cfg"), "AICS_MFD prop patched into 5 stock cockpits and shipped");
-            Console.WriteLine("IVA MFD: 7 behavior checks passed.");
+            string cvSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "MfdCanvas.cs")), ivaSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "IvaMfd.cs")), mapSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(root2, "KSPChatMod", "MapWindow.cs"));
+            Check(cvSrc.Contains("internal interface IMfdCanvas") && cvSrc.Contains("float TextWidth(string text, int px);") && cvSrc.Contains("class GuiCanvas : IMfdCanvas") && cvSrc.Contains("class RtCanvas : IMfdCanvas"), "one shared canvas (IMfdCanvas, with text measurement) drawn through IMGUI or into a cockpit RenderTexture");
+            Check(!ivaSrc.Contains("GUI.") && ivaSrc.Contains("void DrawSharedPage(MapWindow m, Rect g) { cv.Group(g, () => m.DrawIva(cv,") && mapSrc.Contains("internal void DrawIva(IMfdCanvas c, Rect area, string item)") && mapSrc.Contains("AicsIvaMfd.WantsMap"), "IVA MAP / CHART / ILS draw the outside MFD's real graphics (shared pass, no IMGUI on the IVA screen)");
+            Console.WriteLine("IVA MFD: 9 behavior checks passed.");
         }
 
         {   // repo checks ported from the removed Python suite (bridge removal, P5-8)
@@ -2299,6 +2302,7 @@ class Program
                 Console.WriteLine("P5-5 llama smoke: generated " + text.Length + " chars on CPU: " + text.Replace("\n", " ").Substring(0, Math.Min(60, text.Length)));
             }
         }
+        ProfileJsonParsingTests.Run();
         LearnAbortStallTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)

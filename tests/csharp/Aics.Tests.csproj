@@ -20,7 +20,7 @@
   <ItemGroup><Compile Include="../../KSPChatMod/VerticalLandingPolicy.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativeCommands.cs"/><Compile Include="../../KSPChatMod/NativeLibraryLayout.cs"/><Compile Include="../../KSPChatMod/ModelManager.cs"/><Compile Include="../../KSPChatMod/AiRuntimePolicy.cs"/><Compile Include="../../KSPChatMod/ChatOrchestrator.cs"/><Compile Include="../../KSPChatMod/NativeAiLoader.cs"/></ItemGroup>
   <ItemGroup>
-    <Compile Include="InModTestStubs.cs"/><Compile Include="LearnAbortStallTests.cs"/>
+    <Compile Include="InModTestStubs.cs"/><Compile Include="LearnAbortStallTests.cs"/><Compile Include="ProfileJsonParsingTests.cs"/>
     <Compile Include="../../KSPChatMod/SecretsStore.cs"/>
     <Compile Include="../../KSPChatMod/OpenAiBackend.cs"/>
     <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
