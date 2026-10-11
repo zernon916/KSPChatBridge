@@ -488,8 +488,18 @@ namespace KSPChatBridge
             Phase = ph; aoaF = double.NaN;
             spdF = double.NaN; prevThr = double.NaN; badThr = 0;
             if (ph == "sinkdown" || ph == "sinkmap") { vsF = i.Vs; lastT = i.T; overAt = double.NaN; recThr = double.NaN; limThr = 0; limT = double.NaN; }
-            if (ph == "wait") { HoldAlt = Math.Round(i.Alt / 100) * 100; HoldHdg = i.Heading; waitSpeed = WaitSpeed(i); } t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = crSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN;
+            if (ph == "wait") { HoldAlt = waitHere ? Math.Round(i.Alt / 100) * 100 : ClimbAlt; HoldHdg = i.Heading; waitSpeed = WaitSpeed(i); } t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = crSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN;
             if (!Visited.Contains(ph)) Visited.Add(ph); if (status != null) Status = status;
+        }
+        /// <summary>Climb level-off lead: full climb pitch until vs x LevelLead s (150..3000 m) below the target, then blend linearly
+        /// into the altitude hold so the climb captures the target instead of zooming past it (live 17:53: 30 deg climb overshot 5 km to 8.6 km).</summary>
+        internal const double LevelLead = 13;
+        internal static double LevelOff(LearnIn i, double target, double climbPitch)
+        {
+            double lead = FlightPolicy.Clamp(Math.Max(0, i.Vs) * LevelLead, 150, 3000), below = target - i.Alt;
+            if (below >= lead) return climbPitch;
+            double lvl = Level(i, target), f = FlightPolicy.Clamp(below / lead, 0, 1);
+            return lvl + (Math.Max(climbPitch, lvl) - lvl) * f;
         }
         static double Level(LearnIn i, double target = double.NaN)
         {
@@ -658,8 +668,8 @@ namespace KSPChatBridge
                     return;
                 case "climb":
                     if (n == 0) climbFuel0 = i.FuelFrac; SampleClimb(i);
-                    Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; gSum += i.Vs; n++;   // up to ~30 deg, easing toward 1.3x stall
-                    if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); P.Curves.Accel.Add(P.ClimbAccel, i.Mass, (i.Speed + v0) / 2); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
+                    Throttle = 1; Pitch = LevelOff(i, ClimbAlt, i.Speed < 1.3 * i.StallGuess ? 8 : PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; gSum += i.Vs; n++;   // up to ~30 deg, easing toward 1.3x stall
+                    if (i.Alt >= ClimbAlt - 60 || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); P.Curves.Accel.Add(P.ClimbAccel, i.Mass, (i.Speed + v0) / 2); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
                     return;
                 case "decel":
                     Throttle = 0; Pitch = Level(i); Bank = 0;
@@ -687,7 +697,7 @@ namespace KSPChatBridge
                 case "ratesprep":
                     {   // step 6 setup: never pull at vmax (Luke 14:18 log: 1.5 s at 60% elevator from 300 m/s = 8.6 g, test aborted)
                         if (double.IsNaN(ratesSpeed)) ratesSpeed = RatesSpeed(i.StallGuess);
-                        SpeedTarget = ratesSpeed; Throttle = i.Speed > ratesSpeed + 10 ? 0 : .6; Pitch = Level(i); Bank = 0;
+                        SpeedTarget = ratesSpeed; Throttle = i.Speed > ratesSpeed + 10 ? 0 : .6; Pitch = Level(i, ClimbAlt); Bank = 0;   // back to the 5 km test altitude
                         if (Math.Abs(i.Speed - ratesSpeed) < 10) { if (double.IsNaN(ratesSteady)) ratesSteady = i.T; } else ratesSteady = double.NaN;
                         if ((!double.IsNaN(ratesSteady) && i.T - ratesSteady >= 3) || dt > RatesPrepTimeout) { bool late = dt > RatesPrepTimeout; ratesElev = 0; ratesCut = false; Go("rates", i, (late ? "Could not slow to " + ratesSpeed.ToString("0") + " m/s in " + RatesPrepTimeout.ToString("0") + " s - running the rate checks at " + i.Speed.ToString("0") + " m/s instead. " : "") + "Roll and pitch rate checks at " + i.Speed.ToString("0") + " m/s: full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); }
                         return;
@@ -754,7 +764,7 @@ namespace KSPChatBridge
                     }
                 case "turnprep":
                     {
-                        double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, a0); SpeedTarget = vT;   // speed PI only
+                        double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, ClimbAlt); SpeedTarget = vT;   // turns fly at the 5 km test altitude   // speed PI only
                         if (Math.Abs(i.Speed - vT) < 5 || dt > 180) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }
@@ -777,13 +787,13 @@ namespace KSPChatBridge
                         return;
                     }
                 case "sinkprep":
-                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
+                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = LevelOff(i, SinkAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
                     else { Throttle = .5; Pitch = SpeedPitch(i, SinkSpeedFactor); FilterVs(i); Throttle = Math.Max(Throttle, SinkLimit(i)); }
                     Bank = 0; if (double.IsNaN(sinkStart)) sinkStart = i.T;
                     if ((i.Alt >= SinkAlt - 200 && i.Speed <= (SinkSpeedFactor + .03) * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "climbback":
-                    Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; SampleClimb(i);
+                    Throttle = 1; Pitch = LevelOff(i, ClimbAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; SampleClimb(i);   // climb-back / sinkclimb: 5 km (ClimbAlt == SinkAlt)
                     if (i.Alt >= ClimbAlt - 100 || dt > 600) Go("wait", i, "Back at 5 km. Waiting: check a test box to run it; you can fly manually any time.");
                     return;
                 case "wait":
@@ -791,7 +801,7 @@ namespace KSPChatBridge
                     if (Queue.Count > 0) { int code = Queue[0]; Queue.RemoveAt(0); StartTest(code, i); }
                     return;
                 case "sinkclimb":
-                    Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; SampleClimb(i);
+                    Throttle = 1; Pitch = LevelOff(i, ClimbAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; SampleClimb(i);   // climb-back / sinkclimb: 5 km (ClimbAlt == SinkAlt)
                     if (i.Alt >= SinkAlt - 100) { string r = resume; double keepT = stepThr; Go(r, i, "Sink map resumed."); stepThr = keepT; stepAt = i.T; vs0 = vsF; lagDone = false; lagS = double.NaN; prevT = i.T; }
                     return;
                 case "sinkdown":

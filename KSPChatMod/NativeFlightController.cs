@@ -251,7 +251,7 @@ namespace KSPChatBridge
                 vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
             ConfigureInertia(); LoadProfile();
             stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
-            { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.CoM, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
+            { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.rootPart.transform.position, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
               ApproachProfile.JoinG = CraftClass.JoinG(CraftCls, ApproachProfile.JoinG); ApproachProfile.FinalG = CraftClass.JoinG(CraftCls, ApproachProfile.FinalG);
               ChatLog.Write("vessel", "class " + CraftClass.Label(CraftCls, craftOverride) + " span " + (hi - lo).ToString("0") + " m"); }

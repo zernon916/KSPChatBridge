@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -167,6 +167,29 @@ internal static class ThrottleLearnTests
             thr = gt.Step(want, .1, kind); v += (6 * thr - .00004 * v * v) * .1;
         }
         return thr;
+    }
+    static void LevelOffCapture()
+    {
+        // 30 deg climb, nose follows the command at 2 deg/s: without a lead this zooms past 5 km (live: 8.6 km).
+        foreach (double v in new[] { 200.0, 385.0 })
+        {
+            double alt = 1000, p = 30, maxAlt = 0, dt = .1;
+            for (double t = 0; t < 400; t += dt)
+            {
+                double vs = v * Math.Sin(p * Math.PI / 180);
+                var li = new LearnIn { T = t, Speed = v, Alt = alt, Agl = alt, Vs = vs, Pitch = p, G = 1, GLimit = 8, FuelFrac = .9, Mass = 5.5, StallGuess = 60, Throttle = 1, GroundSpeed = v };
+                double cmd = LearnFlight.LevelOff(li, LearnFlight.ClimbAlt, PilotPolicy.ClimbBackPitch(v, 60));
+                p += Math.Max(-2 * dt, Math.Min(2 * dt, cmd - p)); alt += vs * dt; maxAlt = Math.Max(maxAlt, alt);
+            }
+            Check(maxAlt <= LearnFlight.ClimbAlt + 150, "level-off lead caps the climb within 150 m at " + v + " m/s (peak " + maxAlt.ToString("0") + ")");
+            Check(Math.Abs(alt - LearnFlight.ClimbAlt) < 150, "climb settles at 5 km at " + v + " m/s (" + alt.ToString("0") + ")");
+        }
+        var low = new LearnIn { Alt = 1000, Vs = 150, Speed = 300, Pitch = 30 };
+        Check(LearnFlight.LevelOff(low, 5000, 30) == 30, "far below the target -> full climb pitch");
+        Check(CraftClass.Classify(5.5, 503, 40) == "light", "5.5 t craft with a glitched 503 m span stays light");
+        Check(CraftClass.Classify(5.5, 8, 40) == "light", "5.5 t, 8 m span -> light");
+        Check(CraftClass.Classify(30, 40, 60) == "heavy", "real 40 m span -> heavy");
+        Check(CraftClass.Classify(120, 503, 300) == "heavy", "120 t -> heavy regardless of span");
     }
     static void LearnThrottleStuck()
     {

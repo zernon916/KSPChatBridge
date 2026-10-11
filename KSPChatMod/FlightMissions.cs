@@ -47,7 +47,10 @@ namespace KSPChatBridge
     /// 1.15 g level-turn joins, 6 deg/s roll, gentle pitch); light/fighter keep the full 4 g rating. Override: auto / gentle / fighter.</summary>
     internal static class CraftClass
     {
-        internal static string Classify(double massT, double spanM, int parts) { return massT >= 40 || spanM >= 30 || parts >= 150 ? "heavy" : "light"; }
+        internal static string Classify(double massT, double spanM, int parts) { return massT >= 40 || PlausibleSpan(spanM, massT) >= 30 || parts >= 150 ? "heavy" : "light"; }
+        /// <summary>Span sanity: a sub-40 t craft cannot have a 100+ m wingspan; that is a stale-transform measurement (live 17:51: 5.5 t Aeris 3A
+        /// measured "span 503 m" -> HEAVY -> heavy floor recovery on takeoff). Ignored (0) so mass/parts decide.</summary>
+        internal static double PlausibleSpan(double spanM, double massT) { return double.IsNaN(spanM) || spanM < 0 || (spanM > 100 && massT < 40) ? 0 : spanM; }
         internal static string Effective(string auto, string overrideMode) { return overrideMode == "gentle" ? "heavy" : overrideMode == "fighter" ? "light" : auto; }
         internal static bool Gentle(string cls) { return cls == "heavy"; }
         /// <summary>Stall estimate never below what liftoff proved: a craft that lifted off at Vlo has Vs >= Vlo/1.25.</summary>
