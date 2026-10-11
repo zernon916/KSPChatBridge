@@ -363,7 +363,7 @@ class Program
                 Check(!LearnFlight.Toggle(pp, 1) && !LearnFlight.Toggle(pp, 12) && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
                 var pr = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
                 Check(pr.Rerun.Count == 1 && pr.Rerun[0] == 5, "re-run selection persisted");
-                var pcl = LearnFlight.ProfileChecklist(pr, 4); Check(pcl[4].StartsWith(">[ ] 5") && pcl[3].StartsWith(" [x] 4") && pcl[0].StartsWith(" [*] 1"), "toggle view: cursor, [ ] re-run, [x] kept");
+                var pcl = LearnFlight.ProfileChecklist(pr, 4); Check(pcl[4].StartsWith(">[x] 5") && pcl[3].StartsWith(" [ ] 4") && pcl[0].StartsWith(" [*] 1"), "toggle view (Oct 11): cursor, boxes start unchecked, [x] = run that test");
                 int turns0 = pp.Turns.Count, dives0 = pp.Dives.Count; double stall0 = pr.Stall, climb0 = pr.ClimbAccel;
                 var rf = new LearnFlight(pr, pr.Rerun); T = 0; v = 0; alt = 70; vs = 0; pit = 0; fuel = 1; landed = true; int rg = 0;
                 while (!rf.Done && rg++ < 200000)
@@ -438,7 +438,7 @@ class Program
             var withF = sinkRun(true); var noF = sinkRun(false);
             Check(withF.P.Sink.Count == 6 && withF.P.SinkFlaps.Count == 6 && withF.P.ThrottleForSink(4, 30) < withF.P.SinkFlaps.Find(r => r[0] == 4)[1] && withF.Flaps == 0, "sink map runs clean, then repeats with flaps FULL (more throttle for the same sink), flaps back up after: " + withF.P.Sink.Count + "/" + withF.P.SinkFlaps.Count + " " + string.Join(",", withF.P.SinkFlaps.ConvertAll(r => r[0] + ":" + r[1]).ToArray()) + " clean4=" + withF.P.ThrottleForSink(4, 30) + " flaps=" + withF.Flaps + " ph=" + withF.Phase);
             Check(noF.P.Sink.Count == 6 && noF.P.SinkFlaps.Count == 0, "flaps-full sink sub-step toggled off: skipped");
-            var pf = new PlaneProfile(); Check(LearnFlight.Toggle(pf, 91) && !pf.FlapSub && LearnFlight.Toggle(pf, 101) && !pf.FlapStallSub, "9b / 10b toggle");
+            var pf = new PlaneProfile(); Check(LearnFlight.Toggle(pf, 91) && pf.Rerun.Contains(91) && LearnFlight.Toggle(pf, 101) && pf.Rerun.Contains(101), "9b / 10b toggle (checked = run)");
             var pcl = LearnFlight.ProfileChecklist(pf, 9); Check(pcl[9].Contains("9b") && pcl[9].StartsWith(">") && pcl[11].Contains("10b") && LearnFlight.Codes.Length == 14, "profile checklist shows the flap sub-steps");
             withF.P.FlapStall = 70; var rtf = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(withF.P.ToDict())) as Dictionary<string, object>);
             Check(rtf.SinkFlaps.Count == 6 && rtf.FlapStall == 70 && rtf.FlapSub, "flap data saved in the profile");
@@ -2304,6 +2304,7 @@ class Program
         }
         ProfileJsonParsingTests.Run();
         LearnAbortStallTests.Run();
+        ThrottleLearnTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

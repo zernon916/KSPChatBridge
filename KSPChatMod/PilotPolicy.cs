@@ -9,13 +9,15 @@ namespace KSPChatBridge
     /// <summary>Live test round 2 (Oct 9): pure policies for roll, throttle, engine watch, plan-from-chat and command preemption.</summary>
     /// <summary>Smooth airborne speed hold (Luke 6:42 PM: A300 cycled 98 <-> 117 m/s). The old logic stepped 5% every 3 s, chased
     /// vertical speed instead of airspeed, and slammed to 80-90% at 1.3 Vs. Now: target slewed at 1 m/s/s, 1.5 m/s deadband,
-    /// PI + acceleration damping, throttle rate limited to 15%/s.</summary>
+    /// PI + acceleration damping, throttle rate limited to 15%/s.
+    /// Oct 11: damping uses the FILTERED acceleration, normal rate 4%/s, step-and-wait near the target (<= 0.5% steps, then hold until
+    /// the speed responds or the learned throttle lag passes), no integrator wind-up while rate-limited / waiting / spooling.</summary>
     /// <summary>Luke 10:41 AM: the ONE throttle output path. Every mode/step hands its throttle TARGET here; the output moves at a
-    /// finite rate: the speed PI rate (0.15/s / mass factor) normally, fast (1/s) for steps that explicitly test idle/full or ground
+    /// finite rate: the speed PI rate (0.04/s / mass factor) normally, fast (1/s) for steps that explicitly test idle/full or ground
     /// rollout, 2/s for a true emergency (below 1.15 Vs, low-energy floor, flameout). Anything not "pi" is logged once with its reason.</summary>
     internal sealed class ThrottleGate
     {
-        internal const double NormalRate = .15, FastRate = 1.0, EmergencyRate = 2.0;
+        internal const double NormalRate = .04, FastRate = 1.0, EmergencyRate = 2.0;
         internal double Out = double.NaN, K = 1, MaxStep; internal string Reason = "";
         internal Action<string> Log;
         internal static double RateOf(string kind, double k) { return kind == "emergency" ? EmergencyRate : kind == "test" || kind == "ground" ? FastRate : NormalRate / Math.Max(1, k); }
@@ -34,9 +36,18 @@ namespace KSPChatBridge
 
     internal sealed class SpeedHold
     {
-        internal const double Deadband = 1.5, Kp0 = .035, Ki0 = .004, Kd0 = .08, Rate0 = .15, Slew0 = 1.0;
+        internal const double Deadband = 1.5, Kp0 = .035, Ki0 = .004, Kd0 = .08, Rate0 = .04, Slew0 = 1.0;
+        /// <summary>Step-and-wait: within NearBand m/s of the target the throttle moves in steps of at most FineStep, then holds.</summary>
+        internal const double FineStep = .005, NearBand = 6, MinStep = .0015, SpoolBand = .02;
         double Kp = Kp0, Ki = Ki0, Kd = Kd0, Rate = Rate0, TargetSlew = Slew0, Lead;
         double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN, accF;
+        double clk, stepGoal = double.NaN, waitT = double.NaN, waitV, lastStep, vF = double.NaN;
+        /// <summary>Last frame: output was rate-limited / holding for the speed to respond / still spooling to the commanded throttle
+        /// (the integrator does not accumulate in any of these).</summary>
+        internal bool RateLimited, Waiting, SpoolPending;
+        internal double Integral { get { return i; } }
+        internal double AccFiltered { get { return accF; } }
+        internal int FineSteps;
         /// <summary>Weight modifier (Luke 6:52 PM): >= 1. sqrt(mass / 10 t), x sqrt(0.5 / TWR) for weak engines, x (1 + spool/4).</summary>
         /// <summary>Per-craft throttle->speed lag measurement: after a throttle step of >= 15% (held), the time until the filtered
         /// acceleration has moved by 30% of the expected change (Sens x step). Returns the lag once, else NaN.</summary>
@@ -76,19 +87,36 @@ namespace KSPChatBridge
             Sens = double.IsNaN(twr) || twr <= 0 ? 3 : FlightPolicy.Clamp(9.81 * twr * .8, .5, 15); Lag = EstimateLag(K, spoolS);
         }
         internal double Target { get { return cmd; } }
-        internal void Reset() { i = cmd = prevV = double.NaN; }
+        internal void Reset() { i = cmd = prevV = vF = double.NaN; stepGoal = waitT = double.NaN; RateLimited = Waiting = SpoolPending = false; }
         internal double Step(double target, double v, double dt, double thrNow)
         {
             if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; model = outv; }
             if (dt <= 0) return outv;
             cmd += FlightPolicy.Clamp(target - cmd, -TargetSlew * dt, TargetSlew * dt);
-            double acc = (v - prevV) / dt; prevV = v; accF += (acc - accF) * Math.Min(1, dt / .5);
+            double acc = (v - prevV) / dt; prevV = v; accF += (acc - accF) * Math.Min(1, dt / .5); vF = double.IsNaN(vF) ? v : vF + (v - vF) * Math.Min(1, dt / .5);
             model += (outv - model) * Math.Min(1, dt / Lag);   // throttle already commanded but not felt yet (lag model)
             double pending = Sens * (outv - model) * Lag;        // Smith-style: speed change still on its way from earlier throttle moves
             double err = cmd - (v + accF * Lead + pending), e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;   // anticipate: act on the speed we'll have
-            double raw = i + Kp * e - Kd * acc;
-            if (!((raw >= 1 && e > 0) || (raw <= .05 && e < 0))) i = FlightPolicy.Clamp(i + Ki * e * dt, .05, 1);   // anti-windup
-            outv += FlightPolicy.Clamp(FlightPolicy.Clamp(raw, .05, 1) - outv, -Rate * dt, Rate * dt);
+            double raw = i + Kp * e - Kd * accF;   // damping on the FILTERED acceleration (raw dv/dt is frame noise)
+            double want = FlightPolicy.Clamp(raw, .05, 1), lim = Rate * dt, goal;
+            clk += dt; Waiting = false;
+            if (Math.Abs(err) < NearBand)
+            {   // step-and-wait: one small step, then hold until the speed answers or the learned lag has passed
+                if (!double.IsNaN(waitT))
+                {
+                    bool responded = Math.Sign(lastStep) * (vF - waitV) >= .3;   // filtered speed moved the way the step pushes it
+                    if (responded || clk - waitT >= Lag) waitT = double.NaN; else Waiting = true;
+                }
+                if (double.IsNaN(stepGoal) && !Waiting && e != 0 && Math.Abs(want - outv) > MinStep) {   // inside the deadband: hold
+                    lastStep = FlightPolicy.Clamp(want - outv, -FineStep, FineStep); stepGoal = outv + lastStep; FineSteps++; }
+                goal = double.IsNaN(stepGoal) ? outv : stepGoal;
+            }
+            else { stepGoal = waitT = double.NaN; goal = want; }
+            double d = goal - outv; RateLimited = Math.Abs(d) > lim + 1e-12; outv += FlightPolicy.Clamp(d, -lim, lim);
+            if (!double.IsNaN(stepGoal) && Math.Abs(stepGoal - outv) < 1e-9) { stepGoal = double.NaN; waitT = clk; waitV = vF; }
+            SpoolPending = Math.Abs(outv - model) > SpoolBand;
+            bool sat = (raw >= 1 && e > 0) || (raw <= .05 && e < 0);
+            if (!sat && !RateLimited && !Waiting && !SpoolPending) i = FlightPolicy.Clamp(i + Ki * e * dt, .05, 1);   // anti-windup
             return outv;
         }
         /// <summary>Airbrakes only when well fast: out above +15 m/s, in below +5.</summary>
@@ -101,6 +129,30 @@ namespace KSPChatBridge
         internal static double MinSafeSpeed(double stall) { return 1.3 * stall; }
         /// <summary>Slow, or sinking hard close to the surface: hard minimum power, airbrakes in, climb.</summary>
         /// <summary>With hysteresis: enters below 1.2 Vs (the 1.3 Vs speed floor is the target, not the trigger), leaves above 1.3 Vs.</summary>
+        /// <summary>Why the low-energy override is active (for the activation log): sink near the ground and/or slow.</summary>
+        internal static string LowEnergyReason(double speed, double stall, double vs, double agl)
+        {
+            var r = new List<string>();
+            if (vs < -8 && agl < 300) r.Add("sinking " + (-vs).ToString("0", CultureInfo.InvariantCulture) + " m/s at " + agl.ToString("0", CultureInfo.InvariantCulture) + " m AGL (> 8 m/s below 300 m)");
+            else if (vs < -3 && agl < 120) r.Add("sinking " + (-vs).ToString("0", CultureInfo.InvariantCulture) + " m/s at " + agl.ToString("0", CultureInfo.InvariantCulture) + " m AGL (> 3 m/s below 120 m)");
+            if (speed < MinSafeSpeed(stall)) r.Add("speed " + speed.ToString("0", CultureInfo.InvariantCulture) + " m/s below " + (speed < 1.2 * stall ? "1.2" : "1.3") + "x stall (" + stall.ToString("0", CultureInfo.InvariantCulture) + ")");
+            return r.Count == 0 ? "low energy" : string.Join(", ", r.ToArray());
+        }
+        /// <summary>Flight-path angle (deg): atan2(vertical speed, horizontal surface speed). Nose pitch is attitude; this is where the plane goes.</summary>
+        internal static double FlightPathAngle(double vs, double horizontal)
+        {
+            if (double.IsNaN(vs) || double.IsNaN(horizontal)) return double.NaN;
+            if (Math.Abs(vs) < 1e-9 && Math.Abs(horizontal) < 1e-9) return 0;
+            return Math.Atan2(vs, Math.Max(0, horizontal)) * 180 / Math.PI;
+        }
+        /// <summary>Learn climb-back: about 30 deg nose up at full power, lowered as the speed falls toward 1.3x stall (level at/below it).</summary>
+        internal const double ClimbBackMax = 30;
+        internal static double ClimbBackPitch(double speed, double stall)
+        {
+            double s = double.IsNaN(stall) || double.IsInfinity(stall) || stall <= 0 ? 60 : stall, lo = 1.3 * s, hi = 1.6 * s;
+            if (speed <= lo) return 0;
+            return FlightPolicy.Clamp(3 + (ClimbBackMax - 3) * (speed - lo) / (hi - lo), 3, ClimbBackMax);
+        }
         internal static bool LowEnergy(bool was, double speed, double stall, double vs, double agl) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? MinSafeSpeed(stall) : 1.2 * stall); }
         internal static bool LowEnergy(double speed, double stall, double vs, double agl) { return speed < MinSafeSpeed(stall) || (vs < -8 && agl < 300) || (vs < -3 && agl < 120); }
         // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----
@@ -640,5 +692,64 @@ namespace KSPChatBridge
         }
 
         internal const string ToolRules = "\nRULES: To change anything in the game you MUST call a tool (<tool_call>). Never say you did something unless a tool result says so; only state numbers (times, distances, speeds) that appear in a tool result or the status - never compute or invent them; if a tool fails, say what failed. If no listed tool fits, call find_tool. Answer in one short sentence.";
+    }
+
+    /// <summary>Oct 11: turn / attitude rate measurement. Heading rate = wrapTo180(dHeading)/dt (359 -> 1 is +2 deg), course rate from the
+    /// surface velocity vector, roll rate and pitch rate from the attitude, each lightly smoothed (first-order, Tau s).</summary>
+    internal sealed class RateMeter
+    {
+        internal const double Tau = .5, MaxGap = 2;
+        double pt = double.NaN, ph = double.NaN, pc = double.NaN, pp = double.NaN, pr = double.NaN;
+        internal double HeadingRate, CourseRate, PitchRate, RollRate;
+        /// <summary>Signed angular rate through the +-180 wrap (deg/s).</summary>
+        internal static double WrapRate(double prev, double now, double dt) { return dt <= 0 || double.IsNaN(prev) || double.IsNaN(now) ? double.NaN : FlightPolicy.Wrap(now - prev) / dt; }
+        static double Smooth(double f, double raw, double a) { return double.IsNaN(raw) ? f : f + (raw - f) * a; }
+        internal void Reset() { pt = double.NaN; HeadingRate = CourseRate = PitchRate = RollRate = 0; }
+        /// <summary>course NaN (hovering / stopped) leaves the course rate unchanged.</summary>
+        internal void Update(double t, double heading, double course, double pitch, double roll)
+        {
+            if (double.IsNaN(pt) || t <= pt || t - pt > MaxGap)
+            {
+                if (!double.IsNaN(pt) && t - pt > MaxGap) HeadingRate = CourseRate = PitchRate = RollRate = 0;
+                if (double.IsNaN(pt) || t > pt) { pt = t; ph = heading; pc = course; pp = pitch; pr = roll; }
+                return;
+            }
+            double dt = t - pt, a = Math.Min(1, dt / Tau);
+            HeadingRate = Smooth(HeadingRate, WrapRate(ph, heading, dt), a);
+            CourseRate = Smooth(CourseRate, WrapRate(pc, course, dt), a);
+            PitchRate = Smooth(PitchRate, double.IsNaN(pp) || double.IsNaN(pitch) ? double.NaN : (pitch - pp) / dt, a);
+            RollRate = Smooth(RollRate, WrapRate(pr, roll, dt), a);
+            pt = t; ph = heading; pc = course; pp = pitch; pr = roll;
+        }
+    }
+
+    /// <summary>Oct 11: ABOUT live section. Fuel burn rate (units/s, smoothed), time to empty at that burn, horizontal / vertical
+    /// acceleration (smoothed). Pure; fed a few times a second.</summary>
+    internal sealed class LiveStats
+    {
+        internal const double Tau = 2;
+        double pt = double.NaN, pFuel, pH, pV;
+        internal double Burn, HAccel, VAccel;
+        internal double FuelLeft = double.NaN;
+        /// <summary>Seconds until the fuel is gone at the current burn; NaN when not burning.</summary>
+        internal double TimeToEmpty { get { return Burn > 1e-6 && !double.IsNaN(FuelLeft) ? FuelLeft / Burn : double.NaN; } }
+        internal void Reset() { pt = double.NaN; Burn = HAccel = VAccel = 0; }
+        internal void Update(double t, double fuel, double hSpeed, double vSpeed)
+        {
+            FuelLeft = fuel;
+            if (double.IsNaN(pt) || t <= pt || t - pt > 5) { pt = t; pFuel = fuel; pH = hSpeed; pV = vSpeed; return; }
+            double dt = t - pt, a = Math.Min(1, dt / Tau);
+            double burn = Math.Max(0, (pFuel - fuel) / dt);
+            if (fuel > pFuel + 1e-6) burn = Burn;   // refuel / transfer in: keep the last burn
+            Burn += (burn - Burn) * a; HAccel += ((hSpeed - pH) / dt - HAccel) * a; VAccel += ((vSpeed - pV) / dt - VAccel) * a;
+            pt = t; pFuel = fuel; pH = hSpeed; pV = vSpeed;
+        }
+        /// <summary>"1h 02m", "12m 05s", "45s"; "-" for NaN.</summary>
+        internal static string Duration(double s)
+        {
+            if (double.IsNaN(s) || double.IsInfinity(s) || s < 0) return "-";
+            long n = (long)Math.Round(s); if (n >= 3600) return (n / 3600) + "h " + ((n % 3600) / 60).ToString("00") + "m";
+            if (n >= 60) return (n / 60) + "m " + (n % 60).ToString("00") + "s"; return n + "s";
+        }
     }
 }

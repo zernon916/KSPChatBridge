@@ -127,6 +127,11 @@ namespace KSPChatBridge
         internal readonly PerfCurve Decel = new PerfCurve("decel", "spd", "m/s2", "accel");
         internal readonly PerfCurve FuelBurn = new PerfCurve("burn", "spd,alt,thr", "%/s", "none");
         internal readonly PerfCurve ThrottleLag = new PerfCurve("thr_lag", "dthr", "s", "none");
+        /// <summary>Oct 11: course rate (velocity-vector track change) next to the heading rate (TurnRate), and the separately measured
+        /// roll / pitch rates vs speed.</summary>
+        internal readonly PerfCurve CourseRate = new PerfCurve("course_rate", "bank,spd", "deg/s", "rate");
+        internal readonly PerfCurve RollRate = new PerfCurve("roll_rate", "spd", "deg/s", "rate");
+        internal readonly PerfCurve PitchRate = new PerfCurve("pitch_rate", "spd", "deg/s", "rate");
 
         internal IEnumerable<PerfCurve> All
         {
@@ -134,6 +139,7 @@ namespace KSPChatBridge
             {
                 yield return Stall; yield return Sink; yield return TurnRadius; yield return TurnRate; yield return TurnG;
                 yield return Climb; yield return Accel; yield return Decel; yield return FuelBurn; yield return ThrottleLag;
+                yield return CourseRate; yield return RollRate; yield return PitchRate;
             }
         }
 
@@ -156,6 +162,7 @@ namespace KSPChatBridge
             if (d == null) return;
             Load(Stall, d); Load(Sink, d); Load(TurnRadius, d); Load(TurnRate, d); Load(TurnG, d);
             Load(Climb, d); Load(Accel, d); Load(Decel, d); Load(FuelBurn, d); Load(ThrottleLag, d);
+            Load(CourseRate, d); Load(RollRate, d); Load(PitchRate, d);
         }
         static void Load(PerfCurve c, Dictionary<string, object> d)
         {

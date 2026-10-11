@@ -123,6 +123,10 @@ namespace KSPChatBridge
     internal struct LearnIn
     {
         internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
+        /// <summary>TurnRate = heading rate (wrapTo180(dHdg)/dt, smoothed); CourseRate = velocity-vector track rate; Heading deg.</summary>
+        internal double CourseRate, Heading;
+        /// <summary>Flight-path angle (deg) from Vs and the horizontal surface speed; NaN without a horizontal speed (then nose pitch is used).</summary>
+        internal double Fpa { get { return GroundSpeed > 1 ? PilotPolicy.FlightPathAngle(Vs, GroundSpeed) : double.NaN; } }
         internal bool HasFlaps;
         internal string Res;   // resources that went down since the last frame (comma list)
         internal bool Landed, PartLost;
@@ -135,7 +139,7 @@ namespace KSPChatBridge
         internal string Phase = "start", Status = "", Reason = "";
         internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN, SpeedTarget = double.NaN;
         /// <summary>Steps that explicitly test idle/full power (fast but finite throttle ramp); every other step goes through the speed PI.</summary>
-        internal bool TestThrottle { get { return Phase == "decel" || Phase == "accel" || Phase == "vmax" || Phase == "dive" || Phase.StartsWith("stall") || Phase.StartsWith("sink") || Phase == "climb" || Phase == "rates" || Phase == "recover" || Phase == "cruise"; } }
+        internal bool TestThrottle { get { return Phase == "decel" || Phase == "accel" || Phase == "vmax" || Phase == "dive" || Phase.StartsWith("stall") || Phase.StartsWith("sink") || Phase == "climb" || Phase == "rates" || Phase == "recover" || Phase == "cruise" || Phase == "climbback"; } }
         /// <summary>Steps found with throttle/pitch not tracking: data discarded, step left unchecked for a redo.</summary>
         internal readonly List<int> Redo = new List<int>();
         internal int Flaps;   // flap setting the test wants (0..3)
@@ -144,7 +148,7 @@ namespace KSPChatBridge
         /// <summary>After the clean sink map: repeat with flaps full (toggle-able 9b), then the stall step.</summary>
         void SinkDone(LearnIn i, string msg)
         {
-            if (!flapPass && i.HasFlaps && P.FlapSub) { flapPass = true; P.SinkFlaps.Clear(); Go("sinkprep", i, msg + " Repeating the sink map with flaps FULL."); return; }
+            if (!flapPass && i.HasFlaps && P.FlapSub && !ManualMode) { flapPass = true; P.SinkFlaps.Clear(); Go("sinkprep", i, msg + " Repeating the sink map with flaps FULL."); return; }
             flapPass = false; Go("stallprep", i, msg);
         }
         internal bool LandingDone; double rollM, rollPrevT = double.NaN, rollStartT = double.NaN;
@@ -156,6 +160,7 @@ namespace KSPChatBridge
         internal string Skip()
         {
             if (Done) return "Can't skip the landing.";
+            if (ManualMode && activeTest == 0 && setupDone) return "No test running: check a test box to run one.";
             int k = StepNo;
             if (k == 1 && (Phase != "pullback")) return "Can't skip the takeoff roll.";
             if (k >= 12) return "Can't skip the landing.";
@@ -169,7 +174,7 @@ namespace KSPChatBridge
             }
             if (k == 7) { idx = 0; Go("recover", last, "Turns skipped. Leveling off."); idx = 100; Phase = "recover"; }   // level off, then dives
             else if (k == 8) Go("sinkprep", last, "Dives skipped.");
-            else if (next == "finish") Finish(false, "");
+            else if (next == "finish") { if (ManualMode) Go("wait", last, "Step " + k + " skipped."); else Finish(false, ""); }
             else Go(next, last, "Step " + k + " skipped.");
             return "Skipped step " + k + " (" + StepNames[k - 1] + "); partial data kept.";
         }
@@ -181,6 +186,92 @@ namespace KSPChatBridge
             prior = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>);
             P = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>);
             Only = new HashSet<int>(only); if (Only.Contains(11)) Only.Add(10); if (Only.Contains(10)) Only.Add(11);
+        }
+        // ---- Manual test picker (Oct 11): LEARN takes off, climbs and WAITS (holding altitude + heading, pilot may fly); checking a box
+        // runs that one test, then the flight returns to waiting. Tests in any order; 12 = land and end. ----
+        internal readonly bool ManualMode;
+        internal readonly List<int> Queue = new List<int>();
+        internal readonly List<int> Ran = new List<int>();
+        int activeTest; bool setupDone; double waitSpeed = double.NaN;
+        internal int ActiveTest { get { return activeTest; } }
+        internal int TestsDone { get; private set; }
+        internal double HoldAlt = double.NaN, HoldHdg = double.NaN;
+        internal bool Waiting { get { return ManualMode && !Done && (Phase == "wait" || Phase == "climbback"); } }
+        internal LearnFlight(PlaneProfile prev, IEnumerable<int> queue, bool manual)
+        {
+            ManualMode = manual;
+            if (prev != null) { prior = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P.Rerun.Clear(); }
+            if (queue != null) foreach (int k in queue) if (Pickable(k) && !Queue.Contains(k)) Queue.Add(k);
+        }
+        static bool Pickable(int k) { return (k >= 3 && k <= 11) || k == 91 || k == 101; }
+        static int[] ActiveSteps(int code) { return code == 10 || code == 11 || code == 101 ? new[] { 10, 11 } : code == 91 ? new[] { 9 } : new[] { code }; }
+        internal static string CodeName(int code) { return code == 91 ? "9b Flaps-full sink map" : code == 101 ? "10b Flaps-full stall" : code >= 1 && code <= StepCount ? code + " " + StepNames[code - 1] : code.ToString(); }
+        /// <summary>Box checked (or unchecked) on the LEARN page while the manual test flight runs.</summary>
+        internal string Request(int code)
+        {
+            if (!ManualMode || Done) return "No test flight running: press LEARN.";
+            if (code == 1 || code == 2) return "Takeoff and climb run automatically.";
+            if (code == 12) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; }
+            if (!Pickable(code)) return "Unknown test.";
+            if (activeTest == code) return "Test " + CodeName(code) + " is running (SKIP ends it).";
+            if (Queue.Remove(code)) return "Test " + CodeName(code) + " unchecked.";
+            Queue.Add(code);
+            return Phase == "wait" ? "Starting test " + CodeName(code) + "." : !setupDone ? "Test " + CodeName(code) + " queued: runs once the climb is done." : "Test " + CodeName(code) + " queued: runs when the current test is done.";
+        }
+        void StartTest(int code, LearnIn i)
+        {
+            activeTest = code; flapPass = code == 91; stallFlapPass = code == 101; string n = "Test " + CodeName(code) + ": ";
+            switch (code)
+            {
+                case 3: Go("decel", i, n + "throttle idle, recording deceleration for 20 s."); break;
+                case 4: cruiseFuel0 = i.FuelFrac; Go("cruise", i, n + "level cruise 60 s at the economy setting."); break;
+                case 5: vmaxV = i.Speed; vmaxT = i.T; Go("vmax", i, n + "full power, level."); break;
+                case 6: ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, n + "slowing to " + ratesSpeed.ToString("0") + " m/s first."); break;
+                case 7: idx = 0; turnPass = 0; passBest = null; passBad = false; passSpeed = TurnSpeed(i.Speed, i.StallGuess); Go("turnprep", i, n + "settling level at " + passSpeed.ToString("0") + " m/s before banking."); break;
+                case 8: idx = 100; Go("dive", i, n + "idle, flight path " + DivePitch[0] + " deg down."); break;
+                case 9: case 91: if (code == 91) P.SinkFlaps.Clear(); else P.Sink.Clear(); sinkStart = double.NaN; limThr = 0; Go("sinkprep", i, n + "back to 5 km, slow to 1.25x stall."); break;
+                default: Go("stallprep", i, n + "level at 4 km first."); break;
+            }
+        }
+        /// <summary>Manual mode: setup (takeoff/climb) flows on; inside a test its own phases flow on; anything else ends the test -> wait
+        /// (climbing back to 5 km first when low).</summary>
+        string ManualRoute(string ph, LearnIn i, ref string status)
+        {
+            if (ph == "climbback" || ph == "wait") { if (ph == "wait" && i.Alt < ClimbAlt - 500) ph = "climbback"; }
+            else
+            {
+                int k = StepOf(ph, idx);
+                if (!setupDone && activeTest == 0 && k <= 2) return ph;
+                if (activeTest != 0 && Array.IndexOf(ActiveSteps(activeTest), k) >= 0) return ph;
+                ph = i.Alt < ClimbAlt - 500 ? "climbback" : "wait";
+            }
+            string pre = status ?? "";
+            if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest) + " done. " + (status ?? ""); activeTest = 0; }
+            setupDone = true; flapPass = stallFlapPass = false;
+            status = (pre.Length > 0 ? pre.Trim() + " " : "") + (ph == "climbback" ? "Climbing back to 5 km: full power, up to 30 deg." : "Waiting: holding altitude and heading. Check a test box to run it; you can fly manually any time.");
+            return ph;
+        }
+        double WaitSpeed(LearnIn i)
+        {
+            double st = double.IsNaN(i.StallGuess) || i.StallGuess <= 0 ? 60 : i.StallGuess, c = P.Perf.CruiseSpeed;
+            return Math.Max(1.5 * st, !double.IsNaN(c) && c > 0 ? c : 1.7 * st);
+        }
+        /// <summary>LEARN page while the manual flight runs: every box starts unchecked; [>] running, [x] done / queued.</summary>
+        internal List<string> ManualChecklist(int cursor)
+        {
+            var o = new List<string>();
+            for (int j = 0; j < Codes.Length; j++)
+            {
+                int k = Codes[j]; string cur = j == cursor ? ">" : " ", ind = k == 91 || k == 101 ? "  " : "";
+                if (k == 1 || k == 2) { o.Add(cur + (setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k) + " (auto)"); continue; }
+                if (k == 12) { o.Add(cur + "[ ] 12 Land KSC 27 + rollout (check to end)"); continue; }
+                string mark = activeTest == k ? "[>] " : Queue.Contains(k) || Ran.Contains(k) ? "[x] " : "[ ] ";
+                string extra = activeTest == k ? "" : Queue.Contains(k) ? " (queued)" : Ran.Contains(k) ? " (done)" : "";
+                o.Add(cur + ind + mark + CodeName(k) + extra);
+                if (activeTest == k) { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
+            }
+            o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest) + ".");
+            return o;
         }
         static bool Setup(int k) { return k <= 2 || k >= 12; }
         internal bool Selected(int k) { return Only == null || Only.Contains(k); }
@@ -228,7 +319,7 @@ namespace KSPChatBridge
             return Math.Min(RatesElevMax, Math.Max(0, double.IsNaN(prev) ? 0 : prev) + RatesRamp * Math.Max(0, dt));
         }
         /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
-        bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
+        bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = crSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
         internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
         double tickPrevT = double.NaN, badPitch, badThr; bool passBad; internal const double BadPitchDeg = 8, BadPitchS = 8, BadThrS = 5;
         int turnPass; double passSpeed = double.NaN; double[] passBest; internal const double TurnAltLoss = 150;
@@ -247,12 +338,23 @@ namespace KSPChatBridge
         double SpeedPitch(LearnIn i, double factor = 1.2)
         {
             double vT = factor * i.StallGuess, e = i.Speed - vT, dt = double.IsNaN(spT) ? 0 : FlightPolicy.Clamp(i.T - spT, 0, 1); spT = i.T;
-            if (double.IsNaN(spCmd)) spCmd = double.IsNaN(i.Pitch) ? 5 : i.Pitch;
+            double gam = i.Fpa; bool path = !double.IsNaN(gam);   // sink tests fly the flight-path angle; nose = path + angle of attack
+            if (double.IsNaN(spCmd)) spCmd = path ? gam : double.IsNaN(i.Pitch) ? 5 : i.Pitch;
             double rate = FlightPolicy.Clamp(e * .4, -3, 3); if (rate > 0 && i.G > 1.5) rate = 0;
             spCmd = FlightPolicy.Clamp(spCmd + rate * dt, -10, 15);
             double cmd = FlightPolicy.Clamp(spCmd + e * .5, -10, 15);
             if (i.Speed < 1.18 * i.StallGuess) cmd = Math.Min(cmd, -5);
-            return cmd;
+            return path ? FpaPitch(i, cmd, dt) : cmd;
+        }
+        /// <summary>Nose pitch that flies a flight-path angle: target path + (smoothed) angle of attack (pitch - path). No path angle
+        /// (no horizontal speed) -> the target is used as nose pitch.</summary>
+        double aoaF = double.NaN;
+        double FpaPitch(LearnIn i, double fpaTarget, double dt)
+        {
+            double g = i.Fpa; if (double.IsNaN(g) || double.IsNaN(i.Pitch)) return fpaTarget;
+            double aoa = FlightPolicy.Clamp(i.Pitch - g, -15, 25);
+            aoaF = double.IsNaN(aoaF) ? aoa : aoaF + (aoa - aoaF) * Math.Min(1, Math.Max(0, dt) / 1.0);
+            return FlightPolicy.Clamp(fpaTarget + aoaF, -45, 30);
         }
         double CruiseThr() { if (econ.Count == 0) return .6; double best = -1, th = .6; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; th = e[1]; } } return th; }
         static string Cat(string ph)
@@ -267,14 +369,16 @@ namespace KSPChatBridge
             if (i.Landed && !double.IsNaN(rollStartT) && i.Speed <= 1) { LandingDone = true; if (Selected(12) || prior == null || double.IsNaN(prior.Perf.Rollout)) P.Perf.Rollout = rollM; else rollM = P.Perf.Rollout; P.Note("rollout", rollM, i.Mass); return true; }
             rollPrevT = i.T; return false;
         }
-        double t0, v0, a0, minV, maxPitch, minAlt, fuel0 = double.NaN, lagAt = double.NaN, gSum, trSum, stMax; int n, idx;
+        double t0, v0, a0, minV, maxPitch, minAlt, fuel0 = double.NaN, lagAt = double.NaN, gSum, trSum, crSum, stMax; int n, idx;
         readonly List<double[]> econ = new List<double[]>();
         internal readonly List<string> Visited = new List<string>();
 
         void Go(string ph, LearnIn i, string status)
         {
-            ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; }
-            Phase = ph; t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN; turnThr = double.NaN;
+            if (ManualMode) ph = ManualRoute(ph, i, ref status);
+            else { ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; } }
+            Phase = ph; aoaF = double.NaN;
+            if (ph == "wait") { HoldAlt = Math.Round(i.Alt / 100) * 100; HoldHdg = i.Heading; waitSpeed = WaitSpeed(i); } t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = crSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN; turnThr = double.NaN;
             if (!Visited.Contains(ph)) Visited.Add(ph); if (status != null) Status = status;
         }
         static double Level(LearnIn i, double target = double.NaN)
@@ -295,7 +399,7 @@ namespace KSPChatBridge
         }
         void Finish(bool aborted, string why)
         {
-            if (prior != null)
+            if (prior != null && Only != null)
             {   // keep the old setup data unless that step was selected
                 if (!Only.Contains(1)) { P.Liftoff = prior.Liftoff; P.Perf.GroundRoll = prior.Perf.GroundRoll; }
                 if (!Only.Contains(2)) { P.ClimbAccel = prior.ClimbAccel; P.ClimbVs = prior.ClimbVs; P.Perf.ClimbTime = prior.Perf.ClimbTime; P.Perf.ClimbFuel = prior.Perf.ClimbFuel; }
@@ -306,6 +410,7 @@ namespace KSPChatBridge
             Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN;
         }
 
+        void EndTest(LearnIn i) { if (ManualMode) Go("wait", i, null); else Finish(false, ""); }
         internal static readonly string[] StepNames = { "Takeoff + ground roll", "Climb to 5 km", "Idle decel / full-power accel", "Econ cruise 60 s", "Max level speed", "Roll / pitch rates", "Turns 5-30 deg", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27 + rollout" };
         internal static int StepCount { get { return StepNames.Length; } }
         LearnIn last; int stepAtDone = -1;
@@ -321,6 +426,7 @@ namespace KSPChatBridge
                     case "recover": return idx < 100 ? 7 : 8; case "dive": return 8;
                     case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 9;
                     case "stallprep": case "stall": return 10; case "stallrec": return 11;
+                    case "wait": case "climbback": return 0;
                     default: return 12;
                 }
             }
@@ -337,7 +443,7 @@ namespace KSPChatBridge
             }
             return raw;
         }
-        /// <summary>Toggle view of a saved profile: [x] keep, [ ] re-run next LEARN; '>' marks the cursor.</summary>
+        /// <summary>LEARN page before a flight (Oct 11): every box starts unchecked; [x] = run that test after the climb. '>' marks the cursor.</summary>
         internal static List<string> ProfileChecklist(PlaneProfile p, int cursor)
         {
             var o = new List<string>();
@@ -345,20 +451,18 @@ namespace KSPChatBridge
             for (int j = 0; j < codes.Length; j++)
             {
                 int k = codes[j]; string cur = j == cursor ? ">" : " ";
-                if (k == 91) o.Add(cur + (p.FlapSub ? "  [x] " : "  [ ] ") + "9b Flaps-full sink map");
-                else if (k == 101) o.Add(cur + (p.FlapStallSub ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
-                else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[ ] " : "[x] ") + k + " " + StepNames[k - 1]);
+                if (k == 91) o.Add(cur + (p.Rerun.Contains(91) ? "  [x] " : "  [ ] ") + "9b Flaps-full sink map");
+                else if (k == 101) o.Add(cur + (p.Rerun.Contains(101) ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
+                else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[x] " : "[ ] ") + k + " " + StepNames[k - 1]);
             }
-            o.Add(p.Rerun.Count == 0 ? "All kept. TOGGLE unchecks a step." : "LEARN re-runs " + p.Rerun.Count + " step(s) + takeoff/climb/landing.");
+            o.Add(p.Rerun.Count == 0 ? "All unchecked. LEARN takes off, climbs and waits; TOGGLE a box to run that test." : "LEARN runs " + p.Rerun.Count + " checked test(s) after the climb, then waits.");
             return o;
         }
         /// <summary>Profile checklist rows: steps 1..12 with the flap sub-steps 9b (91) and 10b (101).</summary>
         internal static readonly int[] Codes = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 91, 10, 101, 11, 12 };
         internal static bool Toggle(PlaneProfile p, int step)
         {
-            if (p != null && step == 91) { p.FlapSub = !p.FlapSub; return true; }
-            if (p != null && step == 101) { p.FlapStallSub = !p.FlapStallSub; return true; }
-            if (p == null || step < 1 || step > StepCount || Setup(step)) return false;
+            if (p == null || ((step < 1 || step > StepCount || Setup(step)) && step != 91 && step != 101)) return false;
             if (!p.Rerun.Remove(step)) p.Rerun.Add(step); p.Rerun.Sort(); return true;
         }
         List<string> ChecklistRaw()
@@ -486,7 +590,8 @@ namespace KSPChatBridge
                         if (dt < 2) Aileron = 1; else if (dt < 4) Aileron = -1; else if (dt < 7) { Bank = 0; Pitch = Level(i); }
                         else if (dt < 8.5) { Bank = 0; Elevator = RatesElevator(ratesElev, tick, i.G, i.GLimit, ref ratesCut); ratesElev = Elevator; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
                         else { Bank = 0; Pitch = Level(i); }
-                        if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass); idx = 0; turnPass = 0; passSpeed = TurnSpeed(i.Speed, i.StallGuess); passBad = false; Go("turnprep", i, "Max safe turn: settling level at " + passSpeed.ToString("0") + " m/s (cruise) with power before banking."); }
+                        if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass);
+                            if (!double.IsNaN(P.Perf.RollRate)) P.Curves.RollRate.Add(P.Perf.RollRate, i.Mass, i.Speed); if (!double.IsNaN(P.Perf.PitchRate)) P.Curves.PitchRate.Add(P.Perf.PitchRate, i.Mass, i.Speed); idx = 0; turnPass = 0; passSpeed = TurnSpeed(i.Speed, i.StallGuess); passBad = false; Go("turnprep", i, "Max safe turn: settling level at " + passSpeed.ToString("0") + " m/s (cruise) with power before banking."); }
                         return;
                     }
                 case "turn":
@@ -526,14 +631,15 @@ namespace KSPChatBridge
                         bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;   // checked during the roll-in too
                         if (!nearLimit && !Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
                         if (double.IsNaN(reachAt)) reachAt = i.T;
-                        thrSum += Throttle; gSum += i.G; trSum += Math.Abs(i.TurnRate); stMax = Math.Max(stMax, i.Stress); n++;
+                        thrSum += Throttle; gSum += i.G; trSum += Math.Abs(i.TurnRate); crSum += Math.Abs(i.CourseRate); stMax = Math.Max(stMax, i.Stress); n++;
                         bool slow = i.Speed < 1.3 * i.StallGuess, sinking = a0 - i.Alt > TurnAltLoss;
                         if (i.T - reachAt >= Seg || nearLimit || slow || sinking)
                         {
                             double rate = trSum / Math.Max(1, n), radius = rate > .01 ? i.Speed / (rate * Math.PI / 180) : double.NaN, rollIn = reachAt - t0;
-                            var row = new double[] { b, gSum / Math.Max(1, n), rate, a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n), vT, radius, rollIn };
+                            double crate = crSum / Math.Max(1, n);
+                            var row = new double[] { b, gSum / Math.Max(1, n), rate, a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n), vT, radius, rollIn, crate };
                             P.Turns.Add(row); P.Note("turn_throttle_" + b, row[6], i.Mass);
-                            P.Curves.TurnG.Add(row[1], i.Mass, b, vT); P.Curves.TurnRate.Add(rate, i.Mass, b, vT);
+                            P.Curves.TurnG.Add(row[1], i.Mass, b, vT); P.Curves.TurnRate.Add(rate, i.Mass, b, vT); P.Curves.CourseRate.Add(crate, i.Mass, b, vT);
                             if (!double.IsNaN(radius)) P.Curves.TurnRadius.Add(radius, i.Mass, b, vT);
                             bool fail = nearLimit || slow || sinking;
                             if (!fail) passBest = row;
@@ -570,20 +676,29 @@ namespace KSPChatBridge
                     return;
                 case "dive":
                     {
-                        int p = DivePitch[idx - 100]; Throttle = 0; Pitch = -p; Bank = 0;
-                        if (!Reached(i, Math.Abs(i.Pitch + p) < 2) && i.Alt >= 2000 && i.Speed <= 320) { v0 = i.Speed; return; }
+                        int p = DivePitch[idx - 100]; Throttle = 0; Bank = 0; double gam = i.Fpa;   // dives target the FLIGHT-PATH angle (not nose pitch)
+                        Pitch = FpaPitch(i, -p, tick);
+                        if (!Reached(i, Math.Abs((double.IsNaN(gam) ? i.Pitch : gam) + p) < 2) && i.Alt >= 2000 && i.Speed <= 320) { v0 = i.Speed; return; }
                         if (n == 0) v0 = i.Speed; gSum += i.Vs; n++;
                         if (i.T - reachAt >= DiveSeg || i.Alt < 2000 || i.Speed > 320) { P.Dives.Add(new double[] { p, -gSum / Math.Max(1, n), i.Speed - v0, i.Mass }); idx++; Go("recover", i, null); }
                         return;
                     }
                 case "sinkprep":
-                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = BestClimbPitch(i); SampleClimb(i); }
+                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
                     else { Throttle = .5; Pitch = SpeedPitch(i, 1.25); Throttle = Math.Max(Throttle, SinkLimit(i)); }
                     Bank = 0; if (double.IsNaN(sinkStart)) sinkStart = i.T;
                     if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
+                case "climbback":
+                    Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; SampleClimb(i);
+                    if (i.Alt >= ClimbAlt - 100 || dt > 600) Go("wait", i, "Back at 5 km. Waiting: check a test box to run it; you can fly manually any time.");
+                    return;
+                case "wait":
+                    SpeedTarget = double.IsNaN(waitSpeed) ? WaitSpeed(i) : waitSpeed;   // pitch/bank/throttle: the normal altitude + heading + speed hold
+                    if (Queue.Count > 0) { int code = Queue[0]; Queue.RemoveAt(0); StartTest(code, i); }
+                    return;
                 case "sinkclimb":
-                    Throttle = 1; Pitch = BestClimbPitch(i); Bank = 0; SampleClimb(i);
+                    Throttle = 1; Pitch = PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess); Bank = 0; SampleClimb(i);
                     if (i.Alt >= SinkAlt - 100) { string r = resume; double keepT = stepThr; Go(r, i, "Sink map resumed."); stepThr = keepT; stepAt = i.T; vs0 = vsF; lagDone = false; prevT = i.T; }
                     return;
                 case "sinkdown":
@@ -634,9 +749,9 @@ namespace KSPChatBridge
                     Throttle = 1; Bank = 0; minAlt = Math.Min(minAlt, i.Alt);
                     Pitch = i.Speed < 1.3 * P.Stall ? -10 : Level(i);
                     if ((i.Vs > 0 && i.Speed > 1.3 * P.Stall && dt > 3) || dt > 60) {
-                        if (stallFlapPass) { P.FlapStallAltLoss = a0 - minAlt; P.Note("flap_stall_alt_loss", P.FlapStallAltLoss, i.Mass); stallFlapPass = false; Finish(false, ""); }
+                        if (stallFlapPass) { P.FlapStallAltLoss = a0 - minAlt; P.Note("flap_stall_alt_loss", P.FlapStallAltLoss, i.Mass); stallFlapPass = false; EndTest(i); }
                         else { P.StallAltLoss = a0 - minAlt; P.Note("stall_alt_loss", P.StallAltLoss, i.Mass);
-                            if (i.HasFlaps && P.FlapStallSub && i.FuelFrac > .55 && i.Alt > 2500) { stallFlapPass = true; Go("stallprep", i, "Optional: stall again with flaps FULL."); } else Finish(false, ""); }
+                            if (!ManualMode && i.HasFlaps && P.FlapStallSub && i.FuelFrac > .55 && i.Alt > 2500) { stallFlapPass = true; Go("stallprep", i, "Optional: stall again with flaps FULL."); } else EndTest(i); }
                     }
                     return;
             }

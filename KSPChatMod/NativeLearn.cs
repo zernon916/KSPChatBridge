@@ -16,7 +16,9 @@ namespace KSPChatBridge
             if (vessel == null) return "No active vessel.";
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
-            learn = profile != null && profile.Rerun.Count > 0 ? new LearnFlight(profile, profile.Rerun) : new LearnFlight(); lastLearn = null; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
+            // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
+            var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear();
+            learn = new LearnFlight(profile, queue, true); lastLearn = null; learnRates.Reset(); learnTestsSaved = 0; learnPilotUntil = 0; learnPilotHad = false; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
             ChatLog.Write("learn", "test flight start: " + vessel.vesselName + " " + vessel.totalMass.ToString("0.0") + " t");
             if (vessel.LandedOrSplashed) { altitude = vessel.altitude + 300; heading = FlightGlobals.ship_heading; BeginHold(); return "Test flight: " + StartTakeoff(); }
             BeginHold(); return "Test flight started from the air.";
@@ -34,11 +36,15 @@ namespace KSPChatBridge
             double frac, total; FuelState(out frac, out total);
             double t = Planetarium.GetUniversalTime(), hdg = FlightGlobals.ship_heading;
             double rate = double.IsNaN(learnPrevFuel) || t <= learnPrevT ? 0 : Math.Max(0, (learnPrevFuel - total) / (t - learnPrevT));
-            double tr = double.IsNaN(learnPrevHdg) || t <= learnPrevT ? 0 : FlightPolicy.Wrap(hdg - learnPrevHdg) / (t - learnPrevT);
+            Vector3d sv = vessel.srf_velocity; double hs = vessel.horizontalSrfSpeed;
+            double course = hs > 1 ? (Math.Atan2(Vector3d.Dot(sv, vessel.east), Vector3d.Dot(sv, vessel.north)) * 180 / Math.PI + 360) % 360 : double.NaN;
+            learnRates.Update(t, hdg, course, pitch, Roll());   // heading rate = wrapTo180(dHdg)/dt, course rate from the velocity vector, roll/pitch rates
+            double tr = learnRates.HeadingRate;
             learnPrevFuel = total; learnPrevHdg = hdg; learnPrevT = t;
             double stress = 0; foreach (Part p in vessel.parts) { if (p.maxTemp > 0) stress = Math.Max(stress, p.temperature / p.maxTemp); if (p.skinMaxTemp > 0) stress = Math.Max(stress, p.skinTemperature / p.skinMaxTemp); }
             var i = BuildIn(t, frac, rate, tr, stress, pitch);
             learn.Step(i);
+            if (learn.TestsDone != learnTestsSaved) { learnTestsSaved = learn.TestsDone; profile = learn.P; SaveProfile(learn.P); ChatLog.Write("learn", "test done, profile saved: " + learn.P.Summary()); }
             if (learn.Status != learnLast) { learnLast = learn.Status; ChatLog.Write("learn", learn.Phase + ": " + learn.Status); ChatWindow.Notice("[LEARN] " + learn.Status); }
             DoneCheck();
             if (learn == null || learn.Phase == "takeoff" || mode == "takeoff") return;
@@ -47,30 +53,56 @@ namespace KSPChatBridge
                 learnPhaseSeen = learn.Phase; pitchIntegral = vsIntegral = 0; pitchShape.Reset(pitch); elevator = vessel.ctrlState.pitch; bankOverride = false;
                 if (!double.IsNaN(gate.Out)) FlightInputHandler.state.mainThrottle = (float)gate.Out;
                 ChatLog.Write("learn", "step " + learn.Phase + ": control overrides reset (thr " + Math.Round((double.IsNaN(gate.Out) ? 0 : gate.Out) * 100) + "%)");
+                if (learn.Phase == "wait" && !double.IsNaN(learn.HoldAlt))
+                {   // waiting: the normal hold flies altitude + heading (+ speed via the PI)
+                    altitude = learn.HoldAlt; heading = double.IsNaN(learn.HoldHdg) ? hdg : learn.HoldHdg; holdAltitude = holdHeading = true; capture = null;
+                    ChatLog.Write("learn", "waiting: hold " + altitude.ToString("0") + " m hdg " + heading.ToString("000"));
+                }
             }
             directVs = null;
             if (!double.IsNaN(learn.SpeedTarget)) { holdSpeed = true; speed = learn.SpeedTarget; } else holdSpeed = false;   // speed steps fly the ONE speed PI
             directPitch = double.IsNaN(learn.Pitch) ? (double?)null : learn.Pitch;
             directBank = double.IsNaN(learn.Bank) || !double.IsNaN(learn.Aileron) ? (double?)null : learn.Bank;
             bankOverride = directBank.HasValue;   // learn banks are the test's own (G/stall-guarded): no slow/decel bank clamp (that held every turn at 5 deg)
-            if ((learn.Phase == "turn" || learn.Phase == "dive") && t >= learnTraceNext)
-            {   // commanded vs actual every 2 s
-                learnTraceNext = t + 2;
-                ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " act " + pitch.ToString("0") + ", thr " + Math.Round((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100) + "%, spd " + vessel.srfSpeed.ToString("0"));
+            if (learn.Phase != "wait" && t >= learnTraceNext)
+            {   // commanded vs actual every 2 s: nose pitch (attitude) AND flight-path angle, heading/course/roll/pitch rates
+                learnTraceNext = t + 2; double fpa = PilotPolicy.FlightPathAngle(vessel.verticalSpeed, hs);
+                ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " nose " + pitch.ToString("0.0") + " fpa " + fpa.ToString("0.0")
+                    + ", hdg rate " + learnRates.HeadingRate.ToString("0.0") + " course rate " + learnRates.CourseRate.ToString("0.0") + " roll rate " + learnRates.RollRate.ToString("0.0") + " pitch rate " + learnRates.PitchRate.ToString("0.0")
+                    + ", thr " + ((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100).ToString("0.00") + "%, spd " + vessel.srfSpeed.ToString("0"));
             }
         }
         double learnTraceNext; string learnPhaseSeen = "";
+        readonly RateMeter learnRates = new RateMeter(); int learnTestsSaved; float learnPilotUntil; bool learnPilotHad;
+        /// <summary>Manual learn wait: the pilot is flying (stick keys within the last 2 s); the controller does not touch the controls.</summary>
+        bool LearnPilotFlying { get { return learn != null && learn.Waiting && Time.realtimeSinceStartup < learnPilotUntil; } }
+        /// <summary>Called from Update with the manual-input flag. Returns true when the input was absorbed by the learn wait (no Stop()).</summary>
+        bool LearnPilotInput(bool manual)
+        {
+            if (learn == null || !learn.Waiting) { learnPilotHad = false; return false; }
+            if (manual)
+            {
+                if (!learnPilotHad) { ChatWindow.Notice("[LEARN] You have the controls. The hold resumes (here) when you let go; check a box to run a test."); ChatLog.Write("learn", "pilot took the controls while waiting"); }
+                learnPilotHad = true; learnPilotUntil = Time.realtimeSinceStartup + 2; return true;
+            }
+            if (learnPilotHad && Time.realtimeSinceStartup >= learnPilotUntil)
+            {   // pilot let go: hold where they left it
+                learnPilotHad = false; altitude = vessel.altitude; heading = FlightGlobals.ship_heading; learn.HoldAlt = altitude; learn.HoldHdg = heading; capture = null;
+                pitchIntegral = vsIntegral = 0; elevator = vessel.ctrlState.pitch; gate.Seed(vessel.ctrlState.mainThrottle); shold.Reset();
+                ChatLog.Write("learn", "pilot released: hold " + altitude.ToString("0") + " m hdg " + heading.ToString("000"));
+            }
+            return false;
+        }
         Dictionary<string, double> resPrev = new Dictionary<string, double>();
         LearnIn BuildIn(double t, double frac, double rate, double tr, double stress, double pitch)
         {
             double thr = 0, thrMax = 0; var res = new Dictionary<string, double>();
             foreach (Part p in vessel.parts) { foreach (PartModule pm in p.Modules) { var en = pm as ModuleEngines; if (en != null && en.EngineIgnited) { thr += en.finalThrust; thrMax += en.maxThrust; } } foreach (PartResource r in p.Resources) { double v; res.TryGetValue(r.resourceName, out v); res[r.resourceName] = v + r.amount; } }
             var used = new List<string>(); foreach (var kv in res) { double pv; if (resPrev.TryGetValue(kv.Key, out pv) && kv.Value < pv - 1e-6 && kv.Key != "ElectricCharge" && kv.Key != "IntakeAir") used.Add(kv.Key); } resPrev = res;
-            var av = vessel.angularVelocity;
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
-                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
+                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
-                HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
+                HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = learnRates.RollRate, PitchRate = learnRates.PitchRate, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
         void DoneCheck()
         {
@@ -140,20 +172,23 @@ namespace KSPChatBridge
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
         double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
         /// <summary>LEARN page cursor/toggle (Luke 11:26 PM). True when the cursor keys are in toggle mode (no flight running).</summary>
-        internal static bool LearnToggleMode { get { var me = instance; return me != null && me.profile != null && MfdNav.AboutPage == AboutTitles.Length - 1 && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null); } }
+        internal static bool LearnToggleMode { get { var me = instance; return me != null && MfdNav.AboutPage == AboutTitles.Length - 1 && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
         internal static string ToggleLearnStep(int step)
         {
             return ToggleLearnCode(step);
         }
         internal static string ToggleLearnCode(int step)
         {
-            var me = instance; if (me == null || me.profile == null) return "No profile yet.";
-            if (me.learn != null && !me.learn.Done) return "Test flight running.";
+            var me = instance; if (me == null) return "No active vessel.";
+            if (me.learn != null && !me.learn.Done)
+            {   // manual test picker: checking a box runs that one test (then back to waiting)
+                if (!me.learn.ManualMode) return "Test flight running.";
+                string r = me.learn.Request(step); ChatLog.Write("learn", "box " + LearnFlight.CodeName(step) + ": " + r); return r;
+            }
+            if (me.profile == null) return "Press LEARN: it takes off, climbs and waits; then check a box to run that test.";
             if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
             me.SaveProfile(me.profile);
-            if (step == 91) return "Flaps-full sink map " + (me.profile.FlapSub ? "on." : "off.");
-            if (step == 101) return "Flaps-full stall " + (me.profile.FlapStallSub ? "on." : "off.");
-            return "Step " + step + (me.profile.Rerun.Contains(step) ? " will be re-run." : " kept.");
+            return LearnFlight.CodeName(step) + (me.profile.Rerun.Contains(step) ? " checked: runs after the LEARN climb." : " unchecked.");
         }
         internal static string LearnSkip()
         {
@@ -162,7 +197,17 @@ namespace KSPChatBridge
             string r = me.learn.Skip(); ChatLog.Write("learn", r); return r;
         }
         /// <summary>Base ABOUT pages; curve graph pages are inserted before LEARN when the profile has data.</summary>
-        internal static readonly string[] AboutBase = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF" };
+        internal static readonly string[] AboutBase = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF", "LIVE" };
+        readonly LiveStats live = new LiveStats(); float liveNext; Vessel liveVessel;
+        /// <summary>ABOUT LIVE page samples (4 Hz, from Update): fuel burn, time to empty, horizontal / vertical acceleration.</summary>
+        void LiveTick()
+        {
+            if (MfdNav.VesselName == null) MfdNav.VesselName = () => FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.vesselName : null;
+            if (vessel == null || Time.realtimeSinceStartup < liveNext) return; liveNext = Time.realtimeSinceStartup + .25f;
+            if (liveVessel != vessel) { liveVessel = vessel; live.Reset(); }
+            double fr, tot; FuelState(out fr, out tot);
+            live.Update(Planetarium.GetUniversalTime(), tot, vessel.horizontalSrfSpeed, vessel.verticalSpeed);
+        }
         internal static string[] AboutTitles
         {
             get
@@ -177,14 +222,15 @@ namespace KSPChatBridge
         static string F0(double v) { return double.IsNaN(v) ? "-" : v.ToString("0"); }
         static string F1(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.0"); }
         static string F2(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.00"); }
-        /// <summary>ABOUT THIS PLANE, paged (Luke 8:30 PM): 1 SUMMARY, 2 SPEEDS/STALL, 3 TURNS/DIVES/SINK, 4 FUEL/PERF, 5 LEARN.
+        /// <summary>ABOUT THIS PLANE, paged (Luke 8:30 PM): 1 SUMMARY, 2 SPEEDS/STALL, 3 TURNS/DIVES/SINK, 4 FUEL/PERF, 5 LIVE (burn, time to empty, attitude, throttle, accels, mass), GRAPH pages, LEARN last.
         /// Source tags: TEST = learn flight (scaled to this mass), LIVE = measured in normal flight, EST = estimate.</summary>
         internal static List<string> AboutLines()
         {
             var titles = AboutTitles;
             var o = new List<string>(); var me = instance; int pg = Math.Max(0, Math.Min(titles.Length - 1, MfdNav.AboutPage));
             string title = titles[pg];
-            o.Add("ABOUT " + (pg + 1) + "/" + titles.Length + " " + title.Replace("CURVE:", "GRAPH ") + "   < >");
+            string vname = me != null && me.vessel != null ? me.vessel.vesselName : "";
+            o.Add(MfdNav.AboutLabel(vname) + "  " + (pg + 1) + "/" + titles.Length + " " + title.Replace("CURVE:", "GRAPH ") + "   < >");
             if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
             var p = me.profile; double m = me.vessel.totalMass; var lf = me.learn ?? me.lastLearn;
             string tag = p != null ? "TEST" : "EST";
@@ -200,7 +246,7 @@ namespace KSPChatBridge
                 o.Add("[outside MFD draws the graph; IVA shows this table]");
                 return o;
             }
-            int basePg = title == "LEARN" ? 4 : Array.IndexOf(AboutBase, title);
+            int basePg = title == "LEARN" ? 99 : Array.IndexOf(AboutBase, title);
             switch (basePg)
             {
                 case 0:
@@ -241,7 +287,21 @@ namespace KSPChatBridge
                     o.Add("Ground roll " + F0(pf.GroundRoll) + " m  Rollout " + F0(pf.Rollout) + " m");
                     foreach (var kv in pf.Res) o.Add("  " + kv.Key + ": " + string.Join(",", new List<string>(kv.Value).ToArray()));
                     break;
+                case 4:
+                    {   // LIVE (Oct 11)
+                        var v = me.vessel; var L = me.live; double fr4, tot4; me.FuelState(out fr4, out tot4);
+                        double pctMin = tot4 > 0 && fr4 > 0 ? L.Burn / (tot4 / fr4) * 6000 : double.NaN;
+                        o.Add("LIVE  " + v.vesselName);
+                        o.Add("Fuel burn " + F2(L.Burn) + " u/s (" + F2(pctMin) + " %/min), " + F0(tot4) + " u left");
+                        o.Add("Empty in  " + LiveStats.Duration(L.TimeToEmpty) + " at this burn");
+                        o.Add("Pitch " + F1(me.Pitch()) + "  Roll " + F1(me.Roll()) + "  Hdg " + FlightGlobals.ship_heading.ToString("000.0"));
+                        o.Add("Throttle " + (v.ctrlState.mainThrottle * 100.0).ToString("0.00") + "%  Speed " + F1(v.srfSpeed) + " m/s");
+                        o.Add("Horiz " + (L.HAccel >= 0 ? "accel " : "decel ") + Math.Abs(L.HAccel).ToString("0.00") + " m/s2  Vert accel " + L.VAccel.ToString("+0.00;-0.00") + " m/s2");
+                        o.Add("Mass " + v.totalMass.ToString("0.000") + " t");
+                        break;
+                    }
                 default:
+                    if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); break; }
                     if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); break; }
                     if (p == null) { o.Add("No test flight yet. LEARN starts one."); break; }
                     o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));

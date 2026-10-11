@@ -71,7 +71,7 @@ namespace KSPChatBridge
         float nextRotorPark;
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
-        TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); readonly ThrottleGate gate = new ThrottleGate { Log = m => ChatLog.Write("throttle", m) }; string throttleKind = "pi", throttleWhy = ""; string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext;
+        TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); readonly ThrottleGate gate = new ThrottleGate { Log = m => ChatLog.Write("throttle", m) }; string throttleKind = "pi", throttleWhy = ""; string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext, attTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         void ConfigureInertia()
         {
@@ -338,6 +338,8 @@ namespace KSPChatBridge
                 || (!InputLockManager.IsLocked(ControlTypes.ROLL) && (GameSettings.ROLL_LEFT.GetKey() || GameSettings.ROLL_RIGHT.GetKey()))
                 || (!InputLockManager.IsLocked(ControlTypes.YAW) && (GameSettings.YAW_LEFT.GetKey() || GameSettings.YAW_RIGHT.GetKey()));
             NativeCommands.WriteStatus(Busy, mode, NativeIds.Vessel(vessel.id));
+            if (LearnPilotInput(manual)) manual = false;   // learn waiting: the pilot may fly without ending the test flight
+            LiveTick();
             if (manual && Busy) { Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
             if (!manual)
             {
@@ -470,6 +472,7 @@ namespace KSPChatBridge
         void Fly(FlightCtrlState c)
         {
             if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
+            if (LearnPilotFlying) return;   // learn wait: pilot has the controls
             try
             {
                 if (mode == "spool") return;
@@ -675,7 +678,15 @@ namespace KSPChatBridge
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, PilotPolicy.SaneStall(stall, StallEstimate()), decel);
                 bool heavyFloor = !vessel.LandedOrSplashed && (mode == "hold" || (mode == "landing" && runway != null && runway.Phase == "entry")) && CraftClass.FloorRecover(CraftCls, vessel.radarAltitude, vessel.verticalSpeed);
                 if (heavyFloor) { bank = 0; bankCmd = CraftClass.RollStep(CraftCls, bankCmd, 0, dt); targetVs = Math.Max(targetVs, 8); if (Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "heavy floor recovery: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0")); } }   // heavy: wings level + climb early   // no tight turns while slow / bleeding speed
+                bool wasLowEnergy = lowEnergy;
                 lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(lowEnergy, vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude);
+                if (lowEnergy && !wasLowEnergy) ChatLog.Write("throttle", "low-energy override ACTIVATED (" + mode + "): " + PilotPolicy.LowEnergyReason(vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude) + " -> power 90%+ at the emergency rate, wings within 15 deg, climb");
+                else if (!lowEnergy && wasLowEnergy) ChatLog.Write("throttle", "low-energy override cleared: spd=" + vessel.srfSpeed.ToString("0") + " (1.3 Vs " + PilotPolicy.MinSafeSpeed(stall).ToString("0") + ") vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0"));
+                if (!vessel.LandedOrSplashed && Time.realtimeSinceStartup >= attTraceNext)
+                {   // attitude vs path: nose pitch is where the nose points, flight-path angle is where the plane goes
+                    attTraceNext = Time.realtimeSinceStartup + 5;
+                    ChatLog.Write("att", mode + " nose pitch " + pitch.ToString("0.0") + " fpa " + PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed).ToString("0.0") + " roll " + Roll().ToString("0.0") + " hdg " + FlightGlobals.ship_heading.ToString("0.0") + " spd " + vessel.srfSpeed.ToString("0.0") + " vs " + vessel.verticalSpeed.ToString("0.0"));
+                }
                 if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"))) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(stall));
                 if (lowEnergy)
                 {   // hard minimum power + climb; airbrakes in

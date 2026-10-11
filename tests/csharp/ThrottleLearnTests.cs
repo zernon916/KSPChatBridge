@@ -1,0 +1,152 @@
+using System;
+using System.Collections.Generic;
+using KSPChatBridge;
+
+// Oct 11: throttle filter / step-and-wait / anti-windup, heading wrap-around, flight-path angle, manual learn test picker, ABOUT live.
+internal static class ThrottleLearnTests
+{
+    static int fails, passes;
+    static void Check(bool ok, string what) { if (ok) passes++; else { fails++; Console.WriteLine("FAIL throttle/learn: " + what); } }
+    static bool Near(double a, double b, double tol = 1e-6) { return Math.Abs(a - b) <= tol; }
+
+    internal static void Run()
+    {
+        Throttle(); Rates(); PathAngle(); Manual(); Live();
+        Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
+        if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
+    }
+
+    static void Throttle()
+    {
+        Check(Near(ThrottleGate.NormalRate, .04) && Near(SpeedHold.Rate0, .04), "normal throttle rate 4%/s (was 15%/s)");
+        // 1) noisy speed at the target: damping on FILTERED accel -> no throttle chatter (raw dv/dt of +-0.05 m/s jitter at 50 Hz is +-5 m/s2)
+        {
+            var sh = new SpeedHold(); double thr = .5, travel = 0, maxD = 0, prev = .5; var rnd = new Random(7);
+            for (int s = 0; s < 3000; s++) { double v = 150 + (rnd.NextDouble() - .5) * .1; double o = sh.Step(150, v, .02, thr); travel += Math.Abs(o - prev); maxD = Math.Max(maxD, Math.Abs(o - prev)); prev = thr = o; }
+            Check(travel < .03, "noisy speed at target: throttle travel " + travel.ToString("0.000") + " over 60 s (filtered damping)");
+            Check(maxD <= .04 * .02 + 1e-9, "every output change within 4%/s (max " + maxD.ToString("0.0000") + " per 0.02 s)");
+            Check(Math.Abs(sh.AccFiltered) < 3, "filtered acceleration stays small under jitter (" + sh.AccFiltered.ToString("0.00") + ")");
+        }
+        // 2) anti-windup: the integral never moves in a frame that is rate-limited, waiting, or spooling
+        {
+            var sh = new SpeedHold(); double v = 100, thr = .3, eng = .3; bool sawLim = false, sawWait = false, windup = false; double iPrev = double.NaN;
+            for (int s = 0; s < 30000; s++)
+            {
+                double tgt = s < 500 ? 100 : 125;
+                thr = sh.Step(tgt, v, .02, thr); eng += (thr - eng) * .02 / 2; v += (6 * eng - .00035 * v * v) * .02;
+                double iNow = sh.Integral;
+                if ((sh.RateLimited || sh.Waiting || sh.SpoolPending) && !double.IsNaN(iPrev) && Math.Abs(iNow - iPrev) > 1e-12) windup = true;
+                sawLim |= sh.RateLimited; sawWait |= sh.Waiting; iPrev = iNow;
+            }
+            Check(sawLim && sawWait, "replay exercised rate limit and step-and-wait (limited " + sawLim + ", waiting " + sawWait + ")");
+            Check(!windup, "anti-windup: no integral accumulation while rate-limited / waiting / spooling");
+            Check(Math.Abs(v - 125) < 3, "speed still reaches the target (" + v.ToString("0.0") + " m/s)");
+        }
+        // 3) step-and-wait near the target: steps <= 0.5%, then a hold for the learned lag (or until the speed answers)
+        {
+            var sh = new SpeedHold(); sh.SetLag(4); double v = 120, thr = .5, eng = .5, prevO = .5; var q = new Queue<double>();
+            double stepAcc = 0, maxStep = 0; int holds = 0; double holdT = 0, maxHold = 0; bool inStep = false;
+            for (int s = 0; s < 20000; s++)
+            {
+                double tgt = 123;   // 3 m/s off: inside the near band from the start
+                double o = sh.Step(tgt, v, .02, thr); q.Enqueue(o); double dly = q.Count > 100 ? q.Dequeue() : .5;
+                eng += (dly - eng) * .02 / 2; v += (6 * eng - .00035 * v * v + (6 * .5 - .00035 * 120 * 120) * 0 - (6 * .5 - .00035 * 120 * 120)) * .02;
+                double d = o - prevO;
+                if (Math.Abs(d) > 1e-12) { if (!inStep) { inStep = true; stepAcc = 0; if (holdT > 0) { holds++; maxHold = Math.Max(maxHold, holdT); } holdT = 0; } stepAcc += d; maxStep = Math.Max(maxStep, Math.Abs(stepAcc)); }
+                else { inStep = false; holdT += .02; }
+                prevO = thr = o;
+            }
+            Check(sh.FineSteps > 0 && maxStep <= SpeedHold.FineStep + 1e-9, "near target: throttle moves in steps <= 0.5% (" + sh.FineSteps + " steps, largest " + (maxStep * 100).ToString("0.000") + "%)");
+            Check(holds > 0 && maxHold >= 1, "and holds between steps until the speed responds / lag passes (" + holds + " holds, longest " + maxHold.ToString("0.0") + " s)");
+            Check(Math.Abs(v - 123) < 2.5, "step-and-wait settles near the target (" + v.ToString("0.0") + ")");
+        }
+        // 4) emergencies still move fast; normal PI is 4%/s
+        {
+            var g = new ThrottleGate(); g.Step(0, .02); Check(Near(g.Step(1, .02, "emergency", "low-energy floor"), ThrottleGate.EmergencyRate * .02), "emergency throttle still fast (2/s)");
+            var g2 = new ThrottleGate(); g2.Step(0, 1); Check(Near(g2.Step(1, 1), .04), "PI path 4% per second");
+        }
+        // 5) every low-energy activation gets a reason
+        {
+            string a = PilotPolicy.LowEnergyReason(80, 74, -1, 2000), b = PilotPolicy.LowEnergyReason(150, 74, -12, 200);
+            Check(a.Contains("stall") && b.Contains("sinking") && !b.Contains("stall"), "low-energy reason names the cause (" + a + " | " + b + ")");
+        }
+    }
+
+    static void Rates()
+    {
+        Check(Near(RateMeter.WrapRate(359, 1, 1), 2), "heading 359 -> 1 = +2 deg");
+        Check(Near(RateMeter.WrapRate(1, 359, 1), -2), "heading 1 -> 359 = -2 deg");
+        Check(Near(RateMeter.WrapRate(170, -170, .5), 40), "roll +170 -> -170 = +20 deg in 0.5 s = 40 deg/s");
+        var m = new RateMeter(); double hdg = 355, maxAbs = 0;
+        for (int k = 0; k < 100; k++) { double t = k * .1; m.Update(t, hdg % 360, (hdg + 1) % 360, 5 + .2 * k * .1, 10); maxAbs = Math.Max(maxAbs, Math.Abs(m.HeadingRate)); hdg += 1; }
+        Check(Math.Abs(m.HeadingRate - 10) < .2 && maxAbs < 10.5, "smoothed heading rate through north: +10 deg/s, no wrap spike (max " + maxAbs.ToString("0.0") + ")");
+        Check(Math.Abs(m.CourseRate - 10) < .2, "course rate from the velocity track: +10 deg/s");
+        Check(Math.Abs(m.PitchRate - .2) < .05 && Math.Abs(m.RollRate) < 1e-6, "pitch rate and roll rate measured separately");
+        m.Update(20, 0, double.NaN, 0, 0); Check(m.HeadingRate == 0, "gap > 2 s resets the rates");
+    }
+
+    static void PathAngle()
+    {
+        Check(Near(PilotPolicy.FlightPathAngle(10, 10), 45), "fpa atan2(10,10) = 45");
+        Check(Near(PilotPolicy.FlightPathAngle(0, 100), 0) && Near(PilotPolicy.FlightPathAngle(0, 0), 0), "level path = 0");
+        Check(Near(PilotPolicy.FlightPathAngle(-100 * Math.Tan(5 * Math.PI / 180), 100), -5, 1e-9), "-5 deg path from vs/horizontal speed");
+        var li = new LearnIn { Vs = -10, GroundSpeed = 0 }; Check(double.IsNaN(li.Fpa), "no horizontal speed -> no path angle");
+        li.GroundSpeed = 100; Check(Near(li.Fpa, Math.Atan2(-10, 100) * 180 / Math.PI), "LearnIn.Fpa");
+        // the dive test targets the PATH: nose 0 deg while the path is -5 counts as reached; command = target path + angle of attack
+        var lf = new LearnFlight(null, null, true);
+        var q = In(0, 5000); lf.Step(q); q.T = 1; lf.Step(q);   // start -> climb -> (at 5 km) wait
+        Check(lf.Phase == "wait", "manual learn reaches wait (" + lf.Phase + ")");
+        lf.Request(8); q.T = 2; lf.Step(q); Check(lf.Phase == "dive" && lf.ActiveTest == 8, "checking box 8 starts the dives (" + lf.Phase + ")");
+        q.T = 3; q.Pitch = 0; q.GroundSpeed = 150; q.Vs = -150 * Math.Tan(5 * Math.PI / 180); lf.Step(q);
+        Check(Math.Abs(lf.Pitch - 0) < .5, "dive -5 deg path with the nose at 0 (5 deg AoA): pitch command ~0, got " + lf.Pitch.ToString("0.00"));
+        double t = 4; for (; t < 20 && lf.Phase == "dive"; t += .5) { q.T = t; lf.Step(q); }
+        Check(lf.Phase == "recover" && lf.P.Dives.Count == 1 && lf.P.Dives[0][0] == 5, "dive measured on the flight-path angle (nose pitch alone never reached -5)");
+    }
+
+    static LearnIn In(double t, double alt) { return new LearnIn { T = t, Speed = 150, Alt = alt, Agl = alt, Vs = 0, Pitch = 3, G = 1, GLimit = 8, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Heading = 90, GroundSpeed = 150 }; }
+
+    static void Manual()
+    {
+        var lf = new LearnFlight(null, null, true);
+        var q = In(0, 70); q.Landed = true; q.Speed = 0; lf.Step(q); Check(lf.WantTakeoff && lf.Phase == "takeoff", "LEARN takes off");
+        q.Landed = false; q.Agl = 30; q.Alt = 100; q.Speed = 75; q.T = 1; lf.Step(q); Check(lf.Phase == "pullback", "liftoff -> power back");
+        q.T = 5; lf.Step(q); Check(lf.Phase == "climb", "climb");
+        q.T = 6; q.Alt = 5000; lf.Step(q); Check(lf.Phase == "wait" && lf.Waiting && lf.HoldAlt == 5000 && lf.HoldHdg == 90, "after the climb: WAIT holding 5000 m hdg 090 (" + lf.Phase + ")");
+        q.T = 7; lf.Step(q); Check(double.IsNaN(lf.Pitch) && double.IsNaN(lf.Bank) && double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "waiting: normal altitude/heading hold, speed PI");
+        var cl = lf.ManualChecklist(0); bool allOpen = true; foreach (var l in cl) if (l.Contains("[x]") || l.Contains("[>]")) allOpen = false;
+        Check(allOpen && cl.Count >= LearnFlight.Codes.Length, "every learn box starts unchecked");
+        // any order: 6 first, then 3
+        lf.Request(6); q.T = 8; lf.Step(q); Check(lf.Phase == "ratesprep" && lf.ActiveTest == 6, "box 6 runs the rate checks (" + lf.Phase + ")");
+        Check(lf.ManualChecklist(-1).Exists(l => l.Contains("[>] 6")), "running test shows [>]");
+        Check(lf.Request(3).Contains("queued"), "box 3 while 6 runs: queued");
+        Check(lf.Skip().StartsWith("Skipped step 6"), "SKIP ends the running test");
+        Check(lf.Phase == "wait" && lf.Ran.Contains(6) && lf.TestsDone == 1, "after the test: back to waiting (" + lf.Phase + ")");
+        q.T = 9; lf.Step(q); Check(lf.Phase == "decel" && lf.ActiveTest == 3, "queued test 3 starts from waiting");
+        for (double t = 10; t < 80 && lf.ActiveTest == 3; t += 1) { q.T = t; lf.Step(q); }
+        Check(lf.Phase == "wait" && lf.Ran.Contains(3) && !double.IsNaN(lf.P.Decel) && !double.IsNaN(lf.P.Accel), "test 3 (decel + accel) runs alone, then waits (" + lf.Phase + ")");
+        Check(lf.ManualChecklist(-1).Exists(l => l.Contains("[x] 3") && l.Contains("done")), "done test shows [x]");
+        // low after a test: climb back first (30 deg, full power)
+        q.T = 100; q.Alt = 3000; lf.Request(8); lf.Step(q); lf.Skip();
+        Check(lf.Phase == "climbback", "below 4.5 km after a test: climb back (" + lf.Phase + ")");
+        q.T = 101; q.Speed = 150; lf.Step(q); Check(Near(lf.Throttle, 1) && lf.Pitch > 25 && lf.Pitch <= 30, "climb-back ~30 deg at full power (" + lf.Pitch.ToString("0.0") + ")");
+        q.T = 102; q.Speed = 80; lf.Step(q); Check(lf.Pitch < 10, "climb-back pitch lowered near 1.3x stall (" + lf.Pitch.ToString("0.0") + " at 80 m/s, stall 60)");
+        q.T = 103; q.Alt = 4950; lf.Step(q); Check(lf.Phase == "wait", "back at 5 km: waiting");
+        Check(lf.Request(1).Contains("automatically") && lf.Request(12).Contains("landing") && lf.Done && !lf.Aborted, "box 12 ends the flight (land)");
+        Check(Near(PilotPolicy.ClimbBackPitch(120, 60), 30) && PilotPolicy.ClimbBackPitch(78, 60) == 0 && PilotPolicy.ClimbBackPitch(85, 60) < PilotPolicy.ClimbBackPitch(90, 60), "ClimbBackPitch: 30 deg with margin, 0 at 1.3x stall");
+        // queue from the pre-flight checklist (boxes checked before LEARN)
+        var pf = new PlaneProfile(); LearnFlight.Toggle(pf, 5); var lq = new LearnFlight(pf, pf.Rerun, true);
+        Check(lq.Queue.Count == 1 && lq.Queue[0] == 5 && lq.P.Rerun.Count == 0, "boxes checked before LEARN queue those tests");
+        Check(LearnFlight.ProfileChecklist(new PlaneProfile(), 0).TrueForAll(l => !l.Contains("[x]")), "pre-flight checklist: all unchecked");
+    }
+
+    static void Live()
+    {
+        var ls = new LiveStats(); double fuel = 1000;
+        for (int k = 0; k <= 80; k++) { ls.Update(k * .25, fuel, 100 + k * .25 * 2, -k * .25 * .5); fuel -= .5; }   // 2 u/s, +2 m/s2 horizontal, -0.5 m/s2 vertical
+        Check(Math.Abs(ls.Burn - 2) < .05 && Math.Abs(ls.TimeToEmpty - fuel / 2) < 20, "live burn 2 u/s, time to empty ~" + ls.TimeToEmpty.ToString("0") + " s");
+        Check(Math.Abs(ls.HAccel - 2) < .05 && Math.Abs(ls.VAccel + .5) < .05, "live horizontal / vertical acceleration");
+        Check(LiveStats.Duration(3725) == "1h 02m" && LiveStats.Duration(725) == "12m 05s" && LiveStats.Duration(double.NaN) == "-", "duration format");
+        Check(MfdNav.AboutLabel("Aeris 3A") == "ABOUT AERIS 3A" && MfdNav.AboutLabel(null) == "ABOUT PLANE" && MfdNav.AboutLabel("A Very Long Vessel Name Indeed").Length <= 6 + MfdNav.AboutNameMax, "ABOUT <vessel name> label");
+        var it = new MfdNav.Item("about", "ABOUT PLANE"); var old = MfdNav.VesselName; MfdNav.VesselName = () => "Learjet"; Check(it.Label == "ABOUT LEARJET", "menu button uses the vessel name"); MfdNav.VesselName = old;
+    }
+}

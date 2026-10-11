@@ -11,8 +11,21 @@ namespace KSPChatBridge
         internal const int Side = 8, BottomCount = 8, TopCount = 8, BackKey = 0, PrevKey = 6, NextKey = 7, Ctx = 5;
         internal sealed class Item
         {
-            internal string Id, Label; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
+            internal string Id; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
+            string label;
+            /// <summary>The ABOUT item is named after the active vessel (Oct 11: "ABOUT &lt;vessel&gt;", not "ABOUT PLANE").</summary>
+            internal string Label { get { return Id == "about" ? AboutLabel(VesselName == null ? null : VesselName()) : label; } set { label = value; } }
             internal Item(string id, string label, int panel = -1) { Id = id; Label = label; Panel = panel; }
+        }
+        /// <summary>Active vessel name source (set by the flight controller; null outside flight / in tests).</summary>
+        internal static Func<string> VesselName;
+        internal const int AboutNameMax = 18;
+        /// <summary>"ABOUT &lt;vessel name&gt;" (upper case, long names cut), "ABOUT PLANE" without a vessel.</summary>
+        internal static string AboutLabel(string vesselName)
+        {
+            string n = (vesselName ?? "").Trim(); if (n.Length == 0) return "ABOUT PLANE";
+            if (n.Length > AboutNameMax) n = n.Substring(0, AboutNameMax - 1).TrimEnd() + "~";
+            return "ABOUT " + n.ToUpperInvariant();
         }
         internal sealed class Group { internal string Id, Label; internal bool NeedsMj; internal List<Item> Items = new List<Item>(); }
 
