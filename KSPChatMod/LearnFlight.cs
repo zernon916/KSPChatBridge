@@ -76,7 +76,7 @@ namespace KSPChatBridge
 
     internal struct LearnIn
     {
-        internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac;
+        internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
         internal string Res;   // resources that went down since the last frame (comma list)
         internal bool Landed, PartLost;
     }
@@ -150,7 +150,11 @@ namespace KSPChatBridge
             return FlightPolicy.Clamp(sweepThr + (10 - sink) * .04, 0, 1);
         }
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
-        double turnThr, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
+        double reachAt = double.NaN; internal const double ReachTimeout = 20;
+        /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
+        bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
+        internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
+        double turnThr = double.NaN, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
         /// <summary>Sink map (Luke 11:32 PM): elevator holds 1.2x stall (pitch-for-speed); throttle alone sets the sink.
         /// Slow -> nose down, fast -> nose up; clamped -10..15 deg, no extra nose-up above 1.5 g, hard nose-down near 1.15x stall.</summary>
         double sinkStart = double.NaN, limThr, limT = double.NaN;
@@ -192,7 +196,7 @@ namespace KSPChatBridge
         void Go(string ph, LearnIn i, string status)
         {
             ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; }
-            Phase = ph; t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = stMax = 0; n = 0; lagAt = double.NaN;
+            Phase = ph; t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN; turnThr = double.NaN;
             if (!Visited.Contains(ph)) Visited.Add(ph); if (status != null) Status = status;
         }
         static double Level(LearnIn i, double target = double.NaN)
@@ -377,12 +381,15 @@ namespace KSPChatBridge
                     {
                         int b = Banks[idx]; Bank = b;
                         // Level turn (Luke 11:25 PM): hold the entry altitude (VS ~0); back-pressure sets the g. PI throttle holds the entry speed.
-                        if (n == 0) { turnThr = double.IsNaN(i.Throttle) ? .7 : FlightPolicy.Clamp(i.Throttle, .2, 1); thrSum = 0; }
-                        turnThr = FlightPolicy.Clamp(turnThr + (v0 - i.Speed) * .0008, 0, 1);
-                        Throttle = FlightPolicy.Clamp(turnThr + (v0 - i.Speed) * .04, 0, 1); thrSum += Throttle;
-                        Pitch = Level(i, a0); gSum += i.G; trSum += Math.Abs(i.TurnRate); stMax = Math.Max(stMax, i.Stress); n++;
+                        double vT = TurnSpeed(v0, i.StallGuess);
+                        if (double.IsNaN(turnThr)) turnThr = double.IsNaN(i.Throttle) ? .7 : FlightPolicy.Clamp(i.Throttle, .2, 1);
+                        turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1);
+                        Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1);
+                        Pitch = Level(i, a0);
+                        if (!Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
+                        thrSum += Throttle; gSum += i.G; trSum += Math.Abs(i.TurnRate); stMax = Math.Max(stMax, i.Stress); n++;
                         bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;
-                        if (dt >= Seg || nearLimit || i.Speed < 1.3 * i.StallGuess)
+                        if (i.T - reachAt >= Seg || nearLimit || i.Speed < 1.3 * i.StallGuess)
                         {
                             P.Turns.Add(new double[] { b, gSum / Math.Max(1, n), trSum / Math.Max(1, n), a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n) });
                             P.Note("turn_throttle_" + b, thrSum / Math.Max(1, n), i.Mass);
@@ -403,8 +410,10 @@ namespace KSPChatBridge
                     return;
                 case "dive":
                     {
-                        int p = DivePitch[idx - 100]; Throttle = 0; Pitch = -p; Bank = 0; gSum += i.Vs; n++;
-                        if (dt >= DiveSeg || i.Alt < 2000 || i.Speed > 320) { P.Dives.Add(new double[] { p, -gSum / Math.Max(1, n), i.Speed - v0, i.Mass }); idx++; Go("recover", i, null); }
+                        int p = DivePitch[idx - 100]; Throttle = 0; Pitch = -p; Bank = 0;
+                        if (!Reached(i, Math.Abs(i.Pitch + p) < 2) && i.Alt >= 2000 && i.Speed <= 320) { v0 = i.Speed; return; }
+                        if (n == 0) v0 = i.Speed; gSum += i.Vs; n++;
+                        if (i.T - reachAt >= DiveSeg || i.Alt < 2000 || i.Speed > 320) { P.Dives.Add(new double[] { p, -gSum / Math.Max(1, n), i.Speed - v0, i.Mass }); idx++; Go("recover", i, null); }
                         return;
                     }
                 case "sinkprep":

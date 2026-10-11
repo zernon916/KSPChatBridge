@@ -267,7 +267,7 @@ class Program
             { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
                 // level turns: above the entry altitude and climbing -> nose comes down (not 20 deg up); slow -> more throttle
                 var q2 = q; q2.T = 2; q2.Alt = 3060; q2.Vs = 4; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
-                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 140; lc2.Step(q2); double thSlow = lc2.Throttle; q2.T = 4; q2.Speed = 160; lc2.Step(q2);
+                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.Throttle; q2.T = 4; q2.Speed = 112; lc2.Step(q2);
                 Check(pHi < 3 && lc2.Bank == 5 && thSlow > lc2.Throttle && thSlow > .5, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), throttle holds speed");
               Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 5 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
@@ -322,6 +322,22 @@ class Program
             Check(krc != null && krc.Item1 == "ksc" && krc.Item2 == "27" && kc != null && kc.Item1 == "ksc" && kc.Item2 == "09" && FlightResidualPolicy.RunwayAlias("krc 27") == "KSC Runway 27", "model typo 'krc 27' fuzzy-matches KSC 27");
             Check(Math.Abs(PilotPolicy.PlaneCap(278, 45, true) - 264.1) < .1 && PilotPolicy.PlaneCap(double.NaN, 45, true) < PilotPolicy.PlaneCap(double.NaN, 5, false), "speed cap per plane: 95% of learned max level, else mass/class estimate");
             Check(PilotPolicy.EffectiveCap(200, 250, false) >= 255 && PilotPolicy.EffectiveCap(200, 250, true) == 180 && PilotPolicy.EffectiveCap(200, double.NaN, false) == 200, "cap never below the commanded speed unless heat/structure is near the limit");
+        }
+        {   // Luke 9:37 AM log (A300): every turn showed bank 5, dives reached only -5/-9/-8 in their 10 s, then recovery (100%) began
+            var lt = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 253, Alt = 5100, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Bank = 5, Throttle = 1 }; lt.Step(q);
+            lt.Phase = "turn"; q.T = .1; lt.Step(q);   // bank 5 reached -> measures 20 s, then the 10 deg turn
+            for (int s = 2; s <= 220; s++) { q.T = s * .1; lt.Step(q); }
+            int turnsAfter5 = lt.P.Turns.Count;
+            for (int s = 221; s <= 330; s++) { q.T = s * .1; q.Bank = 5; lt.Step(q); }   // stuck at 5 while 10 commanded: no measurement yet (< 20 s)
+            Check(turnsAfter5 == 1 && lt.P.Turns.Count == 1 && lt.Bank == 10, "turn measures only once the commanded bank is reached (log: bank stuck at 5)");
+            for (int s = 331; s <= 560; s++) { q.T = s * .1; q.Bank = 10; lt.Step(q); }
+            Check(lt.P.Turns.Count == 2 && lt.P.Turns[1][0] == 10, "10 deg turn recorded after reaching 10 deg");
+            Check(Math.Abs(lt.TurnSpeed(253, 84) - 1.7 * 84) < 1e-6 && lt.TurnSpeed(120, 84) == 120, "turn speed target: cruise / 1.7 Vs, not the 253 m/s vmax entry speed (throttle sat at 100%)");
+            var ld2 = new LearnFlight(); var d = new LearnIn { T = 0, Speed = 160, Alt = 4900, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Pitch = 0 }; ld2.Step(d);
+            ld2.Phase = "recover"; ld2.Step(d); var f = typeof(LearnFlight).GetField("idx", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance); f.SetValue(ld2, 101); ld2.Phase = "dive";
+            double dpit = -2; bool idleAll = true;
+            for (int s = 1; s <= 400; s++) { d.T = s * .1; dpit = Math.Max(-10, dpit - .03); d.Pitch = dpit; d.Vs = -20; ld2.Step(d); if (ld2.Phase == "dive" && ld2.Throttle != 0) idleAll = false; if (ld2.Phase != "dive") break; }
+            Check(idleAll && ld2.P.Dives.Count == 1 && d.T >= 29 && d.T <= 32, "dive waits for -10 deg (slow pitch-over), then measures 10 s at idle (" + d.T.ToString("0") + " s)");
         }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup

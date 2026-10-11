@@ -45,7 +45,14 @@ namespace KSPChatBridge
             holdSpeed = false; directVs = null;
             directPitch = double.IsNaN(learn.Pitch) ? (double?)null : learn.Pitch;
             directBank = double.IsNaN(learn.Bank) || !double.IsNaN(learn.Aileron) ? (double?)null : learn.Bank;
+            bankOverride = directBank.HasValue;   // learn banks are the test's own (G/stall-guarded): no slow/decel bank clamp (that held every turn at 5 deg)
+            if ((learn.Phase == "turn" || learn.Phase == "dive") && t >= learnTraceNext)
+            {   // commanded vs actual every 2 s
+                learnTraceNext = t + 2;
+                ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " act " + pitch.ToString("0") + ", thr " + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%, spd " + vessel.srfSpeed.ToString("0"));
+            }
         }
+        double learnTraceNext;
         Dictionary<string, double> resPrev = new Dictionary<string, double>();
         LearnIn BuildIn(double t, double frac, double rate, double tr, double stress, double pitch)
         {
@@ -56,7 +63,7 @@ namespace KSPChatBridge
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
                 FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, Throttle = vessel.ctrlState.mainThrottle, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
-                GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
+                Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
         void DoneCheck()
         {
