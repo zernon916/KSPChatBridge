@@ -146,7 +146,19 @@ namespace KSPChatBridge
             if (me.learn.Done) return "Can't skip the landing.";
             string r = me.learn.Skip(); ChatLog.Write("learn", r); return r;
         }
-        internal static readonly string[] AboutTitles = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF", "LEARN" };
+        /// <summary>Base ABOUT pages; curve graph pages are inserted before LEARN when the profile has data.</summary>
+        internal static readonly string[] AboutBase = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF" };
+        internal static string[] AboutTitles
+        {
+            get
+            {
+                var o = new List<string>(AboutBase);
+                var me = instance; var pr = me != null ? me.profile : null;
+                if (pr != null) foreach (var c in pr.Curves.Graphable()) o.Add("CURVE:" + c.Name);
+                o.Add("LEARN");
+                return o.ToArray();
+            }
+        }
         static string F0(double v) { return double.IsNaN(v) ? "-" : v.ToString("0"); }
         static string F1(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.0"); }
         static string F2(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.00"); }
@@ -154,12 +166,27 @@ namespace KSPChatBridge
         /// Source tags: TEST = learn flight (scaled to this mass), LIVE = measured in normal flight, EST = estimate.</summary>
         internal static List<string> AboutLines()
         {
-            var o = new List<string>(); var me = instance; int pg = Math.Max(0, Math.Min(AboutTitles.Length - 1, MfdNav.AboutPage));
-            o.Add("ABOUT " + (pg + 1) + "/" + AboutTitles.Length + " " + AboutTitles[pg] + "   < >");
+            var titles = AboutTitles;
+            var o = new List<string>(); var me = instance; int pg = Math.Max(0, Math.Min(titles.Length - 1, MfdNav.AboutPage));
+            string title = titles[pg];
+            o.Add("ABOUT " + (pg + 1) + "/" + titles.Length + " " + title.Replace("CURVE:", "GRAPH ") + "   < >");
             if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
             var p = me.profile; double m = me.vessel.totalMass; var lf = me.learn ?? me.lastLearn;
             string tag = p != null ? "TEST" : "EST";
-            switch (pg)
+            if (title.StartsWith("CURVE:") && p != null)
+            {
+                string cname = title.Substring(6);
+                PerfCurve curve = null; foreach (var c in p.Curves.All) if (c.Name == cname) { curve = c; break; }
+                if (curve == null || curve.Empty) { o.Add("No data."); return o; }
+                o.Add(curve.YLabel + " vs " + curve.XLabel + " (" + curve.Points.Count + " pts, scale " + curve.Scale + ")");
+                var series = curve.Series1D();
+                if (series.Count == 0) { o.Add("(multi-var samples - see table)"); }
+                foreach (var s in series) o.Add("  " + s[0].ToString("0.##") + " -> " + s[1].ToString("0.##"));
+                o.Add("[outside MFD draws the graph; IVA shows this table]");
+                return o;
+            }
+            int basePg = title == "LEARN" ? 4 : Array.IndexOf(AboutBase, title);
+            switch (basePg)
             {
                 case 0:
                     o.Add(me.vessel.vesselName + "  " + m.ToString("0.0") + " t  " + CraftClass.Label(me.CraftCls, me.craftOverride));
@@ -205,7 +232,17 @@ namespace KSPChatBridge
                     o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));
                     break;
             }
-            return o;
+                        return o;
+        }
+        /// <summary>Current ABOUT curve for outside-MFD graph drawing; null when not on a CURVE page.</summary>
+        internal static PerfCurve AboutCurve()
+        {
+            var titles = AboutTitles; int pg = Math.Max(0, Math.Min(titles.Length - 1, MfdNav.AboutPage));
+            string title = titles[pg]; if (!title.StartsWith("CURVE:")) return null;
+            var me = instance; if (me == null || me.profile == null) return null;
+            string cname = title.Substring(6);
+            foreach (var c in me.profile.Curves.All) if (c.Name == cname) return c.Empty ? null : c;
+            return null;
         }
     }
 }

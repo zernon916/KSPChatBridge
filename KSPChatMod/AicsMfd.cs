@@ -311,10 +311,17 @@ namespace KSPChatBridge
                 case "trim": GUILayout.Label("TRIM WIN opens the trim window (pitch / roll / yaw trim). AUTO TRIM trims now.", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) GUILayout.Label(l, scrText); break;
                 case "about":
-                    {   // scrollable (wheel + SCROLL keys); keeps the current [>] step visible
-                        var al = NativeFlightController.AboutLines(); float lh = Mathf.Max(10, scrText.fontSize * 1.45f); int vis = Mathf.Max(4, (int)((mfdRect.height * .55f) / lh));
-                        int off = MfdNav.AboutWindow(al, vis); if (Mathf.Abs(aboutApplied - off) > 0) { mfdScroll.y = off * lh; aboutApplied = off; } else if (Event.current.type == EventType.ScrollWheel) { MfdNav.AboutOffset = Mathf.RoundToInt(mfdScroll.y / lh); aboutApplied = MfdNav.AboutOffset; }
-                        foreach (var l in al) GUILayout.Label(l, scrText); break;
+                    {   // scrollable (wheel + SCROLL keys); keeps the current [>] step visible; CURVE pages draw a line graph
+                        var curve = NativeFlightController.AboutCurve();
+                        if (curve != null)
+                        {
+                            var al = NativeFlightController.AboutLines();
+                            foreach (var l in al) if (!l.StartsWith("  ") && !l.StartsWith("[")) GUILayout.Label(l, scrText);
+                            DrawCurveGraph(curve); break;
+                        }
+                        var al2 = NativeFlightController.AboutLines(); float lh = Mathf.Max(10, scrText.fontSize * 1.45f); int vis = Mathf.Max(4, (int)((mfdRect.height * .55f) / lh));
+                        int off = MfdNav.AboutWindow(al2, vis); if (Mathf.Abs(aboutApplied - off) > 0) { mfdScroll.y = off * lh; aboutApplied = off; } else if (Event.current.type == EventType.ScrollWheel) { MfdNav.AboutOffset = Mathf.RoundToInt(mfdScroll.y / lh); aboutApplied = MfdNav.AboutOffset; }
+                        foreach (var l in al2) GUILayout.Label(l, scrText); break;
                     }
                 case "systems":
                     GUILayout.Label(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW", scrHead);
@@ -338,6 +345,40 @@ namespace KSPChatBridge
         }
 
         static int aboutApplied = -1;
+        /// <summary>Simple line graph for a 1-D projection of a PerfCurve (outside MFD).</summary>
+        void DrawCurveGraph(PerfCurve curve)
+        {
+            var series = curve.Series1D();
+            if (series.Count < 2) { GUILayout.Label("(need 2+ points to graph)", scrText); return; }
+            var r = GUILayoutUtility.GetRect(280 * mfdScale, 140 * mfdScale);
+            var oc = GUI.color; GUI.color = new Color(0.05f, 0.12f, 0.08f); GUI.DrawTexture(r, Texture2D.whiteTexture);
+            GUI.color = new Color(0.2f, 0.45f, 0.25f);
+            GUI.DrawTexture(new Rect(r.x, r.y, 1, r.height), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(r.x, r.yMax - 1, r.width, 1), Texture2D.whiteTexture);
+            double x0 = series[0][0], x1 = series[series.Count - 1][0], y0 = series[0][1], y1 = y0;
+            foreach (var s in series) { y0 = Math.Min(y0, s[1]); y1 = Math.Max(y1, s[1]); }
+            if (Math.Abs(x1 - x0) < 1e-9) x1 = x0 + 1; if (Math.Abs(y1 - y0) < 1e-9) y1 = y0 + 1;
+            GUI.color = Phos;
+            for (int i = 1; i < series.Count; i++)
+            {
+                float ax = r.x + (float)((series[i - 1][0] - x0) / (x1 - x0)) * r.width;
+                float ay = r.yMax - (float)((series[i - 1][1] - y0) / (y1 - y0)) * (r.height - 4) - 2;
+                float bx = r.x + (float)((series[i][0] - x0) / (x1 - x0)) * r.width;
+                float by = r.yMax - (float)((series[i][1] - y0) / (y1 - y0)) * (r.height - 4) - 2;
+                DrawLine(ax, ay, bx, by, 2);
+            }
+            GUI.color = oc;
+            GUILayout.Label(curve.XLabel + ": " + x0.ToString("0.#") + " .. " + x1.ToString("0.#") + "   " + curve.YLabel + ": " + y0.ToString("0.#") + " .. " + y1.ToString("0.#"), scrText);
+        }
+        static void DrawLine(float x0, float y0, float x1, float y1, float th)
+        {
+            var d = new Vector2(x1 - x0, y1 - y0); float len = d.magnitude; if (len < .5f) return;
+            float ang = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
+            var prev = GUI.matrix;
+            GUIUtility.RotateAroundPivot(ang, new Vector2(x0, y0));
+            GUI.DrawTexture(new Rect(x0, y0 - th / 2, len, th), Texture2D.whiteTexture);
+            GUI.matrix = prev;
+        }
         internal static void OnKey(string item, string key)
         {
             if (item == "about" && NativeFlightController.LearnToggleMode && (key == "SCROLL UP" || key == "SCROLL DN")) { MfdNav.MoveCursor(key == "SCROLL UP" ? -1 : 1, LearnFlight.Codes.Length); return; }

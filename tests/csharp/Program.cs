@@ -264,7 +264,7 @@ class Program
             var g2 = new ThrottleGate(); g2.Step(0, .02); double e1 = g2.Step(1, .02, "emergency", "below 1.15x stall"); Check(Math.Abs(e1 - ThrottleGate.EmergencyRate * .02) < 1e-9, "emergency power still ramps (finite, 2/s)");
             var g3 = new ThrottleGate { K = 2 }; g3.Step(0, 1); Check(Math.Abs(g3.Step(1, 1) - ThrottleGate.NormalRate / 2) < 1e-9, "PI rate slowed by the mass factor");
         }
-        {   // Live A300 10:33 repro: step 7 with throttle stuck at 0 and pitch not tracking (cmd +15, act -5) -> NOT saved, redo
+        {   // Live A300 10:33 repro: throttle stuck at 0 + pitch not tracking at FIRST bank -> NOT saved, redo
             var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 272, Alt = 5000, Pitch = 0, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .8, Bank = 0, Stress = .2, TurnRate = 0, FuelFrac = .8 };
             lf.Step(q); lf.Phase = "rates"; double t = 0, v = 272, alt = 5000;
             for (int k = 0; k < 6000 && lf.Phase != "recover"; k++)
@@ -272,10 +272,60 @@ class Program
                 t += .1; q.T = t; q.Speed = v; q.Alt = alt; q.Pitch = -5; q.Throttle = 0; q.Bank = double.IsNaN(lf.Bank) ? 0 : lf.Bank; q.G = 1.05; q.TurnRate = .4;
                 lf.Step(q); v = Math.Max(110, v - .4); alt -= 2;
             }
-            Check(lf.Phase == "recover" && lf.P.Envelope.Count == 0 && lf.Redo.Contains(7) && lf.Status.Contains("not tracking"), "A300 repro: turn envelope invalidated when throttle/pitch don't track; step 7 marked for redo (" + lf.Status + ")");
+            Check(lf.Phase == "recover" && lf.P.Envelope.Count == 0 && lf.Redo.Contains(7) && lf.Status.Contains("not tracking"), "A300 repro: turn envelope invalidated when throttle/pitch don't track at first bank; step 7 marked for redo (" + lf.Status + ")");
             Check(!double.IsNaN(lf.SpeedTarget) || lf.Phase == "recover", "turn steps fly a speed target through the PI");
             var lf2 = new LearnFlight(); var q2 = new LearnIn { T = 0, Speed = 272, Alt = 5000, Pitch = 2, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .8, FuelFrac = .8 }; lf2.Step(q2); lf2.Phase = "rates"; q2.T = 11; lf2.Step(q2); q2.T = 11.1; lf2.Step(q2);
             Check(lf2.Phase == "turnprep" && Math.Abs(lf2.SpeedTarget - lf2.TurnSpeed(272, 84)) < 1e-6 && double.IsNaN(lf2.Elevator) && double.IsNaN(lf2.Aileron), "after rates: settle at the pass speed with power first; rate-test elevator/aileron overrides cleared (" + lf2.Phase + ")");
+        }
+        {   // Live A300 11:06: banks 10-40 clean, at 45 pitch can't follow -> REACHING THE LIMIT, save envelope at 40, reason can't hold altitude
+            var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 250, Alt = 5000, Pitch = 3, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .85, Bank = 0, Stress = .2, TurnRate = 0, FuelFrac = .8, Vs = 0 };
+            lf.Step(q); lf.Phase = "turnprep"; lf.Status = "prep"; double t = 0;
+            // force into turn at cruise pass with settled speed
+            q.T = 1; q.Speed = lf.TurnSpeed(250, 84); lf.Step(q);
+            // manually drive banks 10..40 successfully then fail pitch at 45
+            lf.Phase = "turn"; // idx defaults 0 after Go; set via turnprep completion
+            // Restart cleanly: settle turnprep then fly good banks
+            lf = new LearnFlight(); q = new LearnIn { T = 0, Speed = 250, Alt = 5000, Pitch = 3, G = 1.0, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .9, Bank = 0, Stress = .15, TurnRate = 0, FuelFrac = .8, Vs = 0 };
+            lf.Step(q); lf.Phase = "rates"; t = 0; double v = 250, alt = 5000; int bankTarget = 10; bool failing = false;
+            for (int k = 0; k < 80000; k++)
+            {
+                t += .1; q.T = t; q.Speed = v; q.Alt = alt; q.Throttle = .9; q.Stress = .15; q.FuelFrac = .8; q.StallGuess = 84; q.GLimit = 2.5; q.Mass = 48; q.Vs = 0;
+                if (lf.Phase == "rates") { q.Pitch = 2; q.Bank = 0; q.RollRate = 20; q.PitchRate = 5; }
+                else if (lf.Phase == "turnprep") { q.Pitch = 2; q.Bank = 0; v = lf.TurnSpeed(250, 84); }
+                else if (lf.Phase == "turn")
+                {
+                    bankTarget = double.IsNaN(lf.Bank) ? bankTarget : (int)Math.Round(Math.Abs(lf.Bank));
+                    q.Bank = bankTarget; // instant roll-in for the test
+                    // good banks <=40: pitch tracks and altitude held; at 45+: sink + pitch stuck at -2 so cmd climbs to ~9 (live A300 11:06)
+                    if (bankTarget >= 45) { q.Pitch = -2; q.G = 1.05; q.TurnRate = 1.5; q.Vs = -8; alt -= .8; failing = true; }
+                    else { q.Pitch = double.IsNaN(lf.Pitch) ? 3 : lf.Pitch; q.G = 1 / Math.Cos(Math.Min(70, bankTarget) * Math.PI / 180); q.TurnRate = Math.Tan(Math.Min(70, bankTarget) * Math.PI / 180) * 9.81 / Math.Max(1, v) * 180 / Math.PI; q.Vs = 0; alt = 5000; }
+                }
+                else break;
+                lf.Step(q);
+                if (lf.Status != null && lf.Status.Contains("can't hold altitude")) break;
+                if (lf.Status != null && lf.Status.Contains("not tracking")) break;
+                if (lf.Phase == "recover" || (lf.Phase == "turnprep" && lf.P.Envelope.Count > 0)) break;
+                if (lf.Phase == "dive" || lf.Phase == "sinkprep" || lf.Done) break;
+            }
+            Check(lf.P.Envelope.Count > 0 && lf.P.Envelope[0][1] == 40 && !lf.Redo.Contains(7) && lf.Status.Contains("can't hold altitude"),
+                "A300 11:06: pitch fail at 45 after good 10-40 saves envelope at 40 as limit (" + lf.Status + ", env bank=" + (lf.P.Envelope.Count > 0 ? lf.P.Envelope[0][1].ToString() : "-") + ")");
+            Check(lf.P.Curves.TurnRadius.Points.Count > 0 && lf.P.Curves.TurnG.Points.Count > 0 && lf.P.Curves.TurnRate.Points.Count > 0,
+                "every successful turn sample stored on turn curves (" + lf.P.Curves.TurnG.Points.Count + " g pts)");
+        }
+        {   // PerfCurve lookup + old profile fallback + climb-back uses best climb pitch
+            var c = new PerfCurve("climb", "alt_km", "m/s", "none");
+            c.Add(20, 40, 1); c.Add(15, 40, 3); c.Add(8, 40, 5);
+            Check(Math.Abs(c.Lookup(40, 3) - 15) < .5, "curve nearest/interp at 3 km");
+            Check(double.IsNaN(new PerfCurve("x", "x", "y", "none").Lookup(10, 1)), "empty curve -> NaN fallback");
+            var old = new PlaneProfile(); old.Stall = 80; old.M0 = 40; old.ClimbVs = 12; old.Turns.Add(new[] { 30, 1.15, 3.0, 10, .2, 40, .7, 200, 3800, 5 });
+            var d = old.ToDict(); var loaded = PlaneProfile.FromDict(d);
+            Check(!loaded.Curves.Stall.Empty || loaded.Stall == 80, "old profile loads");
+            loaded.Curves.SeedFromLegacy(loaded);
+            Check(loaded.Curves.TurnG.Points.Count > 0, "legacy turns seed turn_g curve");
+            Check(Math.Abs(loaded.StallAt(40) - 80) < 1 || !double.IsNaN(loaded.StallAt(40)), "StallAt falls back or uses curve");
+            var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 120, Alt = 3500, Pitch = 5, G = 1, GLimit = 4, StallGuess = 60, Mass = 20, Throttle = 1, Vs = 5, FuelFrac = .7 };
+            lf.Step(q); lf.Phase = "sinkclimb"; lf.P.ClimbVs = 18; lf.P.Perf.CruiseSpeed = 150; q.T = 1; lf.Step(q);
+            Check(lf.Phase == "sinkclimb" && lf.Throttle == 1 && lf.Pitch >= 6, "sinkclimb: full power + best-climb pitch, not Level 15 m/s cap (pit=" + lf.Pitch.ToString("0.0") + ")");
         }
         }
         {   // LEARN THIS PLANE (Luke 7:06 PM): full test flight on a crude point-mass plane (stall 60 m/s, 20 t).

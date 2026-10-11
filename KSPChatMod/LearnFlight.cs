@@ -20,6 +20,8 @@ namespace KSPChatBridge
         internal readonly List<double[]> SinkFlaps = new List<double[]>();
         /// <summary>Safe turn envelope: [speed, max sustained bank, g, turn rate deg/s, radius m, roll-in s, mass].</summary>
         internal readonly List<double[]> Envelope = new List<double[]>();
+        /// <summary>Sampled performance curves (mass-tagged). Empty curves fall back to the single-value fields above.</summary>
+        internal readonly CurveBook Curves = new CurveBook();
         /// <summary>Max safe bank at a speed (interpolated by speed between the learned passes); NaN without data.</summary>
         internal double SafeBankAt(double speed)
         {
@@ -29,6 +31,18 @@ namespace KSPChatBridge
             return e[e.Count - 1][1];
         }
         internal double RollIn { get { if (Envelope.Count == 0) return 0; double s = 0; foreach (var x in Envelope) s += double.IsNaN(x[5]) ? 0 : x[5]; return s / Envelope.Count; } }   // flaps-full sink map (same layout as Sink)
+        /// <summary>Climb rate (m/s) at altitude from the curve, else ClimbVs fallback.</summary>
+        internal double ClimbRateAt(double altM, double mass)
+        {
+            double v = Curves.Climb.Lookup(mass, altM / 1000.0);
+            return double.IsNaN(v) ? ClimbVs : v;
+        }
+        /// <summary>Best climb speed (Vy): ~1.4 Vs, or 85% of learned cruise when known.</summary>
+        internal double BestClimbSpeed(double stall, double mass)
+        {
+            double vy = !double.IsNaN(Perf.CruiseSpeed) && Perf.CruiseSpeed > 0 ? Math.Min(ScaleSpeed(Perf.CruiseSpeed, M0, mass) * .85, 1.55 * stall) : 1.4 * stall;
+            return Math.Max(1.3 * stall, vy);
+        }
         internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN;
         internal bool FlapSub = true, FlapStallSub = true;   // 9b / 10b sub-steps (toggle-able)   // steps unchecked for the next LEARN (persisted)
         internal readonly List<double[]> Sink = new List<double[]>();    // sink m/s (+ down), throttle 0..1, lag s (Luke 7:19 PM)
@@ -36,20 +50,31 @@ namespace KSPChatBridge
         /// NaN without a table.</summary>
         internal double ThrottleForSink(double sink, double m)
         {
+            // Prefer the legacy sink table (stable invert). Curve used when the table is empty: invert by nearest sink samples.
+            if (Sink.Count == 0 && !Curves.Sink.Empty)
+            {
+                double bestTh = double.NaN, bestErr = double.MaxValue, m0 = m;
+                foreach (var pt in Curves.Sink.Points)
+                {   // thr, spd, flaps, sink, mass
+                    if (pt.Length < 5 || double.IsNaN(pt[3])) continue;
+                    double err = Math.Abs(pt[3] - sink); if (err < bestErr) { bestErr = err; bestTh = pt[0]; m0 = pt[4]; }
+                }
+                if (!double.IsNaN(bestTh)) { double sc = double.IsNaN(m0) || m0 <= 0 || m <= 0 ? 1 : m / m0; return FlightPolicy.Clamp(bestTh * sc, 0, 1); }
+            }
             if (Sink.Count == 0) return double.NaN;
             var s = new List<double[]>(Sink); s.Sort((a, b) => a[0].CompareTo(b[0]));
-            double th;
-            if (sink <= s[0][0]) th = s[0][1]; else if (sink >= s[s.Count - 1][0]) th = s[s.Count - 1][1];
-            else { th = s[0][1]; for (int k = 1; k < s.Count; k++) if (sink <= s[k][0]) { double f = (sink - s[k - 1][0]) / Math.Max(1e-6, s[k][0] - s[k - 1][0]); th = s[k - 1][1] + f * (s[k][1] - s[k - 1][1]); break; } }
-            double m0 = s[0].Length > 3 && !double.IsNaN(s[0][3]) ? s[0][3] : M0; double sc = double.IsNaN(m0) || m0 <= 0 || m <= 0 ? 1 : m / m0;
-            return FlightPolicy.Clamp(th * sc, 0, 1);
+            double th0;
+            if (sink <= s[0][0]) th0 = s[0][1]; else if (sink >= s[s.Count - 1][0]) th0 = s[s.Count - 1][1];
+            else { th0 = s[0][1]; for (int k = 1; k < s.Count; k++) if (sink <= s[k][0]) { double f = (sink - s[k - 1][0]) / Math.Max(1e-6, s[k][0] - s[k - 1][0]); th0 = s[k - 1][1] + f * (s[k][1] - s[k - 1][1]); break; } }
+            double m0b = s[0].Length > 3 && !double.IsNaN(s[0][3]) ? s[0][3] : M0; double scb = double.IsNaN(m0b) || m0b <= 0 || m <= 0 ? 1 : m / m0b;
+            return FlightPolicy.Clamp(th0 * scb, 0, 1);
         }
         internal static double ScaleSpeed(double v, double m0, double m) { return double.IsNaN(v) || double.IsNaN(m0) || m0 <= 0 || m <= 0 ? v : v * Math.Sqrt(m / m0); }
         internal static double ScaleAccel(double a, double m0, double m) { return double.IsNaN(a) || double.IsNaN(m0) || m0 <= 0 || m <= 0 ? a : a * m0 / m; }
-        internal double StallAt(double m) { return ScaleSpeed(Stall, M0, m); }
+        internal double StallAt(double m) { double v = Curves.Stall.Lookup(m, 0); return double.IsNaN(v) ? ScaleSpeed(Stall, M0, m) : v; }
         internal double LiftoffAt(double m) { return ScaleSpeed(Liftoff, M0, m); }
-        internal double DecelAt(double m) { return ScaleAccel(Decel, M0, m); }
-        internal double AccelAt(double m) { return ScaleAccel(Accel, M0, m); }
+        internal double DecelAt(double m) { double v = Curves.Decel.Lookup(m, double.IsNaN(EconSpeed) ? 100 : EconSpeed); return double.IsNaN(v) ? ScaleAccel(Decel, M0, m) : v; }
+        internal double AccelAt(double m) { double v = Curves.Accel.Lookup(m, double.IsNaN(EconSpeed) ? 100 : EconSpeed); return double.IsNaN(v) ? ScaleAccel(Accel, M0, m) : v; }
         static object N(double v) { return double.IsNaN(v) ? null : (object)Math.Round(v, 3); }
         static double D(Dictionary<string, object> d, string k) { object o; if (d == null || !d.TryGetValue(k, out o) || o == null) return double.NaN; try { return Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { return double.NaN; } }
         internal Dictionary<string, object> ToDict()
@@ -61,7 +86,7 @@ namespace KSPChatBridge
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
-                { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => (object)(double.IsNaN(v) ? 0 : Math.Round(v, 2))))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub } };
+                { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => (object)(double.IsNaN(v) ? 0 : Math.Round(v, 2))))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -83,6 +108,8 @@ namespace KSPChatBridge
             if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
             if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN, l.Count > 4 && l[4] != null ? Convert.ToDouble(l[4], ci) : double.NaN }); } catch (Exception) { } }
+            if (d.TryGetValue("curves", out o)) p.Curves.FromDict(o as Dictionary<string, object>);
+            p.Curves.SeedFromLegacy(p);
             return p;
         }
         internal string Summary()
@@ -239,6 +266,17 @@ namespace KSPChatBridge
             double vsT = double.IsNaN(target) ? 0 : FlightPolicy.Clamp((target - i.Alt) * .05, -15, 15);
             return FlightPolicy.Clamp(3 + (vsT - i.Vs) * .6, -10, 15);
         }
+        /// <summary>Full-power climb pitch for best climb speed (not the slow Level 15 m/s VS cap).</summary>
+        double BestClimbPitch(LearnIn i)
+        {
+            double vT = P.BestClimbSpeed(i.StallGuess, i.Mass), e = i.Speed - vT;
+            return FlightPolicy.Clamp(14 - e * .35, 6, 22);
+        }
+        void SampleClimb(LearnIn i)
+        {
+            P.Perf.Ceiling(i.Alt, i.Vs, i.Mass);
+            if (i.Vs > 1) P.Curves.Climb.Add(i.Vs, i.Mass, i.Alt / 1000.0);
+        }
         void Finish(bool aborted, string why)
         {
             if (prior != null)
@@ -390,24 +428,25 @@ namespace KSPChatBridge
                     if (dt > 3) Go("climb", i, "climb to 5 km at full power, 20 deg pitch, recording acceleration.");
                     return;
                 case "climb":
-                    if (n == 0) climbFuel0 = i.FuelFrac; P.Perf.Ceiling(i.Alt, i.Vs, i.Mass);
-                    Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : 20; Bank = 0; gSum += i.Vs; n++;
-                    if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
+                    if (n == 0) climbFuel0 = i.FuelFrac; SampleClimb(i);
+                    Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : BestClimbPitch(i); Bank = 0; gSum += i.Vs; n++;
+                    if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); P.Curves.Accel.Add(P.ClimbAccel, i.Mass, (i.Speed + v0) / 2); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
                     return;
                 case "decel":
                     Throttle = 0; Pitch = Level(i); Bank = 0;
-                    if (dt >= Seg || i.Speed < 1.35 * i.StallGuess) { P.Decel = (v0 - i.Speed) / Math.Max(1, dt); P.Note("decel", P.Decel, i.Mass); Go("accel", i, "full power, recording acceleration and throttle lag."); }
+                    if (dt >= Seg || i.Speed < 1.35 * i.StallGuess) { P.Decel = (v0 - i.Speed) / Math.Max(1, dt); P.Note("decel", P.Decel, i.Mass); P.Curves.Decel.Add(P.Decel, i.Mass, (v0 + i.Speed) / 2); Go("accel", i, "full power, recording acceleration and throttle lag."); }
                     return;
                 case "accel":
                     Throttle = 1; Pitch = Level(i); Bank = 0; minV = Math.Min(minV, i.Speed);
                     if (double.IsNaN(lagAt) && i.Speed > minV + .5) lagAt = dt;
                     if (double.IsNaN(spoolAt) && i.ThrustFrac >= .9) spoolAt = dt;
-                    if (dt >= Seg) { P.Accel = (i.Speed - minV) / Math.Max(1, dt - (double.IsNaN(lagAt) ? 0 : lagAt)); P.Lag = lagAt; P.Note("accel", P.Accel, i.Mass); P.Note("lag", P.Lag, i.Mass); P.Perf.Spool = spoolAt; P.Note("spool", spoolAt, i.Mass); Go("cruise", i, "Level cruise 60 s at the economy setting: measuring cruise burn and trim."); }
+                    if (dt >= Seg) { P.Accel = (i.Speed - minV) / Math.Max(1, dt - (double.IsNaN(lagAt) ? 0 : lagAt)); P.Lag = lagAt; P.Note("accel", P.Accel, i.Mass); P.Note("lag", P.Lag, i.Mass); P.Perf.Spool = spoolAt; P.Note("spool", spoolAt, i.Mass); P.Curves.Accel.Add(P.Accel, i.Mass, (minV + i.Speed) / 2); if (!double.IsNaN(P.Lag)) P.Curves.ThrottleLag.Add(P.Lag, i.Mass, 1); Go("cruise", i, "Level cruise 60 s at the economy setting: measuring cruise burn and trim."); }
                     return;
                 case "cruise":
                     Throttle = CruiseThr(); Pitch = Level(i); Bank = 0; if (dt > 15) { gSum += i.Trim; n++; }
                     if (dt >= 60) { P.Perf.CruiseTrim = gSum / Math.Max(1, n); P.Perf.CruiseSpeed = i.Speed; P.Perf.CruiseThrottle = Throttle; P.Perf.CruiseFracPerS = (cruiseFuel0 - i.FuelFrac) / Math.Max(1, dt - 15);
                         P.Note("cruise_speed", i.Speed, i.Mass); P.Note("cruise_burn_pct_min", P.Perf.CruiseFracPerS * 6000, i.Mass); P.Note("cruise_trim", P.Perf.CruiseTrim, i.Mass);
+                        if (!double.IsNaN(P.Perf.CruiseFracPerS)) P.Curves.FuelBurn.Add(P.Perf.CruiseFracPerS * 100, i.Mass, i.Speed, i.Alt, Throttle);
                         Go("vmax", i, "Max level speed run: full power, level."); }
                     else if (dt <= 15) cruiseFuel0 = i.FuelFrac;
                     return;
@@ -436,14 +475,28 @@ namespace KSPChatBridge
                         turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1);
                         Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1); SpeedTarget = vT;   // the controller flies this through the one speed PI (full power as needed)
                         Pitch = Level(i, a0);
-                        // controls must track: pitch within 8 deg, and power coming up when slow (Luke 10:33 log: thr 0%, cmd +15 act -5)
+                        // controls must track: pitch within 8 deg, and power coming up when slow (Luke 10:33 / 11:06 logs)
                         if (Math.Abs(Pitch - i.Pitch) > BadPitchDeg) badPitch += tick; else badPitch = Math.Max(0, badPitch - tick);
                         if (i.Speed < vT - 10 && !double.IsNaN(i.Throttle) && i.Throttle < .3) badThr += tick; else badThr = Math.Max(0, badThr - tick);
                         if (badPitch > BadPitchS || badThr > BadThrS)
                         {
                             string what = badThr > BadThrS ? "throttle " + Math.Round(i.Throttle * 100) + "% while " + Math.Round(vT - i.Speed) + " m/s slow" : "pitch cmd " + Pitch.ToString("0") + " act " + i.Pitch.ToString("0");
-                            passBest = null; passSpeed = double.NaN; turnPass = 0; badPitch = badThr = 0; if (!Redo.Contains(7)) Redo.Add(7);
-                            Go("recover", i, "Turn data invalid (" + what + " - controls not tracking): envelope NOT saved, step 7 marked for redo. Leveling off with power."); return;
+                            bool thrFail = badThr > BadThrS;
+                            // invalidate whole step only if throttle wasn't tracking, or pitch failed at the FIRST bank (no earlier success)
+                            if (thrFail || passBest == null)
+                            {
+                                passBest = null; passSpeed = double.NaN; turnPass = 0; badPitch = badThr = 0; if (!Redo.Contains(7)) Redo.Add(7);
+                                Go("recover", i, "Turn data invalid (" + what + " - controls not tracking): envelope NOT saved, step 7 marked for redo. Leveling off with power."); return;
+                            }
+                            // later bank can't hold pitch after earlier banks succeeded = REACHING THE LIMIT (can't hold altitude)
+                            badPitch = badThr = 0;
+                            string why = "can't hold altitude";
+                            if (passBest != null) { P.Envelope.Add(new[] { passBest[7], passBest[0], passBest[1], passBest[2], passBest[8], passBest[9], i.Mass }); P.Note("safe_bank@" + Math.Round(passBest[7]), passBest[0], i.Mass); }
+                            string res = "max safe bank " + passBest[0] + " deg at " + passBest[7].ToString("0") + " m/s (" + passBest[1].ToString("0.0") + " g, " + passBest[2].ToString("0.0") + " deg/s, r " + (passBest[8] / 1000).ToString("0.0") + " km) - limit at " + b + " deg (" + what + ")";
+                            passBest = null; passSpeed = double.NaN;
+                            if (turnPass == 0) { turnPass = 1; Go("turnprep", i, "Turns at cruise: " + why + "; " + res + ". Slowing to ~approach speed for the second pass."); }
+                            else { turnPass = 0; Go("recover", i, "Turns at approach speed: " + why + "; " + res + ". Leveling off."); }
+                            return;
                         }
                         bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;   // checked during the roll-in too
                         if (!nearLimit && !Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
@@ -455,6 +508,8 @@ namespace KSPChatBridge
                             double rate = trSum / Math.Max(1, n), radius = rate > .01 ? i.Speed / (rate * Math.PI / 180) : double.NaN, rollIn = reachAt - t0;
                             var row = new double[] { b, gSum / Math.Max(1, n), rate, a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n), vT, radius, rollIn };
                             P.Turns.Add(row); P.Note("turn_throttle_" + b, row[6], i.Mass);
+                            P.Curves.TurnG.Add(row[1], i.Mass, b, vT); P.Curves.TurnRate.Add(rate, i.Mass, b, vT);
+                            if (!double.IsNaN(radius)) P.Curves.TurnRadius.Add(radius, i.Mass, b, vT);
                             bool fail = nearLimit || slow || sinking;
                             if (!fail) passBest = row;
                             idx++;
@@ -497,11 +552,13 @@ namespace KSPChatBridge
                         return;
                     }
                 case "sinkprep":
-                    Throttle = i.Alt < SinkAlt - 200 ? 1 : .5; Pitch = i.Alt < SinkAlt - 200 ? Level(i, SinkAlt) : SpeedPitch(i, 1.25); Bank = 0; if (i.Alt >= SinkAlt - 200) Throttle = Math.Max(Throttle, SinkLimit(i)); if (double.IsNaN(sinkStart)) sinkStart = i.T;
+                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = BestClimbPitch(i); SampleClimb(i); }
+                    else { Throttle = .5; Pitch = SpeedPitch(i, 1.25); Throttle = Math.Max(Throttle, SinkLimit(i)); }
+                    Bank = 0; if (double.IsNaN(sinkStart)) sinkStart = i.T;
                     if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "sinkclimb":
-                    Throttle = 1; Pitch = Level(i, SinkAlt); Bank = 0;
+                    Throttle = 1; Pitch = BestClimbPitch(i); Bank = 0; SampleClimb(i);
                     if (i.Alt >= SinkAlt - 100) { string r = resume; double keepT = stepThr; Go(r, i, "Sink map resumed."); stepThr = keepT; stepAt = i.T; vs0 = vsF; lagDone = false; prevT = i.T; }
                     return;
                 case "sinkdown":
@@ -528,7 +585,8 @@ namespace KSPChatBridge
                         if (!lagDone && Math.Abs(vsF - vs0) > .2) { lagDone = true; lagS = i.T - stepAt; }
                         while (idx >= 0 && -vsF <= SinkTargets[idx])
                         {
-                            SinkTbl.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass, i.Pitch }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
+                            SinkTbl.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass, i.Pitch }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass);
+                            P.Curves.Sink.Add(SinkTargets[idx], i.Mass, stepThr, i.Speed, flapPass ? 3 : 0); if (!double.IsNaN(lagS)) P.Curves.ThrottleLag.Add(lagS, i.Mass, .01); idx--;
                         }
                         lastVsF = vsF;
                         if (idx < 0) SinkDone(i, "Sink map done (" + SinkTbl.Count + " points). Level at 4 km for the stall test.");
@@ -544,7 +602,7 @@ namespace KSPChatBridge
                         Throttle = 0; Bank = 0; Elevator = FlightPolicy.Clamp(dt * .03, 0, 1); minV = Math.Min(minV, i.Speed);
                         if (i.Pitch > maxPitch) maxPitch = i.Pitch;
                         bool broke = Elevator >= .95 && (i.Pitch < -10 || i.Vs < -25);
-                        if (broke || dt > 90) { if (stallFlapPass) { P.FlapStall = minV; P.Note("flap_stall", minV, i.Mass); } else { P.Stall = minV; P.Note("stall", P.Stall, i.Mass); } Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
+                        if (broke || dt > 90) { if (stallFlapPass) { P.FlapStall = minV; P.Note("flap_stall", minV, i.Mass); P.Curves.Stall.Add(minV, i.Mass, 3); } else { P.Stall = minV; P.Note("stall", P.Stall, i.Mass); P.Curves.Stall.Add(minV, i.Mass, 0); } Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
                         return;
                     }
                 case "stallrec":

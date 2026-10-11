@@ -26,6 +26,7 @@
     <Compile Include="../../KSPChatMod/InModChatSession.cs"/>
     <Compile Include="../../KSPChatMod/MiniJson.cs"/>
     <Compile Include="../../KSPChatMod/LearnFlight.cs"/>
+    <Compile Include="../../KSPChatMod/PerfCurves.cs"/>
     <Compile Include="../../KSPChatMod/TerrainGrid.cs"/>
     <Compile Include="../../KSPChatMod/MapReveal.cs"/><Compile Include="../../KSPChatMod/ChartStore.cs"/>
     <Compile Include="../../KSPChatMod/KerbalPersonality.cs"/>

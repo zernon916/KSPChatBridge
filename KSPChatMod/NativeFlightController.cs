@@ -1116,7 +1116,7 @@ namespace KSPChatBridge
                     {   // Luke 9:58 AM: phase 1 FERRY at cruise (great circle), phase 2 APPROACH from the join area, decel started early
                         var keep = new Dictionary<string, object>(a); keep["_from_ferry"] = true;
                         bool jet = false; foreach (var en in vessel.FindPartModulesImplementing<ModuleEngines>()) foreach (var pr in en.propellants) if (pr.name == "IntakeAir") jet = true;
-                        double ceil = profile != null ? profile.Perf.CeilingKm() : double.NaN, cvs = profile != null && !double.IsNaN(profile.ClimbVs) ? profile.ClimbVs * .6 : double.NaN;
+                        double ceil = profile != null ? profile.Perf.CeilingKm() : double.NaN, cvs = profile != null ? (double.IsNaN(profile.ClimbRateAt(vessel.altitude, vessel.totalMass)) ? double.NaN : profile.ClimbRateAt(vessel.altitude, vessel.totalMass) * .6) : double.NaN;
                         double dvs = PilotPolicy.DescentSink(profile != null ? profile.Dives : null, cruise, PilotPolicy.CapSpeed);   // 25-30 m/s if the learned dives stay inside the cap
                         double falt = PilotPolicy.FerryAltitude(rwDist - handoff, vessel.altitude, ceil, cvs, cruise, dvs, vessel.mainBody.atmosphereDepth, jet), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
                         string hr = Command("plane_hold", new Dictionary<string, object> { { "altitude_m", falt }, { "altitude_ref", "msl" }, { "heading", brg }, { "speed", cruise } });
