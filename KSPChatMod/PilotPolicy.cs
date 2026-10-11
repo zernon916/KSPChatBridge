@@ -349,6 +349,28 @@ namespace KSPChatBridge
             double a = double.IsNaN(decel) || decel <= 0 ? .5 : Math.Max(.3, decel);
             return JoinArea + Math.Max(0, vCruise * vCruise - vJoin * vJoin) / (2 * a) + 3000;
         }
+        internal const double HandoffAlt = 1500;
+        /// <summary>Ferry cruise altitude (Luke 10:00 AM): jets ~75% of the learned ceiling (8-12 km on Kerbin, scaled by atmosphere height),
+        /// props / low-ceiling craft what they sustain. Climb only if the leg is > 3x the climb+descent distance; else the highest level that pays off.</summary>
+        internal static double FerryAltitude(double distM, double curAlt, double ceilingKm, double climbVs, double speed, double descentVs, double atmoHeight, bool jet)
+        {
+            double sc = atmoHeight > 0 ? atmoHeight / 70000 : 1;
+            bool known = !double.IsNaN(ceilingKm) && ceilingKm > 0; double ceil = known ? ceilingKm * 1000 : double.NaN;
+            double target = known ? .75 * ceil : (jet ? 8000 : 4000) * sc;
+            if (jet) { target = FlightPolicy.Clamp(target, 7000 * sc, 12000 * sc); if (known && target > .9 * ceil) target = .75 * ceil; }   // jets: 7 km floor (Luke 10:01) unless it can't sustain it
+            else target = FlightPolicy.Clamp(target, 1500, 6000 * sc);
+            double floorAlt = Math.Max(curAlt, HandoffAlt);
+            if (target <= floorAlt) return floorAlt;
+            double cv = double.IsNaN(climbVs) || climbVs <= 1 ? 10 : Math.Min(climbVs, 30), dv = double.IsNaN(descentVs) || descentVs <= 1 ? 10 : descentVs, v = Math.Max(50, speed);
+            for (double a = target; a > floorAlt + 500; a -= 1000)
+            {
+                double climbD = (a - curAlt) / cv * v, descD = (a - HandoffAlt) / dv * v;
+                if (distM > 3 * (Math.Max(0, climbD) + descD)) return a;
+            }
+            return floorAlt;
+        }
+        /// <summary>Top of descent: distance before the hand-off to start down from cruise to the hand-off altitude (+10%).</summary>
+        internal static double TopOfDescentM(double cruiseAlt, double speed, double descentVs) { double dv = double.IsNaN(descentVs) || descentVs <= 1 ? 10 : descentVs; return 1.1 * Math.Max(0, cruiseAlt - HandoffAlt) / dv * Math.Max(50, speed); }
         internal static double FerryCruise(double stall, double econ, double cap) { return Math.Min(FerryCruise(stall, econ), cap); }
         internal static double FerryCruise(double stall, double econ) { return !double.IsNaN(econ) && econ > 0 ? FlightPolicy.Clamp(econ, 1.4 * stall, 250) : FlightPolicy.Clamp(2.2 * stall, 100, 200); }
         /// <summary>Throttle after the over-cap rule: over 220 m/s low down, cut 15% (30% when 30+ over) at most once a second.</summary>

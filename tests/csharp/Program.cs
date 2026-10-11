@@ -369,6 +369,16 @@ class Program
             Check(PilotPolicy.FerryCruise(84, 164, 264) == 164 && PilotPolicy.FerryCruise(84, double.NaN, 264) == Math.Min(200, 2.2 * 84) && PilotPolicy.FerryCruise(84, 300, 264) == 250 && PilotPolicy.FerryCruise(84, 300, 220) == 220, "ferry cruise: learned econ/cruise, else 2.2x stall, within the per-plane cap (not the 100 m/s approach speed)");
             Check(MfdNav.ApStatus("ferry", false, false).Contains("FERRY") && MfdNav.ApStatus("approach", false, false).Contains("APPROACH"), "AP page shows FERRY / APPROACH");
         }
+        {   // Luke 10:00/10:01 AM: ferry cruise altitude
+            double longJ = PilotPolicy.FerryAltitude(1000000, 3000, double.NaN, 30, 220, 15, 70000, true), learned = PilotPolicy.FerryAltitude(1000000, 3000, 14, 30, 220, 15, 70000, true);
+            Check(longJ >= 7000 && longJ <= 12000 && Math.Abs(learned - 10500) < 1, "jets: 7-12 km, 75% of the learned ceiling (" + longJ + " / " + learned + ")");
+            Check(PilotPolicy.FerryAltitude(1000000, 3000, 6, 30, 220, 15, 70000, true) == 4500, "jet that can't sustain 7 km: 75% of its ceiling");
+            double shortT = PilotPolicy.FerryAltitude(40000, 2000, double.NaN, 30, 200, 15, 70000, true);
+            Check(shortT < 7000, "short ferry: climb doesn't pay off, stays lower (" + shortT + ")");
+            Check(PilotPolicy.FerryAltitude(400000, 2000, double.NaN, 10, 100, 8, 70000, false) <= 6000, "props: lower cruise");
+            Check(PilotPolicy.FerryAltitude(2000000, 3000, double.NaN, 30, 220, 15, 50000, true) < longJ, "scaled by atmosphere height on other bodies");
+            Check(Math.Abs(PilotPolicy.TopOfDescentM(10000, 200, 10) - 1.1 * 8500 / 10 * 200) < 1, "top of descent from the learned sink rate");
+        }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
             var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);
