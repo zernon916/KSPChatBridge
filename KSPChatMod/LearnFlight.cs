@@ -16,7 +16,10 @@ namespace KSPChatBridge
         internal readonly List<object[]> Samples = new List<object[]>();
         internal void Note(string key, double value, double massT) { if (!double.IsNaN(value)) Samples.Add(new object[] { key, Math.Round(value, 3), Math.Round(massT, 3) }); }
         internal readonly PerfData Perf = new PerfData();
-        internal readonly List<int> Rerun = new List<int>();   // steps unchecked for the next LEARN (persisted)
+        internal readonly List<int> Rerun = new List<int>();
+        internal readonly List<double[]> SinkFlaps = new List<double[]>();   // flaps-full sink map (same layout as Sink)
+        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN;
+        internal bool FlapSub = true, FlapStallSub = true;   // 9b / 10b sub-steps (toggle-able)   // steps unchecked for the next LEARN (persisted)
         internal readonly List<double[]> Sink = new List<double[]>();    // sink m/s (+ down), throttle 0..1, lag s (Luke 7:19 PM)
         /// <summary>Throttle for a steady sink rate (+ = down) near 1.25 Vs, nose 12 deg up; scaled by m/M0 (thrust needed ~ weight).
         /// NaN without a table.</summary>
@@ -46,7 +49,8 @@ namespace KSPChatBridge
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN });
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
-                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) } };
+                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
+                { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub } };
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -62,6 +66,9 @@ namespace KSPChatBridge
                     for (int j = 0; j < l.Count; j++) { try { a[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { a[j] = double.NaN; } }
                     (key == "turns" ? p.Turns : p.Dives).Add(a);
                 }
+            p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit");
+            if (d.TryGetValue("flap_sub", out o) && o is bool) p.FlapSub = (bool)o; if (d.TryGetValue("flap_stall_sub", out o) && o is bool) p.FlapStallSub = (bool)o;
+            if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
             if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN, l.Count > 4 && l[4] != null ? Convert.ToDouble(l[4], ci) : double.NaN }); } catch (Exception) { } }
             return p;
@@ -77,6 +84,7 @@ namespace KSPChatBridge
     internal struct LearnIn
     {
         internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
+        internal bool HasFlaps;
         internal string Res;   // resources that went down since the last frame (comma list)
         internal bool Landed, PartLost;
     }
@@ -87,6 +95,15 @@ namespace KSPChatBridge
     {
         internal string Phase = "start", Status = "", Reason = "";
         internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN;
+        internal int Flaps;   // flap setting the test wants (0..3)
+        bool flapPass, stallFlapPass;
+        List<double[]> SinkTbl { get { return flapPass ? P.SinkFlaps : P.Sink; } }
+        /// <summary>After the clean sink map: repeat with flaps full (toggle-able 9b), then the stall step.</summary>
+        void SinkDone(LearnIn i, string msg)
+        {
+            if (!flapPass && i.HasFlaps && P.FlapSub) { flapPass = true; P.SinkFlaps.Clear(); Go("sinkprep", i, msg + " Repeating the sink map with flaps FULL."); return; }
+            flapPass = false; Go("stallprep", i, msg);
+        }
         internal bool LandingDone; double rollM, rollPrevT = double.NaN, rollStartT = double.NaN;
         internal bool WantTakeoff, Done, Aborted;
         internal readonly PlaneProfile P = new PlaneProfile();
@@ -252,12 +269,23 @@ namespace KSPChatBridge
         internal static List<string> ProfileChecklist(PlaneProfile p, int cursor)
         {
             var o = new List<string>();
-            for (int k = 1; k <= StepCount; k++) o.Add((k - 1 == cursor ? ">" : " ") + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[ ] " : "[x] ") + k + " " + StepNames[k - 1]);
+            var codes = Codes;
+            for (int j = 0; j < codes.Length; j++)
+            {
+                int k = codes[j]; string cur = j == cursor ? ">" : " ";
+                if (k == 91) o.Add(cur + (p.FlapSub ? "  [x] " : "  [ ] ") + "9b Flaps-full sink map");
+                else if (k == 101) o.Add(cur + (p.FlapStallSub ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
+                else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[ ] " : "[x] ") + k + " " + StepNames[k - 1]);
+            }
             o.Add(p.Rerun.Count == 0 ? "All kept. TOGGLE unchecks a step." : "LEARN re-runs " + p.Rerun.Count + " step(s) + takeoff/climb/landing.");
             return o;
         }
+        /// <summary>Profile checklist rows: steps 1..12 with the flap sub-steps 9b (91) and 10b (101).</summary>
+        internal static readonly int[] Codes = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 91, 10, 101, 11, 12 };
         internal static bool Toggle(PlaneProfile p, int step)
         {
+            if (p != null && step == 91) { p.FlapSub = !p.FlapSub; return true; }
+            if (p != null && step == 101) { p.FlapStallSub = !p.FlapStallSub; return true; }
             if (p == null || step < 1 || step > StepCount || Setup(step)) return false;
             if (!p.Rerun.Remove(step)) p.Rerun.Add(step); p.Rerun.Sort(); return true;
         }
@@ -325,6 +353,7 @@ namespace KSPChatBridge
                 if (i.GLimit > 0 && i.G > GAbort * i.GLimit) { Finish(true, "g " + i.G.ToString("0.0") + " near the " + i.GLimit.ToString("0") + " g limit"); return; }
             }
             if (Math.Abs(i.Vs) < 3 && i.FuelRate > 0 && !double.IsNaN(i.Throttle) && i.Throttle > .1 && (Phase == "recover" || Phase == "stallprep" || Phase == "accel")) econ.Add(new[] { i.Speed, i.Throttle, i.FuelRate });
+            Flaps = flapPass || stallFlapPass ? 3 : 0;
             P.Perf.Feed(Cat(Phase), i, prevStepT); prevStepT = i.T;
             double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
             switch (Phase)
@@ -428,8 +457,8 @@ namespace KSPChatBridge
                 case "sinkmap":
                     {
                         Pitch = SpeedPitch(i); Bank = 0;
-                        if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { Go("stallprep", i, "Sink map: 10 min cap reached, keeping " + P.Sink.Count + " points. Level at 4 km for the stall test."); return; }
-                        if (i.Speed < 1.15 * i.StallGuess) { Go("stallprep", i, "Sink map stopped (speed under 1.15x stall); " + P.Sink.Count + " points. level at 4 km for the stall test."); return; }
+                        if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { SinkDone(i, "Sink map: 10 min cap reached, keeping " + SinkTbl.Count + " points. Level at 4 km for the stall test."); return; }
+                        if (i.Speed < 1.15 * i.StallGuess) { SinkDone(i, "Sink map stopped (speed under 1.15x stall); " + SinkTbl.Count + " points. level at 4 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T;
                         if (Phase == "sinkdown")
@@ -448,11 +477,11 @@ namespace KSPChatBridge
                         if (!lagDone && Math.Abs(vsF - vs0) > .2) { lagDone = true; lagS = i.T - stepAt; }
                         while (idx >= 0 && -vsF <= SinkTargets[idx])
                         {
-                            P.Sink.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass, i.Pitch }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
+                            SinkTbl.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass, i.Pitch }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
                         }
                         lastVsF = vsF;
-                        if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). Level at 4 km for the stall test.");
-                        else if (stepThr >= 1 && i.T - prevT >= RampWait) Go("stallprep", i, "Sink map: full power reached at " + (-vsF).ToString("0.0") + " m/s sink; " + P.Sink.Count + " points.");
+                        if (idx < 0) SinkDone(i, "Sink map done (" + SinkTbl.Count + " points). Level at 4 km for the stall test.");
+                        else if (stepThr >= 1 && i.T - prevT >= RampWait) SinkDone(i, "Sink map: full power reached at " + (-vsF).ToString("0.0") + " m/s sink; " + SinkTbl.Count + " points.");
                         return;
                     }
                 case "stallprep":
@@ -464,13 +493,17 @@ namespace KSPChatBridge
                         Throttle = 0; Bank = 0; Elevator = FlightPolicy.Clamp(dt * .03, 0, 1); minV = Math.Min(minV, i.Speed);
                         if (i.Pitch > maxPitch) maxPitch = i.Pitch;
                         bool broke = Elevator >= .95 && (i.Pitch < -10 || i.Vs < -25);
-                        if (broke || dt > 90) { P.Stall = minV; P.Note("stall", P.Stall, i.Mass); Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
+                        if (broke || dt > 90) { if (stallFlapPass) { P.FlapStall = minV; P.Note("flap_stall", minV, i.Mass); } else { P.Stall = minV; P.Note("stall", P.Stall, i.Mass); } Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
                         return;
                     }
                 case "stallrec":
                     Throttle = 1; Bank = 0; minAlt = Math.Min(minAlt, i.Alt);
                     Pitch = i.Speed < 1.3 * P.Stall ? -10 : Level(i);
-                    if ((i.Vs > 0 && i.Speed > 1.3 * P.Stall && dt > 3) || dt > 60) { P.StallAltLoss = a0 - minAlt; P.Note("stall_alt_loss", P.StallAltLoss, i.Mass); Finish(false, ""); }
+                    if ((i.Vs > 0 && i.Speed > 1.3 * P.Stall && dt > 3) || dt > 60) {
+                        if (stallFlapPass) { P.FlapStallAltLoss = a0 - minAlt; P.Note("flap_stall_alt_loss", P.FlapStallAltLoss, i.Mass); stallFlapPass = false; Finish(false, ""); }
+                        else { P.StallAltLoss = a0 - minAlt; P.Note("stall_alt_loss", P.StallAltLoss, i.Mass);
+                            if (i.HasFlaps && P.FlapStallSub && i.FuelFrac > .55 && i.Alt > 2500) { stallFlapPass = true; Go("stallprep", i, "Optional: stall again with flaps FULL."); } else Finish(false, ""); }
+                    }
                     return;
             }
         }
@@ -544,6 +577,36 @@ namespace KSPChatBridge
             if (rs != null) foreach (var kv in rs) Res[kv.Key] = new HashSet<string>((kv.Value ?? "").ToString().Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
             var cl = d.TryGetValue("climb_bins", out o) ? o as System.Collections.IList : null;
             if (cl != null) foreach (var c in cl) { var l = c as System.Collections.IList; if (l == null || l.Count < 3) continue; try { Climb.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci) }); } catch (Exception) { } }
+        }
+    }
+}
+
+namespace KSPChatBridge
+{
+    internal enum FlapKind { Pitch, Flap, RollFlap, Other }
+    /// <summary>Flap rules (Luke 9:45 AM).</summary>
+    internal static class FlapsPolicy
+    {
+        /// <summary>Dedicated flap: pitch/yaw/roll all disabled. Roll-only: may deploy as a flap and keep rolling. Anything with pitch: never.</summary>
+        internal static FlapKind Classify(bool pitch, bool yaw, bool roll)
+        {
+            if (pitch) return FlapKind.Pitch;
+            if (!yaw && !roll) return FlapKind.Flap;
+            if (roll && !yaw) return FlapKind.RollFlap;
+            return FlapKind.Other;
+        }
+        internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
+        internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }
+        /// <summary>Flap speed limit: learned, else 1.6x clean stall.</summary>
+        internal static double SpeedLimit(double cleanStall, double learned) { return !double.IsNaN(learned) && learned > 0 ? learned : 1.6 * (double.IsNaN(cleanStall) || cleanStall <= 0 ? 60 : cleanStall); }
+        /// <summary>Highest setting allowed at this speed: 0 above the limit (5 m/s hysteresis to keep what is out), else full.</summary>
+        internal static int MaxAllowed(double ias, double limit, int current) { return ias <= limit || (current > 0 && ias <= limit + 5) ? 3 : 0; }
+        /// <summary>Approach schedule: up until short final; 1 inside 2x the short-final fix, 2 inside it, full inside half of it and in the flare/rollout.</summary>
+        internal static int ApproachSetting(string phase, double distM, double shortFix)
+        {
+            if (phase == "flare" || phase == "rollout" || phase == "stopped") return 3;
+            if (phase != "final" && phase != "intercept") return 0;
+            if (distM < .5 * shortFix) return 3; if (distM < shortFix) return 2; if (distM < 2 * shortFix) return 1; return 0;
         }
     }
 }

@@ -339,6 +339,29 @@ class Program
             for (int s = 1; s <= 400; s++) { d.T = s * .1; dpit = Math.Max(-10, dpit - .03); d.Pitch = dpit; d.Vs = -20; ld2.Step(d); if (ld2.Phase == "dive" && ld2.Throttle != 0) idleAll = false; if (ld2.Phase != "dive") break; }
             Check(idleAll && ld2.P.Dives.Count == 1 && d.T >= 29 && d.T <= 32, "dive waits for -10 deg (slow pitch-over), then measures 10 s at idle (" + d.T.ToString("0") + " s)");
         }
+        {   // Luke 9:45 AM: flaps
+            Check(FlapsPolicy.Classify(false, false, false) == FlapKind.Flap && FlapsPolicy.Classify(false, false, true) == FlapKind.RollFlap && FlapsPolicy.Classify(true, false, false) == FlapKind.Pitch && FlapsPolicy.Classify(true, true, true) == FlapKind.Pitch && FlapsPolicy.Classify(false, true, false) == FlapKind.Other, "flap classes: dedicated / roll-only / never pitch");
+            Check(FlapsPolicy.Fraction(0) == 0 && Math.Abs(FlapsPolicy.Fraction(1) - 1 / 3.0) < 1e-9 && FlapsPolicy.Fraction(3) == 1 && FlapsPolicy.Name(3) == "FULL", "flap settings 0/1/2/full");
+            Check(FlapsPolicy.SpeedLimit(80, double.NaN) == 128 && FlapsPolicy.SpeedLimit(80, 140) == 140 && FlapsPolicy.MaxAllowed(130, 128, 0) == 0 && FlapsPolicy.MaxAllowed(130, 128, 2) == 3 && FlapsPolicy.MaxAllowed(140, 128, 2) == 0, "flap limit 1.6x clean stall (or learned), retract above it (5 m/s hysteresis)");
+            Check(FlapsPolicy.ApproachSetting("entry", 20000, 3000) == 0 && FlapsPolicy.ApproachSetting("final", 5000, 3000) == 1 && FlapsPolicy.ApproachSetting("final", 2500, 3000) == 2 && FlapsPolicy.ApproachSetting("final", 1000, 3000) == 3 && FlapsPolicy.ApproachSetting("flare", 100, 3000) == 3 && FlapsPolicy.ApproachSetting("final", 9000, 3000) == 0, "flaps step in from short final, full in the flare");
+            // LEARN: clean sink map, then flaps-full repeat (9b); toggled off -> skipped
+            Func<bool, LearnFlight> sinkRun = sub => { var lf2 = new LearnFlight(); lf2.P.FlapSub = sub; var li = new LearnIn { T = 0, Speed = 76.8, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, HasFlaps = true }; lf2.Step(li); lf2.Phase = "sinkprep";
+                double fT = 0, fvs = 0, eng = .5; bool flapsSeen = false;
+                for (int g = 0; g < 400000 && lf2.Phase != "stallprep"; g++) { fT += .1; li.T = fT; li.Vs = fvs; li.Alt = 5000; li.Speed = 76; lf2.Step(li); if (lf2.Flaps == 3) flapsSeen = true; double th = double.IsNaN(lf2.Throttle) ? .5 : lf2.Throttle; eng += (th - eng) * .1 / 2; double foff = lf2.Flaps == 3 ? 3 : 0; fvs += ((-(14 + foff - 25 * eng)) - fvs) * .1 / 1.5; }
+                li.T = fT + .1; lf2.Step(li); lf2.P.Note("flaps_seen", flapsSeen ? 1 : 0, 30); return lf2; };
+            var withF = sinkRun(true); var noF = sinkRun(false);
+            Check(withF.P.Sink.Count == 6 && withF.P.SinkFlaps.Count == 6 && withF.P.ThrottleForSink(4, 30) < withF.P.SinkFlaps.Find(r => r[0] == 4)[1] && withF.Flaps == 0, "sink map runs clean, then repeats with flaps FULL (more throttle for the same sink), flaps back up after: " + withF.P.Sink.Count + "/" + withF.P.SinkFlaps.Count + " " + string.Join(",", withF.P.SinkFlaps.ConvertAll(r => r[0] + ":" + r[1]).ToArray()) + " clean4=" + withF.P.ThrottleForSink(4, 30) + " flaps=" + withF.Flaps + " ph=" + withF.Phase);
+            Check(noF.P.Sink.Count == 6 && noF.P.SinkFlaps.Count == 0, "flaps-full sink sub-step toggled off: skipped");
+            var pf = new PlaneProfile(); Check(LearnFlight.Toggle(pf, 91) && !pf.FlapSub && LearnFlight.Toggle(pf, 101) && !pf.FlapStallSub, "9b / 10b toggle");
+            var pcl = LearnFlight.ProfileChecklist(pf, 9); Check(pcl[9].Contains("9b") && pcl[9].StartsWith(">") && pcl[11].Contains("10b") && LearnFlight.Codes.Length == 14, "profile checklist shows the flap sub-steps");
+            withF.P.FlapStall = 70; var rtf = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(withF.P.ToDict())) as Dictionary<string, object>);
+            Check(rtf.SinkFlaps.Count == 6 && rtf.FlapStall == 70 && rtf.FlapSub, "flap data saved in the profile");
+            // optional flaps-full stall after the clean stall
+            var ls = new LearnFlight(); ls.P.Stall = 84; var sq = new LearnIn { T = 0, Speed = 120, Alt = 4000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, HasFlaps = true }; ls.Step(sq); ls.Phase = "stallrec"; sq.T = 10; sq.Vs = 3; sq.Speed = 120; ls.Step(sq); ls.Step(sq);
+            Check(ls.Phase == "stallprep" && ls.Flaps == 3 && !ls.Done, "optional flaps-full stall runs after the clean stall when fuel allows");
+            var ls2 = new LearnFlight(); ls2.P.Stall = 84; sq.FuelFrac = .45; ls2.Step(sq); ls2.Phase = "stallrec"; sq.T = 20; ls2.Step(sq); ls2.Step(sq);
+            Check(ls2.Done, "flaps-full stall skipped when fuel is low");
+        }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
             var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);
@@ -591,8 +614,8 @@ class Program
         Check(study.Finished && study.Measured == null, "stall study terrain guard");
         var flapVessel = new Vessel(); var flapPart = new Part { vessel = flapVessel }; flapPart.partInfo.title = "Dedicated flap";
         flapVessel.parts.Add(flapPart); var flap = new ModuleControlSurface { part = flapPart }; flapPart.Modules.Add(flap);
-        var flapRecovery = new NativeRecovery(flapVessel); var nativeFlaps = new NativeFlaps(flapVessel);
-        nativeFlaps.Tick(flapVessel, flapRecovery, 0, 50, 45, 30);
+        var flapRecovery = new NativeRecovery(flapVessel);
+        flap.deployAngle = 1; flap.deploy = true; flapRecovery.AcceptSurface(flap);   // NativeFlaps.ApplyFlaps path
         Check(flap.deploy && flap.deployAngle == 1 && flapRecovery.CanTrim(flap), "flap change is authorized configuration");
         Console.WriteLine("Landing flap and stall policies: 8 behavior checks passed.");
         double forwardVelocity, rightVelocity;

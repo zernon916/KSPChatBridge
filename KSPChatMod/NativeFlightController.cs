@@ -12,7 +12,7 @@ namespace KSPChatBridge
     {
         static NativeFlightController instance;
         internal static bool Active { get { return instance != null && instance.mode != "idle"; } }
-        internal static string ApLine { get { if (instance == null) return MfdNav.ApStatus("idle", false, false); var r = instance.runway; bool fin = instance.mode == "landing" && r != null && r.Phase == "final"; return MfdNav.ApStatus(instance.mode, fin && r.LocCoupled, fin && r.GsCoupled); } }
+        internal static string ApLine { get { if (instance == null) return MfdNav.ApStatus("idle", false, false); var r = instance.runway; bool fin = instance.mode == "landing" && r != null && r.Phase == "final"; return MfdNav.ApStatus(instance.mode, fin && r.LocCoupled, fin && r.GsCoupled) + (instance.flapSet > 0 ? " FLAPS " + FlapsPolicy.Name(instance.flapSet) : ""); } }
         internal static bool Busy { get { return Active || (instance != null && instance.plan != null && instance.plan.Running); } }
         internal static bool PlanRunning { get { return instance != null && instance.plan != null && instance.plan.Running; } }
         internal static string Phase { get { return instance == null ? "idle" : instance.mode; } }
@@ -51,7 +51,6 @@ namespace KSPChatBridge
         NativePower power;
         NativeRecovery recovery;
         NativeReversers reversers;
-        NativeFlaps flaps;
         StallStudy stallStudy;
         bool needStallStudy;
         ReverseRollout reverseRollout;
@@ -228,7 +227,7 @@ namespace KSPChatBridge
             recovery = new NativeRecovery(vessel); wasNative = false;
             terrainFloor = double.NaN; nextTerrain = 0;
             reversers = new NativeReversers(vessel);
-            flaps = new NativeFlaps(vessel);
+            flapScanAt = -100;
             object cached; var stallCache = settingsData.TryGetValue("stall_speeds", out cached) ? cached as Dictionary<string, object> : null;
             double liftSum = 0; foreach (Part lp in vessel.parts) foreach (PartModule lm in lp.Modules) { var ls = lm as ModuleLiftingSurface; if (ls != null) liftSum += ls.deflectionLiftCoeff; }
             double estStall = ApproachProfile.EstimateStall(vessel.totalMass * 1000, liftSum);
@@ -306,7 +305,7 @@ namespace KSPChatBridge
                 if (mode != "spool") props = new NativePropulsion(vessel);
                 power = new NativePower(vessel);
                 reversers = new NativeReversers(vessel);
-                flaps = new NativeFlaps(vessel);
+                flapScanAt = -100;
             }
             SafetyTick();
             if (rotorPark != null && Time.realtimeSinceStartup >= nextRotorPark)
@@ -418,6 +417,13 @@ namespace KSPChatBridge
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
         Dictionary<string, object> pendingLand; double ferryLat, ferryLon; float ferryNext, capNext;
         internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot;
+        /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
+        double ApproachStall0()
+        {
+            if (profile == null || double.IsNaN(profile.FlapStall) || flaps.Count == 0 || flapSet < 2) return landStall0;
+            double fs = PlaneProfile.ScaleSpeed(profile.FlapStall, profile.M0, landMass0);
+            return Math.Min(landStall0, Math.Max(fs, .6 * landStall0));
+        }
         void FerryTick()
         {
             if (pendingLand == null || mode != "hold" || vessel == null || Time.realtimeSinceStartup < ferryNext) return;
@@ -527,7 +533,7 @@ namespace KSPChatBridge
                     }
                 }
                 if (mode == "landing" || mode == "takeoff")
-                    flaps.Tick(vessel, recovery, Time.realtimeSinceStartup, vessel.srfSpeed, stall, mode == "landing" ? 30 : 5);
+                    // flaps: FlapsTick (NativeFlaps.cs)
                 landFloor = false;
                 if (mode == "landing" && needStallStudy && stallStudy == null && runway.Phase == "entry"
                     && vessel.radarAltitude > 350 && Math.Abs(roll) < 10 && vessel.srfSpeed < 110)
@@ -562,9 +568,9 @@ namespace KSPChatBridge
                 {
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
                     if (landMass0 > 0) { runway.DecelA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true); if (double.IsNaN(runway.DecelA)) runway.DecelA = ApproachProfile.MassDecel(vessel.totalMass); runway.DecelA /= Math.Sqrt(shold.K); }   // heavies start slowing earlier (reaction time)   // measured decel (NaN = conservative default)
-                    runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(landStall0, landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
+                    runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
-                if (runway.Phase == "go around") { altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
+                if (runway.Phase == "go around") { goAroundFlaps = flapSet > 0; altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
                     else if (runway.Phase == "stopped") { c.mainThrottle = 0; Stop(false); return; }
                     else
                     {
@@ -713,7 +719,7 @@ namespace KSPChatBridge
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
                 if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) throttle = 1;   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
-            FerryTick();
+            FerryTick(); FlapsTick();
             LearnApply(c);
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
@@ -727,7 +733,7 @@ namespace KSPChatBridge
         }
         void Stop(bool interruptPlan = true)
         {
-            pendingLand = null;
+            pendingLand = null; goAroundFlaps = false; try { RestoreFlaps(); } catch (Exception) { }
             bankOverride = false; pendingCircle = null;
             if (mode == "taxi" && vessel != null)
             {

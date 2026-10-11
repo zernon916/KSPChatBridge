@@ -63,7 +63,7 @@ namespace KSPChatBridge
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
                 FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, Throttle = vessel.ctrlState.mainThrottle, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
-                Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
+                HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
         void DoneCheck()
         {
@@ -121,10 +121,17 @@ namespace KSPChatBridge
         internal static bool LearnToggleMode { get { var me = instance; return me != null && me.profile != null && MfdNav.AboutPage == AboutTitles.Length - 1 && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null); } }
         internal static string ToggleLearnStep(int step)
         {
+            return ToggleLearnCode(step);
+        }
+        internal static string ToggleLearnCode(int step)
+        {
             var me = instance; if (me == null || me.profile == null) return "No profile yet.";
             if (me.learn != null && !me.learn.Done) return "Test flight running.";
             if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
-            me.SaveProfile(me.profile); return "Step " + step + (me.profile.Rerun.Contains(step) ? " will be re-run." : " kept.");
+            me.SaveProfile(me.profile);
+            if (step == 91) return "Flaps-full sink map " + (me.profile.FlapSub ? "on." : "off.");
+            if (step == 101) return "Flaps-full stall " + (me.profile.FlapStallSub ? "on." : "off.");
+            return "Step " + step + (me.profile.Rerun.Contains(step) ? " will be re-run." : " kept.");
         }
         internal static string LearnSkip()
         {
@@ -159,6 +166,7 @@ namespace KSPChatBridge
                     o.Add("Stall    " + F0(me.stall) + " m/s " + ts + (p != null && !double.IsNaN(p.StallAltLoss) ? ", recovery -" + F0(p.StallAltLoss) + " m" : ""));
                     o.Add("Liftoff  " + F0(p != null && !double.IsNaN(p.Liftoff) ? p.LiftoffAt(m) : me.liftoffSpeed) + " m/s " + (p != null && !double.IsNaN(p.Liftoff) ? "TEST" : double.IsNaN(me.liftoffSpeed) ? "EST" : "LIVE"));
                     o.Add("Approach " + F0(ApproachProfile.AppSpeed(me.stall)) + " m/s (1.35 Vs)");
+                    if (me.flaps.Count > 0 || me.farFlaps) o.Add(FlapLine + (p != null && !double.IsNaN(p.FlapStall) ? ", flaps-full stall " + F0(PlaneProfile.ScaleSpeed(p.FlapStall, p.M0, m)) + " TEST (" + (p.FlapStall - p.Stall).ToString("+0;-0") + ")" : ""));
                     o.Add("Speed cap " + F0(PilotPolicy.CapSpeed) + " m/s below 6 km (plane " + F0(CapPlane) + " " + CapSource + (CapHot ? ", HOT -10%" : "") + ")");
                     o.Add("Econ     " + (p == null || double.IsNaN(p.EconSpeed) ? "-" : PlaneProfile.ScaleSpeed(p.EconSpeed, p.M0, m).ToString("0") + " m/s @ " + Math.Round(p.EconThrottle * 100) + "%") + "  Vmax lvl " + F0(p == null ? double.NaN : p.Perf.MaxLevel));
                     double dl = Decel.Estimate(me.vessel.vesselName, 150, 100, true);
@@ -170,6 +178,7 @@ namespace KSPChatBridge
                     if (p.Turns.Count > 0) { double mg = 0; foreach (var x in p.Turns) mg = Math.Max(mg, x[1]); var lt = p.Turns[p.Turns.Count - 1]; o.Add("Turns to " + lt[0] + " deg, max " + mg.ToString("0.0") + " g, " + lt[2].ToString("0.0") + " deg/s, alt " + (-lt[3]).ToString("+0;-0") + " m" + (lt.Length > 6 && !double.IsNaN(lt[6]) ? ", thr " + Math.Round(lt[6] * 100) + "%" : "")); }
                     o.Add("Roll rate " + F0(p.Perf.RollRate) + " deg/s  Pitch rate " + F0(p.Perf.PitchRate) + " deg/s");
                     if (p.Dives.Count > 0) { var s = ""; foreach (var x in p.Dives) s += x[0] + ":" + x[1].ToString("0") + " "; o.Add("Dive sink (deg:m/s) " + s.Trim()); }
+                    if (p.SinkFlaps.Count > 0) { var s3 = ""; foreach (var x in p.SinkFlaps) { double clean = p.ThrottleForSink(x[0], p.M0); s3 += x[0].ToString("0") + ":" + Math.Round(x[1] * 100) + "%" + (double.IsNaN(clean) ? "" : "(" + Math.Round((x[1] - clean) * 100).ToString("+0;-0") + ")") + " "; } o.Add("Flaps sink map (m/s:thr, vs clean) " + s3.Trim()); }
                     if (p.Sink.Count > 0) { var ss = new List<double[]>(p.Sink); ss.Sort((x, y) => x[0].CompareTo(y[0])); var s2 = ""; double lg = 0; foreach (var x in ss) { s2 += x[0].ToString("0") + ":" + Math.Round(p.ThrottleForSink(x[0], m) * 100) + "% "; lg = Math.Max(lg, x[2]); } o.Add("Sink map (m/s:thr) " + s2.Trim()); o.Add("  sink lag <= " + lg.ToString("0.0") + " s"); }
                     break;
                 case 3:

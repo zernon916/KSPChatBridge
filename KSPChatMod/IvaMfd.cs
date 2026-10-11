@@ -304,7 +304,7 @@ namespace KSPChatBridge
                     return o;
                 }
                 case "map": o.AddRange(AicsRpmPages.MapText(cols, rows - 1, span).Split('\n')); o.Add("span " + (span / 1000).ToString("0") + " km"); return o;
-                case "ils": o.AddRange(AicsRpmPages.IlsText(Math.Max(10, cols / 2), rows).Split('\n')); return o;   // data block right of the needles
+                case "ils": o.AddRange(AicsRpmPages.IlsText(Math.Max(10, cols / 2), rows).Split('\n')); { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) o.Add(fl); } return o;   // data block right of the needles
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) o.AddRange(W(l)); return o;
                 case "about": { var al = new List<string>(); foreach (var l in NativeFlightController.AboutLines()) al.AddRange(W(l)); int room = Math.Max(3, rows - 2), off = MfdNav.AboutWindow(al, room); if (off > 0) o.Add("  ^ more (SCROLL UP)"); o.AddRange(al.GetRange(off, Math.Min(room, al.Count - off))); if (off + room < al.Count) o.Add("  v more (SCROLL DN)"); return o; }
                 case "systems": o.Add(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW"); foreach (var r in StatusWindow.SystemRows()) o.AddRange(W((r[0] == "fail" ? "! " : r[0] == "caution" ? "* " : "  ") + r[1] + ": " + r[2])); return o;
