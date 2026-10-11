@@ -415,7 +415,7 @@ namespace KSPChatBridge
         double Track() { return vessel.srfSpeed < 5 ? double.NaN : FlightGlobals.ship_heading; }   // nose heading ~ track (no wind in KSP)
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
-        Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000, ferryTod; bool ferryDescending; float ferryNext, capNext;
+        Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000, ferryTod, ferrySink = 10; bool ferryDescending; float ferryNext, capNext;
         internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot;
         /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
         double ApproachStall0()
@@ -431,7 +431,13 @@ namespace KSPChatBridge
             double d = NavigationMath.Distance(vessel.latitude, vessel.longitude, ferryLat, ferryLon, vessel.mainBody.Radius);
             if (d < ferryHandoff) { var args = pendingLand; pendingLand = null; ChatLog.Write("ap", "phase APPROACH: " + (d / 1000).ToString("0") + " km out, slowing to the join speed"); ChatWindow.Notice(Command("land_plane", args)); return; }
             heading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, ferryLat, ferryLon);   // great circle: re-aim every 2 s
-            if (!ferryDescending && d - ferryHandoff < ferryTod && altitude > PilotPolicy.HandoffAlt) { ferryDescending = true; altitude = Math.Max(PilotPolicy.HandoffAlt, vessel.altitude - vessel.radarAltitude + 600); ChatLog.Write("ap", "ferry: top of descent at " + (d / 1000).ToString("0") + " km, down to " + altitude.ToString("0") + " m"); }
+            if (!ferryDescending && d - ferryHandoff < ferryTod && altitude > PilotPolicy.HandoffAlt) { ferryDescending = true; altitude = Math.Max(PilotPolicy.HandoffAlt, vessel.altitude - vessel.radarAltitude + 600); ChatLog.Write("ap", "ferry: top of descent at " + (d / 1000).ToString("0") + " km, down to " + altitude.ToString("0") + " m at up to " + ferrySink.ToString("0") + " m/s"); }
+            if (ferryDescending)
+            {   // steep but controllable, easing near the hand-off altitude; the altitude hold takes over once there
+                double above = vessel.altitude - altitude;
+                directVs = above > 50 ? -(double?)PilotPolicy.DescentVs(above, ferrySink, vessel.indicatedAirSpeed, PilotPolicy.CapSpeed) : null;
+                descentPitchMin = above > 50 ? -12 : -5;   // the normal -5 deg descent pitch floor would cap the sink near 19 m/s at cruise speed
+            }
         }
         /// <summary>Per-plane low-altitude speed cap (Luke 12:00 AM): profile max level x 0.95, else mass/class; never below the commanded speed unless hot.</summary>
         void UpdateCap()
@@ -1107,12 +1113,12 @@ namespace KSPChatBridge
                         var keep = new Dictionary<string, object>(a); keep["_from_ferry"] = true;
                         bool jet = false; foreach (var en in vessel.FindPartModulesImplementing<ModuleEngines>()) foreach (var pr in en.propellants) if (pr.name == "IntakeAir") jet = true;
                         double ceil = profile != null ? profile.Perf.CeilingKm() : double.NaN, cvs = profile != null && !double.IsNaN(profile.ClimbVs) ? profile.ClimbVs * .6 : double.NaN;
-                        double dvs = 10; if (profile != null && profile.Dives.Count > 0) dvs = FlightPolicy.Clamp(profile.Dives[0][1], 5, 20);   // idle 5 deg dive sink
+                        double dvs = PilotPolicy.DescentSink(profile != null ? profile.Dives : null, cruise, PilotPolicy.CapSpeed);   // 25-30 m/s if the learned dives stay inside the cap
                         double falt = PilotPolicy.FerryAltitude(rwDist - handoff, vessel.altitude, ceil, cvs, cruise, dvs, vessel.mainBody.atmosphereDepth, jet), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
                         string hr = Command("plane_hold", new Dictionary<string, object> { { "altitude_m", falt }, { "altitude_ref", "msl" }, { "heading", brg }, { "speed", cruise } });
                         if (mode != "hold") return hr;
-                        pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0; ferryHandoff = handoff; ferryTod = PilotPolicy.TopOfDescentM(falt, cruise, dvs); ferryDescending = false;
-                        ChatLog.Write("ap", "phase FERRY: " + (rwDist / 1000).ToString("0") + " km, cruise " + falt.ToString("0") + " m (jet " + jet + ", ceiling " + (double.IsNaN(ceil) ? "-" : ceil.ToString("0.0")) + " km), descent from " + ((handoff + ferryTod) / 1000).ToString("0") + " km, approach from " + (handoff / 1000).ToString("0") + " km, brg " + brg.ToString("000") + ", " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m");
+                        pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0; ferryHandoff = handoff; ferryTod = PilotPolicy.TopOfDescentM(falt, cruise, dvs); ferryDescending = false; ferrySink = dvs;
+                        ChatLog.Write("ap", "phase FERRY: " + (rwDist / 1000).ToString("0") + " km, cruise " + falt.ToString("0") + " m (jet " + jet + ", ceiling " + (double.IsNaN(ceil) ? "-" : ceil.ToString("0.0")) + " km), descent " + dvs.ToString("0") + " m/s from " + ((handoff + ferryTod) / 1000).ToString("0") + " km, approach from " + (handoff / 1000).ToString("0") + " km, brg " + brg.ToString("000") + ", " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m");
                         return "FERRY: runway " + (rwDist / 1000).ToString("0") + " km, great-circle course " + brg.ToString("000") + " at " + cruise.ToString("0") + " m/s, cruise altitude " + falt.ToString("0") + " m (descent from " + ((handoff + ferryTod) / 1000).ToString("0") + " km). APPROACH starts at " + (handoff / 1000).ToString("0") + " km (decel from there).";
                     }
                     double approachSpeed = Num(a, "approach_speed", 0);

@@ -370,7 +370,31 @@ namespace KSPChatBridge
             return floorAlt;
         }
         /// <summary>Top of descent: distance before the hand-off to start down from cruise to the hand-off altitude (+10%).</summary>
-        internal static double TopOfDescentM(double cruiseAlt, double speed, double descentVs) { double dv = double.IsNaN(descentVs) || descentVs <= 1 ? 10 : descentVs; return 1.1 * Math.Max(0, cruiseAlt - HandoffAlt) / dv * Math.Max(50, speed); }
+        internal const double EaseBand = 2000, NormalSink = 8, MaxCruiseSink = 28;
+        /// <summary>Top of descent: high part at the cruise sink, the last 2 km eased (average of cruise and normal sink); +10%.</summary>
+        internal static double TopOfDescentM(double cruiseAlt, double speed, double descentVs)
+        {
+            double s = double.IsNaN(descentVs) || descentVs <= 1 ? 10 : descentVs, v = Math.Max(50, speed), h = Math.Max(0, cruiseAlt - HandoffAlt);
+            double high = Math.Max(0, h - EaseBand), low = Math.Min(EaseBand, h);
+            return 1.1 * (high / s + low / ((s + NormalSink) / 2)) * v;
+        }
+        /// <summary>Cruise descent sink (Luke 10:04 AM): 25-30 m/s when the learned idle dives show it stays inside the speed cap, else the
+        /// steepest learned dive that does; 25 without dive data. dives rows: [pitch deg, sink m/s, speed gain m/s, mass].</summary>
+        internal static double DescentSink(List<double[]> dives, double cruise, double cap)
+        {
+            if (dives == null || dives.Count == 0) return 25;
+            double room = cap - cruise, best = NormalSink;
+            foreach (var d in dives) if (d.Length > 2 && d[2] < room) best = Math.Max(best, d[1]);
+            return FlightPolicy.Clamp(best >= 25 ? MaxCruiseSink : Math.Max(best, 15), NormalSink, MaxCruiseSink);
+        }
+        /// <summary>Commanded sink on the way down: full cruise sink high up, easing linearly to the normal 8 m/s over the last 2 km above
+        /// the hand-off altitude; backs off 5 m/s per 5 m/s within 10 m/s of the speed cap.</summary>
+        internal static double DescentVs(double aboveHandoff, double sink, double ias, double cap)
+        {
+            double s = aboveHandoff >= EaseBand ? sink : NormalSink + (sink - NormalSink) * Math.Max(0, aboveHandoff) / EaseBand;
+            double margin = cap - ias; if (margin < 10) s -= (10 - margin);
+            return FlightPolicy.Clamp(s, 3, MaxCruiseSink);
+        }
         internal static double FerryCruise(double stall, double econ, double cap) { return Math.Min(FerryCruise(stall, econ), cap); }
         internal static double FerryCruise(double stall, double econ) { return !double.IsNaN(econ) && econ > 0 ? FlightPolicy.Clamp(econ, 1.4 * stall, 250) : FlightPolicy.Clamp(2.2 * stall, 100, 200); }
         /// <summary>Throttle after the over-cap rule: over 220 m/s low down, cut 15% (30% when 30+ over) at most once a second.</summary>

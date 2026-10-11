@@ -377,7 +377,10 @@ class Program
             Check(shortT < 7000, "short ferry: climb doesn't pay off, stays lower (" + shortT + ")");
             Check(PilotPolicy.FerryAltitude(400000, 2000, double.NaN, 10, 100, 8, 70000, false) <= 6000, "props: lower cruise");
             Check(PilotPolicy.FerryAltitude(2000000, 3000, double.NaN, 30, 220, 15, 50000, true) < longJ, "scaled by atmosphere height on other bodies");
-            Check(Math.Abs(PilotPolicy.TopOfDescentM(10000, 200, 10) - 1.1 * 8500 / 10 * 200) < 1, "top of descent from the learned sink rate");
+            Check(Math.Abs(PilotPolicy.TopOfDescentM(10000, 200, 28) - 1.1 * (6500 / 28.0 + 2000 / 18.0) * 200) < 1, "top of descent: cruise sink high, eased last 2 km");
+            var dv1 = new List<double[]> { new double[] { 5, 18, -19, 48 }, new double[] { 10, 25, 30, 48 }, new double[] { 20, 32, 80, 48 } };
+            Check(PilotPolicy.DescentSink(dv1, 180, 264) == 28 && PilotPolicy.DescentSink(dv1, 180, 200) == 18 && PilotPolicy.DescentSink(null, 180, 264) == 25, "cruise descent sink 25-30 m/s when the learned dives stay inside the speed cap");
+            Check(PilotPolicy.DescentVs(5000, 28, 180, 264) == 28 && Math.Abs(PilotPolicy.DescentVs(1000, 28, 180, 264) - 18) < 1e-9 && PilotPolicy.DescentVs(0, 28, 180, 264) == 8 && PilotPolicy.DescentVs(5000, 28, 260, 264) == 22, "descent eases to 8 m/s near the hand-off altitude and backs off near the speed cap");
         }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
