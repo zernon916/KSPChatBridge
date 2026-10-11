@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -153,6 +153,20 @@ internal static class ThrottleLearnTests
     // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
     static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
     static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    // profile fingerprint: name stays the key, print is metadata
+    static CraftFingerprint Fp(double dry, double lift, int parts, string root = "mk1pod") { return new CraftFingerprint { DryMass = dry, Lift = lift, Parts = parts, Engines = 1, Root = root, Intake = true }; }
+    static void Fingerprint()
+    {
+        var a = Fp(5, 10, 40);
+        Check(CraftFingerprint.Compare(a, Fp(5.2, 10.3, 42)) == CraftFingerprint.Match.Ok, "fingerprint: small SPH edit (+4% mass, +2 parts) stays OK");
+        Check(CraftFingerprint.Compare(a, Fp(5.7, 10, 40)) == CraftFingerprint.Match.Soft && CraftFingerprint.Compare(a, Fp(7, 10, 40)) == CraftFingerprint.Match.Hard && CraftFingerprint.Compare(a, Fp(5, 10, 40, "cockpitB")) == CraftFingerprint.Match.Hard, "fingerprint: 12% mass soft, 40% mass / new root hard");
+        Check(CraftFingerprint.Compare(null, a) == CraftFingerprint.Match.Missing, "legacy profile without a print: Missing (still used)");
+        Check(CraftFingerprint.RenameMatch(a, Fp(5.1, 10, 41)) && !CraftFingerprint.RenameMatch(a, Fp(8, 10, 40)), "rename carry offered only for a matching airframe");
+        var p = new PlaneProfile(); p.Stall = 60; p.Fingerprint = a; var rt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(p.ToDict())) as Dictionary<string, object>);
+        Check(rt.Fingerprint != null && rt.Fingerprint.Parts == 40 && Math.Abs(rt.Fingerprint.DryMass - 5) < 1e-9 && rt.Fingerprint.Root == "mk1pod" && rt.Fingerprint.Intake, "fingerprint round-trips in the profile JSON");
+        var legacy = new PlaneProfile(); legacy.Stall = 70; var d = legacy.ToDict(); var lg = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(d)) as Dictionary<string, object>);
+        Check(!d.ContainsKey("fingerprint") && lg != null && lg.Fingerprint == null && lg.Stall == 70, "legacy profile (no fingerprint) still loads under its name");
+    }
     // AUTOPILOT_REVIEW.md policy pieces (#4/#11 stall schedule, #7/#10 roll step)
     static void ApReview()
     {
