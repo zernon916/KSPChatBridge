@@ -1,8 +1,10 @@
 // Native IVA AICS MFD (Phase 2, Luke 4:41 PM): a procedural cockpit screen prop. The face (bezel, 26 soft keys, screen) is
-// drawn into a RenderTexture at 4 Hz with a runtime monospace font and mapped on a quad built in code (no Unity/Blender
-// assets); one MeshCollider on the face hit-tests the keys and the screen by texture coordinate (IvaLayout). Same
-// navigation as the outside MFD (MfdNav: HOME groups, paged items, BACK fixed bottom-left). Screen text fields (CHAT input,
-// flight plan editor) take the keyboard while focused, with ship controls locked; Enter submits, Esc unfocuses.
+// recorded into an RtCanvas (MfdCanvas.cs) and flushed into a RenderTexture in one GL pass at 2-5 Hz, then mapped on a quad
+// built in code (no Unity/Blender assets); one MeshCollider on the face hit-tests the keys and the screen by texture
+// coordinate (IvaLayout). Same navigation as the outside MFD (MfdNav: HOME groups, paged items, BACK fixed bottom-left), and
+// MAP / CHART / ILS draw the same real graphics as the outside MFD (MapWindow.DrawIva through that shared canvas, no mouse -
+// the soft keys drive it); every other page is monospace text. Screen text fields (CHAT input, flight plan editor) take the
+// keyboard while focused, with ship controls locked; Enter submits, Esc unfocuses.
 // Added to stock cockpits by AICS_IVA.cfg (ModuleManager). RasterPropMonitor pages (AICS_RPM.cfg) are unaffected.
 using System;using System.IO;
 using System.Collections.Generic;
@@ -36,10 +38,15 @@ namespace KSPChatBridge
         }
 
         const string LockId = "AICS_IvaTyping";
-        static Font font; static Material fontMat, fillMat; const int FontPx = 32;
         static AicsIvaMfd typingOwner; static int releaseFrame = -1;
+        static readonly List<AicsIvaMfd> live = new List<AicsIvaMfd>();   // every built screen: who is showing which page
+        /// <summary>A built screen is showing MAP / CHART / ILS: MapWindow then keeps building its terrain bitmap even with the
+        /// outside MFD hidden, so those pages draw the real graphics instead of a text page.</summary>
+        internal static bool WantsMap { get { foreach (var s in live) if (s.built && SharedPage(s.Item)) return true; return false; } }
+        /// <summary>The pages drawn by the shared MAP / CHART / ILS code (MapWindow.DrawPages) instead of the IVA text page.</summary>
+        static bool SharedPage(string it) { return it == "map" || it == "chart" || it == "ils"; }
 
-        RenderTexture rt; GameObject face; MeshCollider col; float nextDraw; bool dirty = true, built;
+        RenderTexture rt; RtCanvas cv; GameObject face; MeshCollider col; float nextDraw; bool dirty = true, built;   // cv: this screen's frame, flushed into rt
         string group, item; int page; double span = 20000;
         readonly MfdField chatF = new MfdField(false, 400), planF = new MfdField(true, 4000); MfdField focused;
         static readonly Color Bezel = new Color(.19f, .2f, .21f), KeyC = new Color(.27f, .28f, .3f), KeyEdge = new Color(.08f, .08f, .09f), Phos = new Color(.35f, 1f, .45f), Dim = new Color(.1f, .3f, .14f), Label = new Color(.88f, .92f, .88f);
@@ -48,7 +55,7 @@ namespace KSPChatBridge
         {
             if (!HighLogic.LoadedSceneIsFlight || internalProp == null) return;
             if (rpmHost && KeepRpm) { Debug.Log("[KSPChatBridge] IVA MFD: keeping RPM screen (setting)"); return; }
-            try { Build(); built = true; Debug.Log("[KSPChatBridge] IVA MFD built in " + (internalProp.internalModel != null ? internalProp.internalModel.internalName : "?")); }
+            try { Build(); built = true; live.Add(this); Debug.Log("[KSPChatBridge] IVA MFD built in " + (internalProp.internalModel != null ? internalProp.internalModel.internalName : "?")); }
             catch (Exception ex) { Debug.LogError("[KSPChatBridge] IVA MFD build failed: " + ex); }
         }
 
@@ -73,13 +80,9 @@ namespace KSPChatBridge
                 int idx = 0; if (internalProp.internalModel != null) foreach (var pr in internalProp.internalModel.props) { if (pr == internalProp) break; foreach (var x in pr.internalModules) if (x is AicsIvaMfd) { idx++; break; } }
                 OpenItem(DefaultPage(idx)); Debug.Log("[KSPChatBridge] IVA MFD on RPM screen #" + idx + " -> " + item);
             }
-            if (font == null)
-            {
-                font = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Lucida Console", "Courier New", "DejaVu Sans Mono", "Liberation Mono" }, FontPx);
-                fontMat = new Material(font.material);
-                fillMat = new Material(Shader.Find("Hidden/Internal-Colored")); fillMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always); fillMat.SetInt("_Cull", 0); fillMat.SetInt("_ZWrite", 0);
-            }
+            MfdFont.Ensure();   // the shared face + unlit materials (the chrome and the shared MAP / CHART / ILS page draw alike)
             rt = new RenderTexture(IvaLayout.W, IvaLayout.H, 0, RenderTextureFormat.ARGB32) { filterMode = FilterMode.Bilinear, useMipMap = false }; rt.Create();
+            cv = new RtCanvas(rt, IvaLayout.W, IvaLayout.H);   // the frame is recorded, then flushed into rt in one GL pass
             face = new GameObject("AICS_MFD_face"); face.layer = internalProp.gameObject.layer == 0 ? 20 : internalProp.gameObject.layer;   // internal-space layer (16/20)
             face.transform.SetParent(internalProp.transform, false);
             Transform seat0 = internalProp.internalModel != null && internalProp.internalModel.seats != null && internalProp.internalModel.seats.Count > 0 ? internalProp.internalModel.seats[0].seatTransform : null;
@@ -148,6 +151,7 @@ namespace KSPChatBridge
 
         void OnDestroy()
         {
+            live.Remove(this);
             if (typingOwner == this) Unfocus(true);
             if (rt != null) { rt.Release(); Destroy(rt); }
         }
@@ -246,7 +250,12 @@ namespace KSPChatBridge
             if (id[0] == 'B' && k == MfdNav.BackKey) { group = null; item = null; page = 0; Unfocus(true); return; }
             if (id[0] == 'B' && label == "PREV") { page--; item = MfdNav.PageItems(g, page)[0].Id; return; }
             if (id[0] == 'B' && label == "NEXT") { page++; item = MfdNav.PageItems(g, page)[0].Id; return; }
-            if (Item == "map" && (label == "ZOOM+" || label == "ZOOM-")) { span = MapReveal.Zoom(span, label == "ZOOM+" ? .5 : 2); return; }
+            if (Item == "map" && (label == "ZOOM+" || label == "ZOOM-"))
+            {   // the shared MAP page owns the span (MapWindow.ViewSpan): the same zoom the outside MFD uses
+                if (MapWindow.HasMap) { if (label == "ZOOM+") MapWindow.ZoomIn(); else MapWindow.ZoomOut(); }
+                else span = MapReveal.Zoom(span, label == "ZOOM+" ? .5 : 2);
+                return;
+            }
             if (Comms && label == "SEND") { focused = chatF; Submit(); return; }
             if (Comms && label == "CLEAR") { chatF.Set(""); return; }
             AicsMenu.OnKey(Item, label);
@@ -319,14 +328,12 @@ namespace KSPChatBridge
         }
 
         // ---------------- drawing ----------------
-        static float CellW(int px) { return Mathf.Ceil(px * .6f); }
-        readonly List<KeyValuePair<Rect, Color>> fills = new List<KeyValuePair<Rect, Color>>();
-        struct Txt { internal string S; internal float X, Y; internal int Px; internal Color C; internal bool Center; internal float Wd; }
-        readonly List<Txt> texts = new List<Txt>();
+        static float CellW(int px) { return MfdFont.CellW(px); }   // the shared monospace cell (the text pages lay columns out on it)
 
         void Render()
         {
-            fills.Clear(); texts.Clear();
+            if (cv == null) return;
+            cv.Begin(Bezel);   // the whole frame (bezel, keys, screen) is recorded, then flushed in one GL pass
             var s = IvaLayout.Screen;
             Fill(new Rect(s.X - 3, s.Y - 3, s.Wd + 6, s.Ht + 6), new Color(.05f, .05f, .05f)); Fill(new Rect(s.X, s.Y, s.Wd, s.Ht), Color.black);
             for (float x = s.X + 40; x < s.X + s.Wd; x += 40) Fill(new Rect(x, s.Y, 1, s.Ht), Dim);
@@ -348,15 +355,24 @@ namespace KSPChatBridge
                 if (string.IsNullOrEmpty(lab)) continue;
                 int px = IvaLayout.KeyFont(lab, k.Wd, k.Ht, 15); var ls = IvaLayout.KeyLines(lab, k.Wd, px);   // uniform glyphs, wrapped: never squashed
                 float y0 = k.Y + (k.Ht - ls.Count * (px + 2)) / 2;
-                for (int i = 0; i < ls.Count; i++) texts.Add(new Txt { S = ls[i], X = k.X, Y = y0 + i * (px + 2), Px = px, C = k.Id == "A0" ? (lamp ? Color.black : new Color(.45f, .35f, .35f)) : Label, Center = true, Wd = k.Wd });
+                for (int i = 0; i < ls.Count; i++) cv.CellText(ls[i], k.X, y0 + i * (px + 2), px, k.Id == "A0" ? (lamp ? Color.black : new Color(.45f, .35f, .35f)) : Label, true, k.Wd);
             }
             int cols = Cols, rows = Rows; float x0 = s.X + 6;
-            if (Item == "ils") { float S = Math.Min(s.Ht - 8, s.Wd * .48f); DrawNeedles(new Rect(s.X + 4, s.Y + 4, S, S)); x0 = s.X + S + 12; cols = (int)((s.X + s.Wd - x0 - 4) / CellW(TextPx)); }
-            var lines = ScreenLines(cols, rows);
-            for (int i = 0; i < Math.Min(rows, lines.Count); i++) Text(lines[i].Length > cols ? lines[i].Substring(0, cols) : lines[i], x0, s.Y + 4 + i * (TextPx + 3), TextPx, Phos);
-            if (focused != null) Fill(new Rect(s.X, s.Y + s.Ht - 3, s.Wd, 3), Phos);
-            Blit();
+            var shared = SharedPage(Item) && MapWindow.HasMap ? MapWindow.Inst : null;
+            if (shared != null) DrawSharedPage(shared, new Rect(s.X, s.Y, s.Wd, s.Ht));   // MAP / CHART / ILS: the real graphics (MapWindow), not a text page
+            else
+            {   // no map in this scene: the text page (needs the map bitmap, so it stays as the fallback)
+                if (Item == "ils") { float S = Math.Min(s.Ht - 8, s.Wd * .48f); DrawNeedles(new Rect(s.X + 4, s.Y + 4, S, S)); x0 = s.X + S + 12; cols = (int)((s.X + s.Wd - x0 - 4) / CellW(TextPx)); }
+                var lines = ScreenLines(cols, rows);
+                for (int i = 0; i < Math.Min(rows, lines.Count); i++) Text(lines[i].Length > cols ? lines[i].Substring(0, cols) : lines[i], x0, s.Y + 4 + i * (TextPx + 3), TextPx, Phos);
+                if (focused != null) Fill(new Rect(s.X, s.Y + s.Ht - 3, s.Wd, 3), Phos);
+            }
+            cv.End();
         }
+
+        /// <summary>The shared MAP / CHART / ILS page (MapWindow.DrawPages) inside this screen's rect at the screen's own size: the
+        /// same graphics the outside MFD draws, no mouse (the bezel soft keys drive it), clipped to the screen.</summary>
+        void DrawSharedPage(MapWindow m, Rect g) { cv.Group(g, () => m.DrawIva(cv, new Rect(0, 0, g.width, g.height), Item)); }
 
         /// <summary>ILS needles box (same deviations as the outside ILS page and the autopilot).</summary>
         void DrawNeedles(Rect b)
@@ -373,37 +389,8 @@ namespace KSPChatBridge
             float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f, gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;
             Fill(new Rect(lx - 1.5f, b.y + 8, 3, S - 16), nc); Fill(new Rect(b.x + 8, gy - 1.5f, S - 16, 3), nc);
         }
-        void Fill(Rect r, Color c) { fills.Add(new KeyValuePair<Rect, Color>(r, c)); }
-        void Text(string str, float x, float y, int px, Color c) { texts.Add(new Txt { S = str, X = x, Y = y, Px = px, C = c }); }
-
-        void Blit()
-        {
-            var prev = RenderTexture.active; RenderTexture.active = rt;
-            GL.PushMatrix(); GL.LoadPixelMatrix(0, IvaLayout.W, IvaLayout.H, 0); GL.Clear(true, true, Bezel);
-            fillMat.SetPass(0); GL.Begin(GL.QUADS);
-            foreach (var f in fills) { var r = f.Key; GL.Color(f.Value); GL.Vertex3(r.xMin, r.yMin, 0); GL.Vertex3(r.xMax, r.yMin, 0); GL.Vertex3(r.xMax, r.yMax, 0); GL.Vertex3(r.xMin, r.yMax, 0); }
-            GL.End();
-            var sizes = new HashSet<int>(); foreach (var t in texts) sizes.Add(t.Px);
-            foreach (int px in sizes) { var sb = new System.Text.StringBuilder(); foreach (var t in texts) if (t.Px == px) sb.Append(t.S); font.RequestCharactersInTexture(sb.ToString(), px); }
-            fontMat.mainTexture = font.material.mainTexture; fontMat.SetPass(0); GL.Begin(GL.QUADS);
-            foreach (var t in texts)
-            {
-                float cw = CellW(t.Px), x = t.Center ? t.X + Mathf.Max(2, (t.Wd - cw * t.S.Length) / 2) : t.X, baseY = t.Y + t.Px * .8f;
-                GL.Color(t.C);
-                foreach (char ch in t.S)
-                {
-                    CharacterInfo ci;
-                    if (ch != ' ' && font.GetCharacterInfo(ch, out ci, t.Px))
-                    {
-                        float x0 = x + ci.minX, x1 = x + ci.maxX, y0 = baseY - ci.maxY, y1 = baseY - ci.minY;
-                        GL.TexCoord(ci.uvTopLeft); GL.Vertex3(x0, y0, 0); GL.TexCoord(ci.uvTopRight); GL.Vertex3(x1, y0, 0);
-                        GL.TexCoord(ci.uvBottomRight); GL.Vertex3(x1, y1, 0); GL.TexCoord(ci.uvBottomLeft); GL.Vertex3(x0, y1, 0);
-                    }
-                    x += cw;
-                }
-            }
-            GL.End(); GL.PopMatrix(); RenderTexture.active = prev;
-        }
+        void Fill(Rect r, Color c) { cv.Fill(r, c); }
+        void Text(string str, float x, float y, int px, Color c) { cv.CellText(str, x, y, px, c, false, 0); }   // monospace cells, left aligned (the text pages)
     }
 
     /// <summary>Mouse click on the IVA MFD face (Unity OnMouseDown via the internal camera, like RPM's buttons).</summary>

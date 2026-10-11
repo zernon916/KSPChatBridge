@@ -30,7 +30,7 @@ namespace KSPChatBridge
         internal static double ViewSpan = 30000;
         static double Zoom(double span, double factor) { return MapReveal.Zoom(span, factor); }
         static int rwIdx; static bool centerRunway, follow = true; static double fixLat, fixLon;
-        Texture2D tex; Color[] px = new Color[N * N]; int buildRow = -1; double bLat, bLon, bSpan; float nextRebuild;
+        Texture2D tex, texGrey; Color[] px = new Color[N * N], pxGrey = new Color[N * N]; int buildRow = -1; double bLat, bLon, bSpan; float nextRebuild;
         List<NativeFlightController.MapRunway> runways = new List<NativeFlightController.MapRunway>();
         List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int sel = -1; bool dragging; string note = "";
         double cLat, cLon, span; CelestialBody body;
@@ -61,13 +61,20 @@ namespace KSPChatBridge
         internal static void SaveChart() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw != null) m.Save(rw); }
         internal static string Title { get { var m = Inst; var rw = m == null ? null : m.Rw(); var act = NativeFlightController.ActiveRunway; return act != null && !string.IsNullOrEmpty(act.Key) ? act.Key : rw != null ? rw.Key : ""; } }
         NativeFlightController.MapRunway Rw() { return runways.Count > 0 ? runways[Math.Min(rwIdx, runways.Count - 1)] : null; }
-        /// <summary>Draw the MAP / CHART / ILS page inside the MFD screen.</summary>
+        /// <summary>Draw the MAP / CHART / ILS page inside the outside MFD screen (IMGUI: the map mouse works here).</summary>
         internal void DrawEmbedded(Rect area, int tab)
         {
-            Tab = tab; Px = Mathf.Max(80, Mathf.Min(area.height - 2, area.width * .62f));
+            Tab = tab;
             GUILayout.BeginArea(area);
-            try { if (body == null) GUILayout.Label("No map in this scene."); else DrawInner(new Rect(0, 0, area.width, area.height)); } catch (Exception ex) { GuiGuard.Log("MapWindow.Embedded", ex); }
+            try { if (body == null) GUILayout.Label("No map in this scene."); else DrawPages(GuiCanvas.Shared, new Rect(0, 0, area.width, area.height), tab, () => HandleMouse(Rw())); } catch (Exception ex) { GuiGuard.Log("MapWindow.Embedded", ex); }
             GUILayout.EndArea();
+        }
+        /// <summary>Draw the same MAP / CHART / ILS page into an IVA screen's canvas (RtCanvas): identical graphics, no mouse and no
+        /// window chrome - the bezel soft keys drive it, and the caller clips the page to the screen rect. item: MfdNav item id.</summary>
+        internal void DrawIva(IMfdCanvas c, Rect area, string item)
+        {
+            try { if (body != null) DrawPages(c, area, item == "chart" ? 1 : item == "ils" ? 2 : 0, null); }
+            catch (Exception ex) { GuiGuard.Log("MapWindow.Iva", ex); }
         }
 
         void Update()
@@ -75,7 +82,7 @@ namespace KSPChatBridge
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
             if (!ScanSatLink.Installed && v.situation != Vessel.Situations.PRELAUNCH)
                 MapReveal.Fly(v.mainBody.bodyName, v.latitude, v.longitude, Math.Max(0, v.altitude - Math.Max(0, v.terrainAltitude)), v.mainBody.Radius);
-            if (!MapVisible) return;
+            if (!MapVisible && !AicsIvaMfd.WantsMap) return;   // the IVA screens keep the map bitmap alive while the outside MFD is hidden
             body = v.mainBody;
             if (runways.Count == 0 || Time.realtimeSinceStartup > nextRebuild) runways = NativeFlightController.MapRunways(body);
             var act = NativeFlightController.ActiveRunway;
@@ -86,7 +93,6 @@ namespace KSPChatBridge
             span = ViewSpan;
             if (!follow) { cLat = fixLat; cLon = fixLon; } else if (centerRunway && rw != null) { cLat = rw.Lat; cLon = rw.Lon; } else { cLat = v.latitude; cLon = v.longitude; }
             double moved = NavigationMath.Distance(cLat, cLon, bLat, bLon, body.Radius);
-            if (buildRow < 0 && builtTab != (Tab == 0 ? 0 : 1) && builtTab >= 0 && (builtTab == 0) != (Tab == 0)) { builtTab = -1; buildRow = 0; bLat = cLat; bLon = cLon; bSpan = span; }
             if (buildRow < 0 && (bSpan != span || moved > span * .15 || Time.realtimeSinceStartup > nextRebuild)) { bLat = cLat; bLon = cLon; bSpan = span; buildRow = 0; nextRebuild = Time.realtimeSinceStartup + 15; }
             if (buildRow >= 0) BuildRows(12);
         }
@@ -94,20 +100,30 @@ namespace KSPChatBridge
         void BuildRows(int rows)
         {
             if (tex == null) { tex = new Texture2D(N, N, TextureFormat.RGB24, false); tex.filterMode = FilterMode.Bilinear; }
+            if (texGrey == null) { texGrey = new Texture2D(N, N, TextureFormat.RGB24, false); texGrey.filterMode = FilterMode.Bilinear; }
             var extra = NativeFlightController.SpotPositions(body);
             Func<double, double, bool> cov = null; if (ScanSatLink.Installed) cov = (la, lo) => ScanSatLink.IsCovered(la, lo, body);
+            double m = bSpan / N, cosL = Math.Cos(bLat * Math.PI / 180);   // bSpan metres across N texels: one bitmap serves every screen size
             for (int k = 0; k < rows && buildRow < N; k++, buildRow++)
                 for (int x = 0; x < N; x++)
                 {
-                    double la, lo; Unproj(bLat, bLon, bSpan, (x + .5f) * Px / N, (buildRow + .5f) * Px / N, out la, out lo);
+                    double la = bLat + (N / 2 - (buildRow + .5)) * m / body.Radius * 180 / Math.PI;
+                    double lo = bLon + ((x + .5) - N / 2) * m / (body.Radius * cosL) * 180 / Math.PI;
                     Color c;
                     if (!MapReveal.Revealed(body.bodyName, la, lo, body.Radius, cov, extra)) c = new Color(.45f, .45f, .47f);
                     else { double h = NativeFlightController.MapTerrain(body, la, lo); c = HeightColor(double.IsNaN(h) ? 0 : h); }
                     px[(N - 1 - buildRow) * N + x] = c;
                 }
-            if (buildRow >= N) { if (Tab == 0) for (int i = 0; i < px.Length; i++) { float g = px[i].grayscale * .75f + .08f; px[i] = new Color(g, g, g * 1.04f); }   // RPM-style desaturated terrain
-                tex.SetPixels(px); tex.Apply(); buildRow = -1; builtTab = Tab; }
+            if (buildRow >= N)
+            {   // both looks every cycle (RPM-style desaturated MAP + colour CHART), so any screen can draw any page at any time
+                for (int i = 0; i < px.Length; i++) { float g = px[i].grayscale * .75f + .08f; pxGrey[i] = new Color(g, g, g * 1.04f); }
+                tex.SetPixels(px); tex.Apply(); texGrey.SetPixels(pxGrey); texGrey.Apply(); buildRow = -1;
+            }
         }
+        /// <summary>The bitmap a page draws: MAP desaturated, CHART colour (the ILS page draws no terrain).</summary>
+        internal Texture2D TexFor(int tab) { return tab == 0 ? texGrey : tex; }
+        /// <summary>A map bitmap is ready: the IVA screens then draw the real MAP / CHART / ILS graphics instead of a text page.</summary>
+        internal static bool HasMap { get { var m = Inst; return m != null && m.body != null && m.tex != null && m.texGrey != null; } }
 
         internal static Color HeightColor(double h)
         {
@@ -163,8 +179,6 @@ namespace KSPChatBridge
         }
         static bool details, guidance;
         /// <summary>Map/ILS display side for a window size: fills the width, leaves room for the rows below (pure; tested).</summary>
-        static GUIStyle wrap;
-        static GUIStyle Wrap { get { if (wrap == null || wrap.normal.textColor != GUI.skin.label.normal.textColor) wrap = new GUIStyle(GUI.skin.label) { wordWrap = true }; return wrap; } }
         void OnGUIInner()
         {
             if (!MapVisible || body == null) return;
@@ -172,83 +186,84 @@ namespace KSPChatBridge
             // drawn inside the AICS MFD (AicsMfd.cs): no window of its own
         }
 
-        static void Dot(Vector2 p, float s, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(new Rect(p.x - s / 2, p.y - s / 2, s, s), Texture2D.whiteTexture); GUI.color = o; }
-        static void Line(Vector2 a, Vector2 b, Color c, float step = 4)
+        /// <summary>MAP / CHART: the map square fills the page edge to edge (a square covering the area, clipped); every text overlay
+        /// sits on a dark box. No on-screen buttons: each action is a bezel soft key (AicsMfd); waypoints are selected by clicking
+        /// the map (outside window only) or with WP &lt; / WP &gt;. Drawn through IMfdCanvas, so the outside MFD (GuiCanvas) and
+        /// every IVA screen (RtCanvas, into its RenderTexture) render this one pass, each at its own size. tab: 0 MAP, 1 CHART,
+        /// 2 ILS. mapMouse: the IMGUI map mouse (pan / waypoint drag / wheel zoom), called inside the map square; null on the IVA
+        /// screens, where the bezel soft keys do everything.</summary>
+        void DrawPages(IMfdCanvas c, Rect area, int tab, Action mapMouse)
         {
-            float d = Vector2.Distance(a, b); int n = Mathf.Min(400, Mathf.Max(1, (int)(d / step)));
-            for (int i = 0; i <= n; i++) { var p = Vector2.Lerp(a, b, i / (float)n); if (p.x >= 0 && p.y >= 0 && p.x <= Px && p.y <= Px) Dot(p, 2, c); }
-        }
-
-        /// <summary>MAP / CHART: the display (map square, left) + a clean data block (right). No on-screen buttons: every action is
-        /// a bezel soft key (AicsMfd); waypoints are selected by clicking the map or with WP &lt; / WP &gt;.</summary>
-        void DrawInner(Rect area)
-        {
-            if (Tab == 2) { DrawIls(area); return; }
+            if (body == null) return;   // the page is the tab argument; the static Tab stays the outside window's own (DrawEmbedded sets it)
+            if (tab == 2) { DrawIls(c, area); return; }
             var rw = Rw();
-            // Luke 11:47 PM: the map fills the whole page edge to edge (square covering the area, clipped); all text overlays on dark boxes
             Px = Mathf.Max(80, Mathf.Max(area.width, area.height));
+            tagPx = Mathf.Clamp(Mathf.RoundToInt(Mathf.Min(area.width, area.height) / 34), 9, 12);
             Rect map = new Rect((area.width - Px) / 2, (area.height - Px) / 2, Px, Px);
             float th = Mathf.Max(16, area.height * .06f);
-            Fill(area, new Color(.45f, .45f, .47f));
-            if (tex != null) GUI.DrawTexture(map, tex);
-            GUI.BeginGroup(map);
-            try {
-            foreach (var r in runways) Line(Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
-            if (Time.realtimeSinceStartup > taxiAt) { taxiAt = Time.realtimeSinceStartup + 5; taxiRoutes = body.bodyName == "Kerbin" ? NativeFlightController.TaxiRoutes() : new List<TaxiRoute>(); }
-            foreach (var tr in taxiRoutes)
-            {   // ground charts (PluginData/charts/TAXI_*.json): amber dotted centerlines
-                for (int i = 1; i < tr.Points.Count; i++) Line(Proj(tr.Points[i - 1].Lat, tr.Points[i - 1].Lon), Proj(tr.Points[i].Lat, tr.Points[i].Lon), new Color(1, .75f, .2f), 3);
-                if (span <= 8000) foreach (var p in tr.Points) { var q = Proj(p.Lat, p.Lon); if (q.x > 0 && q.y > 0 && q.x < Px && q.y < Px) Tag(new Rect(q.x + 4, q.y + 2, 110, 18), p.Name); }
-            }
-            foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) Tag(new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
-            // chart legs: each side's join list, then FAF -> SF -> threshold
-            if (Tab == 1 && rw != null && fixes.Count > 0)
+            c.Fill(area, new Color(.45f, .45f, .47f));
+            if (TexFor(tab) != null) c.Image(map, TexFor(tab));
+            c.Group(map, () =>
             {
-                var faf = fixes.Find(f => f.Role == "faf"); var sf = fixes.Find(f => f.Role == "sf");
-                foreach (var side in new[] { "left", "right" })
+                foreach (var r in runways) MfdInk.Line(c, Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
+                if (Time.realtimeSinceStartup > taxiAt) { taxiAt = Time.realtimeSinceStartup + 5; taxiRoutes = body.bodyName == "Kerbin" ? NativeFlightController.TaxiRoutes() : new List<TaxiRoute>(); }
+                foreach (var tr in taxiRoutes)
+                {   // ground charts (PluginData/charts/TAXI_*.json): amber dotted centerlines
+                    for (int i = 1; i < tr.Points.Count; i++) MfdInk.Line(c, Proj(tr.Points[i - 1].Lat, tr.Points[i - 1].Lon), Proj(tr.Points[i].Lat, tr.Points[i].Lon), new Color(1, .75f, .2f), 3);
+                    if (span <= 8000) foreach (var p in tr.Points) { var q = Proj(p.Lat, p.Lon); if (q.x > 0 && q.y > 0 && q.x < Px && q.y < Px) Tag(c, new Rect(q.x + 4, q.y + 2, 110, 18), p.Name); }
+                }
+                foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) Tag(c, new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
+            // chart legs: each side's join list, then FAF -> SF -> threshold
+                if (tab == 1 && rw != null && fixes.Count > 0)
                 {
-                    var seq = fixes.FindAll(f => f.Role != "faf" && f.Role != "sf" && (f.Side == side || f.Side == "both")); if (faf != null) seq.Add(faf);
-                    for (int i = 1; i < seq.Count; i++) Line(Proj(seq[i - 1].Lat, seq[i - 1].Lon), Proj(seq[i].Lat, seq[i].Lon), side == "left" ? new Color(.1f, .35f, .8f) : new Color(.75f, .1f, .4f));
+                    var faf = fixes.Find(f => f.Role == "faf");
+                    foreach (var side in new[] { "left", "right" })
+                    {
+                        var seq = fixes.FindAll(f => f.Role != "faf" && f.Role != "sf" && (f.Side == side || f.Side == "both")); if (faf != null) seq.Add(faf);
+                        for (int i = 1; i < seq.Count; i++) MfdInk.Line(c, Proj(seq[i - 1].Lat, seq[i - 1].Lon), Proj(seq[i].Lat, seq[i].Lon), side == "left" ? new Color(.1f, .35f, .8f) : new Color(.75f, .1f, .4f), 4);
+                    }
+                    if (faf != null) MfdInk.Line(c, Proj(faf.Lat, faf.Lon), Proj(rw.Lat, rw.Lon), Color.black, 6);
+                    for (int i = 0; i < fixes.Count; i++)
+                    {
+                        var p = Proj(fixes[i].Lat, fixes[i].Lon); bool fin = fixes[i].Role == "faf" || fixes[i].Role == "sf";
+                        c.Dot(p, i == sel ? 10 : 7, i == sel ? Color.yellow : fin ? Color.cyan : Color.white);
+                        Tag(c, new Rect(p.x + 6, p.y - 9, 120, 18), fixes[i].Name.Split('(')[0].Trim());
+                    }
                 }
-                if (faf != null) Line(Proj(faf.Lat, faf.Lon), Proj(rw.Lat, rw.Lon), Color.black, 6);
-                for (int i = 0; i < fixes.Count; i++)
-                {
-                    var p = Proj(fixes[i].Lat, fixes[i].Lon); bool fin = fixes[i].Role == "faf" || fixes[i].Role == "sf";
-                    Dot(p, i == sel ? 10 : 7, i == sel ? Color.yellow : fin ? Color.cyan : Color.white);
-                    Tag(new Rect(p.x + 6, p.y - 9, 120, 18), fixes[i].Name.Split('(')[0].Trim());
-                }
-            }
-            var act = NativeFlightController.ActiveRunway;
-            if (act != null && act.Route != null)
-                for (int i = Math.Max(0, act.RouteIndex); i < act.Route.Count; i++)
-                {   // the mod-adjusted (smoothed) route actually flown
-                    var p = Proj(act.Route[i].Lat, act.Route[i].Lon); Dot(p, 5, Color.green);
-                    if (i > 0) Line(Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
-                }
-            if (act != null) { double dla, dlo, crsD = NavigationMath.Bearing(act.Lat, act.Lon, act.EndLat, act.EndLon); NavigationMath.Offset(act.Lat, act.Lon, crsD + 180, act.DecelStartDist, body.Radius, out dla, out dlo); var dp = Proj(dla, dlo); Dot(dp, 9, new Color(1, .55f, 0)); Tag(new Rect(dp.x + 6, dp.y - 20, 120, 18), "DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km"); }
-            if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); Dot(jp, 11, Color.magenta); Tag(new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
-            var v = FlightGlobals.ActiveVessel;
-            if (v != null) { var p = Proj(v.latitude, v.longitude); Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; Line(p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
-            HandleMouse(rw);
-            } finally { GUI.EndGroup(); }
+                var act = NativeFlightController.ActiveRunway;
+                if (act != null && act.Route != null)
+                    for (int i = Math.Max(0, act.RouteIndex); i < act.Route.Count; i++)
+                    {   // the mod-adjusted (smoothed) route actually flown
+                        var p = Proj(act.Route[i].Lat, act.Route[i].Lon); c.Dot(p, 5, Color.green);
+                        if (i > 0) MfdInk.Line(c, Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
+                    }
+                if (act != null) { double dla, dlo, crsD = NavigationMath.Bearing(act.Lat, act.Lon, act.EndLat, act.EndLon); NavigationMath.Offset(act.Lat, act.Lon, crsD + 180, act.DecelStartDist, body.Radius, out dla, out dlo); var dp = Proj(dla, dlo); c.Dot(dp, 9, new Color(1, .55f, 0)); Tag(c, new Rect(dp.x + 6, dp.y - 20, 120, 18), "DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km"); }
+                if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); c.Dot(jp, 11, Color.magenta); Tag(c, new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
+                var v = FlightGlobals.ActiveVessel;
+                if (v != null) { var p = Proj(v.latitude, v.longitude); c.Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; MfdInk.Line(c, p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
+                if (mapMouse != null) mapMouse();   // the outside window only: the IMGUI mouse is map-square relative inside the group
+            });
             var vv = FlightGlobals.ActiveVessel;
-            if (Tab == 0)
+            if (tab == 0)
             {   // RPM 'Asc/Desc Mode' look: navy title bar, corner readouts, bottom data + status line - all over the map
-                Fill(new Rect(0, 0, area.width, th), new Color(.06f, .09f, .28f, .92f));
-                GUI.Label(new Rect(6, 0, area.width / 2, th), "MAP MODE", Mono(th * .7f, Color.white));
-                GUI.Label(new Rect(area.width / 2, 0, area.width / 2 - 6, th), "Body: " + (body != null ? body.bodyName : "?"), Mono(th * .7f, Color.white, TextAnchor.MiddleRight));
-                if (vv != null) RpmCorners(vv, area, th);
-                RpmBottom(area); return;
+                int tp = Mathf.Max(9, Mathf.RoundToInt(th * .7f));
+                c.Fill(new Rect(0, 0, area.width, th), new Color(.06f, .09f, .28f, .92f));
+                c.Text(new Rect(6, 0, area.width / 2, th), "MAP MODE", tp, Color.white, TextAnchor.MiddleLeft, false);
+                c.Text(new Rect(area.width / 2, 0, area.width / 2 - 6, th), "Body: " + body.bodyName, tp, Color.white, TextAnchor.MiddleRight, false);
+                if (vv != null) RpmCorners(c, vv, area, th);
+                RpmBottom(c, area); return;
             }
-            DataBox(area, DataBlock(rw));
+            DataBox(c, area, DataBlock(rw, tab, mapMouse != null));
         }
 
-        List<string> DataBlock(NativeFlightController.MapRunway rw)
+        /// <summary>The MAP / CHART data box rows. tab: the page being drawn (not the outside window's Tab: the IVA screens draw their
+        /// own page). mouse: true on the outside window only - the IVA screens have no mouse, so the hints name the soft keys.</summary>
+        List<string> DataBlock(NativeFlightController.MapRunway rw, int tab, bool mouse)
         {
             var o = new List<string>(); var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway;
-            o.Add((Tab == 1 ? "CHART " : "MAP ") + (rw != null ? rw.Key : "no runway"));
+            o.Add((tab == 1 ? "CHART " : "MAP ") + (rw != null ? rw.Key : "no runway"));
             o.Add("SPAN  " + (ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km  " + (follow ? (centerRunway ? "RWY CTR" : "FOLLOW") : "PANNED"));
-            if (Tab == 1 && rw != null)
+            if (tab == 1 && rw != null)
             {
                 string cur = ChartStore.Active(rw.Key); o.Add("VAR   " + (cur.Length == 0 ? "default" : cur));
                 o.Add(NativeFlightController.ApLine);   // AP annunciator (+ LOC/GS on final)
@@ -258,7 +273,7 @@ namespace KSPChatBridge
                     var f = fixes[sel]; double gnd = NativeFlightController.MapTerrain(body, f.Lat, f.Lon); if (double.IsNaN(gnd)) gnd = 0;
                     o.Add("WP    " + f.Name.Split('(')[0].Trim() + "  " + Math.Round(f.Ref == "msl" ? f.AltMsl : f.AltMsl - gnd) + " m " + f.Ref.ToUpper() + "  gnd " + Math.Round(gnd));
                 }
-                else o.Add("WP    none (click the map or WP < / >)");
+                else o.Add(mouse ? "WP    none (click the map or WP < / >)" : "WP    none (WP < / >)");
                 var sb = new System.Text.StringBuilder();
                 for (int i = 0; i < fixes.Count; i++) sb.Append(i == sel ? "[" : " ").Append(fixes[i].Name.Split('(')[0].Trim()).Append(i == sel ? "]" : " ");
                 o.Add(sb.ToString()); if (note.Length > 0) o.Add(note);
@@ -272,56 +287,62 @@ namespace KSPChatBridge
             return o;
         }
 
-        /// <summary>Instrument-style ILS: needles box (left) + data block (right). Single source of truth with the autopilot.</summary>
-        void DrawIls(Rect area)
+        /// <summary>Instrument-style ILS: needles box (left) + data block (right), through the shared canvas, so the outside MFD and
+        /// every IVA screen render the same instrument. Single source of truth with the autopilot.</summary>
+        void DrawIls(IMfdCanvas cv, Rect area)
         {
             var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway; var rw = Rw();
             double tla, tlo, ela, elo, elev; string label;
             if (act != null) { tla = act.Lat; tlo = act.Lon; ela = act.EndLat; elo = act.EndLon; elev = act.Elevation; label = string.IsNullOrEmpty(act.Key) ? "active runway" : act.Key; }
             else if (rw != null) { tla = rw.Lat; tlo = rw.Lon; ela = rw.EndLat; elo = rw.EndLon; elev = rw.Elevation; label = rw.Key; }
-            else { GUI.Label(area, "No runway on this body."); return; }
+            else { cv.Text(area, "No runway on this body.", IlsPx(area), Text, TextAnchor.MiddleCenter, false); return; }
             if (v == null) return;
             var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);
-            // Luke 11:47 PM: the instrument fills the page; the data block overlays the right side on a dark box
+            // the instrument fills the page; the data block overlays the right side on a dark box
             float dw = Mathf.Clamp(area.width * .44f, Mathf.Min(170, area.width * .6f), area.width * .6f);
-            float Sx = Mathf.Max(60, area.width - dw), Sy = Mathf.Max(60, area.height), S = Mathf.Min(Sx, Sy); Rect box = new Rect(0, 0, Sx, Sy);
-            var o = GUI.color; GUI.color = new Color(.02f, .05f, .03f); GUI.DrawTexture(area, Texture2D.whiteTexture); GUI.color = o;
-            Vector2 c = box.center;
-            for (int i = -2; i <= 2; i++) { if (i == 0) continue; Dot(new Vector2(c.x + i * Sx * .2f, c.y), 5, Color.white); Dot(new Vector2(c.x, c.y + i * Sy * .2f), 5, Color.white); }
-            Dot(c, 8, Color.yellow);
+            float Sx = Mathf.Max(60, area.width - dw), Sy = Mathf.Max(60, area.height); Rect box = new Rect(0, 0, Sx, Sy);
+            cv.Fill(area, new Color(.02f, .05f, .03f));
+            Vector2 ctr = box.center;
+            for (int i = -2; i <= 2; i++) { if (i == 0) continue; cv.Dot(new Vector2(ctr.x + i * Sx * .2f, ctr.y), 5, Color.white); cv.Dot(new Vector2(ctr.x, ctr.y + i * Sy * .2f), 5, Color.white); }
+            cv.Dot(ctr, 8, Color.yellow);
             bool valid = r.Front && r.DmeM < 40000;
-            float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * Sx * .4f, gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * Sy * .4f;
-            GUI.color = valid ? Color.magenta : Color.gray;
-            GUI.DrawTexture(new Rect(lx - 1.5f, box.y + 10, 3, Sy - 20), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(box.x + 10, gy - 1.5f, Sx - 20, 3), Texture2D.whiteTexture);
-            GUI.color = o;
-            if (!valid) Tag(new Rect(box.x + 8, box.y + 6, S, 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
+            float lx = ctr.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * Sx * .4f, gy = ctr.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * Sy * .4f;
+            var nd = valid ? Color.magenta : new Color(.45f, .45f, .45f);   // needles: magenta in range, dim out of range
+            cv.Fill(new Rect(lx - 1.5f, box.y + 10, 3, Sy - 20), nd); cv.Fill(new Rect(box.x + 10, gy - 1.5f, Sx - 20, 3), nd);
+            if (!valid) Tag(cv, new Rect(box.x + 8, box.y + 6, Mathf.Min(Sx, Sy), 20), r.Front ? "OUT OF RANGE" : "BEHIND THE RUNWAY");
             bool gear = v.ActionGroups[KSPActionGroup.Gear], brk = v.ActionGroups[KSPActionGroup.Brakes]; double hat = v.altitude - elev, ias = v.indicatedAirSpeed, gs = v.horizontalSrfSpeed;
             double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);
-            Fill(new Rect(area.width - dw, 0, dw, area.height), Back);
-            GUILayout.BeginArea(new Rect(area.width - dw + 6, 0, dw - 8, area.height));
-            var oc0 = GUI.contentColor; var oc = Text; GUI.contentColor = Text;
-            GUILayout.Label("ILS " + label);
-            GUILayout.Label(act == null ? "AP OFF  raw ILS" : act.Coupled ? (act.GsCoupled ? "COUPLED LOC+GS" : "COUPLED LOC") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC ARMED" : "NOT COUPLED");
-            GUILayout.Label("DME  " + (r.DmeM / 1000).ToString("0.0") + " km" + (gs > 1 ? "  ETA " + Math.Round(r.DmeM / gs) + " s" : ""));
-            GUILayout.Label("LOC  " + r.LocDeg.ToString("+0.00;-0.00") + "  XTK " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "R" : "L"));
-            GUILayout.Label("G/S  " + r.GsDeg.ToString("+0.00;-0.00") + "  " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "HIGH" : "LOW"));
-            GUILayout.Label("CRS  " + Math.Round(r.Course).ToString("000") + "   HAT " + Math.Round(hat) + " m");
-            string band = Ils.SpeedBand(ias, tgt); GUI.contentColor = band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red;
-            GUILayout.Label("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt)); GUI.contentColor = oc;
-            GUILayout.Label("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s");
-            { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) GUILayout.Label(fl); }
-                { var ar = NativeFlightController.ActiveRunway; if (ar != null && ar.EntryChart.Length > 0) GUILayout.Label("ENTRY " + EntryPolicy.Label(ar.EntryChart)); }
-            GUI.contentColor = !gear && r.Front && r.DmeM < 3000 ? Color.red : oc; GUILayout.Label("GEAR " + (gear ? "DOWN" : "UP") + "   " + (brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : "")); GUI.contentColor = oc;
-            if (act != null) GUILayout.Label("DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km " + (double.IsNaN(act.DecelA) ? "est" : act.DecelA.ToString("0.0") + " m/s2") + (r.DmeM > act.DecelStartDist ? "" : " DECEL"));
+            cv.Fill(new Rect(area.width - dw, 0, dw, area.height), Back);
+            var rows = new List<KeyValuePair<string, Color>>();   // the data block: text rows on a dark box, wrapped by the canvas
+            rows.Add(new KeyValuePair<string, Color>("ILS " + label, Text));
+            rows.Add(new KeyValuePair<string, Color>(act == null ? "AP OFF  raw ILS" : act.Coupled ? (act.GsCoupled ? "COUPLED LOC+GS" : "COUPLED LOC") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC ARMED" : "NOT COUPLED", Text));
+            rows.Add(new KeyValuePair<string, Color>("DME  " + (r.DmeM / 1000).ToString("0.0") + " km" + (gs > 1 ? "  ETA " + Math.Round(r.DmeM / gs) + " s" : ""), Text));
+            rows.Add(new KeyValuePair<string, Color>("LOC  " + r.LocDeg.ToString("+0.00;-0.00") + "  XTK " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "R" : "L"), Text));
+            rows.Add(new KeyValuePair<string, Color>("G/S  " + r.GsDeg.ToString("+0.00;-0.00") + "  " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "HIGH" : "LOW"), Text));
+            rows.Add(new KeyValuePair<string, Color>("CRS  " + Math.Round(r.Course).ToString("000") + "   HAT " + Math.Round(hat) + " m", Text));
+            string band = Ils.SpeedBand(ias, tgt);
+            rows.Add(new KeyValuePair<string, Color>("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt), band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red));
+            rows.Add(new KeyValuePair<string, Color>("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s", Text));
+            { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) rows.Add(new KeyValuePair<string, Color>(fl, Text)); }
+            { var ar = NativeFlightController.ActiveRunway; if (ar != null && ar.EntryChart.Length > 0) rows.Add(new KeyValuePair<string, Color>("ENTRY " + EntryPolicy.Label(ar.EntryChart), Text)); }
+            rows.Add(new KeyValuePair<string, Color>("GEAR " + (gear ? "DOWN" : "UP") + "   " + (brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : ""), !gear && r.Front && r.DmeM < 3000 ? Color.red : Text));
+            if (act != null) rows.Add(new KeyValuePair<string, Color>("DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km " + (double.IsNaN(act.DecelA) ? "est" : act.DecelA.ToString("0.0") + " m/s2") + (r.DmeM > act.DecelStartDist ? "" : " DECEL"), Text));
             if (guidance && valid)
             {
                 double fh = Ils.FdHeading(r, v.srfSpeed), fv = Ils.FdVs(r, v.srfSpeed), dh = FlightPolicy.Wrap(fh - FlightGlobals.ship_heading), dv = fv - v.verticalSpeed;
-                GUILayout.Label("FD   " + (dh < -2 ? "<< LEFT" : dh > 2 ? "RIGHT >>" : "ON CRS") + "  " + (dv > 2 ? "UP" : dv < -2 ? "DOWN" : "ON PATH"), Wrap);
-                var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) { GUI.contentColor = new Color(1, .7f, 0); GUILayout.Label(string.Join(" ", co.ToArray()), Wrap); GUI.contentColor = oc; }
+                rows.Add(new KeyValuePair<string, Color>("FD   " + (dh < -2 ? "<< LEFT" : dh > 2 ? "RIGHT >>" : "ON CRS") + "  " + (dv > 2 ? "UP" : dv < -2 ? "DOWN" : "ON PATH"), Text));
+                var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) rows.Add(new KeyValuePair<string, Color>(string.Join(" ", co.ToArray()), new Color(1, .7f, 0)));
             }
-            else GUILayout.Label("FD   " + (guidance ? "no signal" : "off (GUIDE)"));
-            GUI.contentColor = oc0; GUILayout.EndArea();
+            else rows.Add(new KeyValuePair<string, Color>("FD   " + (guidance ? "no signal" : "off (GUIDE)"), Text));
+            int ip = IlsPx(area); float wd = dw - 8, rx = area.width - dw + 6, ry = 2;
+            foreach (var row in rows)
+            {   // each row is sized by the canvas (a wrapped row takes the height it needs); drawing stops at the bottom edge
+                float h = cv.TextHeight(row.Key, wd, ip, true); if (ry + h > area.height) break;
+                cv.Text(new Rect(rx, ry, wd, h), row.Key, ip, row.Value, TextAnchor.UpperLeft, true); ry += h;
+            }
         }
+        /// <summary>ILS data-block text size for a page size (the same clamp the CHART data block uses).</summary>
+        static int IlsPx(Rect area) { return Mathf.Clamp(Mathf.RoundToInt(area.height / 30), 10, 15); }
 
         string planeLine = ""; float planeAt;
         /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
@@ -344,60 +365,61 @@ namespace KSPChatBridge
             return planeLine;
         }
 
-        bool panning; Vector2 panFrom; int builtTab = -1;
+        bool panning; Vector2 panFrom;
         static readonly Color Cyan = new Color(.35f, .9f, 1f);
-        static GUIStyle Mono(float size, Color c, TextAnchor a = TextAnchor.MiddleLeft)
-        {
-            var s = new GUIStyle(GUI.skin.label) { fontSize = Mathf.Max(8, Mathf.RoundToInt(size)), alignment = a, wordWrap = false, clipping = TextClipping.Clip, richText = true };
-            s.normal.textColor = c; return s;
-        }
         internal static readonly Color Back = new Color(0, 0, 0, .62f); internal static readonly Color Text = new Color(.85f, 1f, .85f), CyanText = new Color(.35f, .9f, 1f);
-        /// <summary>Map label on a dark backing box (never grey-on-grey).</summary>
-        static void Tag(Rect r, string text)
+        static int tagPx = 12;   // map label text size, scaled to the page (set per draw in DrawPages)
+        /// <summary>Map label on a dark backing box (never grey-on-grey): the canvas sizes the box to the text.</summary>
+        static void Tag(IMfdCanvas c, Rect r, string text)
         {
-            if (string.IsNullOrEmpty(text)) return; var st = Mono(12, Color.white); var sz = st.CalcSize(new GUIContent(text));
-            Fill(new Rect(r.x - 2, r.y, sz.x + 4, sz.y), Back); GUI.Label(new Rect(r.x, r.y, sz.x + 2, sz.y), text, st);
+            if (string.IsNullOrEmpty(text)) return;
+            float w = c.TextWidth(text, tagPx), h = c.TextHeight(text, w + 8, tagPx, false);
+            c.Fill(new Rect(r.x - 2, r.y, w + 4, h), Back);
+            c.Text(new Rect(r.x, r.y, w + 2, h), text, tagPx, Color.white, TextAnchor.UpperLeft, false);
         }
         /// <summary>CHART data block: overlaid top-right on a dark box, wrapped, sized to its text.</summary>
-        static void DataBox(Rect area, List<string> lines)
+        static void DataBox(IMfdCanvas c, Rect area, List<string> lines)
         {
-            float w = Mathf.Clamp(area.width * .46f, Mathf.Min(170, area.width), area.width); var st = new GUIStyle(GUI.skin.label) { wordWrap = true, richText = true, fontSize = Mathf.Clamp(Mathf.RoundToInt(area.height / 30), 10, 16) }; st.normal.textColor = Text;
-            float h = 4; var hs = new List<float>(); foreach (var l in lines) { float lh = st.CalcHeight(new GUIContent(l), w - 8); hs.Add(lh); h += lh; }
-            h = Mathf.Min(h, area.height); Rect box = new Rect(area.width - w, 0, w, h); Fill(box, Back);
-            float y = 2; for (int i = 0; i < lines.Count && y < h; i++) { GUI.Label(new Rect(box.x + 4, y, w - 8, hs[i]), lines[i], st); y += hs[i]; }
+            float w = Mathf.Clamp(area.width * .46f, Mathf.Min(170, area.width), area.width); int px = Mathf.Clamp(Mathf.RoundToInt(area.height / 30), 10, 16);
+            float h = 4; var hs = new List<float>(); foreach (var l in lines) { float lh = c.TextHeight(l, w - 8, px, true); hs.Add(lh); h += lh; }
+            h = Mathf.Min(h, area.height); Rect box = new Rect(area.width - w, 0, w, h); c.Fill(box, Back);
+            float y = 2; for (int i = 0; i < lines.Count && y < h; i++) { c.Text(new Rect(box.x + 4, y, w - 8, hs[i]), lines[i], px, Text, TextAnchor.UpperLeft, true); y += hs[i]; }
         }
         internal static bool TextColorOk(Color c) { return MfdNav.TextColorOk(c.r, c.g, c.b); }
-        static void Fill(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, Texture2D.whiteTexture); GUI.color = o; }
         static string Col(string hex, string s) { return "<color=#" + hex + ">" + s + "</color>"; }
-        void RpmCorners(Vessel v, Rect area, float top)
+        void RpmCorners(IMfdCanvas c, Vessel v, Rect area, float top)
         {
-            float fs = Mathf.Max(9, Mathf.Min(area.width, area.height) / 26), lh = fs * 1.25f, w = area.width / 2 - 4, bw = Mathf.Min(w, fs * 9.5f);
+            int fs = Mathf.Max(9, Mathf.RoundToInt(Mathf.Min(area.width, area.height) / 26)); float lh = fs * 1.25f, w = area.width / 2 - 4, bw = Mathf.Min(w, fs * 9.5f);
             double thrust = 0; foreach (var e in v.FindPartModulesImplementing<ModuleEngines>()) thrust += e.finalThrust;
             double twr = thrust / Math.Max(.001, v.GetTotalMass() * 9.81 * v.mainBody.GeeASL);
             var tl = new[] { "ALT " + Col("FFFFFF", (v.altitude / 1000).ToString("0.00") + "km"), "V.spd " + Col("FFFFFF", v.verticalSpeed.ToString("0.0")), "H.spd " + Col("FFFFFF", v.horizontalSrfSpeed.ToString("0.0")), "TWR " + Col("FFFFFF", twr.ToString("0.00")) };
             var tr = new[] { Col("FFFFFF", (-Roll(v)).ToString("0.0")) + " Roll", Col("FFFFFF", Pitch(v).ToString("0.0")) + " Pitch", Col("FFFFFF", FlightGlobals.ship_heading.ToString("000")) + " Hdg", Col("FFFFFF", thrust.ToString("0")) + "kN Thrust" };
-            Fill(new Rect(0, top, bw, lh * 4 + 4), Back); Fill(new Rect(area.width - bw, top, bw, lh * 4 + 4), Back);
-            for (int i = 0; i < 4; i++) { GUI.Label(new Rect(4, top + 2 + i * lh, w, lh), tl[i], Mono(fs, Cyan)); GUI.Label(new Rect(area.width - w - 4, top + 2 + i * lh, w, lh), tr[i], Mono(fs, Cyan, TextAnchor.MiddleRight)); }
+            c.Fill(new Rect(0, top, bw, lh * 4 + 4), Back); c.Fill(new Rect(area.width - bw, top, bw, lh * 4 + 4), Back);
+            for (int i = 0; i < 4; i++)
+            {
+                c.Text(new Rect(4, top + 2 + i * lh, w, lh), tl[i], fs, Cyan, TextAnchor.MiddleLeft, false);
+                c.Text(new Rect(area.width - w - 4, top + 2 + i * lh, w, lh), tr[i], fs, Cyan, TextAnchor.MiddleRight, false);
+            }
         }
         static double Pitch(Vessel v) { var t = v.ReferenceTransform; return t == null ? 0 : Math.Asin(Math.Max(-1, Math.Min(1, Vector3d.Dot(t.up, v.upAxis)))) * 180 / Math.PI; }
         static double Roll(Vessel v) { var t = v.ReferenceTransform; return t == null ? 0 : -Math.Atan2(Vector3d.Dot(t.right, v.upAxis), Vector3d.Dot(-t.forward, v.upAxis)) * 180 / Math.PI; }
-        void RpmBottom(Rect area)
+        void RpmBottom(IMfdCanvas c, Rect area)
         {
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
-            float lh = Mathf.Max(13, area.height * .058f), fs = lh * .72f, y = area.height - 3 * lh - 2;
-            Fill(new Rect(0, y - 2, area.width, 2 * lh + 2), Back);
+            float lh = Mathf.Max(13, area.height * .058f), y = area.height - 3 * lh - 2; int fs = Mathf.Max(9, Mathf.RoundToInt(lh * .72f));
+            c.Fill(new Rect(0, y - 2, area.width, 2 * lh + 2), Back);
             double h0 = NativeFlightController.MapTerrain(body, v.latitude, v.longitude), la, lo; NavigationMath.Offset(v.latitude, v.longitude, FlightGlobals.ship_heading, 100, body.Radius, out la, out lo);
             double h1 = NativeFlightController.MapTerrain(body, la, lo), slope = double.IsNaN(h0) || double.IsNaN(h1) ? 0 : Math.Atan2(Math.Max(0, h1) - Math.Max(0, h0), 100) * 180 / Math.PI;
             var act = NativeFlightController.ActiveRunway; string eta = "--";
             if (act != null && v.horizontalSrfSpeed > 1) { double s = NavigationMath.Distance(v.latitude, v.longitude, act.Lat, act.Lon, body.Radius) / v.horizontalSrfSpeed; eta = ((int)(s / 60)).ToString("0") + "m" + ((int)(s % 60)).ToString("00") + "s"; }
-            GUI.Label(new Rect(4, y, area.width - 8, lh), "Lat " + Col("FFFFFF", v.latitude.ToString("0.0000")) + "  Lon " + Col("FFFFFF", v.longitude.ToString("0.0000")), Mono(fs, Cyan));
-            GUI.Label(new Rect(4, y + lh, area.width - 8, lh), "Slope " + Col("FFFFFF", slope.ToString("0.0") + "\u00b0") + "   ETA " + Col("FFFFFF", eta) + (act != null ? "  " + Col("FFFFFF", act.Key ?? "") : ""), Mono(fs, Cyan));
+            c.Text(new Rect(4, y, area.width - 8, lh), "Lat " + Col("FFFFFF", v.latitude.ToString("0.0000")) + "  Lon " + Col("FFFFFF", v.longitude.ToString("0.0000")), fs, Cyan, TextAnchor.MiddleLeft, false);
+            c.Text(new Rect(4, y + lh, area.width - 8, lh), "Slope " + Col("FFFFFF", slope.ToString("0.0") + "\u00b0") + "   ETA " + Col("FFFFFF", eta) + (act != null ? "  " + Col("FFFFFF", act.Key ?? "") : ""), fs, Cyan, TextAnchor.MiddleLeft, false);
             double lf = 0, lfc = 0; foreach (Part p in v.parts) foreach (PartResource r in p.Resources) if (r.resourceName == "LiquidFuel") { lf += r.amount; lfc += r.maxAmount; }
             bool sas = v.ActionGroups[KSPActionGroup.SAS], rcs = v.ActionGroups[KSPActionGroup.RCS]; string fuel = MfdNav.FuelStatus(lf, lfc), ap = NativeFlightController.ApLine;
             string line = (sas ? Col("7CFF7C", "SAS") : Col("C08080", "SAS")) + " " + (rcs ? Col("7CFF7C", "RCS") : Col("C08080", "RCS")) + "  " + (fuel == "!Empty!" ? Col("FF4040", fuel) : Col("FFFFFF", fuel))
                 + "  " + (ap == "AP OFF" ? Col("FFB020", ap) : Col("7CFF7C", ap));
-            Fill(new Rect(0, y + 2 * lh, area.width, lh + 2), new Color(0, 0, 0, .75f));
-            GUI.Label(new Rect(4, y + 2 * lh, area.width - 8, lh), line, Mono(fs, Color.white));
+            c.Fill(new Rect(0, y + 2 * lh, area.width, lh + 2), new Color(0, 0, 0, .75f));
+            c.Text(new Rect(4, y + 2 * lh, area.width - 8, lh), line, fs, Color.white, TextAnchor.MiddleLeft, false);
         }
         void HandleMouse(NativeFlightController.MapRunway rw)
         {
