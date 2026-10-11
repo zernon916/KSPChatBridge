@@ -17,6 +17,7 @@ Nothing here is required; each is detected at runtime (no hard dependency):
 - **MechJeb2**: orbital tools (transfers, plane matching, course corrections) use MechJeb's planners.
 - **RasterPropMonitor** (FirstPersonKSP, KSP 1.12): adds **AICS ILS**, **AICS MAP** and **AICS AUTOPILOT** pages to IVA MFDs (stock RPM MFD: press soft key **R8**, press again to cycle) (needle bars, coupling, IAS band, callouts; ASCII map with runway, route and join point).
 - **JSI Advanced Transparent Pods** (JPLRepo, KSP 1.12): see-through cockpit windows/IVAs from the outside view. Works alongside RasterPropMonitor; nothing in AICS depends on it.
+- **Kerbal Wind Tunnel** (DBooots, 1.3.1.1, KSP 1.12; needs ClickThroughBlocker + ToolbarController): reference only. Use its editor envelope plots to sanity-check AICS LEARN profiles by hand. AICS does not read or depend on it.
 
 ## Found a bug?
 
