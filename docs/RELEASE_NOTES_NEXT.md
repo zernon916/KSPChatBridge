@@ -8,4 +8,10 @@
 - Setting "RPM AICS pages: auto/on/off".
 - AICS is single-player only; multiplayer is not supported or tested.
 
+## Docs
+- `AUTOPILOT_OVERHAUL.md` - the in-mod autopilot overhaul: design, learned per-craft profiles and the 5 plane test-flight plan.
+- `GLOSSARY.md` - plain-language definitions (LEARN, profile, Vs, TWR, lead-turn, flare, entry chart, ThrottleGate, suicide burn).
+- `TEST_FLIGHT_CHECKLIST.md` - printable pass/fail checklist for the 5 plane test flights.
+- KWT - optional external reference for envelope plots (stall / max level speed / climb rate); AICS never reads it and there is no dependency.
+
 Bug reports: https://github.com/zernon916/KSPChatBridge/issues

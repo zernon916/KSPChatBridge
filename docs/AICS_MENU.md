@@ -9,7 +9,7 @@ AICS ("AI Control System") is the KSPChatBridge mod's main menu. It sits alongsi
 
 Style: dark, MechJeb-like (dark grey panels, light text, green accents, small fonts). On every panel, a **MechJeb when available** principle applies. If MechJeb2 is installed, the panel drives MechJeb's own autopilot (ascent, landing, rendezvous, docking, node executor, attitude). The in-mod controller fills the gaps MechJeb doesn't cover, or does badly, such as plane autoland, suicide burns, the science watcher and runway spots. The header shows `MJ` (green) or `no MJ` (grey).
 
-Every panel button maps to either (a) a native tool call (`NativeCommands`), (b) the Flight Plan runner , (c) a local C# action (KSP API: power, crew transfer, EVA boarding, map pick), or (d) a chat prompt to the AI. As of 2026-10-08 every panel is wired; the remaining hard limits are listed at the end.
+Every panel button maps to either (a) a native tool call (`NativeCommands`), (b) the Flight Plan runner, (c) a local C# action (KSP API: power, crew transfer, EVA boarding, map pick), or (d) a chat prompt to the AI. As of 2026-10-08 every panel is wired; the remaining hard limits are listed at the end.
 
 Status legend: **[W]** wired, **[P]** partial, **[S]** stub (UI only).
 
@@ -47,9 +47,9 @@ Backend: the in-mod controller + the `plane_hold` tool. Targets live in `native_
 - Runway picker (H spots: KSC 09/27, Island 27 (E-W, from Luke's position), Island Airfield (approx), saved strips).
 - **Short final** (5 km) / **Long final** (11 km, default). [W] `final_km` on `land_plane` / `land_at_spot` (settings `plane_final_m`, read by `plane._fly`)
 - Approach heading override, or auto from runway + approach direction. [W] `approach_heading` = the heading you land on; picks 09/27 (or the matching end of a saved strip)
-- **V vs Plane** checkbox: V = vertical (rocket) landing at the spot, Plane = runway autoland. [W] via `land_at_spot(mode)`
+- **V (rocket) / Plane (runway)** checkbox: V = vertical (rocket) landing at the spot, Plane = runway autoland. [W] via `land_at_spot(mode)`
 - **Touch-and-go** count (0 = full stop, -1 = until told). [W] KSC via `land_plane(touch_and_go)`
-- **Chute check**: before a V landing, warn if there are no parachutes / not enough dV for a powered landing. [W] `landing_check` (button) and `land_at_spot(chute_check=true)`, which refuses when neither is enough.
+- **Chute / dV check**: before a V landing, warn if there are no parachutes / not enough dV for a powered landing. [W] `landing_check` (button) and `land_at_spot(chute_check=true)`, which refuses when neither is enough.
 - **Land** [W], **Abort** [W].
 
 ## 3. Landing Guidance  [W]
@@ -107,7 +107,7 @@ Electric charge: amount / max, % bar, net rate (EC/s, smoothed), **time to empty
 
 ## 11. Science  [W]
 - **Collect all**: run every rerunnable experiment. [W] `run_science(transmit=false)`
-- **Transmit** toggle: run + transmit. [W] `run_science(transmit=true)`
+- **Collect + transmit**: run + transmit. [W] `run_science(transmit=true)`
 - Watcher mode (off / remind / auto). [W] `set_science_watcher`
 - **Reset Experiments** [W] `reset_experiments`: inoperable ones (needs a scientist aboard), and optionally discards held data (after a transmit).
 
@@ -117,10 +117,10 @@ Electric charge: amount / max, % bar, net rate (EC/s, smoothed), **time to empty
 - EVA: **return to ship** boards the nearest free seat with a hatch within 50 m. [W] `KerbalEVA.BoardPart`
 
 ## 13. Taxi / Base Run  [W]
-Waypoint list (Runway 09/27 start, Runway middle, KSC Pad, Island 27/09 start, plus saved spots) with distance/bearing from the craft, **Go** per point, a **Route** field (`;`-separated names or lat,lon), a speed cap, **Mark here as point**, **Stop**. Backend the in-mod controller (`taxi_to`): straight-line steering with wheel steering + yaw; rovers drive with wheel motors, planes with engine throttle (≤ 40 %) + brakes. Also a Flight Plan step (`taxi to Runway 09 start`).
+Waypoint list (Runway 09/27 start, Runway middle, KSC Pad, Island 27/09 start, plus saved spots) with distance/bearing from the craft, **Go** per point, a **Route** field (`;`-separated names or lat,lon), a speed cap, **Mark here as point**, **Stop (abort)**. Backend the in-mod controller (`taxi_to`): straight-line steering with wheel steering + yaw; rovers drive with wheel motors, planes with engine throttle (≤ 40 %) + brakes. Also a Flight Plan step (`taxi to Runway 09 start`).
 
 ## 14. Abort / Status  [W]
-- **Abort**: stops any autopilot cleanly and releases the controls. [W]
+- **ABORT autopilot**: stops any autopilot cleanly and releases the controls. [W]
 - **Status** [W]: radar alt, MSL alt, speed, heading (local); the `/landing` line now includes the **signed heading error ±** (autoland and holds); the `autopilot_status` button.
 
 ## 15. Settings  [W]
@@ -184,7 +184,7 @@ Status as of commit after 31b7fc6: 1-9 DONE in code, except where noted (they st
   per system (green OK / amber caution / red failure): each engine (thrust %, mode, REVERSE), intakes (open, air %),
   each control surface (P/Y/R axes, INV, authority, deployed, CHANGED vs the engage baseline), reaction wheels, gear,
   brakes, chutes, fuel, hottest part, G-load, pilot, control adaptation. Option (default on): blink the craft's Light
-  action group during an unacknowledged MAYDAY (restored afterwards;).
+  action group during an unacknowledged MAYDAY (restored afterwards).
 ## Autoland rollout thrust reversers (in-mod)
 
 - Full-stop landings only (not touch-and-go): once the mains and nose are down, wings level and the wheels on the
@@ -383,3 +383,6 @@ GET /systems picks rows by craft type (Craft row: ROCKET / LANDER / ROVER / STAT
 ## Talk to a kerbal
 
 Address a crew member ABOARD the active vessel by first name in chat ('Hey Bob, are you having a good time?', 'Bob: ...', '@Bob ...', '..., Bob?'; 3+ letter prefixes work, e.g. 'Jeb') and that kerbal answers in character over the intercom: '[INTERCOM] Bob (Sci): ...' (engineers on [COMMS]). Replies use the kerbal's personality and trait and only real flight facts (situation, altitude, speed, destination/ETA, active emergencies); kerbals can't act (tool-ish text and lines claiming an action are dropped). An order to a kerbal ('Bob, gear down') goes to the pilot as usual. A kerbal who isn't aboard doesn't answer; the pilot says so. Each kerbal remembers the last 4 exchanges (until KSP restarts). Language filter applies. Addressing the pilot by name is the normal chat.
+
+See also: [GLOSSARY.md](GLOSSARY.md) - plain-language definitions of LEARN, profile, Vs, TWR, lead-turn, flare, entry chart, ThrottleGate and suicide burn.
+

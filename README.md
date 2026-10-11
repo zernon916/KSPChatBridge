@@ -13,11 +13,11 @@ every command, the autopilots, the crew, and troubleshooting.
 
 Nothing here is required; each is detected at runtime (no hard dependency):
 
-- **SCANsat**: the AICS map reveals terrain from SCANsat coverage instead of only your flight path.
-- **MechJeb2**: orbital tools (transfers, plane matching, course corrections) use MechJeb's planners.
-- **RasterPropMonitor** (FirstPersonKSP, KSP 1.12): adds **AICS ILS**, **AICS MAP** and **AICS AUTOPILOT** pages to IVA MFDs (stock RPM MFD: press soft key **R8**, press again to cycle) (needle bars, coupling, IAS band, callouts; ASCII map with runway, route and join point).
 - **JSI Advanced Transparent Pods** (JPLRepo, KSP 1.12): see-through cockpit windows/IVAs from the outside view. Works alongside RasterPropMonitor; nothing in AICS depends on it.
 - **Kerbal Wind Tunnel** (DBooots, 1.3.1.1, KSP 1.12; needs ClickThroughBlocker + ToolbarController): reference only. Use its editor envelope plots to sanity-check AICS LEARN profiles by hand. AICS does not read or depend on it.
+- **MechJeb2**: orbital tools (transfers, plane matching, course corrections) use MechJeb's planners.
+- **RasterPropMonitor** (FirstPersonKSP, KSP 1.12): adds **AICS ILS**, **AICS MAP** and **AICS AUTOPILOT** pages to IVA MFDs (stock RPM MFD: press soft key **R8**, press again to cycle) (needle bars, coupling, IAS band, callouts; ASCII map with runway, route and join point).
+- **SCANsat**: the AICS map reveals terrain from SCANsat coverage instead of only your flight path.
 
 ## Found a bug?
 
@@ -68,7 +68,9 @@ the map). `taxi to hangar` / `taxi to runway 09` joins the nearest point ahead o
 
 An AICS MFD screen is added by ModuleManager (`AICS_IVA.cfg`) to the Mk1 cockpit and Mk2 inline cockpit (in place of the
 stock docking monitor), the Mk1-3 pod, the Mk2 cockpit and the Mk1 inline cockpit. Click its soft keys in IVA: same pages
-and navigation as the outside MFD (BACK bottom-left). COMMS key (top right) = chat. To type, click the chat
+and navigation as the outside MFD (BACK bottom-left), and MAP / CHART / ILS draw the same real graphics as the outside MFD
+(one shared canvas, `KSPChatMod/MfdCanvas.cs`: IMGUI in the window, a cockpit `RenderTexture` in IVA); the other pages are
+text. COMMS key (top right) = chat. To type, click the chat
 input line (CHAT page) or the plan text (PLAN > FLIGHT PLAN): ship keys are locked while typing, Enter sends / checks
 (Shift+Enter = new line in the plan), Esc stops typing. Positions and `flipX` / `flipY` are tunable in `AICS_IVA.cfg`.
 
