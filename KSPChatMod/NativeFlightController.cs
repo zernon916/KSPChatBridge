@@ -464,8 +464,7 @@ namespace KSPChatBridge
             double heat = 0; foreach (Part p in vessel.parts) if (p.maxTemp > 0) heat = Math.Max(heat, Math.Max(p.temperature / p.maxTemp, p.skinMaxTemp > 0 ? p.skinTemperature / p.skinMaxTemp : 0));
             bool known = profile != null && !double.IsNaN(profile.Perf.MaxLevel);
             CapPlane = PilotPolicy.PlaneCap(known ? profile.Perf.MaxLevel : double.NaN, vessel.totalMass, CraftClass.Gentle(CraftCls)); CapSource = known ? "TEST" : "EST";
-            if (profile != null && profile.Envelope.Count > 0) { var pr = profile; ApproachProfile.SafeBank = v => pr.SafeBankAt(v); ApproachProfile.RollIn = pr.RollIn; } else { ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; }
-            ApproachProfile.TrustedStall = profile != null && !double.IsNaN(profile.Stall) && profile.Stall > 0;
+            ApplyProfileTrust();   // TrustedStall + envelope only when fingerprint still matches (hard mismatch → conservative)
             CapHot = LearnGuards.CapHot(heat, vessel.geeForce, ApproachProfile.StructG, learn != null && !learn.Done && learn.TurnPhase);
             PilotPolicy.CapSpeed = PilotPolicy.EffectiveCap(CapPlane, holdSpeed ? speed : double.NaN, CapHot);
         }

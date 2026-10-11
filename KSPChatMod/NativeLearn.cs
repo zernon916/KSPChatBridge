@@ -9,6 +9,10 @@ namespace KSPChatBridge
     {
         LearnFlight learn, lastLearn; int learnParts; double learnPrevFuel = double.NaN, learnPrevHdg = double.NaN, learnPrevT = double.NaN; string learnLast = "";
         PlaneProfile profile;
+        /// <summary>False when fingerprint hard-mismatch: keep profile for ABOUT but do not trust stall schedule / turn envelope.</summary>
+        bool profileTrusted = true;
+        CraftFingerprint.Match profileMatch = CraftFingerprint.Match.Missing;
+        string pendingCarryFrom;
         internal static string LearnStatus { get { return instance == null || instance.learn == null ? "" : "LEARN " + instance.learn.Phase.ToUpperInvariant() + ": " + instance.learn.Status; } }
 
         string LearnPlaneCmd(Dictionary<string, object> a)
@@ -146,29 +150,124 @@ namespace KSPChatBridge
 
         Dictionary<string, object> Bucket(string key) { object o; var d = settingsData.TryGetValue(key, out o) ? o as Dictionary<string, object> : null; if (d == null) settingsData[key] = d = new Dictionary<string, object>(); return d; }
 
-        void SaveProfile(PlaneProfile p)
+        /// <summary>Dry mass / lift / parts / root / engines — fuel-independent shape for profile safety checks.</summary>
+        static CraftFingerprint CaptureFingerprint(Vessel v)
+        {
+            if (v == null) return null;
+            double res = 0, lift = 0; int eng = 0; bool intake = false;
+            foreach (Part p in v.parts)
+            {
+                foreach (PartResource r in p.Resources) if (r != null && r.info != null) res += r.amount * r.info.density;
+                foreach (PartModule pm in p.Modules)
+                {
+                    var ls = pm as ModuleLiftingSurface; if (ls != null) lift += ls.deflectionLiftCoeff;
+                    var en = pm as ModuleEngines; if (en == null) continue; eng++;
+                    foreach (var pr in en.propellants) if (pr.name == "IntakeAir") intake = true;
+                }
+            }
+            return new CraftFingerprint
+            {
+                DryMass = Math.Max(0, v.totalMass - res), Lift = lift, Parts = v.parts.Count, Engines = eng, Intake = intake,
+                Root = v.rootPart != null ? (v.rootPart.partInfo != null ? v.rootPart.partInfo.name : v.rootPart.name) : "",
+                LearnedName = v.vesselName ?? ""
+            };
+        }
+
+        /// <summary>learned=false (checkbox toggles): keep the stored fingerprint and the current trust; only a LEARN write re-stamps.</summary>
+        void SaveProfile(PlaneProfile p, bool learned = true)
         {
             p.Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+            // Fingerprint only at LEARN write (and step toggles on the same craft) — never refreshed from Bind alone.
+            if (learned && vessel != null) { p.Fingerprint = CaptureFingerprint(vessel); if (p.Fingerprint != null) p.Fingerprint.LearnedName = vessel.vesselName; }
             string n = vessel.vesselName; Bucket("plane_profiles")[n] = p.ToDict();
             if (!double.IsNaN(p.Stall)) Bucket("stall_speeds")[n] = Math.Round(p.Stall, 1);
             if (!double.IsNaN(p.Liftoff)) { Bucket("liftoff_speeds")[n] = Math.Round(p.Liftoff, 1); liftoffSpeed = p.Liftoff; }
             if (!double.IsNaN(p.Lag)) { Bucket("throttle_lag")[n] = Math.Round(p.Lag, 2); shold.SetLag(p.Lag); lagMeasured = true; }
             if (!double.IsNaN(p.Decel) && p.Decel > 0) Decel.Learn(n, 1.6 * (double.IsNaN(p.Stall) ? stall : p.Stall), p.Decel, false);
-            profile = p; if (!double.IsNaN(p.Stall)) stallGuess = p.Stall; stall = LearnedStall();
+            profile = p; if (learned) { profileTrusted = true; profileMatch = CraftFingerprint.Match.Ok; pendingCarryFrom = null; }
+            if (!double.IsNaN(p.Stall)) stallGuess = p.Stall; stall = LearnedStall();
+            ApplyProfileTrust();
             try { Save(); } catch (Exception) { }
         }
 
         void LoadProfile()
         {
-            object o; var all = settingsData.TryGetValue("plane_profiles", out o) ? o as Dictionary<string, object> : null; object po = null; if (all != null) all.TryGetValue(vessel.vesselName, out po);
+            pendingCarryFrom = null; profileTrusted = true; profileMatch = CraftFingerprint.Match.Missing;
+            object o; var all = settingsData.TryGetValue("plane_profiles", out o) ? o as Dictionary<string, object> : null;
+            object po = null; if (all != null) all.TryGetValue(vessel.vesselName, out po);
             profile = PlaneProfile.FromDict(po as Dictionary<string, object>);
-            if (profile == null) return;
+            var now = CaptureFingerprint(vessel);
+            if (profile == null)
+            {   // renamed plane: same fingerprint under another name → offer carry (do not auto-copy)
+                if (all != null && now != null)
+                    foreach (var kv in all)
+                    {
+                        if (string.Equals(kv.Key, vessel.vesselName, StringComparison.OrdinalIgnoreCase)) continue;
+                        var cand = PlaneProfile.FromDict(kv.Value as Dictionary<string, object>);
+                        if (cand == null || cand.Fingerprint == null || !CraftFingerprint.RenameMatch(cand.Fingerprint, now)) continue;
+                        pendingCarryFrom = kv.Key;
+                        ChatWindow.Notice("[LEARN] Renamed craft? Profile \"" + kv.Key + "\" matches this plane. Say \"carry profile\" (or carry_plane_profile) to use it under \"" + vessel.vesselName + "\".");
+                        ChatLog.Write("vessel", "profile carry offer from \"" + kv.Key + "\" -> \"" + vessel.vesselName + "\"");
+                        break;
+                    }
+                ApplyProfileTrust();
+                return;
+            }
+            profileMatch = CraftFingerprint.Compare(profile.Fingerprint, now);
+            if (profileMatch == CraftFingerprint.Match.Hard)
+            {
+                profileTrusted = false;
+                ChatWindow.Notice("[LEARN] Craft looks different from the saved profile (mass/wings/parts). Re-run LEARN, or keep flying with conservative defaults.");
+                ChatLog.Write("vessel", "profile HARD mismatch for " + vessel.vesselName + ": " + CraftFingerprint.Label(profileMatch));
+            }
+            else if (profileMatch == CraftFingerprint.Match.Soft)
+            {
+                ChatWindow.Notice("[LEARN] Craft looks a bit different from the saved profile — consider re-LEARN if handling feels off.");
+                ChatLog.Write("vessel", "profile soft mismatch for " + vessel.vesselName);
+            }
+            else if (profileMatch == CraftFingerprint.Match.Missing)
+                ChatLog.Write("vessel", "profile has no fingerprint (legacy) for " + vessel.vesselName + " — using it; next LEARN will stamp one");
             double m = vessel.totalMass, s = profile.StallAt(m);
             if (!double.IsNaN(s)) stallGuess = s;
             if (!double.IsNaN(profile.Lag)) shold.SetLag(profile.Lag);
             if (!double.IsNaN(profile.Accel)) shold.SetTargetSlew(profile.AccelAt(m));
-            ApproachProfile.TrustedStall = !double.IsNaN(profile.Stall) && profile.Stall > 0;
-            ChatLog.Write("vessel", "plane profile (" + profile.Date + ", test " + profile.M0.ToString("0.0") + " t, now " + m.ToString("0.0") + " t): stall " + (double.IsNaN(s) ? "-" : s.ToString("0")) + " m/s scaled; " + profile.Summary());
+            ApplyProfileTrust();
+            ChatLog.Write("vessel", "plane profile (" + profile.Date + ", test " + profile.M0.ToString("0.0") + " t, now " + m.ToString("0.0") + " t, match " + CraftFingerprint.Label(profileMatch) + "): stall " + (double.IsNaN(s) ? "-" : s.ToString("0")) + " m/s scaled; " + profile.Summary());
+        }
+
+        /// <summary>TrustedStall + envelope only when the craft still matches the LEARN fingerprint.</summary>
+        void ApplyProfileTrust()
+        {
+            bool trust = profile != null && profileTrusted;
+            ApproachProfile.TrustedStall = trust && !double.IsNaN(profile.Stall) && profile.Stall > 0;
+            if (trust && profile.Envelope.Count > 0) { var pr = profile; ApproachProfile.SafeBank = v => pr.SafeBankAt(v); ApproachProfile.RollIn = pr.RollIn; }
+            else { ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; }
+        }
+
+        /// <summary>Copy a fingerprint-matched profile onto this vessel name (rename carry-over).</summary>
+        string CarryPlaneProfileCmd(Dictionary<string, object> a)
+        {
+            if (vessel == null) return "No active vessel.";
+            string from = Str(a, "from", pendingCarryFrom ?? "");
+            if (from.Length == 0) return "No renamed profile to carry. Switch to a renamed craft that matches a saved fingerprint first.";
+            object o; var all = settingsData.TryGetValue("plane_profiles", out o) ? o as Dictionary<string, object> : null;
+            object po = null; if (all == null || !all.TryGetValue(from, out po)) return "No saved profile named \"" + from + "\".";
+            var src = PlaneProfile.FromDict(po as Dictionary<string, object>);
+            if (src == null) return "Saved profile \"" + from + "\" is unreadable.";
+            var now = CaptureFingerprint(vessel);
+            if (src.Fingerprint != null && now != null && !CraftFingerprint.RenameMatch(src.Fingerprint, now) && !Bool(a, "force", false))
+                return "Profile \"" + from + "\" does not match this craft closely enough. Re-run LEARN, or pass force=true to copy anyway.";
+            if (src.Fingerprint != null) src.Fingerprint.LearnedName = vessel.vesselName;
+            // Copy under the new name without re-stamping fingerprint from a non-LEARN path: write dict then LoadProfile.
+            Bucket("plane_profiles")[vessel.vesselName] = src.ToDict();
+            if (!double.IsNaN(src.Stall)) Bucket("stall_speeds")[vessel.vesselName] = Math.Round(src.Stall, 1);
+            if (!double.IsNaN(src.Liftoff)) Bucket("liftoff_speeds")[vessel.vesselName] = Math.Round(src.Liftoff, 1);
+            if (!double.IsNaN(src.Lag)) Bucket("throttle_lag")[vessel.vesselName] = Math.Round(src.Lag, 2);
+            pendingCarryFrom = null;
+            try { Save(); } catch (Exception) { }
+            LoadProfile(); ConfigureInertia(); stall = LearnedStall();
+            ChatLog.Write("learn", "carried profile \"" + from + "\" -> \"" + vessel.vesselName + "\"");
+            return "Carried LEARN profile from \"" + from + "\" to \"" + vessel.vesselName + "\".";
         }
 
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
@@ -189,7 +288,7 @@ namespace KSPChatBridge
             }
             if (me.profile == null) return "Press LEARN: it takes off, climbs and waits; then check a box to run that test.";
             if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
-            me.SaveProfile(me.profile);
+            me.SaveProfile(me.profile, false);   // a toggle is not a LEARN: no fingerprint re-stamp (would hide a hard mismatch)
             return LearnFlight.CodeName(step) + (me.profile.Rerun.Contains(step) ? " checked: runs after the LEARN climb." : " unchecked.");
         }
         internal static string LearnSkip()
@@ -254,6 +353,8 @@ namespace KSPChatBridge
                 case 0:
                     o.Add(me.vessel.vesselName + "  " + m.ToString("0.0") + " t  " + CraftClass.Label(me.CraftCls, me.craftOverride));
                     o.Add(p == null ? "No test flight yet: press LEARN." : "Tested " + p.Date + " at " + p.M0.ToString("0.0") + " t" + (p.Complete ? "" : " (partial: " + p.Abort + ")"));
+                    if (p != null) o.Add("Profile " + CraftFingerprint.Label(me.profileMatch) + (me.profileTrusted ? "" : " (curves off)") + (me.pendingCarryFrom != null ? "  carry from \"" + me.pendingCarryFrom + "\"?" : ""));
+                    else if (me.pendingCarryFrom != null) o.Add("No profile under this name — match \"" + me.pendingCarryFrom + "\" (say carry profile)");
                     o.Add("Stall " + F0(me.stall) + "  Approach " + F0(ApproachProfile.AppSpeed(me.stall)) + "  Liftoff " + F0(p != null && !double.IsNaN(p.Liftoff) ? p.LiftoffAt(m) : me.liftoffSpeed) + " m/s");
                     if (p != null) { double fr, tot; me.FuelState(out fr, out tot); o.Add("Range " + F0(p.Perf.RangeKm(fr)) + " km  Endurance " + F0(p.Perf.EnduranceMin(fr)) + " min (now " + Math.Round(fr * 100) + "% fuel)"); }
                     if (lf != null) o.Add("Learn: step " + Math.Min(lf.StepNo, LearnFlight.StepCount) + "/" + LearnFlight.StepCount + (lf.Done ? (lf.Aborted ? " aborted" : " done") : "") + " (page 5)");

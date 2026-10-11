@@ -3,6 +3,63 @@ using System.Collections.Generic;
 
 namespace KSPChatBridge
 {
+    /// <summary>Craft shape snapshot saved with a LEARN profile (name stays the dictionary key). Used to catch
+    /// "same name, different plane" without orphaning data on every SPH edit.</summary>
+    internal sealed class CraftFingerprint
+    {
+        internal double DryMass = double.NaN, Lift = double.NaN;
+        internal int Parts, Engines;
+        internal string Root = "", LearnedName = "";
+        internal bool Intake;
+        /// <summary>True when at least one identifying field was stored (legacy profiles have none).</summary>
+        internal bool Present { get { return Parts > 0 || (!double.IsNaN(Lift) && Lift > 0) || Root.Length > 0; } }
+        internal enum Match { Missing, Ok, Soft, Hard }
+        /// <summary>Hard: mass/lift &gt;20%, parts &gt;25%, or root part changed. Soft: mass/lift/parts &gt;10%. Missing: no saved print.</summary>
+        internal static Match Compare(CraftFingerprint saved, CraftFingerprint now)
+        {
+            if (saved == null || !saved.Present || now == null || !now.Present) return Match.Missing;
+            bool rootDiff = saved.Root.Length > 0 && now.Root.Length > 0 && !string.Equals(saved.Root, now.Root, StringComparison.OrdinalIgnoreCase);
+            double massR = RelDiff(saved.DryMass, now.DryMass), liftR = RelDiff(saved.Lift, now.Lift);
+            double partsR = saved.Parts <= 0 && now.Parts <= 0 ? 0 : Math.Abs(saved.Parts - now.Parts) / (double)Math.Max(1, Math.Max(saved.Parts, now.Parts));
+            if (rootDiff || massR > .20 || liftR > .20 || partsR > .25) return Match.Hard;
+            if (massR > .10 || liftR > .10 || partsR > .10 || saved.Intake != now.Intake) return Match.Soft;
+            return Match.Ok;
+        }
+        /// <summary>Close enough to offer rename carry-over (same airframe under a new vessel name).</summary>
+        internal static bool RenameMatch(CraftFingerprint saved, CraftFingerprint now)
+        {
+            var m = Compare(saved, now);
+            return m == Match.Ok || (m == Match.Soft && saved.Root.Length > 0 && string.Equals(saved.Root, now.Root, StringComparison.OrdinalIgnoreCase) && RelDiff(saved.Lift, now.Lift) <= .10);
+        }
+        static double RelDiff(double a, double b)
+        {
+            if (double.IsNaN(a) || double.IsNaN(b) || a <= 0 || b <= 0) return 0;
+            return Math.Abs(a - b) / Math.Max(a, b);
+        }
+        internal static string Label(Match m)
+        {
+            return m == Match.Ok ? "OK" : m == Match.Soft ? "craft changed?" : m == Match.Hard ? "craft changed - re-run LEARN" : "unknown craft match";
+        }
+        static object N(double v) { return double.IsNaN(v) ? null : (object)Math.Round(v, 3); }
+        static double D(Dictionary<string, object> d, string k) { object o; if (d == null || !d.TryGetValue(k, out o) || o == null) return double.NaN; try { return Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { return double.NaN; } }
+        internal Dictionary<string, object> ToDict()
+        {
+            return new Dictionary<string, object> { { "dry_mass", N(DryMass) }, { "lift", N(Lift) }, { "parts", Parts }, { "engines", Engines },
+                { "root", Root }, { "learned_name", LearnedName }, { "intake", Intake } };
+        }
+        internal static CraftFingerprint FromDict(Dictionary<string, object> d)
+        {
+            if (d == null) return null; var f = new CraftFingerprint();
+            f.DryMass = D(d, "dry_mass"); f.Lift = D(d, "lift");
+            object o; if (d.TryGetValue("parts", out o) && o != null) { try { f.Parts = Convert.ToInt32(o); } catch (Exception) { } }
+            if (d.TryGetValue("engines", out o) && o != null) { try { f.Engines = Convert.ToInt32(o); } catch (Exception) { } }
+            if (d.TryGetValue("root", out o) && o != null) f.Root = o.ToString();
+            if (d.TryGetValue("learned_name", out o) && o != null) f.LearnedName = o.ToString();
+            if (d.TryGetValue("intake", out o) && o is bool) f.Intake = (bool)o;
+            return f.Present ? f : null;
+        }
+    }
+
     /// <summary>One learned profile per named craft (Luke 7:06 PM "LEARN THIS PLANE"). Values are at the test mass M0 (t);
     /// at another mass speeds scale by sqrt(m/M0) and accelerations by M0/m (thrust/drag-limited).</summary>
     internal sealed class PlaneProfile
@@ -10,6 +67,8 @@ namespace KSPChatBridge
         internal double M0 = double.NaN, Liftoff = double.NaN, Stall = double.NaN, StallAltLoss = double.NaN, ClimbAccel = double.NaN, ClimbVs = double.NaN,
             Decel = double.NaN, Accel = double.NaN, Lag = double.NaN, EconSpeed = double.NaN, EconThrottle = double.NaN, FuelUsed = double.NaN;
         internal bool Complete; internal string Abort = "", Date = "";
+        /// <summary>Shape at last LEARN write; null on legacy profiles.</summary>
+        internal CraftFingerprint Fingerprint;
         internal readonly List<double[]> Turns = new List<double[]>();   // bank, g, turn rate deg/s, alt loss m, max stress/heat 0..1, mass t, throttle to hold speed
         internal readonly List<double[]> Dives = new List<double[]>();   // pitch, sink m/s, speed gain m/s
         /// <summary>Every recorded data point with the mass at that moment (Luke 7:21 PM): key, value, mass t.</summary>
@@ -84,10 +143,12 @@ namespace KSPChatBridge
             var dv = new List<object>(); foreach (var x in Dives) dv.Add(new List<object> { x[0], Math.Round(x[1], 1), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
             var sm = new List<object>(); foreach (var x in Samples) sm.Add(new List<object> { x[0], x[1], x[2] });
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN });
-            return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
+            var dict = new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
+            if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
+            return dict;
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -95,6 +156,7 @@ namespace KSPChatBridge
             p.M0 = D(d, "m0"); p.Liftoff = D(d, "liftoff"); p.Stall = D(d, "stall"); p.StallAltLoss = D(d, "stall_alt_loss"); p.ClimbAccel = D(d, "climb_accel"); p.ClimbVs = D(d, "climb_vs");
             p.Decel = D(d, "decel"); p.Accel = D(d, "accel"); p.Lag = D(d, "lag"); p.EconSpeed = D(d, "econ_speed"); p.EconThrottle = D(d, "econ_throttle"); p.FuelUsed = D(d, "fuel_used");
             object o; p.Complete = d.TryGetValue("complete", out o) && o is bool && (bool)o; p.Abort = d.TryGetValue("abort", out o) && o != null ? o.ToString() : "";             p.Date = d.TryGetValue("date", out o) && o != null ? o.ToString() : "";
+            if (d.TryGetValue("fingerprint", out o)) p.Fingerprint = CraftFingerprint.FromDict(o as Dictionary<string, object>);
             var rr = d.TryGetValue("rerun", out o) ? o as System.Collections.IList : null; if (rr != null) foreach (var x in rr) { try { p.Rerun.Add(Convert.ToInt32(x)); } catch (Exception) { } }
             foreach (var key in new[] { "turns", "dives" })
                 if (d.TryGetValue(key, out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o)
