@@ -273,6 +273,32 @@ class Program
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
                 && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Turns[0].Length >= 7 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
+            {   // Luke 11:26 PM: toggle steps after the first test; LEARN re-runs only unchecked steps (+ takeoff/climb/landing), keeping the rest
+                Check(!LearnFlight.Toggle(pp, 1) && !LearnFlight.Toggle(pp, 12) && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
+                var pr = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
+                Check(pr.Rerun.Count == 1 && pr.Rerun[0] == 5, "re-run selection persisted");
+                var pcl = LearnFlight.ProfileChecklist(pr, 4); Check(pcl[4].StartsWith(">[ ] 5") && pcl[3].StartsWith(" [x] 4") && pcl[0].StartsWith(" [*] 1"), "toggle view: cursor, [ ] re-run, [x] kept");
+                int turns0 = pp.Turns.Count, dives0 = pp.Dives.Count; double stall0 = pr.Stall, climb0 = pr.ClimbAccel;
+                var rf = new LearnFlight(pr, pr.Rerun); T = 0; v = 0; alt = 70; vs = 0; pit = 0; fuel = 1; landed = true; int rg = 0;
+                while (!rf.Done && rg++ < 200000)
+                {
+                    var li = new LearnIn { T = T, Speed = v, Alt = alt, Agl = alt - 70, Vs = vs, Pitch = pit, G = 1, GLimit = 8, FuelFrac = fuel, FuelRate = .5, Stress = .3, TurnRate = 3, Throttle = .7, Liftoff = double.NaN, StallGuess = 60, Mass = 20, Landed = landed };
+                    rf.Step(li);
+                    double thr = double.IsNaN(rf.Throttle) ? 1 : rf.Throttle, want = !double.IsNaN(rf.Elevator) ? (v > 60 ? pit + rf.Elevator * .5 : -15) : double.IsNaN(rf.Pitch) ? (landed ? 0 : 10) : rf.Pitch;
+                    if (landed && v > 70) { landed = false; pit = 8; }
+                    pit += FlightPolicy.Clamp(want - pit, -2, 2) * .1; if (landed) pit = 0;
+                    v = Math.Max(0, v + (4 * thr - .0003 * v * v - 9.81 * Math.Sin(pit * Math.PI / 180)) * .1);
+                    vs = landed ? 0 : v * Math.Sin(pit * Math.PI / 180) - (v < 60 ? 15 : 0); alt = Math.Max(70, alt + vs * .1); fuel -= .00001; T += .1;
+                }
+                var rcl = rf.Checklist();
+                Check(rf.Done && !rf.Aborted && rf.Visited.Contains("climb") && rf.Visited.Contains("vmax") && !rf.Visited.Contains("decel") && !rf.Visited.Contains("turn") && !rf.Visited.Contains("dive") && !rf.Visited.Contains("stall")
+                    && rf.P.Turns.Count == turns0 && rf.P.Dives.Count == dives0 && rf.P.Stall == stall0 && rf.P.ClimbAccel == climb0 && !double.IsNaN(rf.P.Perf.MaxLevel),
+                    "selective re-run flies only step 5 (+setup), keeps other data: " + string.Join(">", rf.Visited) + " t" + rf.P.Turns.Count + "/" + turns0 + " d" + rf.P.Dives.Count + "/" + dives0 + " s" + rf.P.Stall + "/" + stall0 + " c" + rf.P.ClimbAccel + "/" + climb0 + " vm" + rf.P.Perf.MaxLevel);
+                Check(rcl[6].StartsWith("[x] 7") && rcl[6].Contains("kept") && rcl[11].StartsWith("[>] 12"), "re-run checklist marks kept steps");
+                var vf = new LearnFlight(); var vq = new LearnIn { Speed = 100, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, T = 0 }; vf.Step(vq); vf.Phase = "vmax";
+                for (int s = 1; s <= 500; s++) { vq.T = s; vq.Speed = 100 + s * .2; vf.Step(vq); }
+                Check(vf.Phase == "vmax", "max level speed keeps going past 120 s while still accelerating (timeout 600 s)");
+            }
             // abort rules: fuel < 40 %, part lost, stress, g
             Func<LearnIn, string> ab = x => { var l2 = new LearnFlight(); l2.Step(new LearnIn { T = 0, Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }); x.T = 1; l2.Step(x); return l2.Aborted ? l2.Reason : ""; };
             var ok = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 };
@@ -302,9 +328,12 @@ class Program
             { var lc = new LearnFlight(); var lk = li; lk.T = 0; lc.Step(lk); lc.Phase = "sinkmap"; lk.T = 1; lk.Alt = 3900; lc.Step(lk); bool paused = lc.Phase == "sinkclimb"; lk.T = 2; lk.Alt = 4950; lc.Step(lk);
               Check(paused && lc.Phase == "sinkmap", "sink map pauses below 4 km, climbs back to 5 km and resumes"); }
             Check(lf.P.Sink.TrueForAll(r => r.Length > 3 && r[3] == 30) && lf.P.Samples.Count > 0, "every sample is mass-tagged");
-            { var ld = new LearnFlight(); var lr = li; lr.T = 0; ld.Step(lr); ld.Phase = "sinkprep"; lr.Speed = 80; lr.T = .1; ld.Step(lr); var thr = new List<double>(); for (int s = 2; s < 400; s++) { lr.T = s * .1; ld.Step(lr); thr.Add(ld.Throttle); }
-              int changes = 0; double maxStep = 0; for (int k = 1; k < thr.Count; k++) if (thr[k] != thr[k - 1]) { changes++; maxStep = Math.Max(maxStep, Math.Abs(thr[k] - thr[k - 1])); }
-              Check(ld.Phase == "sinkdown" && changes >= 6 && changes <= 8 && maxStep <= .0101, "sink ramp: 1% then wait 5 s (" + changes + " steps in 40 s)"); }
+            { var ld = new LearnFlight(); var lr = li; lr.T = 0; ld.Step(lr); ld.Phase = "sinkprep"; lr.Speed = 80; lr.T = .1; ld.Step(lr); lr.T = .2; ld.Step(lr);
+              Check(ld.Phase == "sinkdown" && ld.Throttle == 0, "sink map: throttle cut until the sink passes 10 m/s");
+              lr.Vs = -12; for (int s = 3; s < 80; s++) { lr.T = s * .1; ld.Step(lr); } bool toMap = ld.Phase == "sinkmap";
+              var thr = new List<double>(); for (int s = 80; s < 480; s++) { lr.T = s * .1; ld.Step(lr); thr.Add(ld.Throttle); }
+              int changes = 0; bool up = true; for (int k = 1; k < thr.Count; k++) if (thr[k] != thr[k - 1]) { changes++; up &= Math.Abs(thr[k] - thr[k - 1] - .01) < 1e-6; }
+              Check(toMap && changes >= 7 && changes <= 8 && up && ld.P.Sink.Count == 0, "sink ramp: past 10 m/s, +1% then wait 5 s (" + changes + " steps in 40 s), nothing recorded above 10 m/s"); }
             Check(rt3.Sink.Count == 6 && Math.Abs(rt3.ThrottleForSink(4, 30) - lf.P.ThrottleForSink(4, 30)) < .01, "sink map saved in the profile");
         }
         {   // learn checklist scrolls and follows the current step

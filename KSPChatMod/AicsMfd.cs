@@ -340,6 +340,8 @@ namespace KSPChatBridge
         static int aboutApplied = -1;
         internal static void OnKey(string item, string key)
         {
+            if (item == "about" && NativeFlightController.LearnToggleMode && (key == "SCROLL UP" || key == "SCROLL DN")) { MfdNav.MoveCursor(key == "SCROLL UP" ? -1 : 1, LearnFlight.StepCount); return; }
+            if (item == "about" && key == "TOGGLE") { ChatWindow.Notice("[LEARN] " + NativeFlightController.ToggleLearnStep(MfdNav.LearnCursor + 1)); return; }
             if (item == "about" && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }
             if (item == "about" && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
             if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }

@@ -16,6 +16,7 @@ namespace KSPChatBridge
         internal readonly List<object[]> Samples = new List<object[]>();
         internal void Note(string key, double value, double massT) { if (!double.IsNaN(value)) Samples.Add(new object[] { key, Math.Round(value, 3), Math.Round(massT, 3) }); }
         internal readonly PerfData Perf = new PerfData();
+        internal readonly List<int> Rerun = new List<int>();   // steps unchecked for the next LEARN (persisted)
         internal readonly List<double[]> Sink = new List<double[]>();    // sink m/s (+ down), throttle 0..1, lag s (Luke 7:19 PM)
         /// <summary>Throttle for a steady sink rate (+ = down) near 1.25 Vs, nose 12 deg up; scaled by m/M0 (thrust needed ~ weight).
         /// NaN without a table.</summary>
@@ -45,7 +46,7 @@ namespace KSPChatBridge
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
-                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() } };
+                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) } };
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -53,6 +54,14 @@ namespace KSPChatBridge
             p.M0 = D(d, "m0"); p.Liftoff = D(d, "liftoff"); p.Stall = D(d, "stall"); p.StallAltLoss = D(d, "stall_alt_loss"); p.ClimbAccel = D(d, "climb_accel"); p.ClimbVs = D(d, "climb_vs");
             p.Decel = D(d, "decel"); p.Accel = D(d, "accel"); p.Lag = D(d, "lag"); p.EconSpeed = D(d, "econ_speed"); p.EconThrottle = D(d, "econ_throttle"); p.FuelUsed = D(d, "fuel_used");
             object o; p.Complete = d.TryGetValue("complete", out o) && o is bool && (bool)o; p.Abort = d.TryGetValue("abort", out o) && o != null ? o.ToString() : "";             p.Date = d.TryGetValue("date", out o) && o != null ? o.ToString() : "";
+            var rr = d.TryGetValue("rerun", out o) ? o as System.Collections.IList : null; if (rr != null) foreach (var x in rr) { try { p.Rerun.Add(Convert.ToInt32(x)); } catch (Exception) { } }
+            foreach (var key in new[] { "turns", "dives" })
+                if (d.TryGetValue(key, out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o)
+                {
+                    var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var a = new double[l.Count];
+                    for (int j = 0; j < l.Count; j++) { try { a[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { a[j] = double.NaN; } }
+                    (key == "turns" ? p.Turns : p.Dives).Add(a);
+                }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
             if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN }); } catch (Exception) { } }
             return p;
@@ -81,6 +90,33 @@ namespace KSPChatBridge
         internal bool LandingDone; double rollM, rollPrevT = double.NaN, rollStartT = double.NaN;
         internal bool WantTakeoff, Done, Aborted;
         internal readonly PlaneProfile P = new PlaneProfile();
+        /// <summary>Selective re-run (Luke 11:26 PM): only these steps are flown; takeoff, climb and landing always run as setup. Null = full test.</summary>
+        internal readonly HashSet<int> Only; readonly PlaneProfile prior;
+        internal LearnFlight() { }
+        internal LearnFlight(PlaneProfile prev, IEnumerable<int> only)
+        {
+            if (prev == null || only == null) return;
+            prior = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>);
+            P = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>);
+            Only = new HashSet<int>(only); if (Only.Contains(11)) Only.Add(10); if (Only.Contains(10)) Only.Add(11);
+        }
+        static bool Setup(int k) { return k <= 2 || k >= 12; }
+        internal bool Selected(int k) { return Only == null || Only.Contains(k); }
+        /// <summary>Phase after skipping unselected test steps ("finish" = end the test).</summary>
+        string SkipTo(string ph)
+        {
+            for (int guard = 0; guard < 20 && Only != null && ph != "finish"; guard++)
+            {
+                int k = StepOf(ph, idx); if (Setup(k) || Only.Contains(k)) break;
+                switch (k)
+                {
+                    case 3: ph = "cruise"; break; case 4: ph = "vmax"; break; case 5: ph = "rates"; break;
+                    case 6: ph = "turn"; idx = 0; break; case 7: ph = "dive"; idx = 100; break; case 8: ph = "sinkprep"; break; case 9: ph = "stallprep"; break;
+                    default: ph = "finish"; break;
+                }
+            }
+            return ph;
+        }
         internal const double ClimbAlt = 5000, StallAlt = 4000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, Seg = 20, DiveSeg = 10;
         internal static readonly int[] Banks = { 5, 10, 15, 20, 25, 30 }; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
         internal const double SinkAlt = 5000, SinkPitch = 12, RampWait = 5; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
@@ -92,7 +128,7 @@ namespace KSPChatBridge
             return FlightPolicy.Clamp(sweepThr + (10 - sink) * .04, 0, 1);
         }
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
-        double turnThr, thrSum;
+        double turnThr, thrSum, overAt = double.NaN;
         double CruiseThr() { if (econ.Count == 0) return .6; double best = -1, th = .6; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; th = e[1]; } } return th; }
         static string Cat(string ph)
         {
@@ -103,7 +139,7 @@ namespace KSPChatBridge
         {
             if (LandingDone) return false;
             if (i.Landed && i.Speed > 1) { if (double.IsNaN(rollStartT)) { rollStartT = i.T; rollM = 0; } else rollM += i.GroundSpeed * (i.T - rollPrevT); rollPrevT = i.T; return false; }
-            if (i.Landed && !double.IsNaN(rollStartT) && i.Speed <= 1) { LandingDone = true; P.Perf.Rollout = rollM; P.Note("rollout", rollM, i.Mass); return true; }
+            if (i.Landed && !double.IsNaN(rollStartT) && i.Speed <= 1) { LandingDone = true; if (Selected(12) || prior == null || double.IsNaN(prior.Perf.Rollout)) P.Perf.Rollout = rollM; else rollM = P.Perf.Rollout; P.Note("rollout", rollM, i.Mass); return true; }
             rollPrevT = i.T; return false;
         }
         double t0, v0, a0, minV, maxPitch, minAlt, fuel0 = double.NaN, lagAt = double.NaN, gSum, trSum, stMax; int n, idx;
@@ -112,6 +148,7 @@ namespace KSPChatBridge
 
         void Go(string ph, LearnIn i, string status)
         {
+            ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; }
             Phase = ph; t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = stMax = 0; n = 0; lagAt = double.NaN;
             if (!Visited.Contains(ph)) Visited.Add(ph); if (status != null) Status = status;
         }
@@ -122,6 +159,11 @@ namespace KSPChatBridge
         }
         void Finish(bool aborted, string why)
         {
+            if (prior != null)
+            {   // keep the old setup data unless that step was selected
+                if (!Only.Contains(1)) { P.Liftoff = prior.Liftoff; P.Perf.GroundRoll = prior.Perf.GroundRoll; }
+                if (!Only.Contains(2)) { P.ClimbAccel = prior.ClimbAccel; P.ClimbVs = prior.ClimbVs; P.Perf.ClimbTime = prior.Perf.ClimbTime; P.Perf.ClimbFuel = prior.Perf.ClimbFuel; }
+            }
             stepAtDone = StepNo; Done = true; Aborted = aborted; P.Abort = aborted ? why : ""; P.Complete = !aborted; Reason = why; Phase = "done";
             if (econ.Count > 0) { double best = -1; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; P.EconSpeed = e[0]; P.EconThrottle = e[1]; } } P.Note("econ_speed", P.EconSpeed, P.M0); }
             Status = aborted ? "Test flight aborted (" + why + "): saving what was learned, landing at KSC 27." : "Test flight complete: profile saved, landing at KSC 27.";
@@ -132,11 +174,11 @@ namespace KSPChatBridge
         internal static int StepCount { get { return StepNames.Length; } }
         LearnIn last; int stepAtDone = -1;
         /// <summary>1..9 for the current phase.</summary>
-        internal int StepNo
+        internal int StepNo { get { return StepOf(Phase, idx); } }
+        static int StepOf(string ph, int idx)
         {
-            get
             {
-                switch (Phase)
+                switch (ph)
                 {
                     case "start": case "takeoff": case "pullback": return 1;
                     case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "rates": return 6; case "turn": return 7;
@@ -149,6 +191,29 @@ namespace KSPChatBridge
         }
         /// <summary>Compact checklist (Luke 8:25 PM): [x] done, [>] current + sub-progress, [ ] pending, [-] skipped/aborted.</summary>
         internal List<string> Checklist()
+        {
+            var raw = ChecklistRaw(); if (Only == null) return raw;
+            for (int j = 0; j < raw.Count; j++)
+            {
+                var l = raw[j]; if (l.Length < 6 || l[0] != '[') continue; int sp = l.IndexOf(' ', 4); int k; if (sp < 0 || !int.TryParse(l.Substring(4, sp - 4), out k)) continue;
+                if (!Setup(k) && !Only.Contains(k)) raw[j] = "[x] " + k + " " + StepNames[k - 1] + " (kept)";
+            }
+            return raw;
+        }
+        /// <summary>Toggle view of a saved profile: [x] keep, [ ] re-run next LEARN; '>' marks the cursor.</summary>
+        internal static List<string> ProfileChecklist(PlaneProfile p, int cursor)
+        {
+            var o = new List<string>();
+            for (int k = 1; k <= StepCount; k++) o.Add((k - 1 == cursor ? ">" : " ") + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[ ] " : "[x] ") + k + " " + StepNames[k - 1]);
+            o.Add(p.Rerun.Count == 0 ? "All kept. TOGGLE unchecks a step." : "LEARN re-runs " + p.Rerun.Count + " step(s) + takeoff/climb/landing.");
+            return o;
+        }
+        internal static bool Toggle(PlaneProfile p, int step)
+        {
+            if (p == null || step < 1 || step > StepCount || Setup(step)) return false;
+            if (!p.Rerun.Remove(step)) p.Rerun.Add(step); p.Rerun.Sort(); return true;
+        }
+        List<string> ChecklistRaw()
         {
             var o = new List<string>(); int cur = Done ? (LandingDone ? 13 : 12) : StepNo, abortAt = Aborted ? stepAtDone : -1;
             for (int k = 1; k <= StepCount; k++)
@@ -252,7 +317,7 @@ namespace KSPChatBridge
                     return;
                 case "vmax":
                     Throttle = 1; Pitch = Level(i); Bank = 0;
-                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 120) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); Go("rates", i, "Roll and pitch rate checks: quick full inputs inside the g limit."); return; } vmaxV = i.Speed; vmaxT = i.T; }
+                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); Go("rates", i, "Roll and pitch rate checks: quick full inputs inside the g limit."); return; } vmaxV = i.Speed; vmaxT = i.T; }
                     if (dt <= 10) { vmaxV = i.Speed; vmaxT = i.T; }
                     return;
                 case "rates":
@@ -300,7 +365,7 @@ namespace KSPChatBridge
                     }
                 case "sinkprep":
                     Throttle = i.Alt < SinkAlt - 200 ? 1 : .5; Pitch = i.Alt < SinkAlt - 200 ? Level(i, SinkAlt) : SinkPitch; Bank = 0;
-                    if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = .5; Go("sinkdown", i, "Sink map: reducing throttle slowly until 10 m/s sink."); }
+                    if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "sinkclimb":
                     Throttle = 1; Pitch = Level(i, SinkAlt); Bank = 0;
@@ -314,26 +379,25 @@ namespace KSPChatBridge
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T;
                         if (Phase == "sinkdown")
-                        {
-                            if (i.T - prevT >= RampWait) { sinkThr = Math.Max(0, sinkThr - .01); prevT = i.T; } Throttle = sinkThr;   // 1 % then wait 5 s (throttle lag)
-                            if (-vsF >= 10 || sinkThr <= 0 || dt > 900) { sweepThr = sinkThr; idx = SinkTargets.Length - 1; stepAt = i.T; Go("sinkmap", i, "Sink map: stepping throttle up for 10..0 m/s sink."); stepAt = i.T; vs0 = vsF; lagDone = false; }
-                            else if (Math.Abs(vsF - lastVsF) < .2) { down.Add(new[] { -vsF, sinkThr }); P.Note("sweep_sink@" + Math.Round(sinkThr * 100), -vsF, i.Mass); }
-                            lastVsF = vsF;
+                        {   // Luke 11:28 PM: cut the throttle until the sink is MORE than 10 m/s (held 3 s)
+                            Throttle = sinkThr = 0;
+                            if (-vsF > 10.5) { if (double.IsNaN(overAt)) overAt = i.T; } else overAt = double.NaN;
+                            if ((!double.IsNaN(overAt) && i.T - overAt >= 3) || dt > 300)
+                            { idx = SinkTargets.Length - 1; stepThr = 0; Go("sinkmap", i, "Sink map: throttle up 1% every 5 s, recording 10..0 m/s sink."); stepThr = 0; prevT = stepAt = i.T; vs0 = vsF; lagDone = false; lagS = double.NaN; }
                             return;
                         }
-                        double target = SinkTargets[idx];
-                        if (double.IsNaN(stepThr)) { stepThr = GuessThr(target); stepAt = i.T; vs0 = vsF; lagDone = false; lagS = double.NaN; }
-                        if (-vsF > 10 && i.T - prevT >= RampWait) { stepThr = Math.Min(1, stepThr + .01); prevT = i.T; }   // past 10 m/s sink: +1 %, then wait 5 s
+                        // +1 %, wait 5 s (throttle lag), repeat; record each target as the sink comes down through it
+                        if (double.IsNaN(stepThr)) stepThr = 0;
+                        if (i.T - prevT >= RampWait) { stepThr = Math.Min(1, stepThr + .01); prevT = stepAt = i.T; vs0 = vsF; lagDone = false; }
                         Throttle = stepThr;
-                        if (!lagDone && Math.Abs(vsF - vs0) > .5) { lagDone = true; lagS = i.T - stepAt; }
-                        bool steady = i.T - stepAt > 8 && Math.Abs(vsF - lastVsF) < .05; lastVsF = vsF;
-                        if (steady || i.T - stepAt > 30)
+                        if (!lagDone && Math.Abs(vsF - vs0) > .2) { lagDone = true; lagS = i.T - stepAt; }
+                        while (idx >= 0 && -vsF <= SinkTargets[idx])
                         {
-                            double sinkNow = -vsF;
-                            if (Math.Abs(sinkNow - target) > 1.2 && i.T - stepAt < 30 && tries < 3) { stepThr = FlightPolicy.Clamp(stepThr + (sinkNow - target) * .02, 0, 1); stepAt = i.T; vs0 = vsF; lagDone = false; tries++; return; }
-                            P.Sink.Add(new[] { sinkNow, stepThr, double.IsNaN(lagS) ? i.T - stepAt : lagS, i.Mass }); tries = 0; idx--; stepThr = double.NaN;
-                            if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). level at 4 km for the stall test.");
+                            P.Sink.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
                         }
+                        lastVsF = vsF;
+                        if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). Level at 4 km for the stall test.");
+                        else if (stepThr >= 1 && i.T - prevT >= RampWait) Go("stallprep", i, "Sink map: full power reached at " + (-vsF).ToString("0.0") + " m/s sink; " + P.Sink.Count + " points.");
                         return;
                     }
                 case "stallprep":

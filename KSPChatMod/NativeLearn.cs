@@ -16,7 +16,7 @@ namespace KSPChatBridge
             if (vessel == null) return "No active vessel.";
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
-            learn = new LearnFlight(); lastLearn = null; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
+            learn = profile != null && profile.Rerun.Count > 0 ? new LearnFlight(profile, profile.Rerun) : new LearnFlight(); lastLearn = null; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
             ChatLog.Write("learn", "test flight start: " + vessel.vesselName + " " + vessel.totalMass.ToString("0.0") + " t");
             if (vessel.LandedOrSplashed) { altitude = vessel.altitude + 300; heading = FlightGlobals.ship_heading; BeginHold(); return "Test flight: " + StartTakeoff(); }
             BeginHold(); return "Test flight started from the air.";
@@ -62,6 +62,7 @@ namespace KSPChatBridge
         {
             if (learn.Done)
             {
+                if (!learn.Aborted) learn.P.Rerun.Clear(); profile = learn.P;
                 SaveProfile(learn.P); var done = learn; lastLearn = learn; learn = null; holdSpeed = true; directPitch = null; directBank = null; directVs = null;
                 ChatLog.Write("learn", "profile " + vessel.vesselName + ": " + done.P.Summary());
                 ChatWindow.Notice(Command("land", new Dictionary<string, object> { { "where", "ksc 27" } }));
@@ -109,6 +110,15 @@ namespace KSPChatBridge
 
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
         double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
+        /// <summary>LEARN page cursor/toggle (Luke 11:26 PM). True when the cursor keys are in toggle mode (no flight running).</summary>
+        internal static bool LearnToggleMode { get { var me = instance; return me != null && me.profile != null && MfdNav.AboutPage == AboutTitles.Length - 1 && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null); } }
+        internal static string ToggleLearnStep(int step)
+        {
+            var me = instance; if (me == null || me.profile == null) return "No profile yet.";
+            if (me.learn != null && !me.learn.Done) return "Test flight running.";
+            if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
+            me.SaveProfile(me.profile); return "Step " + step + (me.profile.Rerun.Contains(step) ? " will be re-run." : " kept.");
+        }
         internal static readonly string[] AboutTitles = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF", "LEARN" };
         static string F0(double v) { return double.IsNaN(v) ? "-" : v.ToString("0"); }
         static string F1(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.0"); }
@@ -159,8 +169,9 @@ namespace KSPChatBridge
                     foreach (var kv in pf.Res) o.Add("  " + kv.Key + ": " + string.Join(",", new List<string>(kv.Value).ToArray()));
                     break;
                 default:
-                    if (lf == null) { o.Add("No test flight running. LEARN starts one."); break; }
-                    o.AddRange(lf.Checklist());
+                    if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); break; }
+                    if (p == null) { o.Add("No test flight yet. LEARN starts one."); break; }
+                    o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));
                     break;
             }
             return o;
