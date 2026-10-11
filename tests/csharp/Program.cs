@@ -310,6 +310,7 @@ class Program
             var rt2 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
             Check(rt2 != null && Math.Abs(rt2.Stall - pp.Stall) < .01 && rt2.Complete, "profile saves and loads");
             Check(DirectOrNull("learn this plane") == "learn_plane", "chat: 'learn this plane' starts the test flight");
+        Check(!MfdNav.TextColorOk(.45f, .45f, .47f) && !MfdNav.TextColorOk(.5f, .5f, .5f) && Array.TrueForAll(MfdNav.OverlayColors, c => MfdNav.TextColorOk(c[0], c[1], c[2])), "map overlay text colors never match the map/fog grey");
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
             var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);

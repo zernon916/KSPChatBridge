@@ -147,6 +147,9 @@ namespace KSPChatBridge
         }
         /// <summary>ABOUT/LEARN page scroll (Luke 8:25 PM), shared by the outside panel and the IVA screens: line offset; follows
     /// the [>] current step when it changes, manual SCROLL keys / wheel otherwise.</summary>
+    /// <summary>Overlay text must never match the map / fog grey (Luke 11:47 PM): reject low-saturation mid greys.</summary>
+    internal static bool TextColorOk(float r, float g, float b) { float y = .299f * r + .587f * g + .114f * b, sat = Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)); return !(sat < .12f && y > .3f && y < .62f); }
+    internal static readonly float[][] OverlayColors = { new[] { .35f, .9f, 1f }, new[] { .85f, 1f, .85f }, new[] { 1f, 1f, 1f }, new[] { .75f, .5f, .5f }, new[] { 1f, .69f, .13f }, new[] { .49f, 1f, .49f } };
     internal static int AboutPage, LearnCursor;
     internal static void MoveCursor(int d, int n) { LearnCursor = Math.Max(0, Math.Min(n - 1, LearnCursor + d)); }
     internal static void AboutTurn(int d, int pages) { AboutPage = ((AboutPage + d) % pages + pages) % pages; AboutOffset = 0; aboutCur = -1; }
