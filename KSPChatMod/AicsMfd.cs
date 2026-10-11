@@ -310,7 +310,12 @@ namespace KSPChatBridge
             {
                 case "trim": GUILayout.Label("TRIM WIN opens the trim window (pitch / roll / yaw trim). AUTO TRIM trims now.", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) GUILayout.Label(l, scrText); break;
-                case "about": foreach (var l in NativeFlightController.AboutLines()) GUILayout.Label(l, scrText); if (NativeFlightController.LearnStatus.Length > 0) GUILayout.Label(NativeFlightController.LearnStatus, scrText); break;
+                case "about":
+                    {   // scrollable (wheel + SCROLL keys); keeps the current [>] step visible
+                        var al = NativeFlightController.AboutLines(); float lh = Mathf.Max(10, scrText.fontSize * 1.45f); int vis = Mathf.Max(4, (int)((mfdRect.height * .55f) / lh));
+                        int off = MfdNav.AboutWindow(al, vis); if (Mathf.Abs(aboutApplied - off) > 0) { mfdScroll.y = off * lh; aboutApplied = off; } else if (Event.current.type == EventType.ScrollWheel) { MfdNav.AboutOffset = Mathf.RoundToInt(mfdScroll.y / lh); aboutApplied = MfdNav.AboutOffset; }
+                        foreach (var l in al) GUILayout.Label(l, scrText); break;
+                    }
                 case "systems":
                     GUILayout.Label(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW", scrHead);
                     foreach (var r in StatusWindow.SystemRows())
@@ -332,8 +337,12 @@ namespace KSPChatBridge
             }
         }
 
+        static int aboutApplied = -1;
         internal static void OnKey(string item, string key)
         {
+            if (item == "about" && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }
+            if (item == "about" && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
+            if (item == "about" && key == "LEARN") { Tool("learn_plane", "{}"); return; }
             if (key == null) return;
             switch (item)
             {

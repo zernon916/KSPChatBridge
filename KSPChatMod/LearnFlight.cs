@@ -103,15 +103,80 @@ namespace KSPChatBridge
         }
         void Finish(bool aborted, string why)
         {
-            Done = true; Aborted = aborted; P.Abort = aborted ? why : ""; P.Complete = !aborted; Reason = why; Phase = "done";
+            stepAtDone = StepNo; Done = true; Aborted = aborted; P.Abort = aborted ? why : ""; P.Complete = !aborted; Reason = why; Phase = "done";
             if (econ.Count > 0) { double best = -1; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; P.EconSpeed = e[0]; P.EconThrottle = e[1]; } } P.Note("econ_speed", P.EconSpeed, P.M0); }
             Status = aborted ? "Test flight aborted (" + why + "): saving what was learned, landing at KSC 27." : "Test flight complete: profile saved, landing at KSC 27.";
             Throttle = Pitch = Bank = Elevator = double.NaN;
         }
 
+        internal static readonly string[] StepNames = { "Takeoff + liftoff speed", "Climb to 5 km", "Idle decel / full-power accel", "Turns 5-30 deg", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27" };
+        LearnIn last; int stepAtDone = -1;
+        /// <summary>1..9 for the current phase.</summary>
+        internal int StepNo
+        {
+            get
+            {
+                switch (Phase)
+                {
+                    case "start": case "takeoff": case "pullback": return 1;
+                    case "climb": return 2; case "decel": case "accel": return 3; case "turn": return 4;
+                    case "recover": return idx < 100 ? 4 : 5; case "dive": return 5;
+                    case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 6;
+                    case "stallprep": case "stall": return 7; case "stallrec": return 8;
+                    default: return 9;
+                }
+            }
+        }
+        /// <summary>Compact checklist (Luke 8:25 PM): [x] done, [>] current + sub-progress, [ ] pending, [-] skipped/aborted.</summary>
+        internal List<string> Checklist()
+        {
+            var o = new List<string>(); int cur = Done ? 9 : StepNo, abortAt = Aborted ? stepAtDone : -1;
+            for (int k = 1; k <= 9; k++)
+            {
+                string mark, extra = "";
+                if (Aborted && k >= abortAt && k < 9) mark = "[-]";
+                else if (k < cur) mark = "[x]";
+                else if (k == cur) mark = Done && k == 9 ? "[>]" : "[>]";
+                else mark = "[ ]";
+                if (mark == "[x]" && k == 5 && P.Dives.Count == 0) mark = "[-]";
+                if (mark == "[x]" && k == 6 && P.Sink.Count == 0) mark = "[-]";
+                if (k == 5 && P.Dives.Count > 0 && mark != "[>]") extra = " (" + P.Dives.Count + "/4)";
+                if (k == 6 && P.Sink.Count > 0 && mark != "[>]") extra = " (" + P.Sink.Count + "/6)";
+                if (k == 4 && P.Turns.Count > 0 && mark != "[>]") extra = " (to " + P.Turns[P.Turns.Count - 1][0] + " deg)";
+                o.Add(mark + " " + k + " " + StepNames[k - 1] + extra);
+                if (mark == "[>]") { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
+            }
+            if (Aborted) o.Add("Aborted: " + Reason);
+            return o;
+        }
+        string SubProgress()
+        {
+            var i = last; double dt = i.T - t0; Func<double, string> pc = x => double.IsNaN(x) ? "-" : Math.Round(x * 100) + "%";
+            switch (Phase)
+            {
+                case "start": case "takeoff": return "speed " + i.Speed.ToString("0") + " m/s";
+                case "pullback": return "liftoff " + P.Liftoff.ToString("0") + " m/s, power 50%";
+                case "climb": return "alt " + (i.Alt / 1000).ToString("0.0") + "/5.0 km, " + i.Speed.ToString("0") + " m/s";
+                case "decel": return "idle " + dt.ToString("0") + "/20 s, " + i.Speed.ToString("0") + " m/s";
+                case "accel": return "full power " + dt.ToString("0") + "/20 s, " + i.Speed.ToString("0") + " m/s";
+                case "turn": return "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
+                case "recover": return "level off " + dt.ToString("0") + "/12 s";
+                case "dive": return "pitch -" + DivePitch[Math.Min(idx - 100, DivePitch.Length - 1)] + " deg, sink " + (-i.Vs).ToString("0") + " m/s";
+                case "sinkprep": return "to 5 km / " + (1.3 * i.StallGuess).ToString("0") + " m/s: " + (i.Alt / 1000).ToString("0.0") + " km, " + i.Speed.ToString("0") + " m/s";
+                case "sinkclimb": return "paused below 4 km, climbing: " + (i.Alt / 1000).ToString("0.0") + " km";
+                case "sinkdown": return "ramp down: sink " + (-vsF).ToString("0.0") + " m/s, throttle " + pc(sinkThr);
+                case "sinkmap": return "target " + SinkTargets[Math.Max(0, idx)] + " m/s: sink " + (-vsF).ToString("0.0") + ", throttle " + pc(stepThr);
+                case "stallprep": return "to 4 km: " + (i.Alt / 1000).ToString("0.0") + " km";
+                case "stall": return "back-stick " + pc(Elevator) + ", " + i.Speed.ToString("0") + " m/s, pitch " + i.Pitch.ToString("0");
+                case "stallrec": return "recovering: " + i.Speed.ToString("0") + " m/s, lost " + (a0 - minAlt).ToString("0") + " m";
+                default: return Done ? "approach to KSC 27" : "";
+            }
+        }
+
         internal void Step(LearnIn i)
         {
             if (Done) return;
+            last = i;
             if (double.IsNaN(P.M0)) P.M0 = i.Mass;
             if (double.IsNaN(fuel0)) fuel0 = i.FuelFrac; P.FuelUsed = fuel0 - i.FuelFrac;
             if (!i.Landed && Phase != "start" && Phase != "takeoff")

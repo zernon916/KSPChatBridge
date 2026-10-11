@@ -7,7 +7,7 @@ namespace KSPChatBridge
     /// <summary>LEARN THIS PLANE (Luke 7:06 PM): drives LearnFlight, saves one unified profile per craft name, lands at KSC 27.</summary>
     public partial class NativeFlightController
     {
-        LearnFlight learn; int learnParts; double learnPrevFuel = double.NaN, learnPrevHdg = double.NaN, learnPrevT = double.NaN; string learnLast = "";
+        LearnFlight learn, lastLearn; int learnParts; double learnPrevFuel = double.NaN, learnPrevHdg = double.NaN, learnPrevT = double.NaN; string learnLast = "";
         PlaneProfile profile;
         internal static string LearnStatus { get { return instance == null || instance.learn == null ? "" : "LEARN " + instance.learn.Phase.ToUpperInvariant() + ": " + instance.learn.Status; } }
 
@@ -44,7 +44,7 @@ namespace KSPChatBridge
             if (learn.Status != learnLast) { learnLast = learn.Status; ChatLog.Write("learn", learn.Phase + ": " + learn.Status); ChatWindow.Notice("[LEARN] " + learn.Status); }
             if (learn.Done)
             {
-                SaveProfile(learn.P); var done = learn; learn = null; holdSpeed = true; directPitch = null; directBank = null; directVs = null;
+                SaveProfile(learn.P); var done = learn; lastLearn = learn; learn = null; holdSpeed = true; directPitch = null; directBank = null; directVs = null;
                 ChatLog.Write("learn", "profile " + vessel.vesselName + ": " + done.P.Summary());
                 ChatWindow.Notice(Command("land", new Dictionary<string, object> { { "where", "ksc 27" } }));
                 return;
@@ -94,6 +94,8 @@ namespace KSPChatBridge
         {
             var o = new List<string>(); var me = instance;
             if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
+            var lf = me.learn ?? (me.lastLearn != null && me.mode == "landing" ? me.lastLearn : null);
+            if (lf != null) { o.Add("LEARN THIS PLANE"); o.AddRange(lf.Checklist()); o.Add(""); }
             var p = me.profile; double m = me.vessel.totalMass;
             Func<double, string> f0 = v => double.IsNaN(v) ? "  -  " : v.ToString("0"); Func<double, string> f2 = v => double.IsNaN(v) ? " - " : v.ToString("0.00");
             o.Add(me.vessel.vesselName + "  " + m.ToString("0.0") + " t");

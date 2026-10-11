@@ -73,6 +73,7 @@ namespace KSPChatBridge
                 case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
+                case "about": return new[] { "LEARN", "SCROLL UP", "SCROLL DN", null, null, null };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
@@ -144,6 +145,17 @@ namespace KSPChatBridge
             var seen = new HashSet<int>(); foreach (var g in Groups(mj)) foreach (var it in g.Items) if (it.Panel >= 0) seen.Add(it.Panel);
             for (int i = 0; i < count; i++) if (!seen.Contains(i)) return false; return true;
         }
-        internal static string DefaultPage(int index) { var p = new[] { "map", "ils", "aircraft", "chart", "all" }; return p[((index % p.Length) + p.Length) % p.Length]; }
+        /// <summary>ABOUT/LEARN page scroll (Luke 8:25 PM), shared by the outside panel and the IVA screens: line offset; follows
+    /// the [>] current step when it changes, manual SCROLL keys / wheel otherwise.</summary>
+    internal static int AboutOffset; static int aboutCur = -1;
+    internal static int AboutWindow(List<string> lines, int rows)
+    {
+        int cur = lines.FindIndex(l => l.StartsWith("[>]"));
+        if (cur >= 0 && cur != aboutCur) { aboutCur = cur; if (cur < AboutOffset || cur + 1 >= AboutOffset + rows) AboutOffset = Math.Max(0, cur - 2); }
+        AboutOffset = Math.Max(0, Math.Min(AboutOffset, Math.Max(0, lines.Count - rows)));
+        return AboutOffset;
+    }
+    internal static void AboutScroll(int d) { AboutOffset = Math.Max(0, AboutOffset + d); }
+    internal static string DefaultPage(int index) { var p = new[] { "map", "ils", "aircraft", "chart", "all" }; return p[((index % p.Length) + p.Length) % p.Length]; }
     }
 }
