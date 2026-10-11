@@ -42,17 +42,24 @@ namespace KSPChatBridge
             if (learn.Status != learnLast) { learnLast = learn.Status; ChatLog.Write("learn", learn.Phase + ": " + learn.Status); ChatWindow.Notice("[LEARN] " + learn.Status); }
             DoneCheck();
             if (learn == null || learn.Phase == "takeoff" || mode == "takeoff") return;
-            holdSpeed = false; directVs = null;
+            if (learn.Phase != learnPhaseSeen)
+            {   // Luke 10:38: every control override is reset between learn steps (no elevator/throttle/integrator carry-over)
+                learnPhaseSeen = learn.Phase; pitchIntegral = vsIntegral = 0; pitchShape.Reset(pitch); elevator = vessel.ctrlState.pitch; bankOverride = false;
+                if (!double.IsNaN(gate.Out)) FlightInputHandler.state.mainThrottle = (float)gate.Out;
+                ChatLog.Write("learn", "step " + learn.Phase + ": control overrides reset (thr " + Math.Round((double.IsNaN(gate.Out) ? 0 : gate.Out) * 100) + "%)");
+            }
+            directVs = null;
+            if (!double.IsNaN(learn.SpeedTarget)) { holdSpeed = true; speed = learn.SpeedTarget; } else holdSpeed = false;   // speed steps fly the ONE speed PI
             directPitch = double.IsNaN(learn.Pitch) ? (double?)null : learn.Pitch;
             directBank = double.IsNaN(learn.Bank) || !double.IsNaN(learn.Aileron) ? (double?)null : learn.Bank;
             bankOverride = directBank.HasValue;   // learn banks are the test's own (G/stall-guarded): no slow/decel bank clamp (that held every turn at 5 deg)
             if ((learn.Phase == "turn" || learn.Phase == "dive") && t >= learnTraceNext)
             {   // commanded vs actual every 2 s
                 learnTraceNext = t + 2;
-                ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " act " + pitch.ToString("0") + ", thr " + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%, spd " + vessel.srfSpeed.ToString("0"));
+                ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " act " + pitch.ToString("0") + ", thr " + Math.Round((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100) + "%, spd " + vessel.srfSpeed.ToString("0"));
             }
         }
-        double learnTraceNext;
+        double learnTraceNext; string learnPhaseSeen = "";
         Dictionary<string, double> resPrev = new Dictionary<string, double>();
         LearnIn BuildIn(double t, double frac, double rate, double tr, double stress, double pitch)
         {
@@ -61,7 +68,7 @@ namespace KSPChatBridge
             var used = new List<string>(); foreach (var kv in res) { double pv; if (resPrev.TryGetValue(kv.Key, out pv) && kv.Value < pv - 1e-6 && kv.Key != "ElectricCharge" && kv.Key != "IntakeAir") used.Add(kv.Key); } resPrev = res;
             var av = vessel.angularVelocity;
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
-                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, Throttle = vessel.ctrlState.mainThrottle, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
+                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
                 HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = av.y * 180 / Math.PI, PitchRate = av.x * 180 / Math.PI, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
@@ -69,7 +76,7 @@ namespace KSPChatBridge
         {
             if (learn.Done)
             {
-                if (!learn.Aborted) learn.P.Rerun.Clear(); profile = learn.P;
+                if (!learn.Aborted) learn.P.Rerun.Clear(); foreach (int k in learn.Redo) if (!learn.P.Rerun.Contains(k)) learn.P.Rerun.Add(k); profile = learn.P;
                 SaveProfile(learn.P); var done = learn; lastLearn = learn; learn = null; holdSpeed = true; directPitch = null; directBank = null; directVs = null;
                 ChatLog.Write("learn", "profile " + vessel.vesselName + ": " + done.P.Summary());
                 ChatWindow.Notice(Command("land", new Dictionary<string, object> { { "where", "ksc 27" } }));
@@ -85,7 +92,7 @@ namespace KSPChatBridge
                 return;
             }
             if (learn == null || learn.Phase == "takeoff" || mode == "takeoff") return;
-            if (!double.IsNaN(learn.Throttle)) c.mainThrottle = (float)learn.Throttle;
+            if (!double.IsNaN(learn.Throttle) && double.IsNaN(learn.SpeedTarget)) { c.mainThrottle = (float)learn.Throttle; throttleKind = learn.TestThrottle ? "test" : "pi"; throttleWhy = "learn " + learn.Phase; }
             if (!double.IsNaN(learn.Aileron)) c.roll = (float)learn.Aileron;
             if (!double.IsNaN(learn.Elevator)) c.pitch = (float)learn.Elevator;
         }

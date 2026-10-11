@@ -106,7 +106,11 @@ namespace KSPChatBridge
     internal sealed class LearnFlight
     {
         internal string Phase = "start", Status = "", Reason = "";
-        internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN;
+        internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN, SpeedTarget = double.NaN;
+        /// <summary>Steps that explicitly test idle/full power (fast but finite throttle ramp); every other step goes through the speed PI.</summary>
+        internal bool TestThrottle { get { return Phase == "decel" || Phase == "accel" || Phase == "vmax" || Phase == "dive" || Phase.StartsWith("stall") || Phase.StartsWith("sink") || Phase == "climb" || Phase == "rates" || Phase == "recover" || Phase == "cruise"; } }
+        /// <summary>Steps found with throttle/pitch not tracking: data discarded, step left unchecked for a redo.</summary>
+        internal readonly List<int> Redo = new List<int>();
         internal int Flaps;   // flap setting the test wants (0..3)
         bool flapPass, stallFlapPass;
         List<double[]> SinkTbl { get { return flapPass ? P.SinkFlaps : P.Sink; } }
@@ -183,6 +187,7 @@ namespace KSPChatBridge
         /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
         bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
         internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
+        double tickPrevT = double.NaN, badPitch, badThr; bool passBad; internal const double BadPitchDeg = 8, BadPitchS = 8, BadThrS = 5;
         int turnPass; double passSpeed = double.NaN; double[] passBest; internal const double TurnAltLoss = 150;
         double turnThr = double.NaN, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
         /// <summary>Sink map (Luke 11:32 PM): elevator holds 1.2x stall (pitch-for-speed); throttle alone sets the sink.
@@ -244,7 +249,7 @@ namespace KSPChatBridge
             stepAtDone = StepNo; Done = true; Aborted = aborted; P.Abort = aborted ? why : ""; P.Complete = !aborted; Reason = why; Phase = "done";
             if (econ.Count > 0) { double best = -1; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; P.EconSpeed = e[0]; P.EconThrottle = e[1]; } } P.Note("econ_speed", P.EconSpeed, P.M0); }
             Status = aborted ? "Test flight aborted (" + why + "): saving what was learned, landing at KSC 27." : "Test flight complete: profile saved, landing at KSC 27.";
-            Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
+            Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN;
         }
 
         internal static readonly string[] StepNames = { "Takeoff + ground roll", "Climb to 5 km", "Idle decel / full-power accel", "Econ cruise 60 s", "Max level speed", "Roll / pitch rates", "Turns 5-30 deg", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27 + rollout" };
@@ -369,7 +374,7 @@ namespace KSPChatBridge
             if (Math.Abs(i.Vs) < 3 && i.FuelRate > 0 && !double.IsNaN(i.Throttle) && i.Throttle > .1 && (Phase == "recover" || Phase == "stallprep" || Phase == "accel")) econ.Add(new[] { i.Speed, i.Throttle, i.FuelRate });
             Flaps = flapPass || stallFlapPass ? 3 : 0;
             P.Perf.Feed(Cat(Phase), i, prevStepT); prevStepT = i.T;
-            double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
+            double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN; double tick = double.IsNaN(tickPrevT) ? 0 : Math.Max(0, i.T - tickPrevT); tickPrevT = i.T;
             switch (Phase)
             {
                 case "start":
@@ -417,7 +422,7 @@ namespace KSPChatBridge
                         if (dt < 2) Aileron = 1; else if (dt < 4) Aileron = -1; else if (dt < 7) { Bank = 0; Pitch = Level(i); }
                         else if (dt < 8.5) { Bank = 0; Elevator = i.GLimit > 0 && i.G > .7 * i.GLimit ? 0 : .6; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
                         else { Bank = 0; Pitch = Level(i); }
-                        if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass); idx = 0; Go("turn", i, "Level turns 5 to 30 deg bank, holding altitude and speed."); }
+                        if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass); idx = 0; turnPass = 0; passSpeed = TurnSpeed(i.Speed, i.StallGuess); passBad = false; Go("turnprep", i, "Max safe turn: settling level at " + passSpeed.ToString("0") + " m/s (cruise) with power before banking."); }
                         return;
                     }
                 case "turn":
@@ -429,8 +434,17 @@ namespace KSPChatBridge
                         double vT = passSpeed;
                         if (double.IsNaN(turnThr)) turnThr = double.IsNaN(i.Throttle) ? .7 : FlightPolicy.Clamp(i.Throttle, .2, 1);
                         turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1);
-                        Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1);
+                        Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1); SpeedTarget = vT;   // the controller flies this through the one speed PI (full power as needed)
                         Pitch = Level(i, a0);
+                        // controls must track: pitch within 8 deg, and power coming up when slow (Luke 10:33 log: thr 0%, cmd +15 act -5)
+                        if (Math.Abs(Pitch - i.Pitch) > BadPitchDeg) badPitch += tick; else badPitch = Math.Max(0, badPitch - tick);
+                        if (i.Speed < vT - 10 && !double.IsNaN(i.Throttle) && i.Throttle < .3) badThr += tick; else badThr = Math.Max(0, badThr - tick);
+                        if (badPitch > BadPitchS || badThr > BadThrS)
+                        {
+                            string what = badThr > BadThrS ? "throttle " + Math.Round(i.Throttle * 100) + "% while " + Math.Round(vT - i.Speed) + " m/s slow" : "pitch cmd " + Pitch.ToString("0") + " act " + i.Pitch.ToString("0");
+                            passBest = null; passSpeed = double.NaN; turnPass = 0; badPitch = badThr = 0; if (!Redo.Contains(7)) Redo.Add(7);
+                            Go("recover", i, "Turn data invalid (" + what + " - controls not tracking): envelope NOT saved, step 7 marked for redo. Leveling off with power."); return;
+                        }
                         bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;   // checked during the roll-in too
                         if (!nearLimit && !Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
                         if (double.IsNaN(reachAt)) reachAt = i.T;
@@ -459,10 +473,10 @@ namespace KSPChatBridge
                     }
                 case "turnprep":
                     {
-                        double vT = 1.5 * i.StallGuess; Bank = 0; Pitch = Level(i, a0);
+                        double vT = turnPass == 0 && !double.IsNaN(passSpeed) ? passSpeed : 1.5 * i.StallGuess; Bank = 0; Pitch = Level(i, a0); SpeedTarget = vT;
                         if (double.IsNaN(turnThr)) turnThr = double.IsNaN(i.Throttle) ? .5 : i.Throttle;
                         turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1); Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1);
-                        if (Math.Abs(i.Speed - vT) < 5 || dt > 90) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
+                        if (Math.Abs(i.Speed - vT) < 5 || dt > 180) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }
                 case "recover":

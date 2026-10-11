@@ -241,6 +241,42 @@ class Program
                 for (int s = 0; s < 40000; s++) { double tg = s < 1000 ? 105 : 125; th = h.Step(tg, v, .02, th); q.Enqueue(th); dly = q.Count > 150 ? q.Dequeue() : .5; en += (dly - en) * .02 / 3; v += (2.6 * en - .00016 * v * v - .00016 * 105 * 105 * 0 ) * .02 + (2.6 * .5 - .00016 * 105 * 105) * 0; if (s > 1000) mx = Math.Max(mx, v - 125); } return mx; };
             double withLag = run(true), noLag = run(false);
             Check(withLag < 4 && withLag <= noLag + .5, "lag-aware speed hold: overshoot " + withLag.ToString("0.0") + " m/s (without lag model " + noLag.ToString("0.0") + ")");
+        {   // Luke 10:41: ONE throttle path. Full simulated learn flight through ThrottleGate + the speed PI: no unexplained jumps.
+            var lf = new LearnFlight(); var gt = new ThrottleGate(); var logs = new List<string>(); gt.Log = m => logs.Add(m); gt.Seed(0); var sh = new SpeedHold();
+            double T = 0, v = 0, alt = 70, vs = 0, pit = 0, fuel = 1, applied = 0, worstPi = 0, worstTest = 0; bool landed = true; int lguard = 0; string badPh = "";
+            while (!lf.Done && lguard++ < 200000)
+            {
+                var li = new LearnIn { T = T, Speed = v, Alt = alt, Agl = alt - 70, Vs = vs, Pitch = pit, G = 1, GLimit = 8, FuelFrac = fuel, FuelRate = .5, Stress = .3, TurnRate = 3, Throttle = applied, Liftoff = double.NaN, StallGuess = 60, Mass = 20, Landed = landed, Bank = double.IsNaN(lf.Bank) ? 0 : lf.Bank };
+                lf.Step(li); if (lf.Done) break;
+                string kind = !double.IsNaN(lf.SpeedTarget) ? "pi" : lf.TestThrottle || lf.Phase == "takeoff" || lf.Phase == "start" || lf.Phase == "pullback" ? "test" : "pi";
+                double target = !double.IsNaN(lf.SpeedTarget) ? sh.Step(lf.SpeedTarget, v, .1, applied) : double.IsNaN(lf.Throttle) ? 1 : lf.Throttle;
+                double before = applied; applied = gt.Step(target, .1, kind, "learn " + lf.Phase);
+                double jump = Math.Abs(applied - before); if (kind == "pi") { if (jump > worstPi) { worstPi = jump; badPh = lf.Phase; } } else worstTest = Math.Max(worstTest, jump);
+                double want = !double.IsNaN(lf.Elevator) ? (v > 60 ? pit + lf.Elevator * .5 : -15) : double.IsNaN(lf.Pitch) ? (landed ? 0 : 10) : lf.Pitch;
+                if (landed && v > 70) { landed = false; pit = 8; }
+                pit += FlightPolicy.Clamp(want - pit, -2, 2) * .1; if (landed) pit = 0;
+                v = Math.Max(0, v + (4 * applied - .0003 * v * v - 9.81 * Math.Sin(pit * Math.PI / 180)) * .1);
+                vs = landed ? 0 : v * Math.Sin(pit * Math.PI / 180) - (v < 60 ? 15 : 0); alt = Math.Max(70, alt + vs * .1); fuel -= .00001; T += .1;
+            }
+            Check(lf.Done && worstPi <= ThrottleGate.NormalRate * .1 + 1e-9 && worstTest <= ThrottleGate.FastRate * .1 + 1e-9 && gt.MaxStep <= ThrottleGate.FastRate * .1 + 1e-9,
+                "full learn flight: every throttle change is rate-limited (pi max " + worstPi.ToString("0.000") + " in " + badPh + ", test steps " + worstTest.ToString("0.000") + " per 0.1 s)");
+            Check(logs.Count > 0 && logs.TrueForAll(m => m.Contains("test: learn ") || m.Contains("emergency")), "every non-PI throttle change is logged with its reason (" + logs.Count + ": " + (logs.Count > 0 ? logs[0] : "") + ")");
+            var g2 = new ThrottleGate(); g2.Step(0, .02); double e1 = g2.Step(1, .02, "emergency", "below 1.15x stall"); Check(Math.Abs(e1 - ThrottleGate.EmergencyRate * .02) < 1e-9, "emergency power still ramps (finite, 2/s)");
+            var g3 = new ThrottleGate { K = 2 }; g3.Step(0, 1); Check(Math.Abs(g3.Step(1, 1) - ThrottleGate.NormalRate / 2) < 1e-9, "PI rate slowed by the mass factor");
+        }
+        {   // Live A300 10:33 repro: step 7 with throttle stuck at 0 and pitch not tracking (cmd +15, act -5) -> NOT saved, redo
+            var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 272, Alt = 5000, Pitch = 0, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .8, Bank = 0, Stress = .2, TurnRate = 0, FuelFrac = .8 };
+            lf.Step(q); lf.Phase = "rates"; double t = 0, v = 272, alt = 5000;
+            for (int k = 0; k < 6000 && lf.Phase != "recover"; k++)
+            {
+                t += .1; q.T = t; q.Speed = v; q.Alt = alt; q.Pitch = -5; q.Throttle = 0; q.Bank = double.IsNaN(lf.Bank) ? 0 : lf.Bank; q.G = 1.05; q.TurnRate = .4;
+                lf.Step(q); v = Math.Max(110, v - .4); alt -= 2;
+            }
+            Check(lf.Phase == "recover" && lf.P.Envelope.Count == 0 && lf.Redo.Contains(7) && lf.Status.Contains("not tracking"), "A300 repro: turn envelope invalidated when throttle/pitch don't track; step 7 marked for redo (" + lf.Status + ")");
+            Check(!double.IsNaN(lf.SpeedTarget) || lf.Phase == "recover", "turn steps fly a speed target through the PI");
+            var lf2 = new LearnFlight(); var q2 = new LearnIn { T = 0, Speed = 272, Alt = 5000, Pitch = 2, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .8, FuelFrac = .8 }; lf2.Step(q2); lf2.Phase = "rates"; q2.T = 11; lf2.Step(q2); q2.T = 11.1; lf2.Step(q2);
+            Check(lf2.Phase == "turnprep" && Math.Abs(lf2.SpeedTarget - lf2.TurnSpeed(272, 84)) < 1e-6 && double.IsNaN(lf2.Elevator) && double.IsNaN(lf2.Aileron), "after rates: settle at the pass speed with power first; rate-test elevator/aileron overrides cleared (" + lf2.Phase + ")");
+        }
         }
         {   // LEARN THIS PLANE (Luke 7:06 PM): full test flight on a crude point-mass plane (stall 60 m/s, 20 t).
             var lf = new LearnFlight(); double T = 0, v = 0, alt = 70, vs = 0, pit = 0, fuel = 1; bool landed = true; int lguard = 0;

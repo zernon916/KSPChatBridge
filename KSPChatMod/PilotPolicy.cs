@@ -10,6 +10,28 @@ namespace KSPChatBridge
     /// <summary>Smooth airborne speed hold (Luke 6:42 PM: A300 cycled 98 <-> 117 m/s). The old logic stepped 5% every 3 s, chased
     /// vertical speed instead of airspeed, and slammed to 80-90% at 1.3 Vs. Now: target slewed at 1 m/s/s, 1.5 m/s deadband,
     /// PI + acceleration damping, throttle rate limited to 15%/s.</summary>
+    /// <summary>Luke 10:41 AM: the ONE throttle output path. Every mode/step hands its throttle TARGET here; the output moves at a
+    /// finite rate: the speed PI rate (0.15/s / mass factor) normally, fast (1/s) for steps that explicitly test idle/full or ground
+    /// rollout, 2/s for a true emergency (below 1.15 Vs, low-energy floor, flameout). Anything not "pi" is logged once with its reason.</summary>
+    internal sealed class ThrottleGate
+    {
+        internal const double NormalRate = .15, FastRate = 1.0, EmergencyRate = 2.0;
+        internal double Out = double.NaN, K = 1, MaxStep; internal string Reason = "";
+        internal Action<string> Log;
+        internal static double RateOf(string kind, double k) { return kind == "emergency" ? EmergencyRate : kind == "test" || kind == "ground" ? FastRate : NormalRate / Math.Max(1, k); }
+        internal double Step(double target, double dt, string kind = "pi", string reason = "")
+        {
+            if (double.IsNaN(target)) target = double.IsNaN(Out) ? 0 : Out;
+            target = FlightPolicy.Clamp(target, 0, 1); if (double.IsNaN(Out)) Out = target;
+            if (kind != "pi") { string r = kind + ": " + reason; if (r != Reason) { Reason = r; if (Log != null) Log("throttle " + r + " (target " + Math.Round(target * 100) + "%, " + RateOf(kind, K).ToString("0.##") + "/s)"); } }
+            else Reason = "";
+            double lim = RateOf(kind, K) * Math.Max(0, dt), d = FlightPolicy.Clamp(target - Out, -lim, lim);
+            MaxStep = Math.Max(MaxStep, Math.Abs(d)); Out += d; return Out;
+        }
+        /// <summary>Re-sync to the throttle actually applied (engage, after a stop/abort or the pilot moved it).</summary>
+        internal void Seed(double v, string why = "") { if (why.Length > 0 && Log != null) Log("throttle direct: " + why + " -> " + Math.Round(v * 100) + "%"); Out = FlightPolicy.Clamp(v, 0, 1); }
+    }
+
     internal sealed class SpeedHold
     {
         internal const double Deadband = 1.5, Kp0 = .035, Ki0 = .004, Kd0 = .08, Rate0 = .15, Slew0 = 1.0;

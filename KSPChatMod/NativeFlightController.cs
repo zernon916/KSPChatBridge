@@ -71,7 +71,7 @@ namespace KSPChatBridge
         float nextRotorPark;
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true;
-        TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext;
+        TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); readonly ThrottleGate gate = new ThrottleGate { Log = m => ChatLog.Write("throttle", m) }; string throttleKind = "pi", throttleWhy = ""; string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         void ConfigureInertia()
         {
@@ -115,7 +115,7 @@ namespace KSPChatBridge
                 ChatWindow.Notice("Local autopilot error during " + where + " - holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + " (details in the log).");
                 return;
             }
-            if (air) { c.mainThrottle = vessel.ctrlState.mainThrottle = Math.Max(c.mainThrottle, .6f); SetGroup(vessel, KSPActionGroup.SAS, true); }
+            if (air) { c.mainThrottle = vessel.ctrlState.mainThrottle = Math.Max(c.mainThrottle, .6f); gate.Seed(c.mainThrottle, "controller error release: power 60%+"); SetGroup(vessel, KSPActionGroup.SAS, true); }
             Stop(); ChatWindow.Notice("Local controller released after error (" + ex.GetType().Name + " in " + where + "): controls centred" + (air ? ", power 60%+, SAS on." : "."));
         }
         double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, liftoffSpeed); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); return FlightPolicy.Clamp(s0, 20, 200); }
@@ -477,7 +477,7 @@ namespace KSPChatBridge
                     if (verticalLanding.Phase != previous) ChatWindow.Notice("Local powered descent: " + verticalLanding.Phase);
                     if (verticalLanding.Phase == "abort")
                     {
-                        c.mainThrottle = 0; vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                        c.mainThrottle = 0; vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; gate.Seed(0, "powered descent abort");
                         Stop(); ChatWindow.Notice("Powered descent aborted: insufficient thrust."); return;
                     }
                     if (verticalLanding.Phase == "landed") { Stop(false); SetGroup(vessel, KSPActionGroup.SAS, true); }
@@ -487,7 +487,7 @@ namespace KSPChatBridge
                 {
                     TaxiHotSwap(); taxi.Step(Planetarium.GetUniversalTime(), vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.srfSpeed, vessel.mainBody.Radius, vessel.LandedOrSplashed, poweredTaxi, Twr());
                     c.wheelSteer = (float)taxi.Wheel; c.wheelThrottle = (float)taxi.Drive; c.yaw = (float)taxi.Yaw;
-                    c.mainThrottle = vessel.LandedOrSplashed ? (float)taxi.Throttle : Math.Max(.05f, c.mainThrottle);
+                    c.mainThrottle = (float)gate.Step(vessel.LandedOrSplashed ? taxi.Throttle : Math.Max(.05, c.mainThrottle), Time.fixedDeltaTime, "ground", "taxi");
                     SetGroup(vessel, KSPActionGroup.Brakes, taxi.Brakes);
                     if (taxi.Result != null) { string result = taxi.Result; Stop(!result.Contains("arrived")); ChatWindow.Notice(result); }
                     return;
@@ -515,7 +515,7 @@ namespace KSPChatBridge
                     if (tground != null && tground.Released && tground.Since(nowT) < 5 && Time.realtimeSinceStartup >= gTraceNext)
                     { gTraceNext = Time.realtimeSinceStartup + .25f; ChatLog.Write("g", "release+" + tground.Since(nowT).ToString("0.00") + "s spd=" + vessel.srfSpeed.ToString("0.0") + " hdg=" + FlightGlobals.ship_heading.ToString("0.0") + " pit=" + pitch.ToString("0.0") + " q=" + q.ToString("0.0") + " thr=" + c.mainThrottle.ToString("0.00") + " wheel=" + tground.Wheel.ToString("0.00") + " yaw=" + tground.Yaw.ToString("0.00") + " elev=" + c.pitch.ToString("0.00") + " g=" + vessel.geeForce.ToString("0.0")); }
                     directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed);
-                    if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
+                    if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; gate.Seed(0, "takeoff timeout on the ground"); SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
                     if (takeoff.Phase == "climbout complete")
                     {
                         mode = landingAfterTakeoff ? "landing" : "hold";
@@ -579,7 +579,7 @@ namespace KSPChatBridge
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
                 if (runway.Phase == "go around") { goAroundFlaps = flapSet > 0; altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
-                    else if (runway.Phase == "stopped") { c.mainThrottle = 0; Stop(false); return; }
+                    else if (runway.Phase == "stopped") { c.mainThrottle = 0; gate.Seed(0, "stopped on the runway"); Stop(false); return; }
                     else
                     {
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
@@ -594,9 +594,9 @@ namespace KSPChatBridge
                         if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
                         {
-                            c.mainThrottle = 0;
                             c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
+                            c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, "ground", "rollout idle/reversers");
                             derot.Step(pitch, dt, NoseGearDown()); c.pitch = (float)derot.Elevator(pitch, q);   // derotation: hold attitude, lower nose at 2.5 deg/s, no forward spike
                             c.roll = (float)FlightPolicy.Clamp(-.02 * roll - .006 * p, -1, 1);
                             c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
@@ -689,7 +689,8 @@ namespace KSPChatBridge
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare") ? Math.Max(1.2, ApproachProfile.FinalG) : 3;   // gentler once established inbound   // joins maneuver to the dynamic limit; final/flare stay gentle
             if (!(mode == "landing" && runway != null && runway.Phase == "entry") && mode != "takeoff") gLim = Math.Min(gLim, 3);
-            gLim = PitchShaper.Limit(gLim, bankCmd); if (CraftClass.Gentle(CraftCls) && mode != "takeoff") gLim = Math.Min(gLim, CraftClass.HeavyPitchG); if (landFloor || lowEnergy || heavyFloor) gLim = Math.Max(gLim, 2); if (landBank && ApproachProfile.SafeBank != null) gLim = Math.Max(gLim, 1 / Math.Cos(Math.Min(70, Math.Abs(bankCmd)) * Math.PI / 180) + .25);   // enough pull to hold altitude in the learned bank   // sink arrest needs real pitch authority   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
+            gLim = PitchShaper.Limit(gLim, bankCmd); bool learnPull = learn != null && (learn.Phase == "turn" || learn.Phase == "turnprep" || learn.Phase == "recover");
+            if (CraftClass.Gentle(CraftCls) && mode != "takeoff" && !learnPull) gLim = Math.Min(gLim, CraftClass.HeavyPitchG); if (learnPull) gLim = Math.Max(gLim, Math.Min(.8 * Math.Max(2.5, ApproachProfile.StructG), 1 / Math.Cos(Math.Min(70, Math.Abs(bankCmd)) * Math.PI / 180) + .4));   // learn turn: pull enough to hold altitude in the bank if (landFloor || lowEnergy || heavyFloor) gLim = Math.Max(gLim, 2); if (landBank && ApproachProfile.SafeBank != null) gLim = Math.Max(gLim, 1 / Math.Cos(Math.Min(70, Math.Abs(bankCmd)) * Math.PI / 180) + .25);   // enough pull to hold altitude in the learned bank   // sink arrest needs real pitch authority   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
@@ -716,7 +717,7 @@ namespace KSPChatBridge
                     double st = SinkThrottle(directVs.Value);
                     if (!double.IsNaN(st)) throttle = runway.Phase == "flare" ? st : .5 * throttle + .5 * st;
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
-            if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) throttle = Math.Max(throttle, .9);   // arrest the sink with power, not only pitch
+            if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
@@ -725,10 +726,12 @@ namespace KSPChatBridge
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
-                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) throttle = 1;   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
+                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) { throttle = 1; throttleKind = "emergency"; throttleWhy = "below 1.15x stall"; }   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
             FerryTick(); FlapsTick();
             LearnApply(c);
+            if (mode == "takeoff" && vessel.LandedOrSplashed && throttleKind == "pi") { throttleKind = "test"; throttleWhy = "takeoff roll power ramp"; }
+            gate.K = shold.K; c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, throttleKind, throttleWhy); if (holdSpeed || learn != null || throttleKind == "emergency") FlightInputHandler.state.mainThrottle = c.mainThrottle; throttleKind = "pi"; throttleWhy = "";   // ONE smooth output path; the pilot's throttle mirrors it
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
                     var samples = props.Sample(); double rpm = double.PositiveInfinity;
@@ -969,7 +972,7 @@ namespace KSPChatBridge
                 case "abort":
                     if (plan != null) plan.Pause();
                     bool descending = mode == "vertical landing";
-                    Stop(); vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                    Stop(); vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; gate.Seed(0, "hard abort");
                     return descending ? "Hard abort: powered descent stopped, throttle zero." : "Hard abort: local control stopped, throttle zero.";
                 case "stop_current": if (plan != null) plan.Pause(); Stop(); return "Local controller stopped; throttle preserved.";
                 case "flightplan/check": ParsePlan(Str(a, "plan", "")); return "Local plan valid.";
