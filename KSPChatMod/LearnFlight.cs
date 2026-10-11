@@ -43,7 +43,7 @@ namespace KSPChatBridge
             var t = new List<object>(); foreach (var x in Turns) t.Add(new List<object> { x[0], Math.Round(x[1], 2), Math.Round(x[2], 2), Math.Round(x[3], 1), Math.Round(x[4], 2), x.Length > 5 ? Math.Round(x[5], 2) : double.NaN, x.Length > 6 ? Math.Round(x[6], 3) : double.NaN });
             var dv = new List<object>(); foreach (var x in Dives) dv.Add(new List<object> { x[0], Math.Round(x[1], 1), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
             var sm = new List<object>(); foreach (var x in Samples) sm.Add(new List<object> { x[0], x[1], x[2] });
-            var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
+            var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN });
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) } };
@@ -63,7 +63,7 @@ namespace KSPChatBridge
                     (key == "turns" ? p.Turns : p.Dives).Add(a);
                 }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
-            if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN }); } catch (Exception) { } }
+            if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN, l.Count > 4 && l[4] != null ? Convert.ToDouble(l[4], ci) : double.NaN }); } catch (Exception) { } }
             return p;
         }
         internal string Summary()
@@ -128,7 +128,19 @@ namespace KSPChatBridge
             return FlightPolicy.Clamp(sweepThr + (10 - sink) * .04, 0, 1);
         }
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
-        double turnThr, thrSum, overAt = double.NaN;
+        double turnThr, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
+        /// <summary>Sink map (Luke 11:32 PM): elevator holds 1.2x stall (pitch-for-speed); throttle alone sets the sink.
+        /// Slow -> nose down, fast -> nose up; clamped -10..15 deg, no extra nose-up above 1.5 g, hard nose-down near 1.15x stall.</summary>
+        double SpeedPitch(LearnIn i)
+        {
+            double vT = 1.2 * i.StallGuess, e = i.Speed - vT, dt = double.IsNaN(spT) ? 0 : FlightPolicy.Clamp(i.T - spT, 0, 1); spT = i.T;
+            if (double.IsNaN(spCmd)) spCmd = double.IsNaN(i.Pitch) ? 5 : i.Pitch;
+            double rate = FlightPolicy.Clamp(e * .4, -3, 3); if (rate > 0 && i.G > 1.5) rate = 0;
+            spCmd = FlightPolicy.Clamp(spCmd + rate * dt, -10, 15);
+            double cmd = FlightPolicy.Clamp(spCmd + e * .5, -10, 15);
+            if (i.Speed < 1.18 * i.StallGuess) cmd = Math.Min(cmd, -5);
+            return cmd;
+        }
         double CruiseThr() { if (econ.Count == 0) return .6; double best = -1, th = .6; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; th = e[1]; } } return th; }
         static string Cat(string ph)
         {
@@ -374,7 +386,7 @@ namespace KSPChatBridge
                 case "sinkdown":
                 case "sinkmap":
                     {
-                        Pitch = SinkPitch; Bank = 0;
+                        Pitch = SpeedPitch(i); Bank = 0;
                         if (i.Speed < 1.15 * i.StallGuess) { Go("stallprep", i, "Sink map stopped (speed under 1.15x stall); " + P.Sink.Count + " points. level at 4 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T;
@@ -393,7 +405,7 @@ namespace KSPChatBridge
                         if (!lagDone && Math.Abs(vsF - vs0) > .2) { lagDone = true; lagS = i.T - stepAt; }
                         while (idx >= 0 && -vsF <= SinkTargets[idx])
                         {
-                            P.Sink.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
+                            P.Sink.Add(new[] { SinkTargets[idx], stepThr, double.IsNaN(lagS) ? RampWait : lagS, i.Mass, i.Pitch }); P.Note("sink_thr@" + SinkTargets[idx], stepThr, i.Mass); idx--;
                         }
                         lastVsF = vsF;
                         if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). Level at 4 km for the stall test.");

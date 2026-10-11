@@ -322,6 +322,11 @@ class Program
             var tbl = lf.P.Sink; double t0s = lf.P.ThrottleForSink(0, 30), t10 = lf.P.ThrottleForSink(10, 30);
             Check(tbl.Count == 6 && Math.Abs(t0s - .56) < .05 && Math.Abs(t10 - .16) < .05 && lf.P.ThrottleForSink(5, 60) > lf.P.ThrottleForSink(5, 30), "sink map: 6 points, 0 m/s @" + Math.Round(t0s * 100) + "%, 10 m/s @" + Math.Round(t10 * 100) + "%, heavier needs more throttle");
             Check(tbl.TrueForAll(r => r[2] > 0 && r[2] < 30), "sink map records the throttle->sink lag");
+            Check(tbl.TrueForAll(r => r.Length > 4 && !double.IsNaN(r[4])), "sink map records the pitch at each point");
+            { // pitch-for-speed: stall 64 -> hold 76.8 m/s. Fast -> nose up over time, slow -> nose down; near 1.15x -> hard nose down
+              Func<double, double> pfs = spd => { var lp = new LearnFlight(); var q = new LearnIn { T = 0, Speed = spd, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = -12 }; lp.Step(q); lp.Phase = "sinkmap"; double pc = 0; for (int s = 1; s <= 30; s++) { q.T = s * .1; lp.Step(q); pc = lp.Pitch; } return pc; };
+              double fast = pfs(85), slow = pfs(75), edge = pfs(74.5);
+              Check(fast > 5 && slow < 5 && edge <= -5 && fast <= 15, "sink map: elevator holds 1.2x stall (fast " + fast.ToString("0.0") + ", slow " + slow.ToString("0.0") + ", near 1.15x " + edge.ToString("0.0") + ")"); }
             var lb = new LearnFlight(); var lj = li; lj.T = 0; lb.Step(lj); lb.Phase = "sinkmap"; lj.T = 1; lj.Speed = 70; lb.Step(lj);
             Check(lb.Phase == "stallprep" && !lb.Aborted, "sink map stops below 1.15x stall and goes on to the stall step");
             var rt3 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
