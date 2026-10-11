@@ -176,6 +176,7 @@ namespace KSPChatBridge
                 case 2:
                     if (p == null) { o.Add("No test data."); break; }
                     if (p.Turns.Count > 0) { double mg = 0; foreach (var x in p.Turns) mg = Math.Max(mg, x[1]); var lt = p.Turns[p.Turns.Count - 1]; o.Add("Turns to " + lt[0] + " deg, max " + mg.ToString("0.0") + " g, " + lt[2].ToString("0.0") + " deg/s, alt " + (-lt[3]).ToString("+0;-0") + " m" + (lt.Length > 6 && !double.IsNaN(lt[6]) ? ", thr " + Math.Round(lt[6] * 100) + "%" : "")); }
+                    foreach (var e in p.Envelope) o.Add("Safe turn @" + F0(e[0]) + " m/s: bank " + F0(e[1]) + ", " + F1(e[2]) + " g, " + F1(e[3]) + " deg/s, r " + F1(e[4] / 1000) + " km, roll-in " + F1(e[5]) + " s");
                     o.Add("Roll rate " + F0(p.Perf.RollRate) + " deg/s  Pitch rate " + F0(p.Perf.PitchRate) + " deg/s");
                     if (p.Dives.Count > 0) { var s = ""; foreach (var x in p.Dives) s += x[0] + ":" + x[1].ToString("0") + " "; o.Add("Dive sink (deg:m/s) " + s.Trim()); }
                     if (p.SinkFlaps.Count > 0) { var s3 = ""; foreach (var x in p.SinkFlaps) { double clean = p.ThrottleForSink(x[0], p.M0); s3 += x[0].ToString("0") + ":" + Math.Round(x[1] * 100) + "%" + (double.IsNaN(clean) ? "" : "(" + Math.Round((x[1] - clean) * 100).ToString("+0;-0") + ")") + " "; } o.Add("Flaps sink map (m/s:thr, vs clean) " + s3.Trim()); }

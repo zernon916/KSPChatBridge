@@ -268,11 +268,11 @@ class Program
                 // level turns: above the entry altitude and climbing -> nose comes down (not 20 deg up); slow -> more throttle
                 var q2 = q; q2.T = 2; q2.Alt = 3060; q2.Vs = 4; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
                 q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.Throttle; q2.T = 4; q2.Speed = 112; lc2.Step(q2);
-                Check(pHi < 3 && lc2.Bank == 5 && thSlow > lc2.Throttle && thSlow > .5, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), throttle holds speed");
-              Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 5 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
+                Check(pHi < 3 && lc2.Bank == 10 && thSlow > lc2.Throttle && thSlow > .5, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), throttle holds speed");
+              Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 10 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
-                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Turns[0].Length >= 7 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
+                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count >= 2 && pp.Envelope.Count == 2 && pp.Turns[0].Length >= 10 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
             {   // Luke 11:26 PM: toggle steps after the first test; LEARN re-runs only unchecked steps (+ takeoff/climb/landing), keeping the rest
                 Check(!LearnFlight.Toggle(pp, 1) && !LearnFlight.Toggle(pp, 12) && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
                 var pr = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
@@ -324,14 +324,14 @@ class Program
             Check(PilotPolicy.EffectiveCap(200, 250, false) >= 255 && PilotPolicy.EffectiveCap(200, 250, true) == 180 && PilotPolicy.EffectiveCap(200, double.NaN, false) == 200, "cap never below the commanded speed unless heat/structure is near the limit");
         }
         {   // Luke 9:37 AM log (A300): every turn showed bank 5, dives reached only -5/-9/-8 in their 10 s, then recovery (100%) began
-            var lt = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 253, Alt = 5100, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Bank = 5, Throttle = 1 }; lt.Step(q);
+            var lt = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 253, Alt = 5100, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Bank = 10, Throttle = 1 }; lt.Step(q);
             lt.Phase = "turn"; q.T = .1; lt.Step(q);   // bank 5 reached -> measures 20 s, then the 10 deg turn
             for (int s = 2; s <= 220; s++) { q.T = s * .1; lt.Step(q); }
             int turnsAfter5 = lt.P.Turns.Count;
-            for (int s = 221; s <= 330; s++) { q.T = s * .1; q.Bank = 5; lt.Step(q); }   // stuck at 5 while 10 commanded: no measurement yet (< 20 s)
-            Check(turnsAfter5 == 1 && lt.P.Turns.Count == 1 && lt.Bank == 10, "turn measures only once the commanded bank is reached (log: bank stuck at 5)");
-            for (int s = 331; s <= 560; s++) { q.T = s * .1; q.Bank = 10; lt.Step(q); }
-            Check(lt.P.Turns.Count == 2 && lt.P.Turns[1][0] == 10, "10 deg turn recorded after reaching 10 deg");
+            for (int s = 221; s <= 330; s++) { q.T = s * .1; q.Bank = 10; lt.Step(q); }   // stuck at 10 while 20 commanded: no measurement yet (< 20 s)
+            Check(turnsAfter5 == 1 && lt.P.Turns.Count == 1 && lt.Bank == 20, "turn measures only once the commanded bank is reached (log: bank stuck at 5)");
+            for (int s = 331; s <= 560; s++) { q.T = s * .1; q.Bank = 20; lt.Step(q); }
+            Check(lt.P.Turns.Count == 2 && lt.P.Turns[1][0] == 20, "20 deg turn recorded after reaching 20 deg");
             Check(Math.Abs(lt.TurnSpeed(253, 84) - 1.7 * 84) < 1e-6 && lt.TurnSpeed(120, 84) == 120, "turn speed target: cruise / 1.7 Vs, not the 253 m/s vmax entry speed (throttle sat at 100%)");
             var ld2 = new LearnFlight(); var d = new LearnIn { T = 0, Speed = 160, Alt = 4900, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Pitch = 0 }; ld2.Step(d);
             ld2.Phase = "recover"; ld2.Step(d); var f = typeof(LearnFlight).GetField("idx", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance); f.SetValue(ld2, 101); ld2.Phase = "dive";
@@ -381,6 +381,32 @@ class Program
             var dv1 = new List<double[]> { new double[] { 5, 18, -19, 48 }, new double[] { 10, 25, 30, 48 }, new double[] { 20, 32, 80, 48 } };
             Check(PilotPolicy.DescentSink(dv1, 180, 264) == 28 && PilotPolicy.DescentSink(dv1, 180, 200) == 18 && PilotPolicy.DescentSink(null, 180, 264) == 25, "cruise descent sink 25-30 m/s when the learned dives stay inside the speed cap");
             Check(PilotPolicy.DescentVs(5000, 28, 180, 264) == 28 && Math.Abs(PilotPolicy.DescentVs(1000, 28, 180, 264) - 18) < 1e-9 && PilotPolicy.DescentVs(0, 28, 180, 264) == 8 && PilotPolicy.DescentVs(5000, 28, 260, 264) == 22, "descent eases to 8 m/s near the hand-off altitude and backs off near the speed cap");
+        }
+        {   // Luke 10:06 AM: step 7 = MAX SAFE TURN. Plane: structure limit 2.5 g -> stop above 2.0 g (60 deg ok, 65 deg = 2.37 g fails).
+            var mt = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 150, Alt = 5000, FuelFrac = .9, GLimit = 2.5, G = 1, StallGuess = 60, Mass = 48, Throttle = .6 }; mt.Step(q);
+            mt.Phase = "turn"; double mT = 0, spd = 102, mb = 0;
+            for (int s = 0; s < 40000 && (mt.Phase == "turn" || mt.Phase == "turnprep"); s++)
+            {
+                mT += .1; double bc = double.IsNaN(mt.Bank) ? 0 : mt.Bank; mb += FlightPolicy.Clamp(bc - mb, -1, 1); double b = mb; double g = 1 / Math.Cos(b * Math.PI / 180);
+                if (mt.Phase == "turnprep") spd = Math.Max(90, spd - .5);
+                q.T = mT; q.Bank = b; q.G = g; q.Speed = spd; q.TurnRate = 9.81 * Math.Tan(b * Math.PI / 180) / spd * 180 / Math.PI; q.Alt = 5000; q.Throttle = mt.Throttle; mt.Step(q);
+            }
+            var env = mt.P.Envelope;
+            Check(env.Count == 2 && env[0][1] == 60 && env[1][1] == 60 && Math.Abs(env[0][0] - 102) < 1 && Math.Abs(env[1][0] - 90) < 1, "max safe turn: stops at 80% of the structure g, envelope at cruise and approach speed (" + string.Join(" | ", env.ConvertAll(e => e[0].ToString("0") + "@" + e[1]).ToArray()) + ") ph=" + mt.Phase + " st=" + mt.Status + " turns=" + string.Join(";", mt.P.Turns.ConvertAll(r => r[0] + "/" + r[1].ToString("0.00") + "/" + r[3].ToString("0")).ToArray()));
+            Check(env[0][4] > 0 && env[0][4] < 1000 && env[0][2] > 1.9 && env[0][3] > 5 && !double.IsNaN(env[0][5]), "envelope records g, turn rate, radius and roll-in");
+            Check(mt.P.Turns.Exists(r => r[0] == 65), "the failing 65 deg turn is recorded as data, not as the safe bank");
+            var rt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(mt.P.ToDict())) as Dictionary<string, object>);
+            Check(rt.Envelope.Count == 2 && rt.SafeBankAt(96) == 60, "envelope saved in the profile");
+            // A300 lineup: heavy defaults vs the learned envelope (40 deg max safe bank at 130 m/s)
+            var a3 = new PlaneProfile(); a3.Envelope.Add(new double[] { 130, 40, 1.3, 3.6, 2000, 6, 48 }); a3.Envelope.Add(new double[] { 165, 35, 1.22, 2.5, 3800, 6, 48 });
+            ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; double defB = CraftClass.MaxBank("heavy", ApproachProfile.PhaseBank("entry", 130, 84));   // heavy comfort cap (25 deg) without an envelope
+            ApproachProfile.SafeBank = sv => a3.SafeBankAt(sv); ApproachProfile.RollIn = a3.RollIn; double lrnB = ApproachProfile.PhaseBank("entry", 130, 84);
+            double rDef = ApproachProfile.Radius(130, defB), rLrn = ApproachProfile.Radius(130, lrnB);
+            Check(Math.Abs(lrnB - 34) < .01 && lrnB > defB && ApproachProfile.PhaseBank("final", 130, 84) <= 25, "A300 lineup: joins bank 85% of the learned 40 deg (" + lrnB.ToString("0") + " vs " + defB.ToString("0") + " default); final stays gentle");
+            Check(rLrn < rDef, "A300 lineup: tighter real radius (" + (rLrn / 1000).ToString("0.0") + " vs " + (rDef / 1000).ToString("0.0") + " km)");
+            bool adv; double xte; RunwayMission.LegSteer(0, -.1, 0, -.3, 0, -.1, 90, 130, lrnB, 600000, out adv, out xte);
+            ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0;
+            Check(a3.RollIn == 6, "roll-in lag feeds the lead-turn distance");
         }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup

@@ -446,6 +446,7 @@ namespace KSPChatBridge
             double heat = 0; foreach (Part p in vessel.parts) if (p.maxTemp > 0) heat = Math.Max(heat, Math.Max(p.temperature / p.maxTemp, p.skinMaxTemp > 0 ? p.skinTemperature / p.skinMaxTemp : 0));
             bool known = profile != null && !double.IsNaN(profile.Perf.MaxLevel);
             CapPlane = PilotPolicy.PlaneCap(known ? profile.Perf.MaxLevel : double.NaN, vessel.totalMass, CraftClass.Gentle(CraftCls)); CapSource = known ? "TEST" : "EST";
+            if (profile != null && profile.Envelope.Count > 0) { var pr = profile; ApproachProfile.SafeBank = v => pr.SafeBankAt(v); ApproachProfile.RollIn = pr.RollIn; } else { ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; }
             CapHot = heat > .85 || vessel.geeForce > .9 * ApproachProfile.StructG;
             PilotPolicy.CapSpeed = PilotPolicy.EffectiveCap(CapPlane, holdSpeed ? speed : double.NaN, CapHot);
         }
@@ -655,7 +656,7 @@ namespace KSPChatBridge
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
                 bool landBank = mode == "landing" && runway != null && runway.TurnBank > 0;   // G-rated approach turns (and explicit "bank 60")   // "bank 60, land nearest"
-                double blim = CraftClass.MaxBank(CraftCls, landBank ? runway.TurnBank : FlightPolicy.BankLimit(vessel.srfSpeed));
+                double blim = landBank && ApproachProfile.SafeBank != null ? runway.TurnBank : CraftClass.MaxBank(CraftCls, landBank ? runway.TurnBank : FlightPolicy.BankLimit(vessel.srfSpeed));   // learned envelope: no heavy comfort cap
                 double arcFf = mode == "landing" && runway != null && runway.Phase == "entry" ? runway.ArcBank : 0;   // curvature feed-forward; heading error is the trim
                 double bank = directBank ?? FlightPolicy.Clamp(arcFf + .5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -blim, blim);
                 bank = landBank && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
@@ -688,7 +689,7 @@ namespace KSPChatBridge
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare") ? Math.Max(1.2, ApproachProfile.FinalG) : 3;   // gentler once established inbound   // joins maneuver to the dynamic limit; final/flare stay gentle
             if (!(mode == "landing" && runway != null && runway.Phase == "entry") && mode != "takeoff") gLim = Math.Min(gLim, 3);
-            gLim = PitchShaper.Limit(gLim, bankCmd); if (CraftClass.Gentle(CraftCls) && mode != "takeoff") gLim = Math.Min(gLim, CraftClass.HeavyPitchG); if (landFloor || lowEnergy || heavyFloor) gLim = Math.Max(gLim, 2);   // sink arrest needs real pitch authority   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
+            gLim = PitchShaper.Limit(gLim, bankCmd); if (CraftClass.Gentle(CraftCls) && mode != "takeoff") gLim = Math.Min(gLim, CraftClass.HeavyPitchG); if (landFloor || lowEnergy || heavyFloor) gLim = Math.Max(gLim, 2); if (landBank && ApproachProfile.SafeBank != null) gLim = Math.Max(gLim, 1 / Math.Cos(Math.Min(70, Math.Abs(bankCmd)) * Math.PI / 180) + .25);   // enough pull to hold altitude in the learned bank   // sink arrest needs real pitch authority   // airliner: gentle pitch   // high g only in commanded turns/joins; climbs/level 1.8 g pitch rate, 3 g cap
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;

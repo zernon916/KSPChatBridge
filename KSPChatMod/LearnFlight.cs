@@ -17,7 +17,18 @@ namespace KSPChatBridge
         internal void Note(string key, double value, double massT) { if (!double.IsNaN(value)) Samples.Add(new object[] { key, Math.Round(value, 3), Math.Round(massT, 3) }); }
         internal readonly PerfData Perf = new PerfData();
         internal readonly List<int> Rerun = new List<int>();
-        internal readonly List<double[]> SinkFlaps = new List<double[]>();   // flaps-full sink map (same layout as Sink)
+        internal readonly List<double[]> SinkFlaps = new List<double[]>();
+        /// <summary>Safe turn envelope: [speed, max sustained bank, g, turn rate deg/s, radius m, roll-in s, mass].</summary>
+        internal readonly List<double[]> Envelope = new List<double[]>();
+        /// <summary>Max safe bank at a speed (interpolated by speed between the learned passes); NaN without data.</summary>
+        internal double SafeBankAt(double speed)
+        {
+            if (Envelope.Count == 0) return double.NaN; var e = new List<double[]>(Envelope); e.Sort((a, b) => a[0].CompareTo(b[0]));
+            if (speed <= e[0][0]) return e[0][1]; if (speed >= e[e.Count - 1][0]) return e[e.Count - 1][1];
+            for (int k = 1; k < e.Count; k++) if (speed <= e[k][0]) { double t = (speed - e[k - 1][0]) / Math.Max(1e-6, e[k][0] - e[k - 1][0]); return e[k - 1][1] + t * (e[k][1] - e[k - 1][1]); }
+            return e[e.Count - 1][1];
+        }
+        internal double RollIn { get { if (Envelope.Count == 0) return 0; double s = 0; foreach (var x in Envelope) s += double.IsNaN(x[5]) ? 0 : x[5]; return s / Envelope.Count; } }   // flaps-full sink map (same layout as Sink)
         internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN;
         internal bool FlapSub = true, FlapStallSub = true;   // 9b / 10b sub-steps (toggle-able)   // steps unchecked for the next LEARN (persisted)
         internal readonly List<double[]> Sink = new List<double[]>();    // sink m/s (+ down), throttle 0..1, lag s (Luke 7:19 PM)
@@ -43,14 +54,14 @@ namespace KSPChatBridge
         static double D(Dictionary<string, object> d, string k) { object o; if (d == null || !d.TryGetValue(k, out o) || o == null) return double.NaN; try { return Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { return double.NaN; } }
         internal Dictionary<string, object> ToDict()
         {
-            var t = new List<object>(); foreach (var x in Turns) t.Add(new List<object> { x[0], Math.Round(x[1], 2), Math.Round(x[2], 2), Math.Round(x[3], 1), Math.Round(x[4], 2), x.Length > 5 ? Math.Round(x[5], 2) : double.NaN, x.Length > 6 ? Math.Round(x[6], 3) : double.NaN });
+            var t = new List<object>(); foreach (var x in Turns) t.Add(new List<object>(Array.ConvertAll(x, v => (object)(double.IsNaN(v) ? double.NaN : Math.Round(v, 3)))));
             var dv = new List<object>(); foreach (var x in Dives) dv.Add(new List<object> { x[0], Math.Round(x[1], 1), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
             var sm = new List<object>(); foreach (var x in Samples) sm.Add(new List<object> { x[0], x[1], x[2] });
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN });
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
-                { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub } };
+                { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => (object)(double.IsNaN(v) ? 0 : Math.Round(v, 2))))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub } };
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -66,6 +77,7 @@ namespace KSPChatBridge
                     for (int j = 0; j < l.Count; j++) { try { a[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { a[j] = double.NaN; } }
                     (key == "turns" ? p.Turns : p.Dives).Add(a);
                 }
+            if (d.TryGetValue("turn_envelope", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 6) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.Envelope.Add(ar); }
             p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit");
             if (d.TryGetValue("flap_sub", out o) && o is bool) p.FlapSub = (bool)o; if (d.TryGetValue("flap_stall_sub", out o) && o is bool) p.FlapStallSub = (bool)o;
             if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
@@ -157,7 +169,7 @@ namespace KSPChatBridge
             return ph;
         }
         internal const double ClimbAlt = 5000, StallAlt = 4000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, Seg = 20, DiveSeg = 10;
-        internal static readonly int[] Banks = { 5, 10, 15, 20, 25, 30 }; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
+        internal static readonly int[] Banks = { 10, 20, 30, 40, 45, 50, 55, 60, 65, 70 }; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };   // max-safe-turn stress test (Luke 10:06 AM) internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
         internal const double SinkAlt = 5000, SinkPitch = 12, RampWait = 5; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
         double sinkThr, sweepThr, vsF, lastVsF, lastT, prevT, stepAt, vs0, lagS = double.NaN, stepThr = double.NaN; bool lagDone; int tries; string resume = "sinkdown";
         readonly List<double[]> down = new List<double[]>();
@@ -171,6 +183,7 @@ namespace KSPChatBridge
         /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
         bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
         internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
+        int turnPass; double passSpeed = double.NaN; double[] passBest; internal const double TurnAltLoss = 150;
         double turnThr = double.NaN, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
         /// <summary>Sink map (Luke 11:32 PM): elevator holds 1.2x stall (pitch-for-speed); throttle alone sets the sink.
         /// Slow -> nose down, fast -> nose up; clamped -10..15 deg, no extra nose-up above 1.5 g, hard nose-down near 1.15x stall.</summary>
@@ -245,7 +258,7 @@ namespace KSPChatBridge
                 switch (ph)
                 {
                     case "start": case "takeoff": case "pullback": return 1;
-                    case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "rates": return 6; case "turn": return 7;
+                    case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "rates": return 6; case "turn": case "turnprep": return 7;
                     case "recover": return idx < 100 ? 7 : 8; case "dive": return 8;
                     case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 9;
                     case "stallprep": case "stall": return 10; case "stallrec": return 11;
@@ -325,7 +338,8 @@ namespace KSPChatBridge
                 case "cruise": return "econ " + Math.Round(CruiseThr() * 100) + "% " + dt.ToString("0") + "/60 s, " + i.Speed.ToString("0") + " m/s";
                 case "vmax": return "full power level: " + i.Speed.ToString("0") + " m/s";
                 case "rates": return (dt < 4 ? "roll " : dt < 7 ? "level " : "pitch ") + dt.ToString("0") + "/10 s";
-                case "turn": return "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
+                case "turnprep": return "pass 2: slowing to " + (1.5 * i.StallGuess).ToString("0") + " m/s (" + i.Speed.ToString("0") + ")";
+                case "turn": return (turnPass == 0 ? "cruise " : "approach ") + "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
                 case "recover": return "level off " + dt.ToString("0") + "/12 s";
                 case "dive": return "pitch -" + DivePitch[Math.Min(idx - 100, DivePitch.Length - 1)] + " deg, sink " + (-i.Vs).ToString("0") + " m/s";
                 case "sinkprep": return "to 5 km / " + (1.3 * i.StallGuess).ToString("0") + " m/s: " + (i.Alt / 1000).ToString("0.0") + " km, " + i.Speed.ToString("0") + " m/s";
@@ -409,23 +423,46 @@ namespace KSPChatBridge
                 case "turn":
                     {
                         int b = Banks[idx]; Bank = b;
-                        // Level turn (Luke 11:25 PM): hold the entry altitude (VS ~0); back-pressure sets the g. PI throttle holds the entry speed.
-                        double vT = TurnSpeed(v0, i.StallGuess);
+                        // MAX SAFE TURN (Luke 10:06 AM): level turns (VS ~0), back-pressure sets the g, full power as needed to hold the pass speed;
+                        // pass 0 at cruise, pass 1 at ~approach speed (1.5 Vs). Stops at 80% structure g, stress/heat, 1.3 Vs, or altitude not held.
+                        if (double.IsNaN(passSpeed)) passSpeed = turnPass == 0 ? TurnSpeed(v0, i.StallGuess) : 1.5 * i.StallGuess;
+                        double vT = passSpeed;
                         if (double.IsNaN(turnThr)) turnThr = double.IsNaN(i.Throttle) ? .7 : FlightPolicy.Clamp(i.Throttle, .2, 1);
                         turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1);
                         Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1);
                         Pitch = Level(i, a0);
-                        if (!Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
+                        bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;   // checked during the roll-in too
+                        if (!nearLimit && !Reached(i, Math.Abs(Math.Abs(i.Bank) - b) < 2.5)) return;
+                        if (double.IsNaN(reachAt)) reachAt = i.T;
                         thrSum += Throttle; gSum += i.G; trSum += Math.Abs(i.TurnRate); stMax = Math.Max(stMax, i.Stress); n++;
-                        bool nearLimit = (i.GLimit > 0 && i.G > TurnStop * i.GLimit) || i.Stress > TurnStop;
-                        if (i.T - reachAt >= Seg || nearLimit || i.Speed < 1.3 * i.StallGuess)
+                        bool slow = i.Speed < 1.3 * i.StallGuess, sinking = a0 - i.Alt > TurnAltLoss;
+                        if (i.T - reachAt >= Seg || nearLimit || slow || sinking)
                         {
-                            P.Turns.Add(new double[] { b, gSum / Math.Max(1, n), trSum / Math.Max(1, n), a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n) });
-                            P.Note("turn_throttle_" + b, thrSum / Math.Max(1, n), i.Mass);
+                            double rate = trSum / Math.Max(1, n), radius = rate > .01 ? i.Speed / (rate * Math.PI / 180) : double.NaN, rollIn = reachAt - t0;
+                            var row = new double[] { b, gSum / Math.Max(1, n), rate, a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n), vT, radius, rollIn };
+                            P.Turns.Add(row); P.Note("turn_throttle_" + b, row[6], i.Mass);
+                            bool fail = nearLimit || slow || sinking;
+                            if (!fail) passBest = row;
                             idx++;
-                            if (nearLimit || idx >= Banks.Length) Go("recover", i, nearLimit ? "Turns stopped at " + b + " deg: near the g/stress limit." : "Turns done. Leveling off.");
+                            if (fail || idx >= Banks.Length)
+                            {
+                                string why = nearLimit ? "near the g/stress limit" : slow ? "speed down to 1.3x stall" : sinking ? "can't hold altitude" : "all banks done";
+                                if (passBest != null) { P.Envelope.Add(new[] { passBest[7], passBest[0], passBest[1], passBest[2], passBest[8], passBest[9], i.Mass }); P.Note("safe_bank@" + Math.Round(passBest[7]), passBest[0], i.Mass); }
+                                string res = passBest != null ? "max safe bank " + passBest[0] + " deg at " + passBest[7].ToString("0") + " m/s (" + passBest[1].ToString("0.0") + " g, " + passBest[2].ToString("0.0") + " deg/s, r " + (passBest[8] / 1000).ToString("0.0") + " km)" : "no safe turn found";
+                                passBest = null; passSpeed = double.NaN;
+                                if (turnPass == 0) { turnPass = 1; Go("turnprep", i, "Turns at cruise: " + why + "; " + res + ". Slowing to ~approach speed for the second pass."); }
+                                else { turnPass = 0; Go("recover", i, "Turns at approach speed: " + why + "; " + res + ". Leveling off."); }
+                            }
                             else Go("turn", i, "Turn " + Banks[idx] + " deg bank.");
                         }
+                        return;
+                    }
+                case "turnprep":
+                    {
+                        double vT = 1.5 * i.StallGuess; Bank = 0; Pitch = Level(i, a0);
+                        if (double.IsNaN(turnThr)) turnThr = double.IsNaN(i.Throttle) ? .5 : i.Throttle;
+                        turnThr = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .0008, 0, 1); Throttle = FlightPolicy.Clamp(turnThr + (vT - i.Speed) * .04, 0, 1);
+                        if (Math.Abs(i.Speed - vT) < 5 || dt > 90) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }
                 case "recover":

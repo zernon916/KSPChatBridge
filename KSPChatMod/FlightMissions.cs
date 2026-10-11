@@ -296,6 +296,17 @@ namespace KSPChatBridge
         /// <summary>Luke: G-based turn rating (joins ~2 g, final corrections ~1.5 g; settable), never above the 3 g cap and
         /// kept 20% inside the stall load factor (v/Vs)^2. Bank = acos(1/n), radius = v^2/(g sqrt(n^2-1)).</summary>
         /// Fighter/NASA style (Luke): allowed g = min(rating, crew tolerance, structure, stall margin), with stress back-off.
+        /// <summary>Learned safe turn envelope (LEARN step 7): max sustained bank at a speed; null = defaults. RollIn = seconds to roll in.</summary>
+        internal static Func<double, double> SafeBank; internal static double RollIn;
+        internal const double EnvelopeUse = .85;
+        /// <summary>Phase bank: the G rating (joins JoinG, final FinalG); joins/intercepts use up to 85% of the learned max safe bank when known.</summary>
+        internal static double PhaseBank(string phase, double speed, double stall)
+        {
+            double def = BankForG(LoadFactor(phase == "entry" ? JoinG : FinalG, speed, stall));
+            if (SafeBank != null && phase != "entry" && phase != "intercept") { double sb2 = SafeBank(speed); if (!double.IsNaN(sb2) && sb2 > 0) return Math.Min(def, Math.Min(25, EnvelopeUse * sb2)); }   // final/flare: gentle, never above 25 deg or the envelope
+            if (SafeBank != null && (phase == "entry" || phase == "intercept")) { double sb = SafeBank(speed); if (!double.IsNaN(sb) && sb > 0) return EnvelopeUse * sb; }   // the learned envelope replaces the G rating / heavy comfort cap
+            return def;
+        }
         internal static double JoinG = 4.0, FinalG = 1.5, CrewG = 6, StructG = 9, Backoff = 1;
         internal const double GCap = 12, StructCap = 9;   // absolute sanity ceiling; real limits come from crew/structure/stall
         internal static string Limit = "rating";
@@ -764,7 +775,7 @@ namespace KSPChatBridge
         internal void Plan(double course, double radius, double speed, int keepIndex, double hereLat = double.NaN, double hereLon = double.NaN)
         {
             PlanSpeed = speed; PlanG = ApproachProfile.LoadFactor(ApproachProfile.JoinG, speed, LastStall);
-            PlanBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(PlanG);   // explicit "bank 60" still wins
+            PlanBank = BankDeg > 20 ? BankDeg : ApproachProfile.SafeBank != null ? ApproachProfile.PhaseBank("entry", speed, LastStall) : ApproachProfile.BankForG(PlanG);   // explicit "bank 60" still wins
             PlanRadius = ApproachProfile.Radius(speed, PlanBank);
             ApproachChart.Wp target = keepIndex >= 0 && Route != null && keepIndex < Route.Count ? Route[keepIndex] : null;
             // smooth from the plane's own position so the first turn (onto the run-in) gets a lead/arc too, then drop that start point
@@ -794,7 +805,7 @@ namespace KSPChatBridge
             xte = d * Math.Sin(th); double remaining = len - d * Math.Cos(th);
             double r = speed * speed / (9.81 * Math.Tan(Math.Max(5, bankDeg) * Math.PI / 180));
             double dh = double.IsNaN(nextBrg) ? 0 : Math.Abs(FlightPolicy.Wrap(nextBrg - leg));
-            double lead = Math.Min(len, r * Math.Tan(Math.Min(120, dh) / 2 * Math.PI / 180));   // reversal (176 deg) no longer completes a leg instantly
+            double lead = Math.Min(len, r * Math.Tan(Math.Min(120, dh) / 2 * Math.PI / 180) + (dh > 5 ? .5 * speed * ApproachProfile.RollIn : 0));   // + roll-in lag (learned)   // reversal (176 deg) no longer completes a leg instantly
             advance = remaining <= Math.Max(250, lead);
             return LocalizerCourse.Heading(leg, xte, r);   // every leg is a localizer course (same capture law as the LOC intercept)
         }
@@ -818,7 +829,7 @@ namespace KSPChatBridge
             double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
             LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
-            TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.BankForG(ApproachProfile.LoadFactor(Phase == "entry" ? ApproachProfile.JoinG : ApproachProfile.FinalG, speed, stall));
+            TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.PhaseBank(Phase, speed, stall);
             stepsSinceRebuild++;
             if (Phase == "entry")
             {
