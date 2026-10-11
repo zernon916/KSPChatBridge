@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -82,7 +82,7 @@ internal static class ThrottleLearnTests
         Check(Math.Abs(m.HeadingRate - 10) < .2 && maxAbs < 10.5, "smoothed heading rate through north: +10 deg/s, no wrap spike (max " + maxAbs.ToString("0.0") + ")");
         Check(Math.Abs(m.CourseRate - 10) < .2, "course rate from the velocity track: +10 deg/s");
         Check(Math.Abs(m.PitchRate - .2) < .05 && Math.Abs(m.RollRate) < 1e-6, "pitch rate and roll rate measured separately");
-        m.Update(20, 0, double.NaN, 0, 0); Check(m.HeadingRate == 0, "gap > 2 s resets the rates");
+        double hrBefore = m.HeadingRate; m.Update(20, 0, double.NaN, 0, 0); Check(m.HeadingRate == hrBefore && hrBefore != 0, "audit #10: gap > 2 s holds the last rate (no bogus 0) and re-seeds");
     }
 
     static void PathAngle()
@@ -153,6 +153,86 @@ internal static class ThrottleLearnTests
     // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
     static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
     static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    // REPORT.7.9 (rewrite) items 1-17
+    static LearnIn S9(double t, double alt, double vs, double spd = 76.8) { return new LearnIn { T = t, Speed = spd, Alt = alt, Agl = alt, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = vs, Throttle = .3 }; }
+    static void Audit2()
+    {
+        {   // #1 / #15: phase flags NFC uses to skip the LE bank clamp (turns) and LE + MinSafeSpeed (sink map)
+            var lf = InTurn(); bool t1 = lf.TurnPhase; lf.Phase = "turnprep"; bool t2 = lf.TurnPhase; lf.Phase = "recover"; bool t3 = lf.TurnPhase; lf.Phase = "dive"; bool t4 = lf.TurnPhase;
+            Check(t1 && t2 && t3 && !t4 && !lf.SinkPhase, "#1: TurnPhase true for turn/turnprep/turn-recover only (turn-only flag, not learnPull)");
+            lf.Phase = "sinkmap"; bool s1 = lf.SinkPhase; lf.Phase = "sinkclimb"; bool s2 = lf.SinkPhase; lf.Phase = "stall"; Check(s1 && s2 && !lf.SinkPhase && !lf.TurnPhase, "#15: SinkPhase true for sink* only");
+        }
+        {   // #5 CapHot: G term ignored in the Learn turn step, heat still counts
+            Check(!LearnGuards.CapHot(.5, 2.3, 2.5, true) && LearnGuards.CapHot(.5, 2.3, 2.5, false) && LearnGuards.CapHot(.9, 1, 2.5, true), "#5: CapHot ignores G during Learn turns, keeps heat");
+        }
+        {   // #17 rails warp notice once per learn
+            bool said = false; bool a = LearnGuards.RailsWarpNotice(true, true, 2, ref said), b = LearnGuards.RailsWarpNotice(true, true, 3, ref said), c = LearnGuards.RailsWarpNotice(true, false, 2, ref said);
+            bool d = LearnGuards.RailsWarpNotice(false, true, 2, ref said), e = LearnGuards.RailsWarpNotice(true, true, 2, ref said);
+            Check(a && !b && !c && !d && e && !LearnGuards.RailsWarpNotice(true, true, 0, ref said), "#17: one notice per Learn while on rails warp; physics warp silent");
+        }
+        {   // #3: step 7 starts fresh (manual StartTest(7) and the rates -> turnprep entry)
+            var lf = new LearnFlight(null, null, true); var q = In(0, 5000); lf.Step(q); q.T = 1; lf.Step(q);
+            lf.P.Turns.Add(new double[] { 10, 1, 1, 0, .1, 20, .5, 100, 1000, 2, 1, 100 }); lf.P.Envelope.Add(new double[] { 100, 10, 1, 1, 1000, 2, 20 });
+            lf.Request(7); q.T = 2; lf.Step(q);
+            Check(lf.Phase == "turnprep" && lf.P.Turns.Count == 0 && lf.P.Envelope.Count == 0, "#3: StartTest(7) clears Turns / Envelope (" + lf.Phase + ")");
+            var la = new LearnFlight(); la.Step(T7(0, 0, 1)); la.P.Turns.Add(new double[] { 10, 1, 1, 0, .1, 20, .5, 100, 1000, 2, 1, 100 }); la.P.Envelope.Add(new double[] { 100, 10, 1, 1, 1000, 2, 20 });
+            la.Phase = "rates"; la.Step(T7(11, 0, 1)); la.Step(T7(11.1, 0, 1));
+            Check(la.Phase == "turnprep" && la.P.Turns.Count == 0 && la.P.Envelope.Count == 0, "#3: rates -> turnprep entry clears Turns / Envelope");
+        }
+        {   // #2: nose error at the FIRST bank (no earlier success) does not invalidate the step; bank completes on altitude/time
+            var lf = InTurn(); double t = 0;
+            for (int k = 0; k < 400 && lf.Phase == "turn" && lf.P.Turns.Count == 0; k++) { t += .1; double b = double.IsNaN(lf.Bank) ? 0 : lf.Bank; var q = T7(t, b, 1.02); q.Pitch = -12; lf.Step(q); }
+            Check(!lf.Redo.Contains(7) && lf.P.Turns.Count == 1 && !lf.Status.Contains("invalid"), "#2: first-bank nose error alone does not wipe step 7 (" + lf.Status + ")");
+            // nose error during roll-in (bank not reached) is ignored
+            var lr = InTurn(); t = 0; for (int k = 0; k < 150; k++) { t += .1; var q = T7(t, 0, 1); q.Pitch = -12; lr.Step(q); }
+            Check(!lr.Redo.Contains(7) && lr.P.Envelope.Count == 0 && lr.Phase == "turn", "#2: nose error before reachAt is not counted");
+        }
+        {   // #4: bank never reached in 20 s -> pass ends, no half-rolled turn row averaged
+            var lf = InTurn(); double t = 0; for (int k = 0; k < 260 && lf.Phase == "turn"; k++) { t += .1; lf.Step(T7(t, 3, 1)); }
+            Check(lf.Phase == "turnprep" && lf.P.Turns.Count == 0 && lf.Status.Contains("not reached"), "#4: bank not reached in 20 s ends the pass without sampling (" + lf.Phase + ", " + lf.Status + ")");
+        }
+        {   // #6: envelope speed = measured mean, not the commanded pass speed
+            var lf = InTurn(); double t = 0;
+            for (int k = 0; k < 2000 && lf.Phase == "turn"; k++) { t += .1; double b = double.IsNaN(lf.Bank) ? 0 : lf.Bank; lf.Step(T7(t, b, b >= 20 ? 2.2 : 1.02, 110)); }
+            Check(lf.P.Envelope.Count == 1 && Math.Abs(lf.P.Envelope[0][0] - 110) < .5 && lf.P.Turns[0][7] != 110, "#6: envelope tagged at measured 110 m/s, not pass target " + (lf.P.Turns.Count > 0 ? lf.P.Turns[0][7].ToString("0") : "-"));
+        }
+        {   // #7 / #8 labels
+            var lf = InTurn(); lf.Phase = "turnprep"; lf.Step(T7(1, 0, 1)); string cl = string.Join("\n", lf.Checklist());
+            Check(LearnFlight.StepNames[6] == "Max safe turn / envelope", "#7: step 7 label");
+            Check(!cl.Contains("pass 2: slowing") && cl.Contains("cruise settle"), "#8: turnprep progress names the pass (" + cl.Replace("\n", " | ") + ")");
+        }
+        {   // #11: limThr cleared when the map resumes after sinkclimb
+            var lf = new LearnFlight(); var q = S9(0, 5000, -12); lf.Step(q); lf.Phase = "sinkprep"; q.T = .1; lf.Step(q); q.T = .2; lf.Step(q);
+            double t = .2; for (int s = 0; s < 40 && lf.Phase == "sinkdown"; s++) { t += .1; q.T = t; lf.Step(q); }
+            q.Alt = 4050; q.Vs = -25; for (int s = 0; s < 100; s++) { t += .1; q.T = t; lf.Step(q); }   // deep sink near 4 km winds limThr up
+            double wound = lf.Throttle; q.Alt = 3990; t += .1; q.T = t; lf.Step(q); bool climb = lf.Phase == "sinkclimb";
+            q.Alt = 4950; q.Vs = -3; t += .1; q.T = t; lf.Step(q); t += .1; q.T = t; lf.Step(q);
+            Check(climb && lf.Phase == "sinkmap" && wound > .2 && lf.Throttle < .1, "#11: post-climb map starts without the old limThr floor (" + wound.ToString("0.00") + " -> " + lf.Throttle.ToString("0.00") + ")");
+        }
+        {   // #12: one speed factor (1.25) for prep exit and the map
+            Check(LearnFlight.SinkSpeedFactor == 1.25, "#12: SinkSpeedFactor 1.25");
+            var a = new LearnFlight(); var q = S9(0, 5000, 0, 83); a.Step(q); a.Phase = "sinkprep"; q.T = .1; a.Step(q); bool stay = a.Phase == "sinkprep";
+            var b = new LearnFlight(); var r = S9(0, 5000, 0, 81); b.Step(r); b.Phase = "sinkprep"; r.T = .1; b.Step(r);
+            Check(stay && b.Phase == "sinkdown", "#12: prep exits at ~1.25x stall (81 yes, 83 = 1.3x no)");
+        }
+        {   // #13: lag recorded only when measured in THAT step
+            var lf = new LearnFlight(); var q = S9(0, 5000, -12); lf.Step(q); lf.Phase = "sinkprep"; q.T = .1; lf.Step(q); q.T = .2; lf.Step(q);
+            double t = .2; for (int s = 0; s < 40 && lf.Phase == "sinkdown"; s++) { t += .1; q.T = t; lf.Step(q); }
+            q.Vs = -8.1; for (int s = 0; s < 150; s++) { t += .1; q.T = t; lf.Step(q); }
+            int lag1 = lf.P.Curves.ThrottleLag.Points.Count, rows1 = lf.P.Sink.Count;
+            q.Vs = -7.95; for (int s = 0; s < 80 && lf.P.Sink.Count == rows1; s++) { t += .1; q.T = t; lf.Step(q); }
+            Check(rows1 == 1 && lf.P.Sink.Count == 2 && lf.P.Sink[1][2] == LearnFlight.RampWait && lf.P.Curves.ThrottleLag.Points.Count == lag1,
+                "#13: unmeasured step stores RampWait in the table and no ThrottleLag point (rows " + lf.P.Sink.Count + ", lag pts " + lag1 + "->" + lf.P.Curves.ThrottleLag.Points.Count + ")");
+        }
+        {   // #14 B: climb-back G uses the spike threshold; mapping keeps 0.9x
+            var a = new LearnFlight(); var q = S9(0, 4500, 5); q.GLimit = 2.5; a.Step(q); a.Phase = "sinkclimb"; q.T = .1; q.G = 2.3; a.Step(q);
+            var b = new LearnFlight(); var r = S9(0, 4000, 5); r.GLimit = 2.5; b.Step(r); b.Phase = "sinkprep"; r.T = .1; r.G = 2.3; b.Step(r);
+            var c = new LearnFlight(); var u = S9(0, 4500, -5); u.GLimit = 2.5; c.Step(u); c.Phase = "sinkmap"; u.T = .1; u.G = 2.3; c.Step(u);
+            var d = new LearnFlight(); var w = S9(0, 4500, 5); w.GLimit = 2.5; d.Step(w); d.Phase = "sinkclimb"; w.T = .1; w.G = 2.6; d.Step(w);
+            Check(!a.Aborted && !b.Aborted && c.Aborted && d.Aborted, "#14: 0.92x g on sink climb-back no abort; map still aborts at 0.9x; real spike aborts");
+        }
+    }
+
     static void Audit()
     {
         // 1) G between 0.8x and 0.9x+ in a turn: the turn stop saves passBest, no global abort

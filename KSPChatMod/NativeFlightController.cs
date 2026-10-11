@@ -393,6 +393,8 @@ namespace KSPChatBridge
                 var noticed = new List<string>(recovery.Noticed); noticed.AddRange(reversers.Noticed);
                 if (Active && flying && TimeWarp.WarpMode == TimeWarp.Modes.LOW && vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
                 { int capI = PilotPolicy.WarpIndexCap(true, TimeWarp.CurrentRateIndex, TimeWarp.fetch != null ? TimeWarp.fetch.physicsWarpRates : null); if (capI < TimeWarp.CurrentRateIndex) { TimeWarp.SetRate(capI, true); ChatLog.Write("ap", "physics warp capped at 3x in atmosphere"); } }
+                if (LearnGuards.RailsWarpNotice(learn != null && !learn.Done, TimeWarp.WarpMode == TimeWarp.Modes.HIGH, TimeWarp.CurrentRateIndex, ref learnWarpSaid))
+                {   ChatWindow.Notice("LEARN: rails warp is on - test timers run on game time, so dwells and throttle steps are skipped. Use physics warp (or none) while Learn runs."); ChatLog.Write("learn", "rails warp during learn (notice shown)"); }
                 if (Active && flying) GearWatch(now); else { gearGate.Reset(); if (!Active) gearSaid = null; }
                 foreach (string what in noticed)
                 {
@@ -421,7 +423,7 @@ namespace KSPChatBridge
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
         Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000, ferryTod, ferrySink = 10; bool ferryDescending; float ferryNext, capNext;
-        internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot;
+        internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot; bool learnWarpSaid;
         /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
         double ApproachStall0()
         {
@@ -452,7 +454,7 @@ namespace KSPChatBridge
             bool known = profile != null && !double.IsNaN(profile.Perf.MaxLevel);
             CapPlane = PilotPolicy.PlaneCap(known ? profile.Perf.MaxLevel : double.NaN, vessel.totalMass, CraftClass.Gentle(CraftCls)); CapSource = known ? "TEST" : "EST";
             if (profile != null && profile.Envelope.Count > 0) { var pr = profile; ApproachProfile.SafeBank = v => pr.SafeBankAt(v); ApproachProfile.RollIn = pr.RollIn; } else { ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; }
-            CapHot = heat > .85 || vessel.geeForce > .9 * ApproachProfile.StructG;
+            CapHot = LearnGuards.CapHot(heat, vessel.geeForce, ApproachProfile.StructG, learn != null && !learn.Done && learn.TurnPhase);
             PilotPolicy.CapSpeed = PilotPolicy.EffectiveCap(CapPlane, holdSpeed ? speed : double.NaN, CapHot);
         }
         double CpMax { get { return Math.Min(climbPitchMax, PilotPolicy.PitchEnvelope(CraftClass.Gentle(CraftCls))); } }   // heavy: 15 deg max climb pitch
@@ -678,8 +680,9 @@ namespace KSPChatBridge
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff") bank = PilotPolicy.SafeBank(bank, vessel.indicatedAirSpeed, PilotPolicy.SaneStall(stall, StallEstimate()), decel);
                 bool heavyFloor = !vessel.LandedOrSplashed && (mode == "hold" || (mode == "landing" && runway != null && runway.Phase == "entry")) && CraftClass.FloorRecover(CraftCls, vessel.radarAltitude, vessel.verticalSpeed);
                 if (heavyFloor) { bank = 0; bankCmd = CraftClass.RollStep(CraftCls, bankCmd, 0, dt); targetVs = Math.Max(targetVs, 8); if (Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "heavy floor recovery: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0")); } }   // heavy: wings level + climb early   // no tight turns while slow / bleeding speed
-                bool wasLowEnergy = lowEnergy;
-                lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(lowEnergy, vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude);
+                bool wasLowEnergy = lowEnergy; bool learnTurnLe = learn != null && !learn.Done && learn.TurnPhase, learnSinkLe = learn != null && !learn.Done && learn.SinkPhase;
+                lowEnergy = !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout" || runway.Distance < ApproachChart.ShortFix)) && PilotPolicy.LowEnergy(lowEnergy, vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude)
+                    && !learnSinkLe;   // sink map flies 1.25x stall by pitch and owns the throttle; its own 1.15x stop is the guard
                 if (lowEnergy && !wasLowEnergy) ChatLog.Write("throttle", "low-energy override ACTIVATED (" + mode + "): " + PilotPolicy.LowEnergyReason(vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude) + " -> power 90%+ at the emergency rate, wings within 15 deg, climb");
                 else if (!lowEnergy && wasLowEnergy) ChatLog.Write("throttle", "low-energy override cleared: spd=" + vessel.srfSpeed.ToString("0") + " (1.3 Vs " + PilotPolicy.MinSafeSpeed(stall).ToString("0") + ") vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0"));
                 if (!vessel.LandedOrSplashed && Time.realtimeSinceStartup >= attTraceNext)
@@ -687,10 +690,11 @@ namespace KSPChatBridge
                     attTraceNext = Time.realtimeSinceStartup + 5;
                     ChatLog.Write("att", mode + " nose pitch " + pitch.ToString("0.0") + " fpa " + PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed).ToString("0.0") + " roll " + Roll().ToString("0.0") + " hdg " + FlightGlobals.ship_heading.ToString("0.0") + " spd " + vessel.srfSpeed.ToString("0.0") + " vs " + vessel.verticalSpeed.ToString("0.0"));
                 }
-                if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"))) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(stall));
+                if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout")) && !learnSinkLe) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(stall));
                 if (lowEnergy)
                 {   // hard minimum power + climb; airbrakes in
-                    bank = FlightPolicy.Clamp(bank, -15, 15); if (vessel.radarAltitude < 300) targetVs = Math.Max(targetVs, 4);
+                    if (!learnTurnLe) bank = FlightPolicy.Clamp(bank, -15, 15);   // Learn turn ladder commands 40-70 deg on purpose
+                    if (vessel.radarAltitude < 300) targetVs = Math.Max(targetVs, 4);
                     if (vessel.ActionGroups[KSPActionGroup.Brakes] && AirbrakesByAutopilot) { SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; }
                     if (Time.realtimeSinceStartup >= lowTraceNext) { lowTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "low energy: spd=" + vessel.srfSpeed.ToString("0") + " min=" + PilotPolicy.MinSafeSpeed(stall).ToString("0") + " stall=" + stall.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0") + " -> power 90%+, climb"); }
                 }

@@ -696,6 +696,20 @@ namespace KSPChatBridge
 
     /// <summary>Oct 11: turn / attitude rate measurement. Heading rate = wrapTo180(dHeading)/dt (359 -> 1 is +2 deg), course rate from the
     /// surface velocity vector, roll rate and pitch rate from the attitude, each lightly smoothed (first-order, Tau s).</summary>
+    internal static class LearnGuards
+    {
+        /// <summary>Speed-cap "hot": heat > 85%, or G over 90% of the structure limit - except during the Learn turn step, which
+        /// deliberately loads toward its own 80% TurnStop while the speed PI holds the pass speed (REPORT 7.9 #5).</summary>
+        internal static bool CapHot(double heat, double g, double structG, bool learnTurn) { return heat > .85 || (!learnTurn && g > .9 * structG); }
+        /// <summary>One-time notice when rails (high) warp runs during an unfinished Learn: dwell timers are UT-based (REPORT 7.9 #17).</summary>
+        internal static bool RailsWarpNotice(bool learnActive, bool railsMode, int rateIndex, ref bool said)
+        {
+            if (!learnActive) { said = false; return false; }
+            if (said || !railsMode || rateIndex <= 0) return false;
+            said = true; return true;
+        }
+    }
+
     internal sealed class RateMeter
     {
         internal const double Tau = .5, MaxGap = 2;
@@ -710,7 +724,7 @@ namespace KSPChatBridge
         {
             if (double.IsNaN(pt) || t <= pt || t - pt > MaxGap)
             {
-                if (!double.IsNaN(pt) && t - pt > MaxGap) HeadingRate = CourseRate = PitchRate = RollRate = 0;
+                // gap (hitch / warp): hold the last rates and re-seed; zeros would put bogus 0 deg/s into turn averages
                 if (double.IsNaN(pt) || t > pt) { pt = t; ph = heading; pc = course; pp = pitch; pr = roll; }
                 return;
             }
