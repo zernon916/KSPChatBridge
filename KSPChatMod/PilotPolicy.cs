@@ -601,6 +601,12 @@ namespace KSPChatBridge
         }
         /// <summary>Airborne near-stall power slam: under 1.15x the (sane) stall, and never above 1.5x the estimated stall
         /// (Luke 14:18 log: fired every ~28 s at 280-306 m/s with no learned stall). Bad IAS (NaN/0) falls back to surface speed.</summary>
+        /// <summary>Speed the stall emergency judges. LEARN targets, stops and stall numbers are all surface speed (srfSpeed), so while a Learn test flies (not its takeoff/stall phases) the emergency uses srfSpeed too; at altitude IAS sits far below srfSpeed and a TAS speed target read as "below 1.15x stall" pinned 100% throttle in every Learn phase (live 17:53).</summary>
+        internal static double EmergencySpeed(bool learnActive, string learnPhase, double ias, double srf)
+        {
+            bool learnOwns = learnActive && learnPhase != null && learnPhase != "takeoff" && learnPhase != "start" && learnPhase != "stall" && learnPhase != "stallrec";
+            return learnOwns || double.IsNaN(ias) || ias <= 0 ? srf : ias;
+        }
         internal static bool StallEmergency(double ias, double srf, double stall, double estimate)
         {
             double v = double.IsNaN(ias) || double.IsInfinity(ias) || ias <= 0 ? srf : ias;

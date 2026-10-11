@@ -434,7 +434,7 @@ namespace KSPChatBridge
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
         Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000, ferryTod, ferrySink = 10; bool ferryDescending; float ferryNext, capNext;
-        internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot; bool learnWarpSaid;
+        internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot; bool learnWarpSaid; float stallEmTraceNext;
         /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
         double ApproachStall0()
         {
@@ -782,7 +782,7 @@ namespace KSPChatBridge
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
-                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (PilotPolicy.StallEmergency(vessel.indicatedAirSpeed, vessel.srfSpeed, stall, StallEstimate())) { throttle = 1; throttleKind = "emergency"; throttleWhy = "below 1.15x stall"; }   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
+                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (PilotPolicy.StallEmergency(PilotPolicy.EmergencySpeed(learn != null && !learn.Done, learn != null ? learn.Phase : null, vessel.indicatedAirSpeed, vessel.srfSpeed), vessel.srfSpeed, stall, StallEstimate())) { if (Time.realtimeSinceStartup >= stallEmTraceNext) { stallEmTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("throttle", "stall emergency: ias=" + vessel.indicatedAirSpeed.ToString("0") + " srf=" + vessel.srfSpeed.ToString("0") + " stall=" + stall.ToString("0") + " est=" + StallEstimate().ToString("0") + (learn != null ? " learn=" + learn.Phase : "")); }  throttle = 1; throttleKind = "emergency"; throttleWhy = "below 1.15x stall"; }   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
             FerryTick(); FlapsTick();
             LearnApply(c);

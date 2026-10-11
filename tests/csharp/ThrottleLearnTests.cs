@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -153,6 +153,36 @@ internal static class ThrottleLearnTests
     // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
     static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
     static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    // live 17:53 (Aeris 3A, 8.6 km): every Learn slowdown sat at 100% - the stall emergency read the TAS speed targets on IAS
+    static double PipeThrottle(string phase, bool fixedPath, out LearnFlight lf, double seconds = 40)
+    {
+        lf = new LearnFlight(); var q = In(0, 8600); q.Speed = 336; q.StallGuess = 120; q.Throttle = 1; lf.Step(q); lf.Phase = phase;
+        var sh = new SpeedHold(); var gt = new ThrottleGate(); gt.Step(1, .1); double v = 336, thr = 1;
+        for (double t = .1; t <= seconds; t += .1)
+        {
+            q.T = t; q.Speed = v; q.Throttle = thr; lf.Step(q);
+            double want = !double.IsNaN(lf.SpeedTarget) ? sh.Step(lf.SpeedTarget, v, .1, thr) : double.IsNaN(lf.Throttle) ? thr : lf.Throttle; string kind = "pi";
+            double ias = .3 * v, judged = fixedPath ? PilotPolicy.EmergencySpeed(true, lf.Phase, ias, v) : ias;
+            if (PilotPolicy.StallEmergency(judged, v, 120, 120)) { want = 1; kind = "emergency"; }
+            thr = gt.Step(want, .1, kind); v += (6 * thr - .00004 * v * v) * .1;
+        }
+        return thr;
+    }
+    static void LearnThrottleStuck()
+    {
+        Check(PilotPolicy.EmergencySpeed(true, "ratesprep", 130, 336) == 336 && PilotPolicy.EmergencySpeed(false, null, 130, 336) == 130 && PilotPolicy.EmergencySpeed(true, "stall", 130, 336) == 130, "emergency speed: srf during Learn tests, IAS otherwise / in the stall test");
+        LearnFlight lf; double before = PipeThrottle("ratesprep", false, out lf);
+        Check(before > .99, "repro: ratesprep at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
+        foreach (var ph in new[] { "ratesprep", "turnprep", "wait", "sinkprep" })
+        {
+            double thr = PipeThrottle(ph, true, out lf);
+            Check(thr < .6, "Learn " + ph + " (speed target / learn throttle) can reduce throttle at altitude: " + thr.ToString("0.00") + " after 40 s");
+        }
+        // ratesprep never reaching the target -> moves on after 90 s with a notice
+        var lr = new LearnFlight(); var r = In(0, 5000); r.Speed = 336; r.StallGuess = 120; lr.Step(r); lr.Phase = "ratesprep";
+        for (double t = .5; t < 95 && lr.Phase == "ratesprep"; t += .5) { r.T = t; lr.Step(r); }
+        Check(lr.Phase == "rates" && lr.Status.Contains("Could not slow"), "ratesprep times out at 90 s and moves on with a notice (" + lr.Phase + ": " + lr.Status + ")");
+    }
     // profile fingerprint: name stays the key, print is metadata
     static CraftFingerprint Fp(double dry, double lift, int parts, string root = "mk1pod") { return new CraftFingerprint { DryMass = dry, Lift = lift, Parts = parts, Engines = 1, Root = root, Intake = true }; }
     static void Fingerprint()

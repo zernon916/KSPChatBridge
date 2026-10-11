@@ -371,7 +371,7 @@ namespace KSPChatBridge
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
         double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
-        internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 180;
+        internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 90;
         /// <summary>Step 6 test speed: learned cruise or 2x stall (the lower), never under 1.6x stall.</summary>
         internal double RatesSpeed(double stall)
         {
@@ -689,7 +689,7 @@ namespace KSPChatBridge
                         if (double.IsNaN(ratesSpeed)) ratesSpeed = RatesSpeed(i.StallGuess);
                         SpeedTarget = ratesSpeed; Throttle = i.Speed > ratesSpeed + 10 ? 0 : .6; Pitch = Level(i); Bank = 0;
                         if (Math.Abs(i.Speed - ratesSpeed) < 10) { if (double.IsNaN(ratesSteady)) ratesSteady = i.T; } else ratesSteady = double.NaN;
-                        if ((!double.IsNaN(ratesSteady) && i.T - ratesSteady >= 3) || dt > RatesPrepTimeout) { ratesElev = 0; ratesCut = false; Go("rates", i, "Roll and pitch rate checks at " + i.Speed.ToString("0") + " m/s: full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); }
+                        if ((!double.IsNaN(ratesSteady) && i.T - ratesSteady >= 3) || dt > RatesPrepTimeout) { bool late = dt > RatesPrepTimeout; ratesElev = 0; ratesCut = false; Go("rates", i, (late ? "Could not slow to " + ratesSpeed.ToString("0") + " m/s in " + RatesPrepTimeout.ToString("0") + " s - running the rate checks at " + i.Speed.ToString("0") + " m/s instead. " : "") + "Roll and pitch rate checks at " + i.Speed.ToString("0") + " m/s: full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); }
                         return;
                     }
                 case "rates":
