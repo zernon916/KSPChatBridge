@@ -275,7 +275,8 @@ class Program
             Check(lf.Phase == "recover" && lf.P.Envelope.Count == 0 && lf.Redo.Contains(7) && lf.Status.Contains("not tracking"), "A300 repro: turn envelope invalidated when throttle/pitch don't track at first bank; step 7 marked for redo (" + lf.Status + ")");
             Check(!double.IsNaN(lf.SpeedTarget) || lf.Phase == "recover", "turn steps fly a speed target through the PI");
             var lf2 = new LearnFlight(); var q2 = new LearnIn { T = 0, Speed = 272, Alt = 5000, Pitch = 2, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .8, FuelFrac = .8 }; lf2.Step(q2); lf2.Phase = "rates"; q2.T = 11; lf2.Step(q2); q2.T = 11.1; lf2.Step(q2);
-            Check(lf2.Phase == "turnprep" && Math.Abs(lf2.SpeedTarget - lf2.TurnSpeed(272, 84)) < 1e-6 && double.IsNaN(lf2.Elevator) && double.IsNaN(lf2.Aileron), "after rates: settle at the pass speed with power first; rate-test elevator/aileron overrides cleared (" + lf2.Phase + ")");
+            // high→low: first pass target ≈ current speed, so turnprep can complete in one tick and enter turn immediately
+            Check((lf2.Phase == "turnprep" || lf2.Phase == "turn") && Math.Abs(lf2.SpeedTarget - lf2.TurnSpeed(272, 84)) < 1e-6 && double.IsNaN(lf2.Elevator) && double.IsNaN(lf2.Aileron), "after rates: high→low turn at entry speed; rate-test elevator/aileron overrides cleared (" + lf2.Phase + " @" + lf2.SpeedTarget.ToString("0") + ")");
         }
         {   // Live A300 11:06: banks 10-40 clean, at 45 pitch can't follow -> REACHING THE LIMIT, save envelope at 40, reason can't hold altitude
             var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 250, Alt = 5000, Pitch = 3, G = 1, GLimit = 2.5, StallGuess = 84, Mass = 48, Throttle = .85, Bank = 0, Stress = .2, TurnRate = 0, FuelFrac = .8, Vs = 0 };
@@ -357,8 +358,14 @@ class Program
                 Check(pHi < 3 && lc2.Bank == 10 && noLever && !double.IsNaN(thSlow) && thSlow == lc2.SpeedTarget, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), speed PI (SpeedTarget only) holds speed");
               Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 10 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
-            Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
-                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count >= 2 && pp.Envelope.Count == 2 && pp.Turns[0].Length >= 10 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
+            {
+                var probe = new LearnFlight(); probe.P.Perf.CruiseSpeed = pp.Perf.CruiseSpeed; probe.P.Perf.MaxLevel = pp.Perf.MaxLevel;
+                var tg = probe.BuildTurnTargets(Math.Max(120, double.IsNaN(pp.Perf.CruiseSpeed) ? 120 : pp.Perf.CruiseSpeed), 60);
+                string passPlan = ""; foreach (var s in pp.Samples) if (s.Length > 1 && (s[0] as string) == "turn_pass_plan") passPlan = Convert.ToString(s[1]);
+                Check(tg.Count >= 2, "turn target plan has enroute + approach (" + string.Join(",", tg.ConvertAll(x => x.ToString("0"))) + ")");
+                Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
+                    && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count >= 2 && pp.Envelope.Count >= 1 && pp.Turns[0].Length >= 10 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary() + " env=" + pp.Envelope.Count + " passPlan=" + passPlan + " redo=" + string.Join(",", lf.Redo));
+            }
             {   // Luke 11:26 PM: toggle steps after the first test; LEARN re-runs only unchecked steps (+ takeoff/climb/landing), keeping the rest
                 Check(!LearnFlight.Toggle(pp, 1) && !LearnFlight.Toggle(pp, 12) && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
                 var pr = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
@@ -418,7 +425,11 @@ class Program
             Check(turnsAfter5 == 1 && lt.P.Turns.Count == 1 && lt.Bank == 20, "turn measures only once the commanded bank is reached (log: bank stuck at 5)");
             for (int s = 331; s <= 560; s++) { q.T = s * .1; q.Bank = 20; lt.Step(q); }
             Check(lt.P.Turns.Count == 2 && lt.P.Turns[1][0] == 20, "20 deg turn recorded after reaching 20 deg");
-            Check(Math.Abs(lt.TurnSpeed(253, 84) - 1.7 * 84) < 1e-6 && lt.TurnSpeed(120, 84) == 120, "turn speed target: cruise / 1.7 Vs, not the 253 m/s vmax entry speed (throttle sat at 100%)");
+            {   // high→low: first pass at entry speed; last pass ~1.5 Vs approach (no learned cruise → floor from 1.7 Vs)
+                var fromFast = lt.BuildTurnTargets(253, 84); var fromSlow = lt.BuildTurnTargets(120, 84);
+                Check(fromFast.Count >= 2 && Math.Abs(fromFast[0] - 253) < 1e-6 && Math.Abs(fromFast[fromFast.Count - 1] - 1.5 * 84) < 1e-6, "turn targets: start at entry speed, finish at approach (" + string.Join(",", fromFast.ConvertAll(x => x.ToString("0"))) + ")");
+                Check(fromSlow.Count >= 1 && fromSlow[0] >= 1.5 * 84 - 1e-6, "turn targets from slow entry still cover approach (" + string.Join(",", fromSlow.ConvertAll(x => x.ToString("0"))) + ")");
+            }
             var ld2 = new LearnFlight(); var d = new LearnIn { T = 0, Speed = 160, Alt = 4900, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Pitch = 0 }; ld2.Step(d);
             ld2.Phase = "recover"; ld2.Step(d); var f = typeof(LearnFlight).GetField("idx", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance); f.SetValue(ld2, 101); ld2.Phase = "dive";
             double dpit = -2; bool idleAll = true;

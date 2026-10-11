@@ -301,7 +301,7 @@ namespace KSPChatBridge
                 case 4: cruiseFuel0 = i.FuelFrac; Go("cruise", i, n + "level cruise 60 s at the economy setting."); break;
                 case 5: vmaxV = i.Speed; vmaxT = i.T; Go("vmax", i, n + "full power, level."); break;
                 case 6: ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, n + "slowing to " + ratesSpeed.ToString("0") + " m/s first."); break;
-                case 7: idx = 0; turnPass = 0; passBest = null; P.Turns.Clear(); P.Envelope.Clear(); passSpeed = TurnSpeed(i.Speed, i.StallGuess); Go("turnprep", i, n + "settling level at " + passSpeed.ToString("0") + " m/s before banking."); break;
+                case 7: BeginTurnEnvelope(i, n); break;
                 case 8: idx = 100; Go("dive", i, n + "idle, flight path " + DivePitch[0] + " deg down."); break;
                 case 9: case 91: if (code == 91) P.SinkFlaps.Clear(); else P.Sink.Clear(); sinkStart = double.NaN; limThr = 0; Go("sinkprep", i, n + "back to 5 km, slow to " + SinkSpeedFactor + "x stall."); break;
                 default: Go("stallprep", i, n + "level at 4 km first."); break;
@@ -388,23 +388,82 @@ namespace KSPChatBridge
         }
         /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
         bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = crSum = stMax = 0; n = 0; thrSum = 0; spdSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
-        double TurnPrepSpeed(LearnIn i) { return turnPass == 0 && !double.IsNaN(passSpeed) ? passSpeed : 1.5 * i.StallGuess; }
-        /// <summary>End of a turn pass: save the last good bank to the envelope at the MEASURED mean speed (row[11]), then next pass / recover.</summary>
+        /// <summary>High→low turn envelope: at most MaxTurnPasses (hot → step down to ~0.8× cruise → final ~1.5× stall approach pass).</summary>
+        internal const int MaxTurnPasses = 5;
+        internal const double TurnCruiseFloor = .8, TurnStepMs = 20, TurnStepFrac = .10;
+        double TurnPrepSpeed(LearnIn i) { return !double.IsNaN(passSpeed) ? passSpeed : ApproachTurnSpeed(i.StallGuess); }
+        double ApproachTurnSpeed(double stall) { double s = double.IsNaN(stall) || stall <= 0 ? 60 : stall; return 1.5 * s; }
+        double CruiseRef(double stall)
+        {
+            double s = double.IsNaN(stall) || stall <= 0 ? 60 : stall;
+            return !double.IsNaN(P.Perf.CruiseSpeed) && P.Perf.CruiseSpeed > 0 ? P.Perf.CruiseSpeed : Math.Max(1.7 * s, ApproachTurnSpeed(s));
+        }
+        /// <summary>Build pass targets: start at current (soft-capped), step down to 0.8× cruise, always finish near approach speed.</summary>
+        internal List<double> BuildTurnTargets(double vNow, double stall)
+        {
+            double approach = ApproachTurnSpeed(stall), cruise = CruiseRef(stall);
+            double floor = Math.Max(TurnCruiseFloor * cruise, approach + 15);
+            double hot = vNow;
+            // Soft-cap at Vmax only when it still leaves room above the enroute floor (else MaxLevel≈cruise collapses the ladder).
+            if (!double.IsNaN(P.Perf.MaxLevel) && P.Perf.MaxLevel > floor + 25) hot = Math.Min(hot, .95 * P.Perf.MaxLevel);
+            if (double.IsNaN(hot) || hot < approach) hot = Math.Max(vNow, approach);
+            var o = new List<double>();
+            double step = Math.Max(TurnStepMs, TurnStepFrac * cruise);
+            if (hot > floor + 5)
+            {
+                int enroute = Math.Min(MaxTurnPasses - 1, Math.Max(2, 1 + (int)Math.Ceiling((hot - floor) / step)));
+                for (int k = 0; k < enroute; k++)
+                    o.Add(hot + (floor - hot) * k / Math.Max(1, enroute - 1));
+            }
+            else if (hot > approach + 10) o.Add(hot);   // between approach and floor: one enroute point, then approach
+            else o.Add(Math.Max(hot, approach));
+            // Always end with an approach-speed pass when the last enroute point is clearly faster
+            if (o[o.Count - 1] > approach + 8) o.Add(approach);
+            while (o.Count > MaxTurnPasses) o.RemoveAt(1);   // drop middles, keep first + later (incl. approach)
+            if (o.Count < 1) o.Add(approach);
+            return o;
+        }
+        void BeginTurnEnvelope(LearnIn i, string prefix)
+        {
+            idx = 0; turnPass = 0; passBest = null; P.Turns.Clear(); P.Envelope.Clear();
+            turnTargets = BuildTurnTargets(i.Speed, i.StallGuess);
+            passSpeed = turnTargets[0];
+            P.Note("turn_pass_plan", turnTargets.Count, i.Mass);
+            P.Note("turn_pass0_speed", passSpeed, i.Mass);
+            Go("turnprep", i, (prefix ?? "") + "max safe turn: high→low, pass 1/" + turnTargets.Count + " at " + passSpeed.ToString("0") + " m/s (then step down to ~" + (TurnCruiseFloor * 100).ToString("0") + "% cruise, finish at approach).");
+        }
+        string TurnPassTag()
+        {
+            int n = turnTargets != null ? turnTargets.Count : 0;
+            if (n <= 0) return "turn ";
+            bool appr = turnPass == n - 1 && !double.IsNaN(passSpeed) && passSpeed <= ApproachTurnSpeed(last.StallGuess) + 5;
+            return (appr ? "approach " : "") + "pass " + (turnPass + 1) + "/" + n + " @" + (!double.IsNaN(passSpeed) ? passSpeed.ToString("0") : "?") + " ";
+        }
+        /// <summary>End of a turn pass: save the last good bank to the envelope at the MEASURED mean speed (row[11]), then next slower pass / recover.</summary>
         void EndPass(LearnIn i, string why, string tail)
         {
             if (passBest != null) { P.Envelope.Add(new[] { passBest[11], passBest[0], passBest[1], passBest[2], passBest[8], passBest[9], i.Mass }); P.Note("safe_bank@" + Math.Round(passBest[11]), passBest[0], i.Mass); }
             string res = (passBest != null ? "max safe bank " + passBest[0] + " deg at " + passBest[11].ToString("0") + " m/s (" + passBest[1].ToString("0.0") + " g, " + passBest[2].ToString("0.0") + " deg/s, r " + (passBest[8] / 1000).ToString("0.0") + " km)" : "no safe turn found") + tail;
-            passBest = null; passSpeed = double.NaN;
-            if (turnPass == 0) { turnPass = 1; Go("turnprep", i, "Turns at cruise: " + why + "; " + res + ". Slowing to ~approach speed for the second pass."); }
-            else { turnPass = 0; Go("recover", i, "Turns at approach speed: " + why + "; " + res + ". Leveling off."); }
+            passBest = null;
+            if (turnTargets != null && turnPass + 1 < turnTargets.Count)
+            {
+                turnPass++; passSpeed = turnTargets[turnPass];
+                Go("turnprep", i, "Turns: " + why + "; " + res + ". Next pass " + (turnPass + 1) + "/" + turnTargets.Count + " @" + passSpeed.ToString("0") + " m/s.");
+            }
+            else { turnPass = 0; passSpeed = double.NaN; turnTargets = null; Go("recover", i, "Turn envelope done: " + why + "; " + res + ". Leveling off."); }
         }
         /// <summary>Turn step phases (turnprep / turn / turn recover): NFC skips the low-energy bank clamp and the G term of CapHot.</summary>
         internal bool TurnPhase { get { return Phase == "turn" || Phase == "turnprep" || (Phase == "recover" && idx < 100); } }
         /// <summary>Sink map phases: NFC skips the MinSafeSpeed hold floor and the low-energy override (the map flies 1.25x by pitch).</summary>
         internal bool SinkPhase { get { return Phase != null && Phase.StartsWith("sink"); } }
-        internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
+        /// <summary>Legacy helper: first-pass target ≈ current speed (soft-capped); prefer BuildTurnTargets for the full ladder.</summary>
+        internal double TurnSpeed(double v0, double stall)
+        {
+            var t = BuildTurnTargets(v0, stall);
+            return t.Count > 0 ? t[0] : Math.Min(v0, CruiseRef(stall));
+        }
         double tickPrevT = double.NaN, badPitch, badThr, gF = double.NaN, stF = double.NaN, spdF = double.NaN, spdTrend, prevThr = double.NaN; internal const double BadPitchDeg = 8, BadPitchS = 8, BadThrS = 5;
-        int turnPass; double passSpeed = double.NaN; double[] passBest; internal const double TurnAltLoss = 150;
+        int turnPass; double passSpeed = double.NaN; double[] passBest; List<double> turnTargets; internal const double TurnAltLoss = 150;
         double thrSum, spdSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
         /// <summary>Sink map (Luke 11:32 PM): elevator holds SinkSpeedFactor (1.25x) stall (pitch-for-speed); throttle alone sets the sink.
         /// Slow -> nose down, fast -> nose up; clamped -10..15 deg, no extra nose-up above 1.5 g, hard nose-down near 1.15x stall.</summary>
@@ -622,8 +681,8 @@ namespace KSPChatBridge
                 case "vmax": return "full power level: " + i.Speed.ToString("0") + " m/s";
                 case "ratesprep": return "slowing to " + (double.IsNaN(ratesSpeed) ? "-" : ratesSpeed.ToString("0")) + " m/s (" + i.Speed.ToString("0") + ")";
                 case "rates": return (dt < 4 ? "roll " : dt < 7 ? "level " : "pitch ") + dt.ToString("0") + "/10 s";
-                case "turnprep": return (turnPass == 0 ? "cruise" : "approach") + " settle " + TurnPrepSpeed(i).ToString("0") + " m/s (" + i.Speed.ToString("0") + ")";
-                case "turn": return (turnPass == 0 ? "cruise " : "approach ") + "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
+                case "turnprep": return TurnPassTag() + "settle " + TurnPrepSpeed(i).ToString("0") + " m/s (" + i.Speed.ToString("0") + ")";
+                case "turn": return TurnPassTag() + "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/" + TurnSeg.ToString("0") + " s, " + i.G.ToString("0.0") + " g";
                 case "recover": return "level off " + dt.ToString("0") + "/12 s";
                 case "dive": return "pitch -" + DivePitch[Math.Min(idx - 100, DivePitch.Length - 1)] + " deg, sink " + (-i.Vs).ToString("0") + " m/s";
                 case "sinkprep": return "to 5 km / " + (SinkSpeedFactor * i.StallGuess).ToString("0") + " m/s: " + (i.Alt / 1000).ToString("0.0") + " km, " + i.Speed.ToString("0") + " m/s";
@@ -715,15 +774,19 @@ namespace KSPChatBridge
                         else if (dt < 8.5) { Bank = 0; Elevator = RatesElevator(ratesElev, tick, i.G, i.GLimit, ref ratesCut); ratesElev = Elevator; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
                         else { Bank = 0; Pitch = Level(i); }
                         if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass);
-                            if (!double.IsNaN(P.Perf.RollRate)) P.Curves.RollRate.Add(P.Perf.RollRate, i.Mass, i.Speed); if (!double.IsNaN(P.Perf.PitchRate)) P.Curves.PitchRate.Add(P.Perf.PitchRate, i.Mass, i.Speed); idx = 0; turnPass = 0; passSpeed = TurnSpeed(i.Speed, i.StallGuess); passBest = null; P.Turns.Clear(); P.Envelope.Clear(); Go("turnprep", i, "Max safe turn: settling level at " + passSpeed.ToString("0") + " m/s (cruise) with power before banking."); }
+                            if (!double.IsNaN(P.Perf.RollRate)) P.Curves.RollRate.Add(P.Perf.RollRate, i.Mass, i.Speed); if (!double.IsNaN(P.Perf.PitchRate)) P.Curves.PitchRate.Add(P.Perf.PitchRate, i.Mass, i.Speed); BeginTurnEnvelope(i, "Max safe turn: "); }
                         return;
                     }
                 case "turn":
                     {
                         int b = Banks[idx]; Bank = b;
-                        // MAX SAFE TURN (Luke 10:06 AM): level turns (VS ~0), back-pressure sets the g, full power as needed to hold the pass speed;
-                        // pass 0 at cruise, pass 1 at ~approach speed (1.5 Vs). Stops at 80% structure g, stress/heat, 1.3 Vs, or altitude not held.
-                        if (double.IsNaN(passSpeed)) passSpeed = turnPass == 0 ? TurnSpeed(v0, i.StallGuess) : 1.5 * i.StallGuess;
+                        // MAX SAFE TURN: level turns; high→low speed passes (current → ~0.8× cruise → approach 1.5 Vs).
+                        // Stops each ladder at 80% structure g, stress/heat, 1.3 Vs, or altitude not held.
+                        if (double.IsNaN(passSpeed))
+                        {
+                            if (turnTargets == null || turnTargets.Count == 0) { turnTargets = BuildTurnTargets(i.Speed, i.StallGuess); turnPass = 0; }
+                            passSpeed = turnTargets[Math.Min(turnPass, turnTargets.Count - 1)];
+                        }
                         double vT = passSpeed;
                         SpeedTarget = vT;   // ONE throttle authority: the controller's speed PI (full power as needed); no learn Throttle
                         Pitch = TurnPitchCmd(i, b, a0);   // altitude hold + load-factor back-pressure for the bank
@@ -734,7 +797,7 @@ namespace KSPChatBridge
                         if (badThr > BadThrS)
                         {
                             string what = "throttle " + Math.Round(i.Throttle * 100) + "% while " + Math.Round(vT - i.Speed) + " m/s slow";
-                            passBest = null; passSpeed = double.NaN; turnPass = 0; badPitch = badThr = 0; if (!Redo.Contains(7)) Redo.Add(7);
+                            passBest = null; passSpeed = double.NaN; turnPass = 0; turnTargets = null; badPitch = badThr = 0; if (!Redo.Contains(7)) Redo.Add(7);
                             Go("recover", i, "Turn data invalid (" + what + " - controls not tracking): envelope NOT saved, step 7 marked for redo. Leveling off with power."); return;
                         }
                         if (badPitch > BadPitchS)
@@ -758,8 +821,8 @@ namespace KSPChatBridge
                             double crate = crSum / Math.Max(1, n), vMean = n > 0 ? spdSum / n : i.Speed;
                             var row = new double[] { b, gSum / Math.Max(1, n), rate, a0 - i.Alt, stMax, i.Mass, thrSum / Math.Max(1, n), vT, radius, rollIn, crate, vMean };
                             P.Turns.Add(row); P.Note("turn_throttle_" + b, row[6], i.Mass);
-                            P.Curves.TurnG.Add(row[1], i.Mass, b, vT); P.Curves.TurnRate.Add(rate, i.Mass, b, vT); P.Curves.CourseRate.Add(crate, i.Mass, b, vT);
-                            if (!double.IsNaN(radius)) P.Curves.TurnRadius.Add(radius, i.Mass, b, vT);
+                            P.Curves.TurnG.Add(row[1], i.Mass, b, vMean); P.Curves.TurnRate.Add(rate, i.Mass, b, vMean); P.Curves.CourseRate.Add(crate, i.Mass, b, vMean);   // curves keyed on MEASURED speed
+                            if (!double.IsNaN(radius)) P.Curves.TurnRadius.Add(radius, i.Mass, b, vMean);
                             bool fail = nearLimit || slow || sinking;
                             if (!fail) passBest = row;
                             idx++;
@@ -770,7 +833,7 @@ namespace KSPChatBridge
                     }
                 case "turnprep":
                     {
-                        double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, ClimbAlt); SpeedTarget = vT;   // turns fly at the 5 km test altitude   // speed PI only
+                        double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, ClimbAlt); SpeedTarget = vT;   // turns fly at the 5 km test altitude
                         if ((Math.Abs(i.Speed - vT) < Math.Max(5, .03 * vT) && Math.Abs(i.Alt - ClimbAlt) < 400) || dt > TurnPrepTimeout) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }

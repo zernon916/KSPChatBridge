@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -183,6 +183,17 @@ internal static class ThrottleLearnTests
         }
         return new[] { hi - lo, alt };
     }
+    static void HighLowTurns()
+    {
+        var lf = new LearnFlight(); lf.P.Perf.CruiseSpeed = 250; lf.P.Perf.MaxLevel = 400;
+        var t = lf.BuildTurnTargets(385, 60);
+        bool desc = true; for (int k = 1; k < t.Count; k++) desc &= t[k] < t[k - 1];
+        Check(t.Count >= 3 && t.Count <= LearnFlight.MaxTurnPasses && desc && Math.Abs(t[t.Count - 1] - 90) < 1 && t[0] <= 385, "high->low: descending, finite, ends at 1.5x stall (" + string.Join("/", t.ConvertAll(x => x.ToString("0")).ToArray()) + ")");
+        var none = new LearnFlight().BuildTurnTargets(200, double.NaN);
+        Check(none.Count >= 1 && none.TrueForAll(x => !double.IsNaN(x) && x > 0), "no learned data -> fallback targets, no NaN");
+        var capped = new LearnFlight(); capped.P.Perf.CruiseSpeed = 250; capped.P.Perf.MaxLevel = 400;
+        Check(capped.BuildTurnTargets(420, 60)[0] <= 380.1, "first pass soft-capped at 0.95x learned Vmax");
+    }
     static void PrepPorpoise()
     {
         var old = PorpoiseSim(i => FlightPolicy.Clamp(3 + (FlightPolicy.Clamp((5000 - i.Alt) * .05, -15, 15) - i.Vs) * .6, -10, 15), 5300);
@@ -307,7 +318,8 @@ internal static class ThrottleLearnTests
             Check(lf.Phase == "turnprep" && lf.P.Turns.Count == 0 && lf.P.Envelope.Count == 0, "#3: StartTest(7) clears Turns / Envelope (" + lf.Phase + ")");
             var la = new LearnFlight(); la.Step(T7(0, 0, 1)); la.P.Turns.Add(new double[] { 10, 1, 1, 0, .1, 20, .5, 100, 1000, 2, 1, 100 }); la.P.Envelope.Add(new double[] { 100, 10, 1, 1, 1000, 2, 20 });
             la.Phase = "rates"; la.Step(T7(11, 0, 1)); la.Step(T7(11.1, 0, 1));
-            Check(la.Phase == "turnprep" && la.P.Turns.Count == 0 && la.P.Envelope.Count == 0, "#3: rates -> turnprep entry clears Turns / Envelope");
+            // high→low: already at entry speed → turnprep can complete in one tick
+            Check((la.Phase == "turnprep" || la.Phase == "turn") && la.P.Turns.Count == 0 && la.P.Envelope.Count == 0, "#3: rates -> turnprep entry clears Turns / Envelope (" + la.Phase + ")");
         }
         {   // #2: nose error at the FIRST bank (no earlier success) does not invalidate the step; bank completes on altitude/time
             var lf = InTurn(); double t = 0;
@@ -322,14 +334,14 @@ internal static class ThrottleLearnTests
             Check(lf.Phase == "turnprep" && lf.P.Turns.Count == 0 && lf.Status.Contains("not reached"), "#4: bank not reached in 20 s ends the pass without sampling (" + lf.Phase + ", " + lf.Status + ")");
         }
         {   // #6: envelope speed = measured mean, not the commanded pass speed
-            var lf = InTurn(); double t = 0;
+            var lf = InTurn(); lf.Step(T7(.05, 0, 1, 150)); double t = .05;   // lock pass target from 150, then fly banks at 110
             for (int k = 0; k < 2000 && lf.Phase == "turn"; k++) { t += .1; double b = double.IsNaN(lf.Bank) ? 0 : lf.Bank; lf.Step(T7(t, b, b >= 20 ? 2.2 : 1.02, 110)); }
-            Check(lf.P.Envelope.Count == 1 && Math.Abs(lf.P.Envelope[0][0] - 110) < .5 && lf.P.Turns[0][7] != 110, "#6: envelope tagged at measured 110 m/s, not pass target " + (lf.P.Turns.Count > 0 ? lf.P.Turns[0][7].ToString("0") : "-"));
+            Check(lf.P.Envelope.Count >= 1 && Math.Abs(lf.P.Envelope[0][0] - 110) < .5 && lf.P.Turns[0][7] != 110, "#6: envelope tagged at measured 110 m/s, not pass target " + (lf.P.Turns.Count > 0 ? lf.P.Turns[0][7].ToString("0") : "-"));
         }
         {   // #7 / #8 labels
             var lf = InTurn(); lf.Phase = "turnprep"; lf.Step(T7(1, 0, 1)); string cl = string.Join("\n", lf.Checklist());
             Check(LearnFlight.StepNames[6] == "Max safe turn / envelope", "#7: step 7 label");
-            Check(!cl.Contains("pass 2: slowing") && cl.Contains("cruise settle"), "#8: turnprep progress names the pass (" + cl.Replace("\n", " | ") + ")");
+            Check(!cl.Contains("pass 2: slowing") && (cl.Contains("pass ") || cl.Contains("settle")), "#8: turnprep progress names the pass (" + cl.Replace("\n", " | ") + ")");
         }
         {   // #11: limThr cleared when the map resumes after sinkclimb
             var lf = new LearnFlight(); var q = S9(0, 5000, -12); lf.Step(q); lf.Phase = "sinkprep"; q.T = .1; lf.Step(q); q.T = .2; lf.Step(q);
@@ -378,7 +390,7 @@ internal static class ThrottleLearnTests
             var q = T7(0, 60, 2); double lvl = LearnFlight.TurnPitchCmd(q, 0, 5000), p60 = LearnFlight.TurnPitchCmd(q, 60, 5000);
             Check(Math.Abs(p60 - lvl - ApproachProfile.TurnPitch(60)) < 1e-9 && p60 > lvl + 3, "item 2: 60 deg bank adds TurnPitch back-pressure (" + lvl.ToString("0.0") + " -> " + p60.ToString("0.0") + ")");
             var lf = InTurn(); lf.Step(T7(1, 0, 1)); Check(double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "items 3/19: turn sets SpeedTarget only (no dead learn throttle)");
-            lf.Phase = "turnprep"; lf.Step(T7(2, 0, 1)); Check(double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "items 3/19: turnprep sets SpeedTarget only");
+            lf.Phase = "turnprep"; lf.Step(T7(2, 0, 1, 150)); Check(double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "items 3/19: turnprep sets SpeedTarget only (NativeLearn ignores learn Throttle when SpeedTarget is set)");
             // lever ramping 10% -> 30% at the 4%/s gate while 30 m/s slow and still decelerating: the PI is working, not a fault
             var lr = InTurn(); double t = 1, thr = .1, v = 150; lr.Step(T7(t, 0, 1, v)); double vT = lr.SpeedTarget;
             for (int k = 0; k < 60; k++) { t += .1; thr = Math.Min(.29, thr + .004); v -= .05; var qi = T7(t, 0, 1, vT - 30 + (v - 150)); qi.Throttle = thr; lr.Step(qi); }
