@@ -341,6 +341,15 @@ namespace KSPChatBridge
         }
         internal const double ApproachRange = 150000, FerryHandoff = 145000;
         internal static bool FerryNeeded(double distM) { return distM > ApproachRange; }
+        /// <summary>Two-phase landing (Luke 9:58 AM): ferry at cruise until the join area (~30 km) plus the distance to slow from cruise
+        /// to the join speed at the learned decel rate (+3 km margin); then the approach.</summary>
+        internal const double JoinArea = 30000;
+        internal static double FerryHandoffM(double vCruise, double vJoin, double decel)
+        {
+            double a = double.IsNaN(decel) || decel <= 0 ? .5 : Math.Max(.3, decel);
+            return JoinArea + Math.Max(0, vCruise * vCruise - vJoin * vJoin) / (2 * a) + 3000;
+        }
+        internal static double FerryCruise(double stall, double econ, double cap) { return Math.Min(FerryCruise(stall, econ), cap); }
         internal static double FerryCruise(double stall, double econ) { return !double.IsNaN(econ) && econ > 0 ? FlightPolicy.Clamp(econ, 1.4 * stall, 250) : FlightPolicy.Clamp(2.2 * stall, 100, 200); }
         /// <summary>Throttle after the over-cap rule: over 220 m/s low down, cut 15% (30% when 30+ over) at most once a second.</summary>
         internal static double SpeedCapThrottle(double throttle, double ias, double altitude, double sinceLastCut, out bool cut)

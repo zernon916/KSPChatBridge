@@ -362,6 +362,13 @@ class Program
             var ls2 = new LearnFlight(); ls2.P.Stall = 84; sq.FuelFrac = .45; ls2.Step(sq); ls2.Phase = "stallrec"; sq.T = 20; ls2.Step(sq); ls2.Step(sq);
             Check(ls2.Done, "flaps-full stall skipped when fuel is low");
         }
+        {   // Luke 9:58 AM: two-phase landing - FERRY at cruise to ~30 km (+ decel distance), then APPROACH
+            double h = PilotPolicy.FerryHandoffM(164, 126, 1.5);
+            Check(Math.Abs(h - (30000 + (164.0 * 164 - 126 * 126) / 3 + 3000)) < 1 && h > 30000 && h < 45000, "ferry hands off at the join area + learned decel distance (" + (h / 1000).ToString("0.0") + " km)");
+            Check(PilotPolicy.FerryHandoffM(250, 126, .3) > PilotPolicy.FerryHandoffM(250, 126, 1.5), "slow-decelerating heavies hand off earlier");
+            Check(PilotPolicy.FerryCruise(84, 164, 264) == 164 && PilotPolicy.FerryCruise(84, double.NaN, 264) == Math.Min(200, 2.2 * 84) && PilotPolicy.FerryCruise(84, 300, 264) == 250 && PilotPolicy.FerryCruise(84, 300, 220) == 220, "ferry cruise: learned econ/cruise, else 2.2x stall, within the per-plane cap (not the 100 m/s approach speed)");
+            Check(MfdNav.ApStatus("ferry", false, false).Contains("FERRY") && MfdNav.ApStatus("approach", false, false).Contains("APPROACH"), "AP page shows FERRY / APPROACH");
+        }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
             var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);

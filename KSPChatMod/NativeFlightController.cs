@@ -12,7 +12,7 @@ namespace KSPChatBridge
     {
         static NativeFlightController instance;
         internal static bool Active { get { return instance != null && instance.mode != "idle"; } }
-        internal static string ApLine { get { if (instance == null) return MfdNav.ApStatus("idle", false, false); var r = instance.runway; bool fin = instance.mode == "landing" && r != null && r.Phase == "final"; return MfdNav.ApStatus(instance.mode, fin && r.LocCoupled, fin && r.GsCoupled) + (instance.flapSet > 0 ? " FLAPS " + FlapsPolicy.Name(instance.flapSet) : ""); } }
+        internal static string ApLine { get { if (instance == null) return MfdNav.ApStatus("idle", false, false); var r = instance.runway; bool fin = instance.mode == "landing" && r != null && r.Phase == "final"; return MfdNav.ApStatus(instance.pendingLand != null && instance.mode == "hold" ? "ferry" : instance.mode == "landing" ? "approach" : instance.mode, fin && r.LocCoupled, fin && r.GsCoupled) + (instance.flapSet > 0 ? " FLAPS " + FlapsPolicy.Name(instance.flapSet) : ""); } }
         internal static bool Busy { get { return Active || (instance != null && instance.plan != null && instance.plan.Running); } }
         internal static bool PlanRunning { get { return instance != null && instance.plan != null && instance.plan.Running; } }
         internal static string Phase { get { return instance == null ? "idle" : instance.mode; } }
@@ -415,7 +415,7 @@ namespace KSPChatBridge
         double Track() { return vessel.srfSpeed < 5 ? double.NaN : FlightGlobals.ship_heading; }   // nose heading ~ track (no wind in KSP)
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
-        Dictionary<string, object> pendingLand; double ferryLat, ferryLon; float ferryNext, capNext;
+        Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000; float ferryNext, capNext;
         internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot;
         /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
         double ApproachStall0()
@@ -429,7 +429,7 @@ namespace KSPChatBridge
             if (pendingLand == null || mode != "hold" || vessel == null || Time.realtimeSinceStartup < ferryNext) return;
             ferryNext = Time.realtimeSinceStartup + 2;
             double d = NavigationMath.Distance(vessel.latitude, vessel.longitude, ferryLat, ferryLon, vessel.mainBody.Radius);
-            if (d < PilotPolicy.FerryHandoff) { var args = pendingLand; pendingLand = null; ChatLog.Write("ap", "ferry: inside " + (d / 1000).ToString("0") + " km, starting the approach"); ChatWindow.Notice(Command("land_plane", args)); return; }
+            if (d < ferryHandoff) { var args = pendingLand; pendingLand = null; ChatLog.Write("ap", "phase APPROACH: " + (d / 1000).ToString("0") + " km out, slowing to the join speed"); ChatWindow.Notice(Command("land_plane", args)); return; }
             heading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, ferryLat, ferryLon);   // great circle: re-aim every 2 s
         }
         /// <summary>Per-plane low-altitude speed cap (Luke 12:00 AM): profile max level x 0.95, else mass/class; never below the commanded speed unless hot.</summary>
@@ -1096,17 +1096,20 @@ namespace KSPChatBridge
                     : !savedRunway && (island ? direction == "09" : direction == "27"))
                     { double lat = selectedRunway.Lat, lon = selectedRunway.Lon; selectedRunway.Lat = selectedRunway.EndLat; selectedRunway.Lon = selectedRunway.EndLon; selectedRunway.EndLat = lat; selectedRunway.EndLon = lon; }
                     double rwDist = NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius);
-                    if (PilotPolicy.FerryNeeded(rwDist))
-                    {   // Luke 11:57 PM: beyond 150 km fly the great-circle course at cruise; the approach starts automatically inside 150 km
-                        if (vessel.LandedOrSplashed) return "Runway is " + (rwDist / 1000).ToString("0") + " km away: take off first.";
-                        var keep = new Dictionary<string, object>(a);
-                        double econ = profile != null && !double.IsNaN(profile.EconSpeed) ? PlaneProfile.ScaleSpeed(profile.EconSpeed, profile.M0, vessel.totalMass) : double.NaN;
-                        double cruise = PilotPolicy.FerryCruise(stall, econ), falt = Math.Max(vessel.altitude, 3000), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
+                    double econ = profile != null && !double.IsNaN(profile.EconSpeed) ? PlaneProfile.ScaleSpeed(profile.EconSpeed, profile.M0, vessel.totalMass)
+                        : profile != null && !double.IsNaN(profile.Perf.CruiseSpeed) ? PlaneProfile.ScaleSpeed(profile.Perf.CruiseSpeed, profile.M0, vessel.totalMass) : double.NaN;
+                    double cruise = PilotPolicy.FerryCruise(stall, econ, PilotPolicy.CapSpeed);
+                    double fDecel = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : ApproachProfile.MassDecel(vessel.totalMass);
+                    double handoff = PilotPolicy.FerryHandoffM(cruise, ApproachProfile.Speed(stall), fDecel / Math.Sqrt(Math.Max(1, shold.K)));
+                    if (!Bool(a, "_from_ferry", false) && !vessel.LandedOrSplashed && rwDist > handoff + 2000)
+                    {   // Luke 9:58 AM: phase 1 FERRY at cruise (great circle), phase 2 APPROACH from the join area, decel started early
+                        var keep = new Dictionary<string, object>(a); keep["_from_ferry"] = true;
+                        double falt = Math.Max(vessel.altitude, 3000), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
                         string hr = Command("plane_hold", new Dictionary<string, object> { { "altitude_m", falt }, { "altitude_ref", "msl" }, { "heading", brg }, { "speed", cruise } });
                         if (mode != "hold") return hr;
-                        pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0;
-                        ChatLog.Write("ap", "ferry to runway: " + (rwDist / 1000).ToString("0") + " km, brg " + brg.ToString("000") + ", " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m");
-                        return "Runway is " + (rwDist / 1000).ToString("0") + " km away: flying the great-circle course (" + brg.ToString("000") + ") at " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m. The approach starts automatically inside 150 km.";
+                        pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0; ferryHandoff = handoff;
+                        ChatLog.Write("ap", "phase FERRY: " + (rwDist / 1000).ToString("0") + " km, approach from " + (handoff / 1000).ToString("0") + " km, brg " + brg.ToString("000") + ", " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m");
+                        return "FERRY: runway " + (rwDist / 1000).ToString("0") + " km, great-circle course " + brg.ToString("000") + " at " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m. APPROACH starts at " + (handoff / 1000).ToString("0") + " km (decel from there).";
                     }
                     double approachSpeed = Num(a, "approach_speed", 0);
                     selectedRunway.Terrain = (la, lo) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(la, lo)) - vessel.mainBody.Radius);
