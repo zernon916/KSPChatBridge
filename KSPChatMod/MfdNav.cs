@@ -73,7 +73,7 @@ namespace KSPChatBridge
                 case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
-                case "about": return new[] { "LEARN", "SCROLL UP", "SCROLL DN", null, null, null };
+                case "about": return new[] { "LEARN", "<", ">", "SCROLL UP", "SCROLL DN", null };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
@@ -147,6 +147,8 @@ namespace KSPChatBridge
         }
         /// <summary>ABOUT/LEARN page scroll (Luke 8:25 PM), shared by the outside panel and the IVA screens: line offset; follows
     /// the [>] current step when it changes, manual SCROLL keys / wheel otherwise.</summary>
+    internal static int AboutPage;
+    internal static void AboutTurn(int d, int pages) { AboutPage = ((AboutPage + d) % pages + pages) % pages; AboutOffset = 0; aboutCur = -1; }
     internal static int AboutOffset; static int aboutCur = -1;
     internal static int AboutWindow(List<string> lines, int rows)
     {

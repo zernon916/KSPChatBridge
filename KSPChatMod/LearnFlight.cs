@@ -15,6 +15,7 @@ namespace KSPChatBridge
         /// <summary>Every recorded data point with the mass at that moment (Luke 7:21 PM): key, value, mass t.</summary>
         internal readonly List<object[]> Samples = new List<object[]>();
         internal void Note(string key, double value, double massT) { if (!double.IsNaN(value)) Samples.Add(new object[] { key, Math.Round(value, 3), Math.Round(massT, 3) }); }
+        internal readonly PerfData Perf = new PerfData();
         internal readonly List<double[]> Sink = new List<double[]>();    // sink m/s (+ down), throttle 0..1, lag s (Luke 7:19 PM)
         /// <summary>Throttle for a steady sink rate (+ = down) near 1.25 Vs, nose 12 deg up; scaled by m/M0 (thrust needed ~ weight).
         /// NaN without a table.</summary>
@@ -44,7 +45,7 @@ namespace KSPChatBridge
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN });
             return new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
-                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm } };
+                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() } };
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
@@ -52,6 +53,7 @@ namespace KSPChatBridge
             p.M0 = D(d, "m0"); p.Liftoff = D(d, "liftoff"); p.Stall = D(d, "stall"); p.StallAltLoss = D(d, "stall_alt_loss"); p.ClimbAccel = D(d, "climb_accel"); p.ClimbVs = D(d, "climb_vs");
             p.Decel = D(d, "decel"); p.Accel = D(d, "accel"); p.Lag = D(d, "lag"); p.EconSpeed = D(d, "econ_speed"); p.EconThrottle = D(d, "econ_throttle"); p.FuelUsed = D(d, "fuel_used");
             object o; p.Complete = d.TryGetValue("complete", out o) && o is bool && (bool)o; p.Abort = d.TryGetValue("abort", out o) && o != null ? o.ToString() : "";             p.Date = d.TryGetValue("date", out o) && o != null ? o.ToString() : "";
+            if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
             if (d.TryGetValue("sink_table", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; try { var ci = System.Globalization.CultureInfo.InvariantCulture; p.Sink.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci), l.Count > 3 && l[3] != null ? Convert.ToDouble(l[3], ci) : double.NaN }); } catch (Exception) { } }
             return p;
         }
@@ -65,7 +67,8 @@ namespace KSPChatBridge
 
     internal struct LearnIn
     {
-        internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass;
+        internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac;
+        internal string Res;   // resources that went down since the last frame (comma list)
         internal bool Landed, PartLost;
     }
 
@@ -74,7 +77,8 @@ namespace KSPChatBridge
     internal sealed class LearnFlight
     {
         internal string Phase = "start", Status = "", Reason = "";
-        internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN;
+        internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN;
+        internal bool LandingDone; double rollM, rollPrevT = double.NaN, rollStartT = double.NaN;
         internal bool WantTakeoff, Done, Aborted;
         internal readonly PlaneProfile P = new PlaneProfile();
         internal const double ClimbAlt = 5000, StallAlt = 4000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, Seg = 20, DiveSeg = 10;
@@ -86,6 +90,20 @@ namespace KSPChatBridge
         {   // from the slow down-sweep (sink -> throttle), else linear between the sweep end and 0.6
             if (down.Count >= 2) { double best = double.MaxValue, th = .5; foreach (var d in down) { double e = Math.Abs(d[0] - sink); if (e < best) { best = e; th = d[1]; } } return th; }
             return FlightPolicy.Clamp(sweepThr + (10 - sink) * .04, 0, 1);
+        }
+        double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
+        double CruiseThr() { if (econ.Count == 0) return .6; double best = -1, th = .6; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; th = e[1]; } } return th; }
+        static string Cat(string ph)
+        {
+            switch (ph) { case "takeoff": case "pullback": case "start": return "takeoff"; case "climb": case "sinkclimb": return "climb"; case "decel": return "idle"; case "turn": return "turns"; case "dive": case "stall": case "stallrec": case "sinkdown": case "sinkmap": return "descent"; default: return "level"; }
+        }
+        /// <summary>Landing rollout (step 12): call after Done while the controller lands; true once stopped.</summary>
+        internal bool TrackLanding(LearnIn i)
+        {
+            if (LandingDone) return false;
+            if (i.Landed && i.Speed > 1) { if (double.IsNaN(rollStartT)) { rollStartT = i.T; rollM = 0; } else rollM += i.GroundSpeed * (i.T - rollPrevT); rollPrevT = i.T; return false; }
+            if (i.Landed && !double.IsNaN(rollStartT) && i.Speed <= 1) { LandingDone = true; P.Perf.Rollout = rollM; P.Note("rollout", rollM, i.Mass); return true; }
+            rollPrevT = i.T; return false;
         }
         double t0, v0, a0, minV, maxPitch, minAlt, fuel0 = double.NaN, lagAt = double.NaN, gSum, trSum, stMax; int n, idx;
         readonly List<double[]> econ = new List<double[]>();
@@ -106,10 +124,11 @@ namespace KSPChatBridge
             stepAtDone = StepNo; Done = true; Aborted = aborted; P.Abort = aborted ? why : ""; P.Complete = !aborted; Reason = why; Phase = "done";
             if (econ.Count > 0) { double best = -1; foreach (var e in econ) { double k = e[0] / Math.Max(1e-6, e[2]); if (k > best) { best = k; P.EconSpeed = e[0]; P.EconThrottle = e[1]; } } P.Note("econ_speed", P.EconSpeed, P.M0); }
             Status = aborted ? "Test flight aborted (" + why + "): saving what was learned, landing at KSC 27." : "Test flight complete: profile saved, landing at KSC 27.";
-            Throttle = Pitch = Bank = Elevator = double.NaN;
+            Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
         }
 
-        internal static readonly string[] StepNames = { "Takeoff + liftoff speed", "Climb to 5 km", "Idle decel / full-power accel", "Turns 5-30 deg", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27" };
+        internal static readonly string[] StepNames = { "Takeoff + ground roll", "Climb to 5 km", "Idle decel / full-power accel", "Econ cruise 60 s", "Max level speed", "Roll / pitch rates", "Turns 5-30 deg", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27 + rollout" };
+        internal static int StepCount { get { return StepNames.Length; } }
         LearnIn last; int stepAtDone = -1;
         /// <summary>1..9 for the current phase.</summary>
         internal int StepNo
@@ -119,30 +138,32 @@ namespace KSPChatBridge
                 switch (Phase)
                 {
                     case "start": case "takeoff": case "pullback": return 1;
-                    case "climb": return 2; case "decel": case "accel": return 3; case "turn": return 4;
-                    case "recover": return idx < 100 ? 4 : 5; case "dive": return 5;
-                    case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 6;
-                    case "stallprep": case "stall": return 7; case "stallrec": return 8;
-                    default: return 9;
+                    case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "rates": return 6; case "turn": return 7;
+                    case "recover": return idx < 100 ? 7 : 8; case "dive": return 8;
+                    case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 9;
+                    case "stallprep": case "stall": return 10; case "stallrec": return 11;
+                    default: return 12;
                 }
             }
         }
         /// <summary>Compact checklist (Luke 8:25 PM): [x] done, [>] current + sub-progress, [ ] pending, [-] skipped/aborted.</summary>
         internal List<string> Checklist()
         {
-            var o = new List<string>(); int cur = Done ? 9 : StepNo, abortAt = Aborted ? stepAtDone : -1;
-            for (int k = 1; k <= 9; k++)
+            var o = new List<string>(); int cur = Done ? (LandingDone ? 13 : 12) : StepNo, abortAt = Aborted ? stepAtDone : -1;
+            for (int k = 1; k <= StepCount; k++)
             {
                 string mark, extra = "";
-                if (Aborted && k >= abortAt && k < 9) mark = "[-]";
+                if (Aborted && k >= abortAt && k < StepCount) mark = "[-]";
                 else if (k < cur) mark = "[x]";
-                else if (k == cur) mark = Done && k == 9 ? "[>]" : "[>]";
+                else if (k == cur) mark = "[>]";
                 else mark = "[ ]";
-                if (mark == "[x]" && k == 5 && P.Dives.Count == 0) mark = "[-]";
-                if (mark == "[x]" && k == 6 && P.Sink.Count == 0) mark = "[-]";
-                if (k == 5 && P.Dives.Count > 0 && mark != "[>]") extra = " (" + P.Dives.Count + "/4)";
-                if (k == 6 && P.Sink.Count > 0 && mark != "[>]") extra = " (" + P.Sink.Count + "/6)";
-                if (k == 4 && P.Turns.Count > 0 && mark != "[>]") extra = " (to " + P.Turns[P.Turns.Count - 1][0] + " deg)";
+                if (mark == "[x]" && k == 8 && P.Dives.Count == 0) mark = "[-]";
+                if (mark == "[x]" && k == 9 && P.Sink.Count == 0) mark = "[-]";
+                if (k == 8 && P.Dives.Count > 0 && mark != "[>]") extra = " (" + P.Dives.Count + "/4)";
+                if (k == 9 && P.Sink.Count > 0 && mark != "[>]") extra = " (" + P.Sink.Count + "/6)";
+                if (k == 7 && P.Turns.Count > 0 && mark != "[>]") extra = " (to " + P.Turns[P.Turns.Count - 1][0] + " deg)";
+                if (k == 1 && !double.IsNaN(P.Perf.GroundRoll) && mark == "[x]") extra = " (" + P.Perf.GroundRoll.ToString("0") + " m)";
+                if (k == 12 && LandingDone) extra = " (rollout " + P.Perf.Rollout.ToString("0") + " m)";
                 o.Add(mark + " " + k + " " + StepNames[k - 1] + extra);
                 if (mark == "[>]") { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
             }
@@ -159,6 +180,9 @@ namespace KSPChatBridge
                 case "climb": return "alt " + (i.Alt / 1000).ToString("0.0") + "/5.0 km, " + i.Speed.ToString("0") + " m/s";
                 case "decel": return "idle " + dt.ToString("0") + "/20 s, " + i.Speed.ToString("0") + " m/s";
                 case "accel": return "full power " + dt.ToString("0") + "/20 s, " + i.Speed.ToString("0") + " m/s";
+                case "cruise": return "econ " + Math.Round(CruiseThr() * 100) + "% " + dt.ToString("0") + "/60 s, " + i.Speed.ToString("0") + " m/s";
+                case "vmax": return "full power level: " + i.Speed.ToString("0") + " m/s";
+                case "rates": return (dt < 4 ? "roll " : dt < 7 ? "level " : "pitch ") + dt.ToString("0") + "/10 s";
                 case "turn": return "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
                 case "recover": return "level off " + dt.ToString("0") + "/12 s";
                 case "dive": return "pitch -" + DivePitch[Math.Min(idx - 100, DivePitch.Length - 1)] + " deg, sink " + (-i.Vs).ToString("0") + " m/s";
@@ -169,7 +193,7 @@ namespace KSPChatBridge
                 case "stallprep": return "to 4 km: " + (i.Alt / 1000).ToString("0.0") + " km";
                 case "stall": return "back-stick " + pc(Elevator) + ", " + i.Speed.ToString("0") + " m/s, pitch " + i.Pitch.ToString("0");
                 case "stallrec": return "recovering: " + i.Speed.ToString("0") + " m/s, lost " + (a0 - minAlt).ToString("0") + " m";
-                default: return Done ? "approach to KSC 27" : "";
+                default: return Done ? (LandingDone ? "" : rollM > 0 ? "rollout " + rollM.ToString("0") + " m" : "approach to KSC 27") : "";
             }
         }
 
@@ -187,33 +211,58 @@ namespace KSPChatBridge
                 if (i.GLimit > 0 && i.G > GAbort * i.GLimit) { Finish(true, "g " + i.G.ToString("0.0") + " near the " + i.GLimit.ToString("0") + " g limit"); return; }
             }
             if (Math.Abs(i.Vs) < 3 && i.FuelRate > 0 && !double.IsNaN(i.Throttle) && i.Throttle > .1 && (Phase == "recover" || Phase == "stallprep" || Phase == "accel")) econ.Add(new[] { i.Speed, i.Throttle, i.FuelRate });
-            double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = double.NaN;
+            P.Perf.Feed(Cat(Phase), i, prevStepT); prevStepT = i.T;
+            double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
             switch (Phase)
             {
                 case "start":
-                    if (i.Landed) { WantTakeoff = true; Go("takeoff", i, "Step 1/8: takeoff at full power, recording rotate/liftoff speed."); }
-                    else Go("climb", i, "Step 2/8: already airborne - climb to 5 km at full power, 20 deg pitch.");
+                    if (i.Landed) { WantTakeoff = true; Go("takeoff", i, "takeoff at full power, recording rotate/liftoff speed."); }
+                    else Go("climb", i, "already airborne - climb to 5 km at full power, 20 deg pitch.");
                     return;
                 case "takeoff":
-                    if (!i.Landed && i.Agl > 20) { P.Liftoff = double.IsNaN(i.Liftoff) ? i.Speed : i.Liftoff; P.Note("liftoff", P.Liftoff, i.Mass); Go("pullback", i, "Liftoff at " + P.Liftoff.ToString("0") + " m/s. Power back."); }
+                    if (i.Landed && i.Speed > 1) { if (!double.IsNaN(rollPrevT)) rollM += i.GroundSpeed * (i.T - rollPrevT); rollPrevT = i.T; }
+                    if (!i.Landed && i.Agl > 20) { P.Liftoff = double.IsNaN(i.Liftoff) ? i.Speed : i.Liftoff; P.Note("liftoff", P.Liftoff, i.Mass); P.Perf.GroundRoll = rollM; P.Note("ground_roll", rollM, i.Mass); Go("pullback", i, "Liftoff at " + P.Liftoff.ToString("0") + " m/s. Power back."); }
                     return;
                 case "pullback":
                     Throttle = .5; Pitch = 8; Bank = 0;
-                    if (dt > 3) Go("climb", i, "Step 2/8: climb to 5 km at full power, 20 deg pitch, recording acceleration.");
+                    if (dt > 3) Go("climb", i, "climb to 5 km at full power, 20 deg pitch, recording acceleration.");
                     return;
                 case "climb":
+                    if (n == 0) climbFuel0 = i.FuelFrac; P.Perf.Ceiling(i.Alt, i.Vs, i.Mass);
                     Throttle = 1; Pitch = i.Speed < 1.3 * i.StallGuess ? 8 : 20; Bank = 0; gSum += i.Vs; n++;
-                    if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); Go("decel", i, "Step 3/8: throttle idle, recording deceleration for 20 s."); }
+                    if (i.Alt >= ClimbAlt || dt > 400) { P.ClimbAccel = (i.Speed - v0) / Math.Max(1, dt); P.Perf.ClimbTime = dt; P.Perf.ClimbFuel = climbFuel0 - i.FuelFrac; P.Note("climb_time", dt, i.Mass); P.Note("climb_fuel", P.Perf.ClimbFuel, i.Mass); P.ClimbVs = gSum / Math.Max(1, n); P.Note("climb_accel", P.ClimbAccel, i.Mass); P.Note("climb_vs", P.ClimbVs, i.Mass); Go("decel", i, "throttle idle, recording deceleration for 20 s."); }
                     return;
                 case "decel":
                     Throttle = 0; Pitch = Level(i); Bank = 0;
-                    if (dt >= Seg || i.Speed < 1.35 * i.StallGuess) { P.Decel = (v0 - i.Speed) / Math.Max(1, dt); P.Note("decel", P.Decel, i.Mass); Go("accel", i, "Step 3/8: full power, recording acceleration and throttle lag."); }
+                    if (dt >= Seg || i.Speed < 1.35 * i.StallGuess) { P.Decel = (v0 - i.Speed) / Math.Max(1, dt); P.Note("decel", P.Decel, i.Mass); Go("accel", i, "full power, recording acceleration and throttle lag."); }
                     return;
                 case "accel":
                     Throttle = 1; Pitch = Level(i); Bank = 0; minV = Math.Min(minV, i.Speed);
                     if (double.IsNaN(lagAt) && i.Speed > minV + .5) lagAt = dt;
-                    if (dt >= Seg) { P.Accel = (i.Speed - minV) / Math.Max(1, dt - (double.IsNaN(lagAt) ? 0 : lagAt)); P.Lag = lagAt; P.Note("accel", P.Accel, i.Mass); P.Note("lag", P.Lag, i.Mass); idx = 0; Go("turn", i, "Step 4/8: banked turns 5 to 30 deg with 20 deg nose-up pull."); }
+                    if (double.IsNaN(spoolAt) && i.ThrustFrac >= .9) spoolAt = dt;
+                    if (dt >= Seg) { P.Accel = (i.Speed - minV) / Math.Max(1, dt - (double.IsNaN(lagAt) ? 0 : lagAt)); P.Lag = lagAt; P.Note("accel", P.Accel, i.Mass); P.Note("lag", P.Lag, i.Mass); P.Perf.Spool = spoolAt; P.Note("spool", spoolAt, i.Mass); Go("cruise", i, "Level cruise 60 s at the economy setting: measuring cruise burn and trim."); }
                     return;
+                case "cruise":
+                    Throttle = CruiseThr(); Pitch = Level(i); Bank = 0; if (dt > 15) { gSum += i.Trim; n++; }
+                    if (dt >= 60) { P.Perf.CruiseTrim = gSum / Math.Max(1, n); P.Perf.CruiseSpeed = i.Speed; P.Perf.CruiseThrottle = Throttle; P.Perf.CruiseFracPerS = (cruiseFuel0 - i.FuelFrac) / Math.Max(1, dt - 15);
+                        P.Note("cruise_speed", i.Speed, i.Mass); P.Note("cruise_burn_pct_min", P.Perf.CruiseFracPerS * 6000, i.Mass); P.Note("cruise_trim", P.Perf.CruiseTrim, i.Mass);
+                        Go("vmax", i, "Max level speed run: full power, level."); }
+                    else if (dt <= 15) cruiseFuel0 = i.FuelFrac;
+                    return;
+                case "vmax":
+                    Throttle = 1; Pitch = Level(i); Bank = 0;
+                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 120) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); Go("rates", i, "Roll and pitch rate checks: quick full inputs inside the g limit."); return; } vmaxV = i.Speed; vmaxT = i.T; }
+                    if (dt <= 10) { vmaxV = i.Speed; vmaxT = i.T; }
+                    return;
+                case "rates":
+                    {   // 0-2 s full right, 2-4 s full left, 4-7 s neutral (level), 7-8.5 s pull, 8.5-10 s relax; g-limited
+                        Throttle = .8; P.Perf.RollRate = Math.Max(double.IsNaN(P.Perf.RollRate) ? 0 : P.Perf.RollRate, dt < 4 ? Math.Abs(i.RollRate) : 0);
+                        if (dt < 2) Aileron = 1; else if (dt < 4) Aileron = -1; else if (dt < 7) { Bank = 0; Pitch = Level(i); }
+                        else if (dt < 8.5) { Bank = 0; Elevator = i.GLimit > 0 && i.G > .7 * i.GLimit ? 0 : .6; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
+                        else { Bank = 0; Pitch = Level(i); }
+                        if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass); idx = 0; Go("turn", i, "Banked turns 5 to 30 deg with 20 deg nose-up pull."); }
+                        return;
+                    }
                 case "turn":
                     {
                         int b = Banks[idx]; Throttle = 1; Bank = b; Pitch = i.Speed < 1.4 * i.StallGuess ? Level(i) : 20; gSum += i.G; trSum += Math.Abs(i.TurnRate); stMax = Math.Max(stMax, i.Stress); n++;
@@ -231,9 +280,9 @@ namespace KSPChatBridge
                     Throttle = 1; Pitch = Level(i); Bank = 0;
                     if (dt >= 12)
                     {
-                        if (idx < 100) { idx = 100; Go("dive", i, "Step 5/8: dives at idle, 5 to 20 deg nose down."); }
+                        if (idx < 100) { idx = 100; Go("dive", i, "dives at idle, 5 to 20 deg nose down."); }
                         else if (idx - 100 < DivePitch.Length && i.Alt > 2500) Go("dive", i, "Dive " + DivePitch[idx - 100] + " deg nose down.");
-                        else Go("sinkprep", i, "Step 6/9: sink map - back to 5 km, slow to 1.25x stall, nose 12 deg up.");
+                        else Go("sinkprep", i, "sink map - back to 5 km, slow to 1.25x stall, nose 12 deg up.");
                     }
                     return;
                 case "dive":
@@ -254,7 +303,7 @@ namespace KSPChatBridge
                 case "sinkmap":
                     {
                         Pitch = SinkPitch; Bank = 0;
-                        if (i.Speed < 1.15 * i.StallGuess) { Go("stallprep", i, "Sink map stopped (speed under 1.15x stall); " + P.Sink.Count + " points. Step 7/9: level at 4 km for the stall test."); return; }
+                        if (i.Speed < 1.15 * i.StallGuess) { Go("stallprep", i, "Sink map stopped (speed under 1.15x stall); " + P.Sink.Count + " points. level at 4 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T;
                         if (Phase == "sinkdown")
@@ -276,7 +325,7 @@ namespace KSPChatBridge
                             double sinkNow = -vsF;
                             if (Math.Abs(sinkNow - target) > 1.2 && i.T - stepAt < 30 && tries < 3) { stepThr = FlightPolicy.Clamp(stepThr + (sinkNow - target) * .02, 0, 1); stepAt = i.T; vs0 = vsF; lagDone = false; tries++; return; }
                             P.Sink.Add(new[] { sinkNow, stepThr, double.IsNaN(lagS) ? i.T - stepAt : lagS, i.Mass }); tries = 0; idx--; stepThr = double.NaN;
-                            if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). Step 7/9: level at 4 km for the stall test.");
+                            if (idx < 0) Go("stallprep", i, "Sink map done (" + P.Sink.Count + " points). level at 4 km for the stall test.");
                         }
                         return;
                     }
@@ -298,6 +347,77 @@ namespace KSPChatBridge
                     if ((i.Vs > 0 && i.Speed > 1.3 * P.Stall && dt > 3) || dt > 60) { P.StallAltLoss = a0 - minAlt; P.Note("stall_alt_loss", P.StallAltLoss, i.Mass); Finish(false, ""); }
                     return;
             }
+        }
+    }
+}
+
+namespace KSPChatBridge
+{
+    /// <summary>LEARN fuel/performance data (Luke 8:28 PM), mass-tagged per phase category.</summary>
+    internal sealed class PerfData
+    {
+        internal double GroundRoll = double.NaN, Rollout = double.NaN, ClimbTime = double.NaN, ClimbFuel = double.NaN, MaxLevel = double.NaN, RollRate = double.NaN, PitchRate = double.NaN,
+            CruiseTrim = double.NaN, CruiseSpeed = double.NaN, CruiseThrottle = double.NaN, CruiseFracPerS = double.NaN, Spool = double.NaN;
+        /// <summary>cat -> [fuel frac used, seconds, metres, mass*seconds]</summary>
+        internal readonly Dictionary<string, double[]> Phase = new Dictionary<string, double[]>();
+        internal readonly Dictionary<string, HashSet<string>> Res = new Dictionary<string, HashSet<string>>();
+        internal readonly List<double[]> Climb = new List<double[]>();   // alt km bin, mean climb m/s, mass
+        double prevFuel = double.NaN; double binSum, binN; int bin = -1; double binMass;
+        internal void Feed(string cat, LearnIn i, double prevT)
+        {
+            if (!double.IsNaN(prevT) && i.T > prevT && !double.IsNaN(prevFuel))
+            {
+                double dt = i.T - prevT; double[] a; if (!Phase.TryGetValue(cat, out a)) Phase[cat] = a = new double[4];
+                a[0] += Math.Max(0, prevFuel - i.FuelFrac); a[1] += dt; a[2] += i.GroundSpeed * dt; a[3] += i.Mass * dt;
+            }
+            prevFuel = i.FuelFrac;
+            if (!string.IsNullOrEmpty(i.Res)) { HashSet<string> h; if (!Res.TryGetValue(cat, out h)) Res[cat] = h = new HashSet<string>(); foreach (var r in i.Res.Split(',')) if (r.Length > 0) h.Add(r); }
+        }
+        internal void Ceiling(double alt, double vs, double m)
+        {
+            int b = (int)(alt / 1000); if (b != bin) { if (bin >= 0 && binN > 0) Climb.Add(new[] { bin + .5, binSum / binN, binMass }); bin = b; binSum = binN = 0; }
+            binSum += vs; binN++; binMass = m;
+        }
+        internal double PctPerMin(string cat) { double[] a; return Phase.TryGetValue(cat, out a) && a[1] > 5 ? a[0] / a[1] * 6000 : double.NaN; }
+        internal double PctPerKm(string cat) { double[] a; return Phase.TryGetValue(cat, out a) && a[2] > 500 ? a[0] / a[2] * 100000 : double.NaN; }
+        /// <summary>Altitude (km) where climb at full power / 20 deg falls to 0.5 m/s, extrapolated from the last two 1 km bins.</summary>
+        internal double CeilingKm()
+        {
+            if (Climb.Count < 2) return double.NaN; var a = Climb[Climb.Count - 2]; var b = Climb[Climb.Count - 1];
+            double slope = (b[1] - a[1]) / Math.Max(1e-6, b[0] - a[0]); if (slope >= -1e-3) return double.NaN; return b[0] + (.5 - b[1]) / slope;
+        }
+        internal bool HasCruise { get { return !double.IsNaN(CruiseFracPerS) && CruiseFracPerS > 0 && !double.IsNaN(CruiseSpeed); } }
+        internal double EnduranceMin(double fuelFrac) { return HasCruise ? fuelFrac / CruiseFracPerS / 60 : double.NaN; }
+        internal double RangeKm(double fuelFrac) { return HasCruise ? fuelFrac / CruiseFracPerS * CruiseSpeed / 1000 : double.NaN; }
+        /// <summary>Fuel fraction to fly home distKm at cruise plus one go-around (90 s at the climb burn, else 2x cruise).</summary>
+        internal double ReserveFrac(double distKm)
+        {
+            if (!HasCruise) return double.NaN; double climb = PctPerMin("climb") / 6000; if (double.IsNaN(climb)) climb = 2 * CruiseFracPerS;
+            return distKm * 1000 / CruiseSpeed * CruiseFracPerS + 90 * climb;
+        }
+        static object N(double v) { return double.IsNaN(v) ? null : (object)Math.Round(v, 5); }
+        static double D(Dictionary<string, object> d, string k) { object o; if (d == null || !d.TryGetValue(k, out o) || o == null) return double.NaN; try { return Convert.ToDouble(o, System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { return double.NaN; } }
+        internal Dictionary<string, object> ToDict()
+        {
+            var ph = new Dictionary<string, object>(); foreach (var kv in Phase) ph[kv.Key] = new List<object> { Math.Round(kv.Value[0], 5), Math.Round(kv.Value[1], 1), Math.Round(kv.Value[2], 0), Math.Round(kv.Value[1] > 0 ? kv.Value[3] / kv.Value[1] : 0, 2) };
+            var rs = new Dictionary<string, object>(); foreach (var kv in Res) rs[kv.Key] = string.Join(",", new List<string>(kv.Value).ToArray());
+            var cl = new List<object>(); foreach (var c in Climb) cl.Add(new List<object> { c[0], Math.Round(c[1], 1), Math.Round(c[2], 2) });
+            return new Dictionary<string, object> { { "ground_roll", N(GroundRoll) }, { "rollout", N(Rollout) }, { "climb_time", N(ClimbTime) }, { "climb_fuel", N(ClimbFuel) }, { "max_level", N(MaxLevel) },
+                { "roll_rate", N(RollRate) }, { "pitch_rate", N(PitchRate) }, { "cruise_trim", N(CruiseTrim) }, { "cruise_speed", N(CruiseSpeed) }, { "cruise_throttle", N(CruiseThrottle) },
+                { "cruise_frac_s", N(CruiseFracPerS) }, { "spool", N(Spool) }, { "phases", ph }, { "resources", rs }, { "climb_bins", cl } };
+        }
+        internal void FromDict(Dictionary<string, object> d)
+        {
+            if (d == null) return;
+            GroundRoll = D(d, "ground_roll"); Rollout = D(d, "rollout"); ClimbTime = D(d, "climb_time"); ClimbFuel = D(d, "climb_fuel"); MaxLevel = D(d, "max_level"); RollRate = D(d, "roll_rate"); PitchRate = D(d, "pitch_rate");
+            CruiseTrim = D(d, "cruise_trim"); CruiseSpeed = D(d, "cruise_speed"); CruiseThrottle = D(d, "cruise_throttle"); CruiseFracPerS = D(d, "cruise_frac_s"); Spool = D(d, "spool");
+            object o; var ci = System.Globalization.CultureInfo.InvariantCulture;
+            var ph = d.TryGetValue("phases", out o) ? o as Dictionary<string, object> : null;
+            if (ph != null) foreach (var kv in ph) { var l = kv.Value as System.Collections.IList; if (l == null || l.Count < 4) continue; try { double t = Convert.ToDouble(l[1], ci); Phase[kv.Key] = new[] { Convert.ToDouble(l[0], ci), t, Convert.ToDouble(l[2], ci), Convert.ToDouble(l[3], ci) * t }; } catch (Exception) { } }
+            var rs = d.TryGetValue("resources", out o) ? o as Dictionary<string, object> : null;
+            if (rs != null) foreach (var kv in rs) Res[kv.Key] = new HashSet<string>((kv.Value ?? "").ToString().Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
+            var cl = d.TryGetValue("climb_bins", out o) ? o as System.Collections.IList : null;
+            if (cl != null) foreach (var c in cl) { var l = c as System.Collections.IList; if (l == null || l.Count < 3) continue; try { Climb.Add(new[] { Convert.ToDouble(l[0], ci), Convert.ToDouble(l[1], ci), Convert.ToDouble(l[2], ci) }); } catch (Exception) { } }
         }
     }
 }

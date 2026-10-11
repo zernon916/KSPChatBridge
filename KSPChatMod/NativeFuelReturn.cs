@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -64,7 +64,13 @@ namespace KSPChatBridge
             fuelRate = FlightExtrasPolicy.BurnRate(fuelPrevUnits, units, now - fuelPrevT, fuelRate); fuelPrevUnits = units; fuelPrevT = now;
             double lat, lon; if (!HomePoint(out lat, out lon)) return;
             double d = NavigationMath.Distance(vessel.latitude, vessel.longitude, lat, lon, vessel.mainBody.Radius);
-            if (!FlightExtrasPolicy.ReturnNow(FlightExtrasPolicy.Range(units, fuelRate, vessel.horizontalSrfSpeed), d, fuelReserve)) return;
+            double range = FlightExtrasPolicy.Range(units, fuelRate, vessel.horizontalSrfSpeed), reservePct = fuelReserve;
+            if (profile != null && profile.Perf.HasCruise)
+            {   // learned profile (LEARN THIS PLANE): range at the measured cruise burn, reserve = trip home + one go-around
+                double fr, tot; FuelState(out fr, out tot); double go = profile.Perf.ReserveFrac(0);
+                range = Math.Min(range, profile.Perf.RangeKm(Math.Max(0, fr - (double.IsNaN(go) ? 0 : go))) * 1000);
+            }
+            if (!FlightExtrasPolicy.ReturnNow(range, d, reservePct)) return;
             fuelReturning = true;
             ChatWindow.Notice(Voice().Key + ": Bingo fuel, Captain. Turning for " + fuelHome + ": " + Command("fly_to", Args("name", fuelHome)));
         }

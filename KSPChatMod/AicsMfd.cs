@@ -342,6 +342,8 @@ namespace KSPChatBridge
         {
             if (item == "about" && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }
             if (item == "about" && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
+            if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }
+            if (item == "about" && key == ">") { MfdNav.AboutTurn(1, NativeFlightController.AboutTitles.Length); return; }
             if (item == "about" && key == "LEARN") { Tool("learn_plane", "{}"); return; }
             if (key == null) return;
             switch (item)

@@ -255,10 +255,18 @@ class Program
                 vs = landed ? 0 : v * Math.Sin(pit * Math.PI / 180) - (v < 60 ? 15 : 0); alt = Math.Max(70, alt + vs * .1); fuel -= .00001; T += .1;
             }
             var pp = lf.P;
-            { var cl = lf.Checklist(); Check(cl.Count >= 9 && cl[0].StartsWith("[x] 1") && cl[7].StartsWith("[x] 8") && cl[8].StartsWith("[>] 9"), "checklist after the flight: steps done, landing current"); }
+            { var cl = lf.Checklist(); Check(cl.Count >= 12 && cl[0].StartsWith("[x] 1") && cl[3].StartsWith("[x] 4") && cl[4].StartsWith("[x] 5") && cl[5].StartsWith("[x] 6") && cl[10].StartsWith("[x] 11") && cl[11].StartsWith("[>] 12"), "checklist after the flight: 11 steps done, landing current");
+              var pf = lf.P.Perf;
+              Check(lf.Visited.Contains("cruise") && lf.Visited.Contains("vmax") && lf.Visited.Contains("rates") && pf.HasCruise && !double.IsNaN(pf.MaxLevel) && !double.IsNaN(pf.ClimbTime) && !double.IsNaN(pf.ClimbFuel) && !double.IsNaN(pf.PctPerMin("climb")) && !double.IsNaN(pf.PctPerMin("level")), "new steps: econ cruise, max level speed, rates; per-phase burn recorded");
+              double rk = pf.RangeKm(.5), en = pf.EnduranceMin(.5), rs = pf.ReserveFrac(100);
+              Check(rk > 0 && en > 0 && Math.Abs(rk - .5 / pf.CruiseFracPerS * pf.CruiseSpeed / 1000) < 1e-6 && rs > pf.ReserveFrac(0) && pf.ReserveFrac(0) > 0, "range/endurance at cruise burn; reserve = home + go-around");
+              var lnd = new LearnIn { T = 0, Speed = 60, GroundSpeed = 60, Landed = true, Mass = 20 }; lf.TrackLanding(lnd); lnd.T = 1; lnd.Speed = 30; lnd.GroundSpeed = 30; lf.TrackLanding(lnd); lnd.T = 2; lnd.Speed = .5; lnd.GroundSpeed = .5; bool stopped = lf.TrackLanding(lnd);
+              Check(stopped && lf.LandingDone && Math.Abs(lf.P.Perf.Rollout - 30.5) < 1 && lf.Checklist()[11].StartsWith("[>] 12") == false, "landing rollout measured (step 12 done)");
+              var rt4 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
+              Check(rt4.Perf.HasCruise && Math.Abs(rt4.Perf.Rollout - lf.P.Perf.Rollout) < .01 && Math.Abs(rt4.Perf.PctPerMin("climb") - pf.PctPerMin("climb")) < .01, "perf data saved in the profile"); }
             { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
-              Check(c1[2].StartsWith("[x] 3") && c1[3].StartsWith("[>] 4") && c1[4].Contains("bank 5 deg") && c1[5].StartsWith("[ ] 5"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
-              q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[3].StartsWith("[-] 4") && c2[7].StartsWith("[-] 8") && c2[8].StartsWith("[>] 9") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
+              Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 5 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
+              q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
                 && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
             // abort rules: fuel < 40 %, part lost, stress, g
@@ -299,6 +307,7 @@ class Program
             var ls = new List<string>(); for (int k = 0; k < 30; k++) ls.Add(k == 20 ? "[>] 6 Sink map" : "line " + k);
             MfdNav.AboutOffset = 0; int aoff = MfdNav.AboutWindow(ls, 8); bool follows = aoff <= 20 && 20 < aoff + 8;
             MfdNav.AboutScroll(-3); int manual = MfdNav.AboutWindow(ls, 8); MfdNav.AboutScroll(100); int clamp = MfdNav.AboutWindow(ls, 8); MfdNav.AboutOffset = 0;
+            MfdNav.AboutPage = 0; MfdNav.AboutTurn(-1, 5); int lastPg = MfdNav.AboutPage; MfdNav.AboutTurn(1, 5); Check(lastPg == 4 && MfdNav.AboutPage == 0, "ABOUT pages wrap with < and >");
             Check(follows && manual == aoff - 3 && clamp == 22, "learn checklist: auto-scroll to the current step, manual scroll, clamped");
         }
         Check(NavigationMath.Distance(0, 0, 0, 0, 600000) == 0, "coincident distance");
