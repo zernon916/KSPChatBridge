@@ -265,10 +265,14 @@ class Program
               var rt4 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
               Check(rt4.Perf.HasCruise && Math.Abs(rt4.Perf.Rollout - lf.P.Perf.Rollout) < .01 && Math.Abs(rt4.Perf.PctPerMin("climb") - pf.PctPerMin("climb")) < .01, "perf data saved in the profile"); }
             { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
+                // level turns: above the entry altitude and climbing -> nose comes down (not 20 deg up); slow -> more throttle
+                var q2 = q; q2.T = 2; q2.Alt = 3060; q2.Vs = 4; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
+                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 140; lc2.Step(q2); double thSlow = lc2.Throttle; q2.T = 4; q2.Speed = 160; lc2.Step(q2);
+                Check(pHi < 3 && lc2.Bank == 5 && thSlow > lc2.Throttle && thSlow > .5, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), throttle holds speed");
               Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 5 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
-                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
+                && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count == 6 && pp.Turns[0].Length >= 7 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary());
             // abort rules: fuel < 40 %, part lost, stress, g
             Func<LearnIn, string> ab = x => { var l2 = new LearnFlight(); l2.Step(new LearnIn { T = 0, Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }); x.T = 1; l2.Step(x); return l2.Aborted ? l2.Reason : ""; };
             var ok = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 };

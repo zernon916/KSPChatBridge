@@ -143,7 +143,7 @@ namespace KSPChatBridge
                     break;
                 case 2:
                     if (p == null) { o.Add("No test data."); break; }
-                    if (p.Turns.Count > 0) { double mg = 0; foreach (var x in p.Turns) mg = Math.Max(mg, x[1]); var lt = p.Turns[p.Turns.Count - 1]; o.Add("Turns to " + lt[0] + " deg, max " + mg.ToString("0.0") + " g, " + lt[2].ToString("0.0") + " deg/s, alt " + (-lt[3]).ToString("+0;-0") + " m"); }
+                    if (p.Turns.Count > 0) { double mg = 0; foreach (var x in p.Turns) mg = Math.Max(mg, x[1]); var lt = p.Turns[p.Turns.Count - 1]; o.Add("Turns to " + lt[0] + " deg, max " + mg.ToString("0.0") + " g, " + lt[2].ToString("0.0") + " deg/s, alt " + (-lt[3]).ToString("+0;-0") + " m" + (lt.Length > 6 && !double.IsNaN(lt[6]) ? ", thr " + Math.Round(lt[6] * 100) + "%" : "")); }
                     o.Add("Roll rate " + F0(p.Perf.RollRate) + " deg/s  Pitch rate " + F0(p.Perf.PitchRate) + " deg/s");
                     if (p.Dives.Count > 0) { var s = ""; foreach (var x in p.Dives) s += x[0] + ":" + x[1].ToString("0") + " "; o.Add("Dive sink (deg:m/s) " + s.Trim()); }
                     if (p.Sink.Count > 0) { var ss = new List<double[]>(p.Sink); ss.Sort((x, y) => x[0].CompareTo(y[0])); var s2 = ""; double lg = 0; foreach (var x in ss) { s2 += x[0].ToString("0") + ":" + Math.Round(p.ThrottleForSink(x[0], m) * 100) + "% "; lg = Math.Max(lg, x[2]); } o.Add("Sink map (m/s:thr) " + s2.Trim()); o.Add("  sink lag <= " + lg.ToString("0.0") + " s"); }
