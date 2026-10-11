@@ -2299,6 +2299,7 @@ class Program
                 Console.WriteLine("P5-5 llama smoke: generated " + text.Length + " chars on CPU: " + text.Replace("\n", " ").Substring(0, Math.Min(60, text.Length)));
             }
         }
+        LearnAbortStallTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

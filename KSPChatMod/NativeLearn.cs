@@ -79,10 +79,25 @@ namespace KSPChatBridge
                 if (!learn.Aborted) learn.P.Rerun.Clear(); foreach (int k in learn.Redo) if (!learn.P.Rerun.Contains(k)) learn.P.Rerun.Add(k); profile = learn.P;
                 SaveProfile(learn.P); var done = learn; lastLearn = learn; learn = null; holdSpeed = true; directPitch = null; directBank = null; directVs = null;
                 ChatLog.Write("learn", "profile " + vessel.vesselName + ": " + done.P.Summary());
-                ChatWindow.Notice(Command("land", new Dictionary<string, object> { { "where", "ksc 27" } }));
+                bankOverride = false; pendingCircle = null; learnPhaseSeen = "";   // no learn bank override survives into the landing (held -5 deg in hold)
+                StartLearnLanding();
             }
         }
 
+        /// <summary>After the test (complete or aborted): ferry + approach to KSC 27, verified; one retry straight into land_plane if it did not engage.</summary>
+        void StartLearnLanding()
+        {
+            var args = new Dictionary<string, object> { { "where", "ksc 27" } };
+            string r; try { r = Command("land", args); } catch (Exception ex) { r = "land failed: " + ex.Message; }
+            ChatWindow.Notice(r);
+            if (!PilotPolicy.LandingEngaged(mode, pendingLand != null))
+            {
+                ChatLog.Write("learn", "landing did not engage (mode " + mode + "): " + r + "; retrying land_plane KSC 27");
+                try { r = Command("land_plane", new Dictionary<string, object>(args)); } catch (Exception ex) { r = "land_plane failed: " + ex.Message; }
+                ChatWindow.Notice(r);
+            }
+            ChatLog.Write("learn", "after test: " + (pendingLand != null ? "ferry" : mode) + " to KSC 27, stall " + stall.ToString("0") + " (est " + StallEstimate().ToString("0") + ")");
+        }
         void LearnApply(FlightCtrlState c)
         {
             if (learn == null && lastLearn != null && !lastLearn.LandingDone && vessel != null)

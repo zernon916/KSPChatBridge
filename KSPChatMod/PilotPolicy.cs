@@ -522,6 +522,31 @@ namespace KSPChatBridge
             return throttle;
         }
         /// <summary>No hard turns while slow or decelerating hard (that is how the tight low-speed circle happened).</summary>
+        /// <summary>Estimated stall (lift estimate, raised to liftoff/1.25 when known): never 0/NaN/huge.</summary>
+        internal static double StallEstimate(double est, double liftoff)
+        {
+            double e = double.IsNaN(est) || double.IsInfinity(est) || est <= 0 ? 45 : est;
+            if (!double.IsNaN(liftoff) && !double.IsInfinity(liftoff) && liftoff > 0) e = Math.Max(e, liftoff / 1.25);
+            return FlightPolicy.Clamp(e, 20, 200);
+        }
+        /// <summary>Stall to fly by: missing/NaN/0 or implausible (over 2x the estimate) falls back to the estimate.</summary>
+        internal static double SaneStall(double stall, double estimate)
+        {
+            double e = StallEstimate(estimate, double.NaN);
+            if (double.IsNaN(stall) || double.IsInfinity(stall) || stall <= 0 || stall > 2 * e) return e;
+            return FlightPolicy.Clamp(stall, 20, 200);
+        }
+        /// <summary>Airborne near-stall power slam: under 1.15x the (sane) stall, and never above 1.5x the estimated stall
+        /// (Luke 14:18 log: fired every ~28 s at 280-306 m/s with no learned stall). Bad IAS (NaN/0) falls back to surface speed.</summary>
+        internal static bool StallEmergency(double ias, double srf, double stall, double estimate)
+        {
+            double v = double.IsNaN(ias) || double.IsInfinity(ias) || ias <= 0 ? srf : ias;
+            if (double.IsNaN(v) || double.IsInfinity(v)) return false;
+            if (v > 1.5 * StallEstimate(estimate, double.NaN)) return false;
+            return v < 1.15 * SaneStall(stall, estimate);
+        }
+        /// <summary>After a LEARN test the landing counts as engaged when the approach runs or the ferry leg is pending.</summary>
+        internal static bool LandingEngaged(string mode, bool ferryPending) { return mode == "landing" || (mode == "hold" && ferryPending); }
         internal static double SafeBank(double bank, double ias, double stall, double decel)
         {
             double safe = SafeSpeed(stall), lim = 180;

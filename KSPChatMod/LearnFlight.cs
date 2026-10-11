@@ -163,7 +163,7 @@ namespace KSPChatBridge
             string next;
             switch (k)
             {
-                case 1: next = "climb"; break; case 2: next = "decel"; break; case 3: next = "cruise"; break; case 4: next = "vmax"; break; case 5: next = "rates"; break;
+                case 1: next = "climb"; break; case 2: next = "decel"; break; case 3: next = "cruise"; break; case 4: next = "vmax"; break; case 5: next = "ratesprep"; break;
                 case 6: next = "turn"; idx = 0; break; case 7: next = "recover"; idx = 0; break; case 8: next = "sinkprep"; break; case 9: next = "stallprep"; break;
                 default: next = "finish"; break;
             }
@@ -192,7 +192,7 @@ namespace KSPChatBridge
                 int k = StepOf(ph, idx); if (Setup(k) || Only.Contains(k)) break;
                 switch (k)
                 {
-                    case 3: ph = "cruise"; break; case 4: ph = "vmax"; break; case 5: ph = "rates"; break;
+                    case 3: ph = "cruise"; break; case 4: ph = "vmax"; break; case 5: ph = "ratesprep"; break;
                     case 6: ph = "turn"; idx = 0; break; case 7: ph = "dive"; idx = 100; break; case 8: ph = "sinkprep"; break; case 9: ph = "stallprep"; break;
                     default: ph = "finish"; break;
                 }
@@ -211,6 +211,22 @@ namespace KSPChatBridge
         }
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
+        double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
+        internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 180;
+        /// <summary>Step 6 test speed: learned cruise or 2x stall (the lower), never under 1.6x stall.</summary>
+        internal double RatesSpeed(double stall)
+        {
+            double s = double.IsNaN(stall) || double.IsInfinity(stall) || stall <= 0 ? 60 : stall, c = P.Perf.CruiseSpeed, v = 2 * s;
+            if (!double.IsNaN(c) && c > 0) v = Math.Min(v, c);
+            return Math.Max(v, 1.6 * s);
+        }
+        /// <summary>Pitch-rate pull: elevator ramps at RatesRamp/s up to RatesElevMax; once G passes RatesG x the limit it is cut to 0 for the rest of the pull
+        /// (so neither the 80% learn limit nor the 90% abort is reached). No known limit: 9 g assumed.</summary>
+        internal static double RatesElevator(double prev, double dt, double g, double gLimit, ref bool cut)
+        {
+            double lim = gLimit > 0 ? gLimit : 9; if (g > RatesG * lim) cut = true; if (cut) return 0;
+            return Math.Min(RatesElevMax, Math.Max(0, double.IsNaN(prev) ? 0 : prev) + RatesRamp * Math.Max(0, dt));
+        }
         /// <summary>Turns/dives measure only once the commanded bank/pitch is reached (heavy craft roll/pitch slowly; Luke 9:37 AM log).</summary>
         bool Reached(LearnIn i, bool ok) { if (double.IsNaN(reachAt) && (ok || i.T - t0 >= ReachTimeout)) { reachAt = i.T; gSum = trSum = stMax = 0; n = 0; thrSum = 0; a0 = i.Alt; } return !double.IsNaN(reachAt); }
         internal double TurnSpeed(double v0, double stall) { double c = P.Perf.CruiseSpeed; double t = !double.IsNaN(c) && c > 0 ? c : 1.7 * stall; return Math.Min(v0, Math.Max(t, 1.5 * stall)); }
@@ -301,7 +317,7 @@ namespace KSPChatBridge
                 switch (ph)
                 {
                     case "start": case "takeoff": case "pullback": return 1;
-                    case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "rates": return 6; case "turn": case "turnprep": return 7;
+                    case "climb": return 2; case "decel": case "accel": return 3; case "cruise": return 4; case "vmax": return 5; case "ratesprep": case "rates": return 6; case "turn": case "turnprep": return 7;
                     case "recover": return idx < 100 ? 7 : 8; case "dive": return 8;
                     case "sinkprep": case "sinkdown": case "sinkmap": case "sinkclimb": return 9;
                     case "stallprep": case "stall": return 10; case "stallrec": return 11;
@@ -380,6 +396,7 @@ namespace KSPChatBridge
                 case "accel": return "full power " + dt.ToString("0") + "/20 s, " + i.Speed.ToString("0") + " m/s";
                 case "cruise": return "econ " + Math.Round(CruiseThr() * 100) + "% " + dt.ToString("0") + "/60 s, " + i.Speed.ToString("0") + " m/s";
                 case "vmax": return "full power level: " + i.Speed.ToString("0") + " m/s";
+                case "ratesprep": return "slowing to " + (double.IsNaN(ratesSpeed) ? "-" : ratesSpeed.ToString("0")) + " m/s (" + i.Speed.ToString("0") + ")";
                 case "rates": return (dt < 4 ? "roll " : dt < 7 ? "level " : "pitch ") + dt.ToString("0") + "/10 s";
                 case "turnprep": return "pass 2: slowing to " + (1.5 * i.StallGuess).ToString("0") + " m/s (" + i.Speed.ToString("0") + ")";
                 case "turn": return (turnPass == 0 ? "cruise " : "approach ") + "bank " + Banks[Math.Min(idx, Banks.Length - 1)] + " deg, " + dt.ToString("0") + "/20 s, " + i.G.ToString("0.0") + " g";
@@ -452,14 +469,22 @@ namespace KSPChatBridge
                     return;
                 case "vmax":
                     Throttle = 1; Pitch = Level(i); Bank = 0;
-                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); Go("rates", i, "Roll and pitch rate checks: quick full inputs inside the g limit."); return; } vmaxV = i.Speed; vmaxT = i.T; }
+                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, "Slowing to " + ratesSpeed.ToString("0") + " m/s for the roll/pitch rate checks (not at max speed)."); return; } vmaxV = i.Speed; vmaxT = i.T; }
                     if (dt <= 10) { vmaxV = i.Speed; vmaxT = i.T; }
                     return;
+                case "ratesprep":
+                    {   // step 6 setup: never pull at vmax (Luke 14:18 log: 1.5 s at 60% elevator from 300 m/s = 8.6 g, test aborted)
+                        if (double.IsNaN(ratesSpeed)) ratesSpeed = RatesSpeed(i.StallGuess);
+                        SpeedTarget = ratesSpeed; Throttle = i.Speed > ratesSpeed + 10 ? 0 : .6; Pitch = Level(i); Bank = 0;
+                        if (Math.Abs(i.Speed - ratesSpeed) < 10) { if (double.IsNaN(ratesSteady)) ratesSteady = i.T; } else ratesSteady = double.NaN;
+                        if ((!double.IsNaN(ratesSteady) && i.T - ratesSteady >= 3) || dt > RatesPrepTimeout) { ratesElev = 0; ratesCut = false; Go("rates", i, "Roll and pitch rate checks at " + i.Speed.ToString("0") + " m/s: full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); }
+                        return;
+                    }
                 case "rates":
                     {   // 0-2 s full right, 2-4 s full left, 4-7 s neutral (level), 7-8.5 s pull, 8.5-10 s relax; g-limited
-                        Throttle = .8; P.Perf.RollRate = Math.Max(double.IsNaN(P.Perf.RollRate) ? 0 : P.Perf.RollRate, dt < 4 ? Math.Abs(i.RollRate) : 0);
+                        Throttle = .8; if (!double.IsNaN(ratesSpeed)) SpeedTarget = ratesSpeed; P.Perf.RollRate = Math.Max(double.IsNaN(P.Perf.RollRate) ? 0 : P.Perf.RollRate, dt < 4 ? Math.Abs(i.RollRate) : 0);
                         if (dt < 2) Aileron = 1; else if (dt < 4) Aileron = -1; else if (dt < 7) { Bank = 0; Pitch = Level(i); }
-                        else if (dt < 8.5) { Bank = 0; Elevator = i.GLimit > 0 && i.G > .7 * i.GLimit ? 0 : .6; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
+                        else if (dt < 8.5) { Bank = 0; Elevator = RatesElevator(ratesElev, tick, i.G, i.GLimit, ref ratesCut); ratesElev = Elevator; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
                         else { Bank = 0; Pitch = Level(i); }
                         if (dt >= 10) { P.Note("roll_rate", P.Perf.RollRate, i.Mass); P.Note("pitch_rate", P.Perf.PitchRate, i.Mass); idx = 0; turnPass = 0; passSpeed = TurnSpeed(i.Speed, i.StallGuess); passBad = false; Go("turnprep", i, "Max safe turn: settling level at " + passSpeed.ToString("0") + " m/s (cruise) with power before banking."); }
                         return;
