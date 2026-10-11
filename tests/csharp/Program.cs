@@ -412,9 +412,9 @@ class Program
         {   // Luke 9:37 AM log (A300): every turn showed bank 5, dives reached only -5/-9/-8 in their 10 s, then recovery (100%) began
             var lt = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 253, Alt = 5100, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, Bank = 10, Throttle = 1 }; lt.Step(q);
             lt.Phase = "turn"; q.T = .1; lt.Step(q);   // bank 5 reached -> measures 20 s, then the 10 deg turn
-            for (int s = 2; s <= 220; s++) { q.T = s * .1; lt.Step(q); }
+            for (int s = 2; s <= 120; s++) { q.T = s * .1; lt.Step(q); }   // TurnSeg 10 s dwell
             int turnsAfter5 = lt.P.Turns.Count;
-            for (int s = 221; s <= 330; s++) { q.T = s * .1; q.Bank = 10; lt.Step(q); }   // stuck at 10 while 20 commanded: no measurement yet (< 20 s)
+            for (int s = 121; s <= 230; s++) { q.T = s * .1; q.Bank = 10; lt.Step(q); }   // stuck at 10 while 20 commanded: no measurement yet (< ReachTimeout)
             Check(turnsAfter5 == 1 && lt.P.Turns.Count == 1 && lt.Bank == 20, "turn measures only once the commanded bank is reached (log: bank stuck at 5)");
             for (int s = 331; s <= 560; s++) { q.T = s * .1; q.Bank = 20; lt.Step(q); }
             Check(lt.P.Turns.Count == 2 && lt.P.Turns[1][0] == 20, "20 deg turn recorded after reaching 20 deg");

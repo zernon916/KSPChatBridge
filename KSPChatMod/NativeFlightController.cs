@@ -695,14 +695,14 @@ namespace KSPChatBridge
                 double bank = directBank ?? FlightPolicy.Clamp(arcFf + .5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -blim, blim);
                 bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
-                double learnedRoll = profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;
+                double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight
                 double learnedPitch = profile != null && !double.IsNaN(profile.Perf.PitchRate) ? profile.Perf.PitchRate : double.NaN;
                 double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(TurnOnset.RollRate / learnedRoll, .5, 1.5) : 1;   // fast-rolling airframe -> less gain   // AUTOPILOT_REVIEW #7
                 double pitchGain = !double.IsNaN(learnedPitch) && learnedPitch > 5 ? FlightPolicy.Clamp(20 / learnedPitch, .5, 1.5) : 1;
                 if (!vessel.LandedOrSplashed && !directBank.HasValue)
                 {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry); LEARN roll rate when known
                     double want = bank; double onsetRoll = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(learnedRoll, 10, 60) : TurnOnset.RollRate;
-                    bank = CraftClass.RollStep(CraftCls, bankCmd, TurnOnset.Bank(bankCmd, want, dt, TurnOnset.GRate, onsetRoll), dt, learnedRoll); bankCmd = bank;
+                    bank = CraftClass.RollStep(CraftCls, bankCmd, bankOverride && learn != null && learn.TurnPhase ? want : TurnOnset.Bank(bankCmd, want, dt, TurnOnset.GRate, onsetRoll), dt, learnedRoll);   // Learn stress turns: roll in at the learned roll rate, no gentle g-onset bankCmd = bank;
                     if (Math.Abs(want) > 30 && Math.Abs(bankPrevWant) < 10) gTraceUntil = Time.realtimeSinceStartup + 6;
                     bankPrevWant = want;
                     if (Time.realtimeSinceStartup < gTraceUntil && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + .5f; ChatLog.Write("g", "turn entry: want=" + want.ToString("0") + " cmd=" + bankCmd.ToString("0") + " bank=" + Roll().ToString("0") + " n=" + vessel.geeForce.ToString("0.00")); }

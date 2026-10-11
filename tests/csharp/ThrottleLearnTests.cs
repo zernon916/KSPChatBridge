@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -167,6 +167,34 @@ internal static class ThrottleLearnTests
             thr = gt.Step(want, .1, kind); v += (6 * thr - .00004 * v * v) * .1;
         }
         return thr;
+    }
+    // Replay of live 18:16 turnprep porpoise: nose lags the command (tau 1 s, 4 deg/s), path lags the nose (tau 1.5 s, 3 deg AoA), 250 m/s.
+    static double[] PorpoiseSim(Func<LearnIn, double> law, double alt0)
+    {
+        double alt = alt0, nose = 3, gam = 0, v = 250, dt = .05, lo = 99, hi = -99; var q = new Queue<double>();
+        for (double t = 0; t < 180; t += dt)
+        {
+            double vs = v * Math.Sin(gam * Math.PI / 180);
+            var li = new LearnIn { T = t, Speed = v, Alt = alt, Agl = alt, Vs = vs, Pitch = nose, G = 1, GLimit = 8, FuelFrac = .9, Mass = 5.5, StallGuess = 60, Throttle = .3, GroundSpeed = v * Math.Cos(gam * Math.PI / 180) };
+            double cmd = law(li); q.Enqueue(cmd); double late = q.Count > 50 ? q.Dequeue() : 3;   // 2.5 s controller/actuator delay
+            nose += Math.Max(-4 * dt, Math.Min(4 * dt, (late - nose) * dt / 2));
+            gam += ((nose - 3) - gam) * dt / 1.5; alt += vs * dt;
+            if (t > 120) { lo = Math.Min(lo, cmd); hi = Math.Max(hi, cmd); }
+        }
+        return new[] { hi - lo, alt };
+    }
+    static void PrepPorpoise()
+    {
+        var old = PorpoiseSim(i => FlightPolicy.Clamp(3 + (FlightPolicy.Clamp((5000 - i.Alt) * .05, -15, 15) - i.Vs) * .6, -10, 15), 5300);
+        Check(old[0] > 4, "replay: old 0.6 deg/(m/s) VS law porpoises (cmd swing " + old[0].ToString("0.0") + ", alt " + old[1].ToString("0") + ")");
+        foreach (double a0 in new[] { 5300.0, 4600.0, 5000.0 })
+        {
+            var r = PorpoiseSim(i => LearnFlight.Level(i, LearnFlight.ClimbAlt), a0);
+            Check(r[0] < 1.5, "prep altitude hold is damped from " + a0 + " m (cmd swing " + r[0].ToString("0.00") + ")");
+            Check(Math.Abs(r[1] - LearnFlight.ClimbAlt) < 60, "prep hold settles at 5 km from " + a0 + " m (" + r[1].ToString("0") + ")");
+        }
+        var w = PorpoiseSim(i => LearnFlight.Level(i), 5000);
+        Check(w[0] < 1.5, "plain level hold (wait/ratesprep/sinkprep) is damped");
     }
     static void LevelOffCapture()
     {

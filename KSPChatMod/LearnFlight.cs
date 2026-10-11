@@ -365,8 +365,8 @@ namespace KSPChatBridge
             return ph;
         }
         internal const double ClimbAlt = 5000, StallAlt = 4000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, TurnSpikeG = 1.0, TurnSpikeStress = .97, LoadTau = .5, Seg = 20, DiveSeg = 10;
-        internal static readonly int[] Banks = { 10, 20, 30, 40, 45, 50, 55, 60, 65, 70 }; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };   // max-safe-turn stress test (Luke 10:06 AM) internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
-        internal const double SinkAlt = 5000, RampWait = 5, SinkSpeedFactor = 1.25; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
+        internal static readonly int[] Banks = { 10, 20, 30, 40, 45, 50, 55, 60, 65, 70, 75, 80 }; /* stress test: short dwell, ladder runs to the real limit */ internal const double TurnSeg = 10; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };   // max-safe-turn stress test (Luke 10:06 AM) internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
+        internal const double TurnPrepTimeout = 120; internal const double SinkAlt = 5000, RampWait = 5, SinkSpeedFactor = 1.25; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
         double sinkThr, vsF, lastVsF, lastT, prevT, stepAt, vs0, lagS = double.NaN, stepThr = double.NaN; bool lagDone; int tries; string resume = "sinkdown";
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
@@ -501,10 +501,16 @@ namespace KSPChatBridge
             double lvl = Level(i, target), f = FlightPolicy.Clamp(below / lead, 0, 1);
             return lvl + (Math.Max(climbPitch, lvl) - lvl) * f;
         }
-        static double Level(LearnIn i, double target = double.NaN)
+        /// <summary>Level / altitude hold for Learn prep and wait phases. Commands a flight-path angle, not raw nose from VS error: the old
+        /// 3 + 0.6 deg per m/s VS law had a loop gain of ~2.6 at 250 m/s (1 deg = 4.4 m/s) and, with nose/path lag, porpoised -7..+11 deg on a
+        /// ~16 s cycle (live 18:16, turnprep). Now: nose = current AoA + target path angle + 0.5 x path error; altitude -> VS at 0.03/s, max 10 m/s.</summary>
+        internal static double Level(LearnIn i, double target = double.NaN)
         {
-            double vsT = double.IsNaN(target) ? 0 : FlightPolicy.Clamp((target - i.Alt) * .05, -15, 15);
-            return FlightPolicy.Clamp(3 + (vsT - i.Vs) * .6, -10, 15);
+            double vsT = double.IsNaN(target) ? 0 : FlightPolicy.Clamp((target - i.Alt) * .03, -10, 10);
+            double gam = i.Fpa, v = Math.Max(30, i.GroundSpeed);
+            if (double.IsNaN(gam)) return FlightPolicy.Clamp(3 + (vsT - i.Vs) * .15, -10, 15);
+            double aoa = FlightPolicy.Clamp(i.Pitch - gam, -5, 15), gT = Math.Asin(FlightPolicy.Clamp(vsT / v, -1, 1)) * 180 / Math.PI;
+            return FlightPolicy.Clamp(aoa + gT + .5 * (gT - gam), -10, 15);
         }
         void SampleClimb(LearnIn i)
         {
@@ -745,8 +751,8 @@ namespace KSPChatBridge
                         if (!nearLimit && !Reached(i, bankOk)) return;
                         if (double.IsNaN(reachAt)) reachAt = i.T;
                         thrSum += double.IsNaN(i.Throttle) ? 0 : i.Throttle; spdSum += i.Speed; gSum += i.G; trSum += Math.Abs(i.TurnRate); crSum += Math.Abs(i.CourseRate); stMax = Math.Max(stMax, i.Stress); n++;
-                        bool slow = i.Speed < 1.3 * i.StallGuess, sinking = a0 - i.Alt > TurnAltLoss;
-                        if (i.T - reachAt >= Seg || nearLimit || slow || sinking)
+                        bool slow = i.Speed < 1.3 * i.StallGuess, sinking = a0 - i.Alt > TurnAltLoss || (i.T - reachAt >= TurnSeg && badPitch > 2);   // short dwell: a bank whose nose is already not tracking at the end is not "good"
+                        if (i.T - reachAt >= TurnSeg || nearLimit || slow || sinking)
                         {
                             double rate = trSum / Math.Max(1, n), radius = rate > .01 ? i.Speed / (rate * Math.PI / 180) : double.NaN, rollIn = reachAt - t0;
                             double crate = crSum / Math.Max(1, n), vMean = n > 0 ? spdSum / n : i.Speed;
@@ -765,7 +771,7 @@ namespace KSPChatBridge
                 case "turnprep":
                     {
                         double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, ClimbAlt); SpeedTarget = vT;   // turns fly at the 5 km test altitude   // speed PI only
-                        if (Math.Abs(i.Speed - vT) < 5 || dt > 180) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
+                        if ((Math.Abs(i.Speed - vT) < Math.Max(5, .03 * vT) && Math.Abs(i.Alt - ClimbAlt) < 400) || dt > TurnPrepTimeout) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }
                 case "recover":
