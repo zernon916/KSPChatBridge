@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.RegularExpressions;
 using System;
 using System.Collections.Generic;
@@ -56,9 +57,21 @@ namespace KSPChatBridge
         }
         /// <summary>Fuzzy built-in Kerbin runway: (site "ksc"|"island", direction "09"|"27"|"") or null when the name
         /// mentions something else (a saved spot). Accepts KSC 27, KSP 27, runway 27, rwy 27, 27, 09, island, Island Runway 09...</summary>
+        /// <summary>Model typos for KSC ("krc 27", "kcs", "ksk"): a 3-letter word one edit from "ksc" becomes "ksc".</summary>
+        internal static string FuzzySite(string n)
+        {
+            var w = (n ?? "").Split(' '); for (int i = 0; i < w.Length; i++) if (w[i].Length == 3 && w[i] != "ksc" && w[i] != "ksp" && Array.IndexOf(SiteWords, w[i]) < 0 && (Lev(w[i], "ksc") <= 1 || new string(w[i].OrderBy(ch => ch).ToArray()) == "cks") && char.IsLetter(w[i][0])) w[i] = "ksc";
+            return string.Join(" ", w);
+        }
+        static int Lev(string a, string b)
+        {
+            var d = new int[a.Length + 1, b.Length + 1]; for (int i = 0; i <= a.Length; i++) d[i, 0] = i; for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+            for (int i = 1; i <= a.Length; i++) for (int j = 1; j <= b.Length; j++) d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+            return d[a.Length, b.Length];
+        }
         internal static Tuple<string, string> BuiltInRunway(string name, string runway)
         {
-            string n = (name ?? "").Trim().ToLowerInvariant(), r = (runway ?? "").Trim().ToLowerInvariant();
+            string n = FuzzySite((name ?? "").Trim().ToLowerInvariant()), r = (runway ?? "").Trim().ToLowerInvariant();
             string dir = "";
             var m = DirRx.Match(r.Length > 0 ? r : n);
             if (m.Success) dir = m.Groups[1].Value == "27" ? "27" : "09";

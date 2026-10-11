@@ -302,7 +302,46 @@ namespace KSPChatBridge
         }
 
         // ---- round 3: speed cap (200 target / 220 cap low down) and altitude target vs terrain floor ----
-        internal const double CapSpeed = 220, CapAltitude = 6000;
+        internal const double CapAltitude = 6000;
+        /// <summary>Low-altitude speed cap, per plane (Luke 12:00 AM): set each tick from the LEARN profile / class estimate. 220 until a vessel sets it.</summary>
+        internal static double CapSpeed = 220;
+        /// <summary>Per-plane cap: 95% of the learned max level speed, else a mass/class estimate.</summary>
+        internal static double PlaneCap(double maxLevel, double massT, bool heavy)
+        {
+            if (!double.IsNaN(maxLevel) && maxLevel > 50) return .95 * maxLevel;
+            return heavy ? FlightPolicy.Clamp(260 - massT, 170, 230) : FlightPolicy.Clamp(300 - 1.5 * massT, 200, 300);
+        }
+        /// <summary>Never cap below what the player commanded, unless heat or structure is near its limit (then 90% of the plane cap).</summary>
+        internal static double EffectiveCap(double planeCap, double commanded, bool hot)
+        {
+            if (hot) return .9 * planeCap;
+            return double.IsNaN(commanded) || commanded <= 0 ? planeCap : Math.Max(planeCap, commanded + 5);
+        }
+        /// <summary>Throttle written in hold mode (Luke 11:57 PM log case): the speed hold, or - with the speed hold off - the low-energy minimum
+        /// power still overrides (NaN = leave the pilot's throttle alone).</summary>
+        internal static double HoldThrottleOut(bool holdSpeed, bool lowEnergy, double throttle)
+        {
+            if (holdSpeed) return lowEnergy ? Math.Max(throttle, .9) : throttle;
+            return lowEnergy ? Math.Max(throttle, .9) : double.NaN;
+        }
+        /// <summary>Hold engage speed: the asked speed, else the current speed; never 0 and never below 1.3x stall.</summary>
+        internal static double HoldEngageSpeed(double asked, double srfSpeed, double stall)
+        {
+            double v = double.IsNaN(asked) || asked < 0 ? srfSpeed : asked;
+            double floor = 1.3 * (double.IsNaN(stall) || stall <= 0 ? 45 : stall);
+            return FlightPolicy.Clamp(Math.Max(v, floor), 25, Math.Max(200, Math.Max(CapSpeed, floor)));
+        }
+        /// <summary>Climb pitch envelope: heavy 15 deg, others 25.</summary>
+        internal static double PitchEnvelope(bool heavy) { return heavy ? 15 : 25; }
+        /// <summary>Even with altitude hold off, the hold takes the elevator when energy is low or the attitude leaves the envelope.</summary>
+        internal static bool TakePitch(bool holdAltitude, bool direct, bool lowEnergy, double pitch, bool heavy)
+        {
+            if (holdAltitude || direct) return true;
+            return lowEnergy || pitch > PitchEnvelope(heavy) + 5 || pitch < -25;
+        }
+        internal const double ApproachRange = 150000, FerryHandoff = 145000;
+        internal static bool FerryNeeded(double distM) { return distM > ApproachRange; }
+        internal static double FerryCruise(double stall, double econ) { return !double.IsNaN(econ) && econ > 0 ? FlightPolicy.Clamp(econ, 1.4 * stall, 250) : FlightPolicy.Clamp(2.2 * stall, 100, 200); }
         /// <summary>Throttle after the over-cap rule: over 220 m/s low down, cut 15% (30% when 30+ over) at most once a second.</summary>
         internal static double SpeedCapThrottle(double throttle, double ias, double altitude, double sinceLastCut, out bool cut)
         {
@@ -433,7 +472,7 @@ namespace KSPChatBridge
             {
                 double t = known ? vmax : 400; capLifted = low && t > CapSpeed;
                 reply = "Target " + t.ToString("0", Inv) + " m/s (" + (known ? "estimated max level speed" : "no max estimate yet - full power, watching it") + ")"
-                    + (capLifted ? "; note: above the 220 m/s low-altitude cap because you asked for max." : ".");
+                    + (capLifted ? "; note: above the " + CapSpeed.ToString("0", Inv) + " m/s low-altitude cap because you asked for max." : ".");
                 return t;
             }
             if (!num) { reply = "Speed not understood: " + s + " (give m/s or say max)."; return double.NaN; }

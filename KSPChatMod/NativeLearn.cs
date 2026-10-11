@@ -152,6 +152,7 @@ namespace KSPChatBridge
                     o.Add("Stall    " + F0(me.stall) + " m/s " + ts + (p != null && !double.IsNaN(p.StallAltLoss) ? ", recovery -" + F0(p.StallAltLoss) + " m" : ""));
                     o.Add("Liftoff  " + F0(p != null && !double.IsNaN(p.Liftoff) ? p.LiftoffAt(m) : me.liftoffSpeed) + " m/s " + (p != null && !double.IsNaN(p.Liftoff) ? "TEST" : double.IsNaN(me.liftoffSpeed) ? "EST" : "LIVE"));
                     o.Add("Approach " + F0(ApproachProfile.AppSpeed(me.stall)) + " m/s (1.35 Vs)");
+                    o.Add("Speed cap " + F0(PilotPolicy.CapSpeed) + " m/s below 6 km (plane " + F0(CapPlane) + " " + CapSource + (CapHot ? ", HOT -10%" : "") + ")");
                     o.Add("Econ     " + (p == null || double.IsNaN(p.EconSpeed) ? "-" : PlaneProfile.ScaleSpeed(p.EconSpeed, p.M0, m).ToString("0") + " m/s @ " + Math.Round(p.EconThrottle * 100) + "%") + "  Vmax lvl " + F0(p == null ? double.NaN : p.Perf.MaxLevel));
                     double dl = Decel.Estimate(me.vessel.vesselName, 150, 100, true);
                     o.Add("Accel " + F2(p == null ? double.NaN : p.AccelAt(m)) + "  Decel " + F2(p != null && !double.IsNaN(p.Decel) ? p.DecelAt(m) : dl) + " m/s2 " + (p != null ? "TEST" : double.IsNaN(dl) ? "EST" : "LIVE"));

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
@@ -76,6 +76,7 @@ namespace KSPChatBridge
                     if (route == "heli") return Command("heli_control", Args("mode", "land"));
                     bool sf = Bool(a, "short_final", false) || where.ToLowerInvariant().Contains("short");
                     if (route == "spot") return Command("land_plane", Args("name", FlightResidualPolicy.RunwayAlias(where), "short_final", sf));
+                    if (route == "plane" && where.Trim().Length > 0 && FlightResidualPolicy.BuiltInRunway(where, "") != null) return Command("land_plane", Args("name", FlightResidualPolicy.RunwayAlias(where), "short_final", sf));
                     if (route == "plane") return Command("land_plane", Args("short_final", sf));
                     return Command("land_here", Args());
                 }

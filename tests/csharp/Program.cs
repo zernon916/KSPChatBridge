@@ -311,6 +311,18 @@ class Program
             Check(rt2 != null && Math.Abs(rt2.Stall - pp.Stall) < .01 && rt2.Complete, "profile saves and loads");
             Check(DirectOrNull("learn this plane") == "learn_plane", "chat: 'learn this plane' starts the test flight");
         Check(!MfdNav.TextColorOk(.45f, .45f, .47f) && !MfdNav.TextColorOk(.5f, .5f, .5f) && Array.TrueForAll(MfdNav.OverlayColors, c => MfdNav.TextColorOk(c[0], c[1], c[2])), "map overlay text colors never match the map/fog grey");
+        {   // Luke 11:57 PM log (A300 44.8 t, stall 79): hold engaged with the speed hold off, thr 0%, low energy logged but never applied
+            Check(PilotPolicy.HoldThrottleOut(false, true, 0) >= .9, "low-energy power overrides even with the speed hold off (log 23:54: thr stayed 0%)");
+            Check(double.IsNaN(PilotPolicy.HoldThrottleOut(false, false, .4)) && PilotPolicy.HoldThrottleOut(true, true, .1) >= .9 && PilotPolicy.HoldThrottleOut(true, false, .4) == .4, "speed hold off + normal energy leaves the pilot's throttle; on: speed hold, low energy wins");
+            Check(Math.Abs(PilotPolicy.HoldEngageSpeed(-1, 133, 79) - 133) < 1e-6, "engage captures the current speed (133 m/s)");
+            Check(PilotPolicy.HoldEngageSpeed(0, 133, 79) >= 1.3 * 79 - 1e-6 && PilotPolicy.HoldEngageSpeed(-1, 75, 79) >= 1.3 * 79 - 1e-6, "engage never targets 0 or below 1.3x stall");
+            Check(PilotPolicy.TakePitch(false, false, false, 33, true) && PilotPolicy.TakePitch(false, false, true, 0, true) && !PilotPolicy.TakePitch(false, false, false, 8, true) && PilotPolicy.PitchEnvelope(true) == 15, "hold takes the elevator outside the pitch envelope / low energy (log 23:56: 33-39 deg climb); heavy max 15 deg");
+            Check(PilotPolicy.FerryNeeded(160000) && !PilotPolicy.FerryNeeded(140000) && PilotPolicy.FerryHandoff < PilotPolicy.ApproachRange && PilotPolicy.FerryCruise(79, double.NaN) > 1.4 * 79, "land beyond 150 km ferries at cruise, approach inside 150 km");
+            var krc = FlightResidualPolicy.BuiltInRunway("krc 27", ""); var kc = FlightResidualPolicy.BuiltInRunway("kcs 09", "");
+            Check(krc != null && krc.Item1 == "ksc" && krc.Item2 == "27" && kc != null && kc.Item1 == "ksc" && kc.Item2 == "09" && FlightResidualPolicy.RunwayAlias("krc 27") == "KSC Runway 27", "model typo 'krc 27' fuzzy-matches KSC 27");
+            Check(Math.Abs(PilotPolicy.PlaneCap(278, 45, true) - 264.1) < .1 && PilotPolicy.PlaneCap(double.NaN, 45, true) < PilotPolicy.PlaneCap(double.NaN, 5, false), "speed cap per plane: 95% of learned max level, else mass/class estimate");
+            Check(PilotPolicy.EffectiveCap(200, 250, false) >= 255 && PilotPolicy.EffectiveCap(200, 250, true) == 180 && PilotPolicy.EffectiveCap(200, double.NaN, false) == 200, "cap never below the commanded speed unless heat/structure is near the limit");
+        }
         Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
         {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
             var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);

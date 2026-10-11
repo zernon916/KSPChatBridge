@@ -416,6 +416,27 @@ namespace KSPChatBridge
         double Track() { return vessel.srfSpeed < 5 ? double.NaN : FlightGlobals.ship_heading; }   // nose heading ~ track (no wind in KSP)
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
+        Dictionary<string, object> pendingLand; double ferryLat, ferryLon; float ferryNext, capNext;
+        internal static double CapPlane = double.NaN; internal static string CapSource = ""; internal static bool CapHot;
+        void FerryTick()
+        {
+            if (pendingLand == null || mode != "hold" || vessel == null || Time.realtimeSinceStartup < ferryNext) return;
+            ferryNext = Time.realtimeSinceStartup + 2;
+            double d = NavigationMath.Distance(vessel.latitude, vessel.longitude, ferryLat, ferryLon, vessel.mainBody.Radius);
+            if (d < PilotPolicy.FerryHandoff) { var args = pendingLand; pendingLand = null; ChatLog.Write("ap", "ferry: inside " + (d / 1000).ToString("0") + " km, starting the approach"); ChatWindow.Notice(Command("land_plane", args)); return; }
+            heading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, ferryLat, ferryLon);   // great circle: re-aim every 2 s
+        }
+        /// <summary>Per-plane low-altitude speed cap (Luke 12:00 AM): profile max level x 0.95, else mass/class; never below the commanded speed unless hot.</summary>
+        void UpdateCap()
+        {
+            if (vessel == null || Time.realtimeSinceStartup < capNext) return; capNext = Time.realtimeSinceStartup + 1;
+            double heat = 0; foreach (Part p in vessel.parts) if (p.maxTemp > 0) heat = Math.Max(heat, Math.Max(p.temperature / p.maxTemp, p.skinMaxTemp > 0 ? p.skinTemperature / p.skinMaxTemp : 0));
+            bool known = profile != null && !double.IsNaN(profile.Perf.MaxLevel);
+            CapPlane = PilotPolicy.PlaneCap(known ? profile.Perf.MaxLevel : double.NaN, vessel.totalMass, CraftClass.Gentle(CraftCls)); CapSource = known ? "TEST" : "EST";
+            CapHot = heat > .85 || vessel.geeForce > .9 * ApproachProfile.StructG;
+            PilotPolicy.CapSpeed = PilotPolicy.EffectiveCap(CapPlane, holdSpeed ? speed : double.NaN, CapHot);
+        }
+        double CpMax { get { return Math.Min(climbPitchMax, PilotPolicy.PitchEnvelope(CraftClass.Gentle(CraftCls))); } }   // heavy: 15 deg max climb pitch
         void BeginHold()
         {
             var savedTrim = craftNotes.Load(vessel.vesselName);
@@ -647,9 +668,9 @@ namespace KSPChatBridge
                 }
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double kinH = kin * CraftClass.GainScale(CraftCls);
-                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kinH * (targetVs - vessel.verticalSpeed) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, climbPitchMax);
+                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kinH * (targetVs - vessel.verticalSpeed) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
-                if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, climbPitchMax), climbPitchMax);
+                if (targetVs > 3 && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, CpMax), CpMax);
                 if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
             double gLim = mode == "landing" && runway != null && runway.Phase == "entry" ? Math.Max(3, ApproachProfile.LoadFactor(ApproachProfile.JoinG, vessel.srfSpeed, stall) + .5) : mode == "landing" && runway != null && (runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare") ? Math.Max(1.2, ApproachProfile.FinalG) : 3;   // gentler once established inbound   // joins maneuver to the dynamic limit; final/flare stay gentle
@@ -663,7 +684,7 @@ namespace KSPChatBridge
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
-                if (holdAltitude || directVs.HasValue || directPitch.HasValue) c.pitch = elevator;
+                if (PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls))) c.pitch = elevator;
                 if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
                 if (holdHeading || directBank.HasValue) c.roll = (float)FlightPolicy.Clamp(.014 * (bank - roll) - .01 * p, -1, 1);
@@ -671,7 +692,7 @@ namespace KSPChatBridge
                 if (mode == "hold" && holdAltitude && vessel.altitude > altitude + 30 && vessel.verticalSpeed > 3) targetThrottle -= .05;   // above the target and still climbing: power off
                 else if (targetVs > 3) targetThrottle += .05 * Math.Sign(targetVs - vessel.verticalSpeed);
                 else if (Math.Abs(speed - vessel.srfSpeed) > 3) targetThrottle += .05 * Math.Sign(speed - vessel.srfSpeed);
-                if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > 220) targetThrottle = throttle - .05;
+                if (vessel.altitude < 6000 && vessel.indicatedAirSpeed > PilotPolicy.CapSpeed) targetThrottle = throttle - .05;
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 if (mode == "takeoff" || vessel.LandedOrSplashed || mode != shapedSpeedMode) { shold.Reset(); shapedSpeedMode = mode; }
                 if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
@@ -686,11 +707,13 @@ namespace KSPChatBridge
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
             if (speedLock && !vessel.LandedOrSplashed) { speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle
+            UpdateCap();
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
                 if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, vessel.indicatedAirSpeed, speed, stall); else if (vessel.indicatedAirSpeed < 1.15 * stall) throttle = 1;   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
-                if (holdSpeed) c.mainThrottle = (float)throttle;
+                { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
+            FerryTick();
             LearnApply(c);
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {
@@ -704,6 +727,7 @@ namespace KSPChatBridge
         }
         void Stop(bool interruptPlan = true)
         {
+            pendingLand = null;
             bankOverride = false; pendingCircle = null;
             if (mode == "taxi" && vessel != null)
             {
@@ -987,13 +1011,14 @@ namespace KSPChatBridge
                     if (altitude < 0) altitude = vessel.altitude;
                     else if (Str(a, "altitude_ref", "agl") == "agl") altitude += vessel.altitude - vessel.radarAltitude;
                     heading = Num(a, "heading", FlightGlobals.ship_heading); if (heading < 0) heading = FlightGlobals.ship_heading;
-                    speed = Num(a, "speed", Math.Min(200, vessel.srfSpeed)); if (speed < 0) speed = Math.Min(200, vessel.srfSpeed);
-                    speed = FlightPolicy.Clamp(speed, 25, 200);
+                    speed = PilotPolicy.HoldEngageSpeed(Num(a, "speed", -1), vessel.srfSpeed, stall);   // capture the current speed; never 0 or below 1.3x stall
                     double vs = Num(a, "vertical_speed", -999); directVs = vs > -999 ? (double?)FlightPolicy.Clamp(vs, -90, 90) : null;
                     if (off.Contains("vertical_speed")) directVs = null;
                     double rollTarget = Num(a, "roll", -999);
                     directBank = !off.Contains("roll") && rollTarget > -999 ? (double?)FlightPolicy.Clamp(rollTarget, -FlightPolicy.BankLimit(vessel.srfSpeed), FlightPolicy.BankLimit(vessel.srfSpeed)) : null;
                     directPitch = null; BeginHold();
+                    if (!holdSpeed) FlightInputHandler.state.mainThrottle = vessel.ctrlState.mainThrottle;   // speed hold off: the pilot's throttle continues from here (not a stale 0)
+                    ChatLog.Write("ap", "hold engage alt=" + altitude.ToString("0") + " hdg=" + heading.ToString("000") + " spd=" + speed.ToString("0") + " off=" + string.Join(",", new List<string>(off).ToArray()) + " thr=" + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%");
                     if (vessel.LandedOrSplashed) { altitude = Math.Max(altitude, vessel.altitude + 300); return StartTakeoff(); }
                     return "Local aircraft holds engaged.";
                 case "takeoff":
@@ -1011,8 +1036,8 @@ namespace KSPChatBridge
                     return "Local powered descent engaged; upright near-vertical descent only.";
                 case "land_plane": case "land_at_spot":
                     if (Str(a, "mode", "H").ToUpperInvariant() == "V") return "Targeted vertical landing is not yet ported; use local powered descent here.";
-                    if (Num(a, "touch_and_go", 0) != 0 || Num(a, "final_km", 0) != 0 || Num(a, "approach_heading", -1) != -1)
-                        return "Local runway landing does not yet support touch-and-go, final-length or approach-heading overrides.";
+                    if (Num(a, "touch_and_go", 0) != 0) return "Local runway landing does not yet support touch-and-go.";
+                    if (Num(a, "final_km", 0) != 0 || Num(a, "approach_heading", -1) != -1) ChatLog.Write("ap", "land: ignoring final_km/approach_heading (chart decides)");
                     bool wheels = false, wings = false;
                     foreach (Part part in vessel.parts) { wheels |= part.FindModuleImplementing<ModuleWheelBase>() != null; wings |= part.FindModuleImplementing<ModuleLiftingSurface>() != null; }
                     if (!wheels || !wings) return "Plane autoland requires wheels and wings.";
@@ -1064,7 +1089,19 @@ namespace KSPChatBridge
                     if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEnd(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading)
                     : !savedRunway && (island ? direction == "09" : direction == "27"))
                     { double lat = selectedRunway.Lat, lon = selectedRunway.Lon; selectedRunway.Lat = selectedRunway.EndLat; selectedRunway.Lon = selectedRunway.EndLon; selectedRunway.EndLat = lat; selectedRunway.EndLon = lon; }
-                    if (NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius) > 150000) return "Runway is beyond the 150 km approach limit.";
+                    double rwDist = NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius);
+                    if (PilotPolicy.FerryNeeded(rwDist))
+                    {   // Luke 11:57 PM: beyond 150 km fly the great-circle course at cruise; the approach starts automatically inside 150 km
+                        if (vessel.LandedOrSplashed) return "Runway is " + (rwDist / 1000).ToString("0") + " km away: take off first.";
+                        var keep = new Dictionary<string, object>(a);
+                        double econ = profile != null && !double.IsNaN(profile.EconSpeed) ? PlaneProfile.ScaleSpeed(profile.EconSpeed, profile.M0, vessel.totalMass) : double.NaN;
+                        double cruise = PilotPolicy.FerryCruise(stall, econ), falt = Math.Max(vessel.altitude, 3000), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
+                        string hr = Command("plane_hold", new Dictionary<string, object> { { "altitude_m", falt }, { "altitude_ref", "msl" }, { "heading", brg }, { "speed", cruise } });
+                        if (mode != "hold") return hr;
+                        pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0;
+                        ChatLog.Write("ap", "ferry to runway: " + (rwDist / 1000).ToString("0") + " km, brg " + brg.ToString("000") + ", " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m");
+                        return "Runway is " + (rwDist / 1000).ToString("0") + " km away: flying the great-circle course (" + brg.ToString("000") + ") at " + cruise.ToString("0") + " m/s, " + falt.ToString("0") + " m. The approach starts automatically inside 150 km.";
+                    }
                     double approachSpeed = Num(a, "approach_speed", 0);
                     selectedRunway.Terrain = (la, lo) => vessel.mainBody.pqsController == null ? double.NaN : Math.Max(0, vessel.mainBody.pqsController.GetSurfaceHeight(vessel.mainBody.GetRelSurfaceNVector(la, lo)) - vessel.mainBody.Radius);
                     double askBank = Num(a, "bank", 0); selectedRunway.BankDeg = askBank > 0 ? FlightPolicy.Clamp(askBank, 10, 60) : 20;
