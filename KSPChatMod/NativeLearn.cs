@@ -166,6 +166,8 @@ namespace KSPChatBridge
             double m = vessel.totalMass, s = profile.StallAt(m);
             if (!double.IsNaN(s)) stallGuess = s;
             if (!double.IsNaN(profile.Lag)) shold.SetLag(profile.Lag);
+            if (!double.IsNaN(profile.Accel)) shold.SetTargetSlew(profile.AccelAt(m));
+            ApproachProfile.TrustedStall = !double.IsNaN(profile.Stall) && profile.Stall > 0;
             ChatLog.Write("vessel", "plane profile (" + profile.Date + ", test " + profile.M0.ToString("0.0") + " t, now " + m.ToString("0.0") + " t): stall " + (double.IsNaN(s) ? "-" : s.ToString("0")) + " m/s scaled; " + profile.Summary());
         }
 

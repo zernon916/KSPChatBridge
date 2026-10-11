@@ -55,7 +55,13 @@ namespace KSPChatBridge
         internal const double HeavyBank = 25, HeavyRollRate = 6, HeavyG = 1.15, HeavyPitchG = 1.4;
         internal static double MaxBank(string cls, double limit) { return Gentle(cls) ? Math.Min(limit, HeavyBank) : limit; }
         internal static double JoinG(string cls, double g) { return Gentle(cls) ? Math.Min(g, HeavyG) : g; }
-        internal static double RollStep(string cls, double cmd, double want, double dt) { if (!Gentle(cls)) return want; double d = HeavyRollRate * dt; return Math.Abs(want - cmd) <= d ? want : cmd + Math.Sign(want - cmd) * d; }
+        /// <summary>Roll toward want. LEARN roll rate (when known) drives the step for every class; else heavies use HeavyRollRate and light/fighter snap (AUTOPILOT_REVIEW #7/#10).</summary>
+        internal static double RollStep(string cls, double cmd, double want, double dt, double learnedRollDegS = double.NaN)
+        {
+            double rate = !double.IsNaN(learnedRollDegS) && learnedRollDegS > 5 ? FlightPolicy.Clamp(learnedRollDegS, 6, 60) : Gentle(cls) ? HeavyRollRate : 0;
+            if (rate <= 0) return want;
+            double d = rate * dt; return Math.Abs(want - cmd) <= d ? want : cmd + Math.Sign(want - cmd) * d;
+        }
         /// <summary>Heavy: extra nose-up lead in a bank (lift lost to bank, anticipated not chased).</summary>
         internal static double PitchLead(string cls, double bankDeg) { if (!Gentle(cls)) return 0; double c = Math.Cos(Math.Min(60, Math.Abs(bankDeg)) * Math.PI / 180); return 8 * (1 / c - 1); }
         /// <summary>Heavy: start recovering (wings level + climb) when AGL is below max(150 m, 10 s of sink).</summary>
@@ -263,6 +269,8 @@ namespace KSPChatBridge
     internal static class ApproachProfile
     {
         internal const double JoinFactor = 1.5, MinSpeed = 80, MaxSpeed = 200, Replan = .08, UnmeasuredStallFloor = 45;
+        /// <summary>True when the active craft has a LEARN'd stall (wider SaneStall / join floor — AUTOPILOT_REVIEW #4/#11).</summary>
+        internal static bool TrustedStall;
         /// <summary>Stall at current mass from a reference stall (Vs ~ sqrt(mass)).</summary>
         internal static double StallAt(double stallRef, double massRef, double massNow) { return massRef > 0 && massNow > 0 ? stallRef * Math.Sqrt(massNow / massRef) : stallRef; }
         /// <summary>Wing-loading estimate when the craft has no measured stall: Vs = sqrt(2 m g / (rho0 * K * sum(lift coeff))), K calibrated to stock (6 t, 6 lift -> ~45 m/s).</summary>
@@ -272,12 +280,25 @@ namespace KSPChatBridge
         internal static double EstimateStall(double massKg, double liftCoeffSum) { return liftCoeffSum <= 0 ? UnmeasuredStallFloor : FlightPolicy.Clamp(Math.Sqrt(2 * massKg * 9.81 / (RhoSea * AreaPerCoeff * liftCoeffSum * ClMaxConservative)), UnmeasuredStallFloor, 200); }
         /// <summary>Heavy-class floor that scales with sqrt(mass): 10 m/s * sqrt(t) (48.8 t -> 70 m/s).</summary>
         internal static double HeavyStallFloor(double massT) { return 10 * Math.Sqrt(Math.Max(0, massT)); }   // Luke 13:33: unfloored estimate gave 31 m/s -> 46 m/s joins, 586 m arcs flown at 70-260 m/s
-        internal static double Speed(double stall) { return FlightPolicy.Clamp(JoinFactor * stall, MinSpeed, MaxSpeed); }
-        /// <summary>Stall estimate sanity floor for the approach schedule (live 15:4x: ~33 m/s gave a 43 m/s final from 20 km).</summary>
-        internal static double SaneStall(double stall) { return FlightPolicy.Clamp(double.IsNaN(stall) ? UnmeasuredStallFloor : stall, 40, 120); }
+        internal static double Speed(double stall)
+        {
+            double s = SaneStall(stall), lo = TrustedStall ? Math.Max(40, 1.3 * s) : MinSpeed;
+            return FlightPolicy.Clamp(JoinFactor * s, lo, MaxSpeed);
+        }
+        /// <summary>Stall sanity for the approach schedule. No LEARN: 40-120 (live 15:4x). With LEARN TrustedStall: 15-180 so light fighters and fast jets keep real Vs (AUTOPILOT_REVIEW #4).</summary>
+        internal static double SaneStall(double stall)
+        {
+            if (double.IsNaN(stall)) return UnmeasuredStallFloor;
+            return TrustedStall ? FlightPolicy.Clamp(stall, 15, 180) : FlightPolicy.Clamp(stall, 40, 120);
+        }
         internal static double AppSpeed(double stall) { return 1.35 * SaneStall(stall); }
-        /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150), linear decel to 1.35x stall by 2 km, then held to the flare.</summary>
-        internal static double HiSpeed(double stall) { return Math.Max(AppSpeed(stall), Math.Min(150, 2.3 * SaneStall(stall))); }
+        /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150, or 1.1x join when LEARN'd fast), linear decel to 1.35x stall by 2 km.</summary>
+        internal static double HiSpeed(double stall)
+        {
+            double s = SaneStall(stall), app = AppSpeed(stall), hi = 2.3 * s;
+            double cap = TrustedStall ? Math.Max(150, Math.Min(MaxSpeed, 1.1 * JoinFactor * s)) : 150;
+            return Math.Max(app, Math.Min(cap, hi));
+        }
         internal const double DefaultDecel = 1.0, DecelMargin = 500, DecelEnd = 2000;
         /// <summary>Distance needed to slow from v1 to v2 at a m/s^2: (v1^2 - v2^2) / 2a, plus margin.</summary>
         internal static double DecelStartM(double v1, double v2, double a) { return Math.Max(0, v1 * v1 - v2 * v2) / (2 * Math.Max(.3, double.IsNaN(a) ? DefaultDecel : a)) + DecelMargin; }
@@ -800,6 +821,8 @@ namespace KSPChatBridge
         internal double Distance;
         internal const double FastAtShort = 15, FastAtGate = 10;
         internal double DecelA = double.NaN, LastStallEst = 45;   // measured idle(+airbrake) decel for this craft; NaN = conservative default
+        /// <summary>LEARN sink-map hint for flare VS (m/s positive down); NaN = default 1 m/s (AUTOPILOT_REVIEW #6).</summary>
+        internal double FlareSinkHint = double.NaN;
         internal double DecelStartDist { get { return ApproachProfile.DecelStartDist(LastStallEst, DecelA); } }
         internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
         internal double Cross, Along;
@@ -973,8 +996,9 @@ namespace KSPChatBridge
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
                 DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
-                double fs = Override != null ? Override.FlareStartM : 15, fv = Override != null ? Override.FlareSinkMs : 1;
-                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s
+                double fs = Override != null ? Override.FlareStartM : 15;
+                double fv = Override != null ? Override.FlareSinkMs : (!double.IsNaN(FlareSinkHint) ? FlareSinkHint : 1);
+                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s; FlareSinkHint from LEARN sink table when present
                 double fastBy = speed - ApproachProfile.FinalSchedule(Distance + 1500, stall, DecelA);   // decel lag allowance   // gates follow the schedule, only inside the short final
                 if (Phase == "final" && Distance < ApproachChart.ShortFix && Distance > GateDistance && fastBy > FastAtShort) { Phase = "go around"; Why = "too fast at the short final (+" + fastBy.ToString("0") + " m/s)"; }
                 if (Phase == "final" && Distance <= GateDistance && Distance > 100 && speed - ApproachProfile.AppSpeed(stall) > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + (speed - ApproachProfile.AppSpeed(stall)).ToString("0") + " m/s)"; }

@@ -30,7 +30,8 @@ namespace KSPChatBridge
             for (int k = 1; k < e.Count; k++) if (speed <= e[k][0]) { double t = (speed - e[k - 1][0]) / Math.Max(1e-6, e[k][0] - e[k - 1][0]); return e[k - 1][1] + t * (e[k][1] - e[k - 1][1]); }
             return e[e.Count - 1][1];
         }
-        internal double RollIn { get { if (Envelope.Count == 0) return 0; double s = 0; foreach (var x in Envelope) s += double.IsNaN(x[5]) ? 0 : x[5]; return s / Envelope.Count; } }   // flaps-full sink map (same layout as Sink)
+        /// <summary>Mean roll-in seconds from the turn envelope rows (index 5).</summary>
+        internal double RollIn { get { if (Envelope.Count == 0) return 0; double s = 0; foreach (var x in Envelope) s += double.IsNaN(x[5]) ? 0 : x[5]; return s / Envelope.Count; } }
         /// <summary>Climb rate (m/s) at altitude from the curve, else ClimbVs fallback.</summary>
         internal double ClimbRateAt(double altM, double mass)
         {

@@ -75,7 +75,18 @@ namespace KSPChatBridge
         /// <summary>Throttle -> speed response lag (s) and acceleration per unit throttle (m/s^2), for the Smith-style prediction.</summary>
         internal double Lag { get; private set; } = 1; internal double Sens = 3;
         double model = double.NaN;
-        internal void SetLag(double lagS) { if (!double.IsNaN(lagS) && lagS > 0) Lag = FlightPolicy.Clamp(lagS, .3, 15); }
+        /// <summary>Learned throttle→speed lag: updates the Smith delay and raises Lead so the PI anticipates (AUTOPILOT_REVIEW #8).</summary>
+        internal void SetLag(double lagS)
+        {
+            if (double.IsNaN(lagS) || lagS <= 0) return;
+            Lag = FlightPolicy.Clamp(lagS, .3, 15);
+            Lead = Math.Max(Lead, .5 * Lag);
+        }
+        /// <summary>LEARN accel (m/s2) as IAS target slew rate when known (AUTOPILOT_REVIEW #14).</summary>
+        internal void SetTargetSlew(double accelMs2)
+        {
+            if (!double.IsNaN(accelMs2) && accelMs2 > 0) TargetSlew = FlightPolicy.Clamp(accelMs2, .5, 3);
+        }
         /// <summary>No measurement yet: 0.8 s x inertia + spool.</summary>
         internal static double EstimateLag(double k, double spoolS) { return FlightPolicy.Clamp(.8 * k + (double.IsNaN(spoolS) ? 0 : spoolS), .3, 15); }
         /// <summary>Heavier / weaker / slower-spooling: softer gains, slower throttle and target slew, more derivative lead
