@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -153,6 +153,19 @@ internal static class ThrottleLearnTests
     // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
     static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
     static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    // AUTOPILOT_REVIEW.md policy pieces (#4/#11 stall schedule, #7/#10 roll step)
+    static void ApReview()
+    {
+        bool was = ApproachProfile.TrustedStall;
+        ApproachProfile.TrustedStall = false;
+        Check(ApproachProfile.SaneStall(25) == 40 && ApproachProfile.SaneStall(150) == 120 && ApproachProfile.Speed(25) == ApproachProfile.MinSpeed && ApproachProfile.HiSpeed(60) == 138, "no profile: approach schedule fallbacks unchanged (40-120 stall, 80 join floor, 150 cap)");
+        ApproachProfile.TrustedStall = true;
+        Check(ApproachProfile.SaneStall(25) == 25 && ApproachProfile.SaneStall(150) == 150 && Math.Abs(ApproachProfile.Speed(30) - 45) < 1e-9 && Math.Abs(ApproachProfile.AppSpeed(30) - 40.5) < 1e-9, "LEARN stall: light craft keep real Vs (join 45, final 40.5)");
+        ApproachProfile.TrustedStall = was;
+        Check(CraftClass.RollStep("light", 0, 40, .1) == 40 && Math.Abs(CraftClass.RollStep("heavy", 0, 40, .1) - CraftClass.HeavyRollRate * .1) < 1e-9, "no learned roll rate: light snaps, heavy uses HeavyRollRate");
+        Check(Math.Abs(CraftClass.RollStep("heavy", 0, 40, .1, 20) - 2) < 1e-9 && Math.Abs(CraftClass.RollStep("light", 0, 40, .1, 30) - 3) < 1e-9, "learned roll rate drives the bank step for every class");
+    }
+
     // live 16:59 (Aeris 3A): climb pitch 6 at 385 m/s; boxes would not uncheck
     static void Oct11Live()
     {

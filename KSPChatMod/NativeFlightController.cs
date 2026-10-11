@@ -279,7 +279,7 @@ namespace KSPChatBridge
         double ClimbSpeedTarget()
         {
             double vy = profile != null ? profile.BestClimbSpeed(stall, vessel.totalMass) : double.NaN;
-            return FlightPolicy.Clamp(double.IsNaN(vy) || vy <= 0 ? 1.8 * stall : vy, 40, 250);
+            return double.IsNaN(vy) || vy <= 0 ? FlightPolicy.Clamp(1.8 * stall, 80, 200) : FlightPolicy.Clamp(vy, 40, 250);   // no profile: the old 1.8x stall, 80-200
         }
         /// <summary>Hot-swap: charts/ mtimes every ~2 s; a changed chart reloads live (bad JSON keeps the old one) and an active approach replans from here.</summary>
         void PollCharts()
@@ -549,7 +549,7 @@ namespace KSPChatBridge
                     }
                     else
                     {
-                        directBank = 0; speed = Math.Max(ClimbSpeedTarget(), 1.5 * stall);
+                        directBank = 0; speed = profile != null ? Math.Max(ClimbSpeedTarget(), 1.5 * stall) : 200;   // no profile: unchanged roll target
                         parkingReleased = true;
                         if (vessel.ActionGroups[KSPActionGroup.Brakes]) SetGroup(vessel, KSPActionGroup.Brakes, false);   // live bug: brakes were held until the 5%-stepped throttle reached 60%
                         if (vessel.radarAltitude > 25) SetGroup(vessel, KSPActionGroup.Gear, false);
@@ -602,12 +602,6 @@ namespace KSPChatBridge
                         if (double.IsNaN(dA) || dA <= 0) dA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true);
                         if (double.IsNaN(dA) || dA <= 0) dA = ApproachProfile.MassDecel(vessel.totalMass);
                         runway.DecelA = dA / Math.Sqrt(shold.K);
-                    }
-                    if (profile != null && profile.Sink.Count > 0)
-                    {   // nearest mapped sink in 0.5..2.5 m/s for flare path (AUTOPILOT_REVIEW #6)
-                        double best = double.NaN, bestErr = 1e9;
-                        foreach (var row in profile.Sink) { if (row == null || row.Length < 1 || double.IsNaN(row[0])) continue; double err = Math.Abs(row[0] - 1.5); if (row[0] >= .5 && row[0] <= 2.5 && err < bestErr) { bestErr = err; best = row[0]; } }
-                        runway.FlareSinkHint = best;
                     }
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
@@ -689,22 +683,23 @@ namespace KSPChatBridge
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
                 bool landBank = mode == "landing" && runway != null && runway.TurnBank > 0;   // G-rated approach turns (and explicit "bank 60")   // "bank 60, land nearest"
-                double blim;
+                double blim; bool envBank = false;
                 if (landBank && ApproachProfile.SafeBank != null) blim = runway.TurnBank;   // chart/join bank already envelope-sized
                 else if (ApproachProfile.SafeBank != null)
                 {   // hold / ferry / fly_to: 85% of learned max safe bank (AUTOPILOT_REVIEW #2); class HeavyBank only when no envelope (#10)
                     double sb = ApproachProfile.SafeBank(vessel.srfSpeed);
-                    blim = !double.IsNaN(sb) && sb > 0 ? FlightPolicy.Clamp(ApproachProfile.EnvelopeUse * sb, 10, 70) : CraftClass.MaxBank(CraftCls, FlightPolicy.BankLimit(vessel.srfSpeed));
+                    envBank = !double.IsNaN(sb) && sb > 0;
+                    blim = envBank ? FlightPolicy.Clamp(ApproachProfile.EnvelopeUse * sb, 10, 70) : CraftClass.MaxBank(CraftCls, FlightPolicy.BankLimit(vessel.srfSpeed));
                 }
                 else blim = CraftClass.MaxBank(CraftCls, landBank ? runway.TurnBank : FlightPolicy.BankLimit(vessel.srfSpeed));
                 double arcFf = mode == "landing" && runway != null && runway.Phase == "entry" ? runway.ArcBank : 0;   // curvature feed-forward; heading error is the trim
                 double bank = directBank ?? FlightPolicy.Clamp(arcFf + .5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -blim, blim);
-                bank = landBank && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
+                bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;
                 double learnedPitch = profile != null && !double.IsNaN(profile.Perf.PitchRate) ? profile.Perf.PitchRate : double.NaN;
-                double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(learnedRoll / TurnOnset.RollRate, .5, 1.5) : 1;   // AUTOPILOT_REVIEW #7
-                double pitchGain = !double.IsNaN(learnedPitch) && learnedPitch > 5 ? FlightPolicy.Clamp(learnedPitch / 20, .5, 1.5) : 1;
+                double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(TurnOnset.RollRate / learnedRoll, .5, 1.5) : 1;   // fast-rolling airframe -> less gain   // AUTOPILOT_REVIEW #7
+                double pitchGain = !double.IsNaN(learnedPitch) && learnedPitch > 5 ? FlightPolicy.Clamp(20 / learnedPitch, .5, 1.5) : 1;
                 if (!vessel.LandedOrSplashed && !directBank.HasValue)
                 {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry); LEARN roll rate when known
                     double want = bank; double onsetRoll = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(learnedRoll, 10, 60) : TurnOnset.RollRate;
@@ -745,7 +740,7 @@ namespace KSPChatBridge
                 if (targetVs > 3 && !directPitch.HasValue)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
                     desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, CpMax), CpMax);
-                    if (profile != null) { double vy = profile.BestClimbSpeed(stall, vessel.totalMass); if (!double.IsNaN(vy) && vy > 0) desiredPitch = FlightPolicy.Clamp(desiredPitch - .35 * (vessel.srfSpeed - vy), Math.Min(5, CpMax), CpMax); }
+                    if (profile != null) { double vy = profile.BestClimbSpeed(stall, vessel.totalMass); if (!double.IsNaN(vy) && vy > 0) desiredPitch = FlightPolicy.Clamp(desiredPitch + .35 * (vessel.srfSpeed - vy), Math.Min(5, CpMax), CpMax); }
                 }
                 if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);
