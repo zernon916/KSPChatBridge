@@ -32,7 +32,7 @@ namespace KSPChatBridge
             // POST-TESTING features (native-only tools, schemas in tools/gen_tool_schemas.py NATIVE_ONLY)
             "hold_pattern", "follow_terrain", "fuel_check_return", "formation", "tech_advisor", "drive_to_building", "roll", "autopilot", "make_flight_plan", "scan_coverage", "mapping_orbit",
             // MFD: ground-chart taxi + MechJeb page (NativeMfdTools.cs)
-            "taxi_route", "craft_class", "learn_plane", "mj_smartass", "mj_node", "mj_land", "mj_rendezvous", "mj_aircraft", "mj_spaceplane", "mj_off", "mj_status"
+            "taxi_route", "craft_class", "learn_plane", "learn_skip", "mj_smartass", "mj_node", "mj_land", "mj_rendezvous", "mj_aircraft", "mj_spaceplane", "mj_off", "mj_status"
         };
         internal static bool IsPorted(string name) { return !string.IsNullOrEmpty(name) && Ported.Contains(name); }
         internal static Func<string> StatusPathProvider = DefaultStatusPath;

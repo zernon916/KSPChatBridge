@@ -73,7 +73,7 @@ namespace KSPChatBridge
                 case "map": return new[] { "ZOOM+", "ZOOM-", "CENTER", "RWY <", "RWY >", "CTR RWY" };
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
-                case "about": return new[] { "LEARN", "<", ">", "SCROLL UP", "SCROLL DN", "TOGGLE" };
+                case "about": return new[] { "LEARN", "<", ">", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };

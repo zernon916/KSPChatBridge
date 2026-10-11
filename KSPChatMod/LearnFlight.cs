@@ -91,6 +91,28 @@ namespace KSPChatBridge
         internal bool WantTakeoff, Done, Aborted;
         internal readonly PlaneProfile P = new PlaneProfile();
         /// <summary>Selective re-run (Luke 11:26 PM): only these steps are flown; takeoff, climb and landing always run as setup. Null = full test.</summary>
+        internal readonly HashSet<int> Skipped = new HashSet<int>();
+        /// <summary>SKIP (Luke 11:36 PM): end the current step, keep its partial data, mark [-], move on. Not during the takeoff roll or the landing.</summary>
+        internal string Skip()
+        {
+            if (Done) return "Can't skip the landing.";
+            int k = StepNo;
+            if (k == 1 && (Phase != "pullback")) return "Can't skip the takeoff roll.";
+            if (k >= 12) return "Can't skip the landing.";
+            Skipped.Add(k); if (k == 10) Skipped.Add(11);
+            string next;
+            switch (k)
+            {
+                case 1: next = "climb"; break; case 2: next = "decel"; break; case 3: next = "cruise"; break; case 4: next = "vmax"; break; case 5: next = "rates"; break;
+                case 6: next = "turn"; idx = 0; break; case 7: next = "recover"; idx = 0; break; case 8: next = "sinkprep"; break; case 9: next = "stallprep"; break;
+                default: next = "finish"; break;
+            }
+            if (k == 7) { idx = 0; Go("recover", last, "Turns skipped. Leveling off."); idx = 100; Phase = "recover"; }   // level off, then dives
+            else if (k == 8) Go("sinkprep", last, "Dives skipped.");
+            else if (next == "finish") Finish(false, "");
+            else Go(next, last, "Step " + k + " skipped.");
+            return "Skipped step " + k + " (" + StepNames[k - 1] + "); partial data kept.";
+        }
         internal readonly HashSet<int> Only; readonly PlaneProfile prior;
         internal LearnFlight() { }
         internal LearnFlight(PlaneProfile prev, IEnumerable<int> only)
@@ -131,9 +153,18 @@ namespace KSPChatBridge
         double turnThr, thrSum, overAt = double.NaN, spCmd = double.NaN, spT = double.NaN;
         /// <summary>Sink map (Luke 11:32 PM): elevator holds 1.2x stall (pitch-for-speed); throttle alone sets the sink.
         /// Slow -> nose down, fast -> nose up; clamped -10..15 deg, no extra nose-up above 1.5 g, hard nose-down near 1.15x stall.</summary>
-        double SpeedPitch(LearnIn i)
+        double sinkStart = double.NaN, limThr, limT = double.NaN;
+        internal const double SinkCap = 600, SinkMax = 15;
+        /// <summary>Extra throttle when the sink passes ~15 m/s (Luke 11:36 PM: the fixed-pitch build fell ~1000 ft); bleeds off once back under.</summary>
+        double SinkLimit(LearnIn i)
         {
-            double vT = 1.2 * i.StallGuess, e = i.Speed - vT, dt = double.IsNaN(spT) ? 0 : FlightPolicy.Clamp(i.T - spT, 0, 1); spT = i.T;
+            double dt = double.IsNaN(limT) ? 0 : FlightPolicy.Clamp(i.T - limT, 0, 1); limT = i.T;
+            limThr = FlightPolicy.Clamp(limThr + (-i.Vs > SinkMax ? .1 * dt * (-i.Vs - SinkMax + 1) : -.05 * dt), 0, 1);
+            return limThr;
+        }
+        double SpeedPitch(LearnIn i, double factor = 1.2)
+        {
+            double vT = factor * i.StallGuess, e = i.Speed - vT, dt = double.IsNaN(spT) ? 0 : FlightPolicy.Clamp(i.T - spT, 0, 1); spT = i.T;
             if (double.IsNaN(spCmd)) spCmd = double.IsNaN(i.Pitch) ? 5 : i.Pitch;
             double rate = FlightPolicy.Clamp(e * .4, -3, 3); if (rate > 0 && i.G > 1.5) rate = 0;
             spCmd = FlightPolicy.Clamp(spCmd + rate * dt, -10, 15);
@@ -204,11 +235,12 @@ namespace KSPChatBridge
         /// <summary>Compact checklist (Luke 8:25 PM): [x] done, [>] current + sub-progress, [ ] pending, [-] skipped/aborted.</summary>
         internal List<string> Checklist()
         {
-            var raw = ChecklistRaw(); if (Only == null) return raw;
+            var raw = ChecklistRaw(); if (Only == null && Skipped.Count == 0) return raw;
             for (int j = 0; j < raw.Count; j++)
             {
                 var l = raw[j]; if (l.Length < 6 || l[0] != '[') continue; int sp = l.IndexOf(' ', 4); int k; if (sp < 0 || !int.TryParse(l.Substring(4, sp - 4), out k)) continue;
-                if (!Setup(k) && !Only.Contains(k)) raw[j] = "[x] " + k + " " + StepNames[k - 1] + " (kept)";
+                if (Skipped.Contains(k)) raw[j] = "[-] " + k + " " + StepNames[k - 1] + " (skipped)";
+                else if (Only != null && !Setup(k) && !Only.Contains(k)) raw[j] = "[x] " + k + " " + StepNames[k - 1] + " (kept)";
             }
             return raw;
         }
@@ -376,8 +408,8 @@ namespace KSPChatBridge
                         return;
                     }
                 case "sinkprep":
-                    Throttle = i.Alt < SinkAlt - 200 ? 1 : .5; Pitch = i.Alt < SinkAlt - 200 ? Level(i, SinkAlt) : SinkPitch; Bank = 0;
-                    if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
+                    Throttle = i.Alt < SinkAlt - 200 ? 1 : .5; Pitch = i.Alt < SinkAlt - 200 ? Level(i, SinkAlt) : SpeedPitch(i, 1.25); Bank = 0; if (i.Alt >= SinkAlt - 200) Throttle = Math.Max(Throttle, SinkLimit(i)); if (double.IsNaN(sinkStart)) sinkStart = i.T;
+                    if ((i.Alt >= SinkAlt - 200 && i.Speed <= 1.3 * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "sinkclimb":
                     Throttle = 1; Pitch = Level(i, SinkAlt); Bank = 0;
@@ -387,12 +419,13 @@ namespace KSPChatBridge
                 case "sinkmap":
                     {
                         Pitch = SpeedPitch(i); Bank = 0;
+                        if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { Go("stallprep", i, "Sink map: 10 min cap reached, keeping " + P.Sink.Count + " points. Level at 4 km for the stall test."); return; }
                         if (i.Speed < 1.15 * i.StallGuess) { Go("stallprep", i, "Sink map stopped (speed under 1.15x stall); " + P.Sink.Count + " points. level at 4 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T;
                         if (Phase == "sinkdown")
                         {   // Luke 11:28 PM: cut the throttle until the sink is MORE than 10 m/s (held 3 s)
-                            Throttle = sinkThr = 0;
+                            sinkThr = 0; Throttle = SinkLimit(i);
                             if (-vsF > 10.5) { if (double.IsNaN(overAt)) overAt = i.T; } else overAt = double.NaN;
                             if ((!double.IsNaN(overAt) && i.T - overAt >= 3) || dt > 300)
                             { idx = SinkTargets.Length - 1; stepThr = 0; Go("sinkmap", i, "Sink map: throttle up 1% every 5 s, recording 10..0 m/s sink."); stepThr = 0; prevT = stepAt = i.T; vs0 = vsF; lagDone = false; lagS = double.NaN; }
@@ -400,8 +433,9 @@ namespace KSPChatBridge
                         }
                         // +1 %, wait 5 s (throttle lag), repeat; record each target as the sink comes down through it
                         if (double.IsNaN(stepThr)) stepThr = 0;
+                        if (idx >= SinkTargets.Length) idx = SinkTargets.Length - 1;
                         if (i.T - prevT >= RampWait) { stepThr = Math.Min(1, stepThr + .01); prevT = stepAt = i.T; vs0 = vsF; lagDone = false; }
-                        Throttle = stepThr;
+                        Throttle = Math.Max(stepThr, SinkLimit(i));
                         if (!lagDone && Math.Abs(vsF - vs0) > .2) { lagDone = true; lagS = i.T - stepAt; }
                         while (idx >= 0 && -vsF <= SinkTargets[idx])
                         {

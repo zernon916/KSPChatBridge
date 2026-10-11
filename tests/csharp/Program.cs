@@ -310,6 +310,27 @@ class Program
             var rt2 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
             Check(rt2 != null && Math.Abs(rt2.Stall - pp.Stall) < .01 && rt2.Complete, "profile saves and loads");
             Check(DirectOrNull("learn this plane") == "learn_plane", "chat: 'learn this plane' starts the test flight");
+        Check(DirectOrNull("skip step") == "learn_skip" && DirectOrNull("skip this step") == "learn_skip", "chat: 'skip step' skips the current learn step");
+        {   // Luke 11:36 PM: SKIP, sink cap, sink limit, pitch-for-speed setup
+            var sk = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 30, Alt = 70, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Landed = true }; sk.Step(q);
+            Check(sk.Skip().StartsWith("Can't") && sk.StepNo == 1, "SKIP refused during the takeoff roll");
+            q = new LearnIn { T = 1, Speed = 150, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, Pitch = 3 }; sk.Phase = "turn"; sk.Step(q);
+            sk.P.Turns.Add(new double[] { 5, 1.1, 2, 0, .2, 20, .6 }); q.T = 2; sk.Step(q); string r = sk.Skip(); var ck = sk.Checklist();
+            Check(r.StartsWith("Skipped step 7") && sk.StepNo == 8 && sk.P.Turns.Count == 1 && ck[6].StartsWith("[-] 7") && ck[6].Contains("skipped"), "SKIP ends the turn step, keeps partial data, marks [-], moves on (" + sk.Phase + ")");
+            sk.Phase = "sinkmap"; q.T = 3; q.Vs = -12; sk.Step(q); sk.P.Sink.Add(new double[] { 10, .1, 2, 20, 4 }); sk.Skip();
+            Check(sk.Phase == "stallprep" && sk.P.Sink.Count == 1 && sk.Checklist()[8].StartsWith("[-] 9"), "SKIP sink map keeps its points");
+            sk.Phase = "stallrec"; q.T = 4; sk.Skip(); Check(sk.Done && sk.Skip().Contains("landing"), "SKIP stall ends the test; landing can't be skipped");
+            // sink cap 10 min, sink limit 15 m/s, setup leg pitch-for-speed
+            var sc = new LearnFlight(); var s2 = new LearnIn { T = 0, Speed = 76.8, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = -12 }; sc.Step(s2); sc.Phase = "sinkprep";
+            s2.Speed = 76; s2.T = .1; sc.Step(s2); bool down = sc.Phase == "sinkdown";
+            s2.Vs = -20; double maxThr = 0; for (int s = 2; s < 300; s++) { s2.T = s * .1; sc.Step(s2); maxThr = Math.Max(maxThr, sc.Throttle); }
+            Check(down && maxThr > .2, "sink past 15 m/s: throttle added (" + Math.Round(maxThr * 100) + "%)");
+            s2.Vs = -12; for (int s = 300; s < 6200; s++) { s2.T = s * .1; sc.Step(s2); if (sc.Phase == "stallprep") break; }
+            Check(sc.Phase == "stallprep" && s2.T <= 601, "sink map capped at 10 minutes (" + s2.T.ToString("0") + " s)");
+            var spf = new LearnFlight(); var s3 = new LearnIn { T = 0, Speed = 130, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 2, Vs = 0 }; spf.Step(s3); spf.Phase = "sinkprep";
+            double pq = 0; for (int s = 1; s < 30; s++) { s3.T = s * .1; spf.Step(s3); pq = spf.Pitch; }
+            Check(spf.Phase == "sinkprep" && pq > 5 && pq <= 15, "sink setup leg: pitch-for-speed (fast -> nose up " + pq.ToString("0.0") + ")");
+        }
         }
         {   // Luke 7:19 PM: sink map. Plant at 12 deg nose-up near 1.25 Vs: steady sink = 14 - 25*throttle (0.56 -> level), 2 s lag.
             var lf = new LearnFlight(); var li = new LearnIn { T = 0, Speed = 80, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Vs = 0 };

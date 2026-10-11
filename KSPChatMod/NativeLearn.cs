@@ -119,6 +119,12 @@ namespace KSPChatBridge
             if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
             me.SaveProfile(me.profile); return "Step " + step + (me.profile.Rerun.Contains(step) ? " will be re-run." : " kept.");
         }
+        internal static string LearnSkip()
+        {
+            var me = instance; if (me == null || me.learn == null) return "No test flight running.";
+            if (me.learn.Done) return "Can't skip the landing.";
+            string r = me.learn.Skip(); ChatLog.Write("learn", r); return r;
+        }
         internal static readonly string[] AboutTitles = { "SUMMARY", "SPEEDS/STALL", "TURNS/DIVES/SINK", "FUEL/PERF", "LEARN" };
         static string F0(double v) { return double.IsNaN(v) ? "-" : v.ToString("0"); }
         static string F1(double v) { return double.IsNaN(v) ? "-" : v.ToString("0.0"); }
