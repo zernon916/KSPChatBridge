@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -148,5 +148,72 @@ internal static class ThrottleLearnTests
         Check(LiveStats.Duration(3725) == "1h 02m" && LiveStats.Duration(725) == "12m 05s" && LiveStats.Duration(double.NaN) == "-", "duration format");
         Check(MfdNav.AboutLabel("Aeris 3A") == "ABOUT AERIS 3A" && MfdNav.AboutLabel(null) == "ABOUT PLANE" && MfdNav.AboutLabel("A Very Long Vessel Name Indeed").Length <= 6 + MfdNav.AboutNameMax, "ABOUT <vessel name> label");
         var it = new MfdNav.Item("about", "ABOUT PLANE"); var old = MfdNav.VesselName; MfdNav.VesselName = () => "Learjet"; Check(it.Label == "ABOUT LEARJET", "menu button uses the vessel name"); MfdNav.VesselName = old;
+    }
+
+    // REPORT.7.9 audit fixes (items 1-4, 6, 10-12, 14, 16, 19)
+    static LearnIn T7(double t, double bank, double g, double spd = 120) { return new LearnIn { T = t, Speed = spd, Alt = 5000, Agl = 5000, Vs = 0, Pitch = 3, G = g, GLimit = 2.5, FuelFrac = .9, Mass = 20, StallGuess = 60, Throttle = .6, Bank = bank, Stress = .2, TurnRate = 3 }; }
+    static LearnFlight InTurn() { var lf = new LearnFlight(); lf.Step(T7(0, 0, 1)); lf.Phase = "turn"; return lf; }
+    static void Audit()
+    {
+        // 1) G between 0.8x and 0.9x+ in a turn: the turn stop saves passBest, no global abort
+        {
+            var lf = InTurn(); double t = 0; bool spiked = false;
+            for (int k = 0; k < 2000 && lf.Phase == "turn"; k++) { t += .1; double b = double.IsNaN(lf.Bank) ? 0 : lf.Bank; double g = b >= 20 ? 2.375 : 1.02; spiked |= g > .9 * 2.5; lf.Step(T7(t, b, g)); }
+            Check(spiked && !lf.Aborted && lf.P.Envelope.Count == 1 && lf.P.Envelope[0][1] == 10, "item 1: 0.95x g at 20 deg stops the ladder and saves 10 deg, no abort (" + lf.Phase + ", aborted " + lf.Aborted + ", env " + lf.P.Envelope.Count + ")");
+            var lf2 = InTurn(); lf2.Step(T7(1, 10, 2.6)); Check(lf2.Aborted, "item 1: a real spike above the structural limit still aborts in a turn");
+            var lf3 = new LearnFlight(); lf3.Step(T7(0, 0, 1)); lf3.Phase = "cruise"; lf3.Step(T7(1, 0, 2.375)); Check(lf3.Aborted, "item 1: outside the turn steps the 0.9x abort is unchanged");
+        }
+        // 2) turn pitch has load-factor back-pressure; throttle authority = SpeedTarget only; badThr ignores a lever still ramping up
+        {
+            var q = T7(0, 60, 2); double lvl = LearnFlight.TurnPitchCmd(q, 0, 5000), p60 = LearnFlight.TurnPitchCmd(q, 60, 5000);
+            Check(Math.Abs(p60 - lvl - ApproachProfile.TurnPitch(60)) < 1e-9 && p60 > lvl + 3, "item 2: 60 deg bank adds TurnPitch back-pressure (" + lvl.ToString("0.0") + " -> " + p60.ToString("0.0") + ")");
+            var lf = InTurn(); lf.Step(T7(1, 0, 1)); Check(double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "items 3/19: turn sets SpeedTarget only (no dead learn throttle)");
+            lf.Phase = "turnprep"; lf.Step(T7(2, 0, 1)); Check(double.IsNaN(lf.Throttle) && !double.IsNaN(lf.SpeedTarget), "items 3/19: turnprep sets SpeedTarget only");
+            // lever ramping 10% -> 30% at the 4%/s gate while 30 m/s slow and still decelerating: the PI is working, not a fault
+            var lr = InTurn(); double t = 1, thr = .1, v = 150; lr.Step(T7(t, 0, 1, v)); double vT = lr.SpeedTarget;
+            for (int k = 0; k < 60; k++) { t += .1; thr = Math.Min(.29, thr + .004); v -= .05; var qi = T7(t, 0, 1, vT - 30 + (v - 150)); qi.Throttle = thr; lr.Step(qi); }
+            Check(!lr.Redo.Contains(7) && !lr.Status.Contains("not tracking"), "item 3: spool / gate ramp-up does not invalidate the turn (" + lr.Status + ")");
+            var ls = InTurn(); t = 1; ls.Step(T7(t, 0, 1)); vT = ls.SpeedTarget; double sp = vT - 30;
+            for (int k = 0; k < 80; k++) { t += .1; sp += .05; var qi = T7(t, 0, 1, sp); qi.Throttle = .2; ls.Step(qi); }
+            Check(!ls.Redo.Contains(7), "item 3: speed already recovering -> no throttle fault");
+        }
+        // 3) one-frame G spike does not count as the limit (filtered)
+        {
+            var lf = InTurn(); double t = 0;
+            for (int k = 0; k < 40; k++) { t += .1; double b = double.IsNaN(lf.Bank) ? 0 : lf.Bank; lf.Step(T7(t, b, k == 30 ? 2.2 : 1.02)); }
+            Check(lf.Phase == "turn" && lf.P.Turns.Count == 0 && lf.LoadG < 1.5, "item 4: single-frame 2.2 g (0.88x) does not stop the bank ladder (filtered g " + lf.LoadG.ToString("0.00") + ")");
+        }
+        // 4) envelope NaN -> null, read back as NaN
+        {
+            var p = new PlaneProfile(); p.Envelope.Add(new[] { 120, 40, 1.3, 3.5, double.NaN, double.NaN, 20 });
+            string js = MiniJson.Serialize(p.ToDict()); var rt = PlaneProfile.FromDict(MiniJson.Deserialize(js) as Dictionary<string, object>);
+            Check(js.Contains("null") && double.IsNaN(rt.Envelope[0][4]) && double.IsNaN(rt.Envelope[0][5]) && rt.Envelope[0][1] == 40, "item 6: missing radius / roll-in saved as null, not 0");
+        }
+        // 5) sink map: one target per settled throttle step; vsF reset on entry; SinkLimit on vsF
+        {
+            var lf = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 76.8, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = -12 };
+            lf.Step(q); lf.Phase = "sinkprep"; q.T = .1; lf.Step(q); q.T = .2; lf.Step(q);
+            Check(lf.Phase == "sinkdown" && Math.Abs(lf.SinkFiltered + 12) < .5, "item 12: vsF reset to the current VS on sinkdown entry (" + lf.SinkFiltered.ToString("0.0") + ")");
+            for (int s = 3; s < 80 && lf.Phase == "sinkdown"; s++) { q.T = s * .1; lf.Step(q); }
+            Check(lf.Phase == "sinkmap" && Math.Abs(lf.SinkFiltered + 12) < .5, "item 12: sinkmap entry with a fresh filter");
+            double t = q.T; for (int s = 0; s < 40; s++) { t += .1; q.T = t; q.Vs = -1; lf.Step(q); }   // sink collapses within one throttle step
+            Check(lf.P.Sink.Count == 1, "item 10: VS jump through several targets records ONE point per throttle step (" + lf.P.Sink.Count + ")");
+            for (int s = 0; s < 60; s++) { t += .1; q.T = t; lf.Step(q); }
+            Check(lf.P.Sink.Count == 2 && lf.P.Sink[0][1] != lf.P.Sink[1][1], "item 10: next target only on the next step, different throttle");
+            // filtered floor: a one-frame -40 m/s spike at 4.1 km doesn't kick the throttle
+            var lm = new LearnFlight(); var r = q; r.T = 0; r.Vs = -12; r.Alt = 4100; lm.Step(r); lm.Phase = "sinkmap"; r.T = .1; lm.Step(r); double th0 = lm.Throttle;
+            r.T = .2; r.Vs = -40; lm.Step(r); r.T = .3; r.Vs = -12; lm.Step(r);
+            Check(Math.Abs(lm.Throttle - th0) < .01, "item 11: SinkLimit uses the filtered VS (one-frame spike ignored, thr " + th0.ToString("0.000") + " -> " + lm.Throttle.ToString("0.000") + ")");
+        }
+        // 6) altitude-scheduled sink floor; no floor throttle in sinkdown
+        {
+            Check(LearnFlight.SinkMaxAt(5000) == 28 && LearnFlight.SinkMaxAt(4000) == 15 && Math.Abs(LearnFlight.SinkMaxAt(4250) - 21.5) < 1e-9, "item 16: 28 m/s allowed above 4.5 km, 15 at 4 km");
+            var ld = new LearnFlight(); var q = new LearnIn { T = 0, Speed = 76.8, Alt = 4600, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = -25 };
+            ld.Step(q); ld.Phase = "sinkdown"; double mx = 0; for (int s = 1; s < 25; s++) { q.T = s * .1; ld.Step(q); if (ld.Phase == "sinkdown") mx = Math.Max(mx, ld.Throttle); }
+            Check(mx == 0, "item 14: sinkdown stays at idle even at 25 m/s sink (no soft floor)");
+            var hi = new LearnFlight(); var h = q; h.T = 0; h.Alt = 5000; hi.Step(h); hi.Phase = "sinkmap"; for (int s = 1; s < 40; s++) { h.T = s * .1; hi.Step(h); }
+            var lo = new LearnFlight(); var l = q; l.T = 0; l.Alt = 4050; lo.Step(l); lo.Phase = "sinkmap"; for (int s = 1; s < 40; s++) { l.T = s * .1; lo.Step(l); }
+            Check(hi.Throttle < .01 && lo.Throttle > .05, "item 16: 25 m/s sink tolerated at 5 km, floor adds power near 4 km (" + hi.Throttle.ToString("0.00") + " / " + lo.Throttle.ToString("0.00") + ")");
+        }
     }
 }

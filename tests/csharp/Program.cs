@@ -353,8 +353,8 @@ class Program
             { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
                 // level turns: above the entry altitude and climbing -> nose comes down (not 20 deg up); slow -> more throttle
                 var q2 = q; q2.T = 2; q2.Alt = 3060; q2.Vs = 4; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
-                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.Throttle; q2.T = 4; q2.Speed = 112; lc2.Step(q2);
-                Check(pHi < 3 && lc2.Bank == 10 && thSlow > lc2.Throttle && thSlow > .5, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), throttle holds speed");
+                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.SpeedTarget; bool noLever = double.IsNaN(lc2.Throttle); q2.T = 4; q2.Speed = 112; lc2.Step(q2);
+                Check(pHi < 3 && lc2.Bank == 10 && noLever && !double.IsNaN(thSlow) && thSlow == lc2.SpeedTarget, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), speed PI (SpeedTarget only) holds speed");
               Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 10 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             Check(lf.Done && !lf.Aborted && lf.Visited.Contains("climb") && lf.Visited.Contains("turn") && lf.Visited.Contains("dive") && lf.Visited.Contains("stall") && lf.Visited.Contains("stallrec")
@@ -530,8 +530,8 @@ class Program
             // sink cap 10 min, sink limit 15 m/s, setup leg pitch-for-speed
             var sc = new LearnFlight(); var s2 = new LearnIn { T = 0, Speed = 76.8, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, Vs = -12 }; sc.Step(s2); sc.Phase = "sinkprep";
             s2.Speed = 76; s2.T = .1; sc.Step(s2); bool down = sc.Phase == "sinkdown";
-            s2.Vs = -20; double maxThr = 0; for (int s = 2; s < 300; s++) { s2.T = s * .1; sc.Step(s2); maxThr = Math.Max(maxThr, sc.Throttle); }
-            Check(down && maxThr > .2, "sink past 15 m/s: throttle added (" + Math.Round(maxThr * 100) + "%)");
+            s2.Vs = -20; s2.Alt = 4050; double maxThr = 0; for (int s = 2; s < 300; s++) { s2.T = s * .1; sc.Step(s2); maxThr = Math.Max(maxThr, sc.Throttle); }   // Oct 11: floor scheduled by altitude (15 m/s near 4 km, 28 above 4.5 km), never in sinkdown
+            Check(down && maxThr > .2, "sink past the ~16 m/s floor near 4 km (sink map): throttle added (" + Math.Round(maxThr * 100) + "%)");
             s2.Vs = -12; for (int s = 300; s < 6200; s++) { s2.T = s * .1; sc.Step(s2); if (sc.Phase == "stallprep") break; }
             Check(sc.Phase == "stallprep" && s2.T <= 601, "sink map capped at 10 minutes (" + s2.T.ToString("0") + " s)");
             var spf = new LearnFlight(); var s3 = new LearnIn { T = 0, Speed = 130, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 2, Vs = 0 }; spf.Step(s3); spf.Phase = "sinkprep";
