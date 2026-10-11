@@ -68,6 +68,23 @@ namespace KSPChatBridge
             try { int n = ChartStore.Migrate(ApproachPath); if (n > 0) ChatLog.Write("approach", "migrated " + n + " charts from approaches.json to charts/ (backup approaches.json.premigrate.bak)"); }
             catch (Exception ex) { ChatLog.Write("approach", "chart migration failed: " + ex.Message); }
         }
+        /// <summary>Luke: HEAD-ON / SIDE / REAR charts for every runway end on this body, sized from this plane's turn envelope.
+        /// Written as KEY_generated.json (reference / selectable variant); never touches the player's own chart files.</summary>
+        void GenerateCharts(CelestialBody body)
+        {
+            try
+            {
+                double v = Math.Max(ApproachProfile.Speed(stall), 60); int n = 0;
+                foreach (var rw in MapRunways(body))
+                {
+                    double crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
+                    var c = ApproachChart.Build(rw.Lat, rw.Lon, crs, rw.Elevation, v, 0, body.Radius, (la, lo) => MapTerrain(body, la, lo));
+                    ChartStore.Write(rw.Key, "generated", EntryPolicy.ChartJson(c, "generated for " + vessel.vesselName + ": join r " + Math.Round(c.TurnRadius) + " m at " + Math.Round(v) + " m/s")); n++;
+                }
+                ChatLog.Write("approach", "generated HEAD-ON/SIDE/REAR charts for " + n + " runway ends on " + body.bodyName + " (KEY_generated.json; your own chart files untouched)");
+            }
+            catch (Exception ex) { ChatLog.Write("approach", "chart generation failed: " + ex.Message); }
+        }
         internal static ApproachOverride LoadOverride(string key, MapRunway rw, CelestialBody body, out string why)
         {
             why = "";

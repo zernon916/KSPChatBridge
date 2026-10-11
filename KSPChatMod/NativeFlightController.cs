@@ -1132,7 +1132,7 @@ namespace KSPChatBridge
                         selectedRunway.Key = savedRunway ? Str(a, "name", "") : (island ? "Island " : "KSC ") + endK;
                         try
                         {
-                            EnsureCharts(); string why; object end = ChartStore.Read(selectedRunway.Key, out why);
+                            EnsureCharts(); GenerateCharts(vessel.mainBody); string why; object end = ChartStore.Read(selectedRunway.Key, out why);
                             if (why.Length > 0) ChatLog.Write("approach", "chart " + selectedRunway.Key + ": " + why + "; computed chart");
                             {
                                 if (end != null)

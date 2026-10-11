@@ -80,7 +80,8 @@ namespace KSPChatBridge
                 if (seen.TryGetValue(f, out old) && old == t) continue;
                 seen[f] = t; if (prime) continue;
                 if (Path.GetFileName(f) == "active.json") { foreach (var k in ActiveMap().Keys) if (!keys.Contains(k)) keys.Add(k); continue; }
-                string v; string key = KeyOf(f, out v); if (!keys.Contains(key)) keys.Add(key);
+                string v; string key = KeyOf(f, out v); if (v == "generated" && Active(key) != v) continue;   // regenerated per plane; only a reload if it is the chosen chart
+                if (!keys.Contains(key)) keys.Add(key);
             }
             if (prime) seen["<primed>"] = DateTime.MinValue;
             return keys;

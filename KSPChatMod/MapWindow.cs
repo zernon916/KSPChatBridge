@@ -310,6 +310,7 @@ namespace KSPChatBridge
             GUILayout.Label("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt)); GUI.contentColor = oc;
             GUILayout.Label("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s");
             { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) GUILayout.Label(fl); }
+                { var ar = NativeFlightController.ActiveRunway; if (ar != null && ar.EntryChart.Length > 0) GUILayout.Label("ENTRY " + EntryPolicy.Label(ar.EntryChart)); }
             GUI.contentColor = !gear && r.Front && r.DmeM < 3000 ? Color.red : oc; GUILayout.Label("GEAR " + (gear ? "DOWN" : "UP") + "   " + (brk ? (NativeFlightController.AirbrakesByAutopilot ? "AIRBRAKES" : "BRAKES") : "")); GUI.contentColor = oc;
             if (act != null) GUILayout.Label("DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km " + (double.IsNaN(act.DecelA) ? "est" : act.DecelA.ToString("0.0") + " m/s2") + (r.DmeM > act.DecelStartDist ? "" : " DECEL"));
             if (guidance && valid)

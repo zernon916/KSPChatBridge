@@ -213,7 +213,7 @@ namespace KSPChatBridge
         internal string AltRef = "msl";
         internal readonly List<Fix> Fixes = new List<Fix>();
         internal double FlareStartM = 15, FlareSinkMs = 1, TouchdownM = 350, TchM = 15;
-        internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "wp" };
+        internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "td_left", "tdend_left", "td_right", "tdend_right", "wp" };
         internal const int MaxFixes = 16;
         static double N(Dictionary<string, object> d, string k, double def) { object v; return d != null && d.TryGetValue(k, out v) && v != null ? Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture) : def; }
         /// <summary>Parse one end. Fixes must sit within 60 km of the threshold, 0-6000 m above the runway; flare/touchdown in sane ranges.</summary>
@@ -458,9 +458,9 @@ namespace KSPChatBridge
     internal sealed class ApproachChart
     {
         internal sealed class Wp { internal string Name; internal double Lat, Lon, Alt; }
-        internal const double LongFix = 12000, ShortFix = 4000, Clearance = 250, Gs = 9.81;
+        internal const double RearPast = 3000; internal const double LongFix = 12000, ShortFix = 4000, Clearance = 250, Gs = 9.81;
         internal double ThrLat, ThrLon, Course, Elevation, TurnRadius, LongAlt, ShortAlt, MinAlt, RouteFixAlt = double.NaN;
-        internal Wp Long, Short, DownLeftA, DownLeftB, ApexLeft, DownRightA, DownRightB, ApexRight;
+        internal Wp Long, Short, DownLeftA, DownLeftB, ApexLeft, DownRightA, DownRightB, ApexRight, RearLeftA, RearLeftB, RearRightA, RearRightB;
         Func<double, double, double> terrain; double radius;
         internal static double Radius(double speed, double bankDeg) { double v = Math.Max(60, Math.Min(speed, 200)); return Margin * v * v / (Gs * Math.Tan(FlightPolicy.Clamp(bankDeg, 10, 60) * Math.PI / 180)); }
         internal const double Margin = 1.3, GlideDeg = 3;   // join turns: 20 deg bank at actual speed + 30% margin
@@ -475,10 +475,14 @@ namespace KSPChatBridge
             Func<double, double, double> terrain, double longAgl = -1, double shortAgl = -1)
         {
             var c = new ApproachChart { ThrLat = thrLat, ThrLon = thrLon, Course = course, Elevation = elevation, terrain = terrain, radius = radius };
+            if (bankDeg <= 20 && ApproachProfile.SafeBank != null) bankDeg = ApproachProfile.PhaseBank("entry", speed, speed / 1.5);   // sized from the learned turn envelope
             double r = c.TurnRadius = Radius(speed, bankDeg);
             c.Long = c.At("long final 12 km", LongFix, 0); c.Short = c.At("short final 4 km", ShortFix, 0);
             c.DownLeftA = c.At("left downwind", 0, -2 * r); c.DownLeftB = c.At("left downwind end", LongFix, -2 * r); c.ApexLeft = c.At("left base", LongFix + r, -r);
             c.DownRightA = c.At("right downwind", 0, 2 * r); c.DownRightB = c.At("right downwind end", LongFix, 2 * r); c.ApexRight = c.At("right base", LongFix + r, r);
+            // rear / teardrop entry (Luke): overfly offset past the far end, outbound parallel to final, 180 back onto the long fix
+            c.RearLeftA = c.At("TD-L overhead", -RearPast, -r); c.RearLeftB = c.At("TD-L outbound end", LongFix + 2 * r, -2 * r);
+            c.RearRightA = c.At("TD-R overhead", -RearPast, r); c.RearRightB = c.At("TD-R outbound end", LongFix + 2 * r, 2 * r);
             double tg = Math.Tan(GlideDeg * Math.PI / 180);   // continuous 3 deg glideslope: ~630 m at 12 km, ~210 m at 4 km above the runway
             c.Long.Alt = longAgl > 0 ? c.T(c.Long.Lat, c.Long.Lon) + longAgl : elevation + LongFix * tg;
             c.Short.Alt = shortAgl > 0 ? c.T(c.Short.Lat, c.Short.Lon) + shortAgl : elevation + ShortFix * tg;
@@ -491,7 +495,7 @@ namespace KSPChatBridge
                 if (d < ShortFix) { double viaShort = elevation + (c.Short.Alt - elevation) * d / ShortFix; if (viaShort < need) c.Short.Alt += (need - viaShort) * ShortFix / d; }
             }
             c.LongAlt = c.Long.Alt; c.ShortAlt = c.Short.Alt;
-            foreach (var w in new[] { c.DownLeftA, c.DownLeftB, c.ApexLeft, c.DownRightA, c.DownRightB, c.ApexRight }) w.Alt = Math.Max(c.Long.Alt, c.T(w.Lat, w.Lon) + Clearance);
+            foreach (var w in new[] { c.DownLeftA, c.DownLeftB, c.ApexLeft, c.DownRightA, c.DownRightB, c.ApexRight, c.RearLeftA, c.RearLeftB, c.RearRightA, c.RearRightB }) w.Alt = Math.Max(c.Long.Alt, c.T(w.Lat, w.Lon) + Clearance);
             c.MinAlt = elevation + 150;
             return c;
         }
@@ -515,7 +519,7 @@ namespace KSPChatBridge
                 CustomLeft = new List<Wp>(); CustomRight = new List<Wp>();
                 foreach (var f in o.Fixes)
                 {
-                    if (f.Role == "faf" || f.Role == "sf") continue;
+                    if (f.Role == "faf" || f.Role == "sf" || f.Role.StartsWith("td")) continue;
                     var w = new Wp { Name = string.IsNullOrEmpty(f.Name) ? f.Role : f.Name, Lat = f.Lat, Lon = f.Lon, Alt = f.Alt };
                     if (f.Side != "right") CustomLeft.Add(w);
                     if (f.Side != "left") CustomRight.Add(w);
@@ -524,7 +528,8 @@ namespace KSPChatBridge
             foreach (var f in o.Fixes)
             {
                 Wp w = f.Role == "faf" ? Long : f.Role == "sf" ? Short : f.Role == "dw_left" ? DownLeftA : f.Role == "dwend_left" ? DownLeftB : f.Role == "base_left" ? ApexLeft
-                    : f.Role == "dw_right" ? DownRightA : f.Role == "dwend_right" ? DownRightB : f.Role == "base_right" ? ApexRight : null;
+                    : f.Role == "dw_right" ? DownRightA : f.Role == "dwend_right" ? DownRightB : f.Role == "base_right" ? ApexRight
+                    : f.Role == "td_left" ? RearLeftA : f.Role == "tdend_left" ? RearLeftB : f.Role == "td_right" ? RearRightA : f.Role == "tdend_right" ? RearRightB : null;
                 if (w == null) continue;
                 w.Lat = f.Lat; w.Lon = f.Lon; w.Alt = f.Alt; if (!string.IsNullOrEmpty(f.Name)) w.Name = f.Name;
             }
@@ -639,12 +644,25 @@ namespace KSPChatBridge
             var seq = new List<Wp>(right ? (CustomRight ?? new List<Wp> { DownRightA, DownRightB, ApexRight }) : (CustomLeft ?? new List<Wp> { DownLeftA, DownLeftB, ApexLeft }));
             seq.Add(Long); return seq;
         }
+        /// <summary>Rear / teardrop entry for one side, ending at the long-final fix.</summary>
+        internal List<Wp> Rear(bool right) { return new List<Wp> { right ? RearRightA : RearLeftA, right ? RearRightB : RearLeftB, Long }; }
+        /// <summary>Candidate join sequences for an entry chart (EntryPolicy): straight = the final line only, left/right = that
+        /// side's downwind/base, rear_* = the teardrop; null/"" = every side (old behaviour).</summary>
+        internal List<KeyValuePair<bool, List<Wp>>> Seqs(string entry)
+        {
+            var o = new List<KeyValuePair<bool, List<Wp>>>();
+            if (entry == "straight") { var far = At("final line 30 km", 30000, 0); far.Alt = Math.Max(Long.Alt, GlideAlt(30000)); o.Add(new KeyValuePair<bool, List<Wp>>(false, new List<Wp> { far, Long })); }
+            else if (entry == "left" || entry == "right") o.Add(new KeyValuePair<bool, List<Wp>>(entry == "right", Side(entry == "right")));
+            else if (entry == "rear_left" || entry == "rear_right") o.Add(new KeyValuePair<bool, List<Wp>>(entry == "rear_right", Rear(entry == "rear_right")));
+            else { o.Add(new KeyValuePair<bool, List<Wp>>(false, Side(false))); o.Add(new KeyValuePair<bool, List<Wp>>(true, Side(true))); }
+            return o;
+        }
 
         /// <summary>Luke: join the chart at the nearest fix or leg point (1/3, 2/3) ahead of the FAF this plane can safely align with:
         /// Dubins turn-straight-turn reach at its radius, arriving on the leg track; descent/climb within 10/15 m/s at its speed;
         /// terrain 150 m below the path. Picks the shortest total path to touchdown; null = none (fall back to the long final).</summary>
         internal const double JoinStep = 300, MaxIntercept = 45, MaxSink = 25; internal Wp JoinPoint;
-        internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why)
+        internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why, string entry = null)
         {
             why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
             double k = Math.PI / 180 * radius, cl = Math.Cos(ThrLat * Math.PI / 180);
@@ -653,9 +671,9 @@ namespace KSPChatBridge
             // Luke: the route LINE is continuous mini-waypoints (every ~300 m). Join at any point ahead (toward the FAF, chart order only)
             // that is intercepted at <= 45 deg; then track the line by cross-track. Prefer the leg we are already flying along (< 30 deg).
             double direct = NavigationMath.Distance(lat, lon, ThrLat, ThrLon, radius);
-            foreach (bool right in new[] { false, true })
+            foreach (var sq in Seqs(entry))
             {
-                var seq = Side(right);
+                bool right = sq.Key; var seq = sq.Value;
                 for (int i = 0; i < seq.Count; i++)
                 {
                     Wp a = i > 0 ? seq[i - 1] : null, f = seq[i];
@@ -692,6 +710,10 @@ namespace KSPChatBridge
                     }
                 }
             }
+            if (best == null && !string.IsNullOrEmpty(entry))
+            {   // the chosen entry chart has no safe join for this plane: try every chart before the long-final fallback
+                string w2; var b2 = BestJoin(lat, lon, heading, altitude, speed, turnR, radius, out w2); why = w2 + " (" + EntryPolicy.Label(entry) + " chart had no safe join)"; return b2;
+            }
             int nFallback = 0;
             if (best == null)
             {   // Luke 5:56 PM (heavy craft, 330/330 unreachable): fall back to the nearest reachable point on the extended
@@ -721,6 +743,37 @@ namespace KSPChatBridge
         }
         /// <summary>Launch pads: a simple vertical-approach point above the pad.</summary>
         internal static Wp Pad(double lat, double lon, double elevation) { return new Wp { Name = "pad vertical", Lat = lat, Lon = lon, Alt = elevation + 300 }; }
+    }
+
+    /// <summary>Luke: pick the runway-end chart by the inbound bearing relative to the runway heading. Within 45 deg = HEAD-ON
+    /// (straight-in), 45-135 = SIDE (left/right base/downwind, by which side of the centerline we are on), beyond = REAR teardrop.</summary>
+    internal static class EntryPolicy
+    {
+        internal const double StraightDeg = 45, SideDeg = 135;
+        internal static double Rel(double inbound, double course) { return Math.Abs(FlightPolicy.Wrap(inbound - course)); }
+        /// <param name="cross">our offset from the extended centerline, + = right of the landing direction</param>
+        internal static string Pick(double inbound, double course, double cross)
+        {
+            double rel = Rel(inbound, course); string side = cross >= 0 ? "right" : "left";
+            return rel <= StraightDeg ? "straight" : rel <= SideDeg ? side : "rear_" + side;
+        }
+        internal static string Label(string e)
+        {
+            return e == "straight" ? "HEAD-ON" : e == "left" ? "SIDE-L" : e == "right" ? "SIDE-R" : e == "rear_left" ? "REAR-L (teardrop)" : e == "rear_right" ? "REAR-R (teardrop)" : "ANY";
+        }
+        /// <summary>Chart file text for one runway end (all entries), sized for this plane; written as KEY_generated.json.</summary>
+        internal static string ChartJson(ApproachChart c, string note)
+        {
+            var ic = System.Globalization.CultureInfo.InvariantCulture; var sb = new System.Text.StringBuilder();
+            sb.Append("{\n \"alt_ref\": \"msl\",\n \"variant\": \"generated\",\n \"note\": \"").Append(note.Replace("\"", "'")).Append("\",\n \"fixes\": [\n");
+            var rows = new List<string>();
+            Action<string, string, ApproachChart.Wp> add = (role, side, w) => rows.Add("  { \"role\": \"" + role + "\", \"side\": \"" + side + "\", \"alt_ref\": \"msl\", \"name\": \"" + w.Name + "\", \"lat\": " + w.Lat.ToString("0.000000", ic) + ", \"lon\": " + w.Lon.ToString("0.000000", ic) + ", \"alt\": " + w.Alt.ToString("0", ic) + " }");
+            add("faf", "both", c.Long); add("sf", "both", c.Short);
+            add("dw_left", "left", c.DownLeftA); add("dwend_left", "left", c.DownLeftB); add("base_left", "left", c.ApexLeft);
+            add("dw_right", "right", c.DownRightA); add("dwend_right", "right", c.DownRightB); add("base_right", "right", c.ApexRight);
+            add("td_left", "left", c.RearLeftA); add("tdend_left", "left", c.RearLeftB); add("td_right", "right", c.RearRightA); add("tdend_right", "right", c.RearRightB);
+            sb.Append(string.Join(",\n", rows.ToArray())).Append("\n ]\n}\n"); return sb.ToString();
+        }
     }
 
     internal sealed class RunwayMission
@@ -754,7 +807,7 @@ namespace KSPChatBridge
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
         internal ApproachOverride Override; internal string Key = "";
         internal ApproachChart Chart; internal List<ApproachChart.Wp> Route; internal int RouteIndex; internal string RouteLog = "";
-        internal string SmoothLog = "", JoinLog = "";
+        internal string SmoothLog = "", JoinLog = "", EntryChart = "", EntryLog = "";
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
         /// <summary>After a go-around: fly a fresh long-final pattern from here (old route is spent), reset the centerline integral.</summary>
         /// <summary>Hot-swapped chart: rebuild while joining (route from here); established on final/flare/rollout keeps flying the centerline.</summary>
@@ -843,7 +896,12 @@ namespace KSPChatBridge
                     if (Kind != "short")
                     {   // join at the nearest safely-alignable fix/leg point for THIS plane; fall back to the computed long-final entry
                         double jv = Math.Max(ApproachProfile.Speed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = BankDeg > 20 ? ApproachProfile.Radius(jv, BankDeg) : ApproachProfile.RadiusForG(jv, ApproachProfile.LoadFactor(ApproachProfile.JoinG, jv, stall)); string jw;
-                        var join = Chart.BestJoin(lat, lon, track, altitude, jv, jr, radius, out jw);
+                        double inb = NavigationMath.Bearing(lat, lon, Lat, Lon), cth = FlightPolicy.Wrap(NavigationMath.Bearing(Lat, Lon, lat, lon) - course) * Math.PI / 180;
+                        double crs = NavigationMath.Distance(Lat, Lon, lat, lon, radius) * Math.Sin(cth);
+                        EntryChart = EntryPolicy.Pick(inb, course, crs);
+                        EntryLog = "chart " + Key + " " + EntryPolicy.Label(EntryChart) + " (inbound " + Math.Round((inb + 360) % 360) + " deg, " + Math.Round(EntryPolicy.Rel(inb, course)) + " deg off the runway heading; r " + Math.Round(Chart.TurnRadius) + " m)";
+                        var join = Chart.BestJoin(lat, lon, track, altitude, jv, jr, radius, out jw, EntryChart);
+                        jw = jw + " [" + EntryLog + "]";
                         if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
                         JoinLog = join != null ? jw : jw + "; long final entry";
                     }

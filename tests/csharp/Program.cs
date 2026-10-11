@@ -397,6 +397,29 @@ class Program
             Check(mt.P.Turns.Exists(r => r[0] == 65), "the failing 65 deg turn is recorded as data, not as the safe bank");
             var rt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(mt.P.ToDict())) as Dictionary<string, object>);
             Check(rt.Envelope.Count == 2 && rt.SafeBankAt(96) == 60, "envelope saved in the profile");
+            {   // Luke: per-end HEAD-ON / SIDE / REAR charts picked by the inbound bearing vs the runway heading
+                Check(EntryPolicy.Pick(270, 270, 10) == "straight" && EntryPolicy.Pick(315, 270, -10) == "straight" && EntryPolicy.Pick(0, 270, -6000) == "left"
+                    && EntryPolicy.Pick(180, 270, 6000) == "right" && EntryPolicy.Pick(90, 270, -500) == "rear_left" && EntryPolicy.Pick(100, 270, 500) == "rear_right"
+                    && EntryPolicy.Pick(270 + 134, 270, 1) == "right", "entry chart: <=45 deg head-on, 45-135 side (by our side of the centerline), beyond rear");
+                double thrLa = -.0485997, thrLo = -74.490300, R = 600000; var ec = ApproachChart.Build(thrLa, thrLo, 270, 69, 90, 0, R, null);
+                var rl = ec.Rear(false); double tdBr = NavigationMath.Bearing(thrLa, thrLo, rl[0].Lat, rl[0].Lon);
+                Check(rl.Count == 3 && rl[2] == ec.Long && rl[0].Lon < thrLo && rl[0].Lat < thrLa && rl[1].Lon > thrLo, "rear teardrop: overhead past the far end on its side, outbound end beyond the long fix, then the FAF");
+                string ew; var jL = ec.BestJoin(-.2, -74.6, 90, 1500, 90, 800, R, out ew, "left");
+                Check(jL != null && ew.Length > 0 && !jL.Exists(w => w.Name.Contains("right")), "SIDE-L chart joins only the left downwind/base: " + ew);
+                var jR = ec.BestJoin(-.0486, -74.3, 270, 1500, 90, 800, R, out ew, "rear_right");
+                Check(jR != null && jR.Exists(w => w.Name.StartsWith("TD-R") || w.Name.Contains("TD-R")), "REAR-R chart flies the teardrop: " + ew);
+                var jS = ec.BestJoin(-.0486, -74.490300 + .3, 270, 1500, 90, 800, R, out ew, "straight");
+                Check(jS != null && !jS.Exists(w => w.Name.Contains("downwind") || w.Name.Contains("TD")), "HEAD-ON chart: straight onto the final line: " + ew);
+                string js = EntryPolicy.ChartJson(ec, "test"), pw; var pov = ApproachOverride.Parse(MiniJson.Deserialize(js), thrLa, thrLo, 69, R, out pw);
+                Check(pov != null && pov.Fixes.Count == 12 && pov.Fixes.Exists(f => f.Role == "tdend_right"), "generated chart file parses: faf/sf + side + rear fixes (" + pw + ")");
+                var c2 = ApproachChart.Build(thrLa, thrLo, 270, 69, 90, 0, R, null); c2.Apply(pov);
+                Check(c2.CustomLeft == null, "rear fixes in a chart do not turn it into a custom (editor) chart");
+                var lukes = new ApproachOverride(); lukes.Fixes.Add(new ApproachOverride.Fix { Role = "wp", Side = "left", Name = "LUKE-L", Lat = -.1, Lon = -74.3, Alt = 900 }); 
+                var c3 = ApproachChart.Build(thrLa, thrLo, 270, 69, 90, 0, R, null); c3.Apply(lukes);
+                Check(c3.Seqs("left")[0].Value[0].Name == "LUKE-L", "Luke's edited chart is flown as-is for its side");
+                double r0 = ec.TurnRadius; ApproachProfile.SafeBank = sv => 60; var ce = ApproachChart.Build(thrLa, thrLo, 270, 69, 90, 0, R, null); ApproachProfile.SafeBank = null;
+                Check(ce.TurnRadius < r0, "charts sized from the learned turn envelope (r " + Math.Round(r0) + " -> " + Math.Round(ce.TurnRadius) + " m)");
+            }
             // A300 lineup: heavy defaults vs the learned envelope (40 deg max safe bank at 130 m/s)
             var a3 = new PlaneProfile(); a3.Envelope.Add(new double[] { 130, 40, 1.3, 3.6, 2000, 6, 48 }); a3.Envelope.Add(new double[] { 165, 35, 1.22, 2.5, 3800, 6, 48 });
             ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; double defB = CraftClass.MaxBank("heavy", ApproachProfile.PhaseBank("entry", 130, 84));   // heavy comfort cap (25 deg) without an envelope
