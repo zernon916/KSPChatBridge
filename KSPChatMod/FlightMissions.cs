@@ -794,6 +794,7 @@ namespace KSPChatBridge
         /// <summary>Oct 12 19:12 (A300, 48 km out, 297/330 "unreachable"): the 45 deg bearing-vs-leg limit only applies near the point (< 3 turn radii);
         /// farther out the Dubins path already turns onto the leg track, only points well behind (> 120 deg) are refused. With ample distance
         /// (> 35 km direct) each skipped chart fix costs 8 km, so it flies entry -> downwind/base -> long final instead of short-cutting to the FAF.</summary>
+        internal static double PlanSink = double.NaN, PlanDecelA = double.NaN, PlanApp = double.NaN; internal static string PlanLearned = "";   // Luke Oct 12 19:57: learned sink/decel/app speed for SHORT routes
         internal const double FarJoinRadii = 3, FarMaxIntercept = 120, AmpleJoinM = 35000, SkipCostM = 8000;
         internal static bool JoinAngleOk(double icpt, bool onLeg, double toJ, double turnR) { return onLeg || toJ <= turnR || icpt <= MaxIntercept || (toJ >= FarJoinRadii * turnR && icpt <= FarMaxIntercept); }
         internal static double SkipCost(double direct, double skipped) { return direct > AmpleJoinM ? Math.Max(0, skipped) * SkipCostM : 0; }
@@ -828,9 +829,9 @@ namespace KSPChatBridge
                         var jp = xy(j.Lat, j.Lon);
                         double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
                         if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) { nReach++; continue; }
-                        double dz = j.Alt - altitude, sink = reach * MaxSink / Math.Max(30, speed);
+                        double sinkR = ApproachProfile.SinkLimit(PlanSink, MaxSink), dz = j.Alt - altitude, sink = reach * sinkR / Math.Max(30, speed);
                         if (dz > reach * 15 / Math.Max(30, speed)) { nAlt++; continue; }   // can't climb that much
-                        double lose = -dz > sink ? (-dz - sink) * Math.Max(30, speed) / MaxSink : 0;   // too high: S-turns/slowing, flown as extra distance
+                        double lose = -dz > sink ? (-dz - sink) * Math.Max(30, speed) / sinkR : 0;   // too high: S-turns/slowing, flown as extra distance
                         if (lose > 30000) { nAlt++; continue; }
                         bool clear = true;
                         for (int s = 1; s <= 8 && clear; s++) { double la = lat + (j.Lat - lat) * s / 8, lo = lon + (j.Lon - lon) * s / 8, g = T(la, lo), path = altitude + (j.Alt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clear = false; }   // clearance vs the PATH flown
@@ -839,7 +840,7 @@ namespace KSPChatBridge
                         var route = new List<Wp> { j };
                         for (int q = kk == steps || a == null ? i + 1 : i; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
                         rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
-                        double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.5 * direct + 15000)) * 2 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
+                        double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.3 * direct + 8000)) * 4 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
                         cost += SkipCost(direct, i - 1 + fr);   // Oct 12: ample distance -> fly the chart from its first fix, no FAF short-cut
                         if (onLeg) cost *= .6;   // prefer the leg we are already heading along
                         if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
@@ -854,11 +855,14 @@ namespace KSPChatBridge
             // Luke Oct 12 19:54: close in (A300 r~6 km, 8-16 km direct) the chart join came out as 69-96 km of loops, so it circled the field.
             // When the best chart join is a big detour, fly to a positioning fix out on the extended centerline (straight out, one turn in).
             bool detour = best != null && direct < AmpleJoinM && bestTotal > 2 * direct + 20000;
-            if (detour) bestCost = bestTotal;
-            if (best == null || detour)
+            // Luke Oct 12 19:57 "shorten those routes": the direct-to-centerline join ALWAYS competes on true length (not only on a detour)
+            if (best != null) bestCost = bestTotal;
+            double fSink = ApproachProfile.SinkLimit(PlanSink, MaxSink), fApp = double.IsNaN(PlanApp) || PlanApp <= 0 ? .75 * speed : PlanApp;
+            double finalMin = Math.Max(RunwayMission.FafDistance, Math.Min(15000, ApproachProfile.DecelStartM(speed, fApp, PlanDecelA)));   // shortest final the learned decel allows
+            
             {   // Luke 5:56 PM (heavy craft, 330/330 unreachable): fall back to the nearest reachable point on the extended
                 // centerline (long final line), far enough out to roll out aligned with this plane's turn radius; no intercept limit.
-                double minD = RunwayMission.FafDistance + 2 * turnR + 2000;
+                double minD = finalMin + turnR;   // was FAF + 2r + 2 km: one turn radius to roll out is enough
                 for (double d = minD; d <= Math.Max(minD, 45000); d += 1000)
                 {
                     double la, lo; NavigationMath.Offset(ThrLat, ThrLon, Course + 180, d, radius, out la, out lo); var jp = xy(la, lo);
@@ -867,12 +871,14 @@ namespace KSPChatBridge
                     for (int s = 1; s <= 8 && clr; s++) { double sla = lat + (la - lat) * s / 8, slo = lon + (lo - lon) * s / 8, g = T(sla, slo), path = altitude + (jAlt - altitude) * s / 8; if (!double.IsNaN(g) && g + 150 > path) clr = false; }
                     if (!clr) { nTerr++; continue; }   // terrain still rules the fallback out
                     if (jAlt - altitude > reach * 15 / Math.Max(30, speed)) { nAlt++; continue; }   // nor a climb it cannot make
-                    nFallback++; double cost = reach + d;
+                    double fz = altitude - jAlt - reach * fSink / Math.Max(30, speed), flose = fz > 0 ? fz * Math.Max(30, speed) / fSink : 0;   // too high: extra distance at the learned sink
+                    if (flose > 30000) { nAlt++; continue; }
+                    nFallback++; double cost = reach + flose + d;
                     if (cost < bestCost) { bestCost = cost; var j = new Wp { Name = "long final -" + (d / 1000).ToString("0") + " km", Lat = la, Lon = lo, Alt = jAlt };
-                        best = new List<Wp> { j }; JoinPoint = j; bestWhy = "fallback: joined the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m)"; }
+                        best = new List<Wp> { j }; JoinPoint = j; bestWhy = "direct to the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m), total " + (cost / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ", final min " + (finalMin / 1000).ToString("0.0") + " km)" + (detour ? " [chart join was a detour]" : ""); }
                 }
             }
-            why = (best != null ? bestWhy : "no safe join point") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable" + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]";
+            why = (best != null ? bestWhy : "no safe join point") + (PlanLearned.Length > 0 ? " {" + PlanLearned + "}" : "") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable" + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]";
             return best;
         }
 
@@ -1081,6 +1087,11 @@ namespace KSPChatBridge
                     if (Kind != "short")
                     {   // join at the nearest safely-alignable fix/leg point for THIS plane; fall back to the computed long-final entry
                         double jv = Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = BankDeg > 20 ? ApproachProfile.Radius(jv, BankDeg) : ApproachProfile.RadiusForG(jv, ApproachProfile.LoadFactor(ApproachProfile.JoinG, jv, stall)); string jw;
+                        // Luke Oct 12 19:57: plan with the LEARNED numbers - turn radius at the bank the autopilot actually flies (learned envelope), learned sink, decel, app speed
+                        double lb = ApproachProfile.SafeBank != null && BankDeg <= 20 ? ApproachProfile.PhaseBank("entry", jv, stall) : double.NaN;
+                        if (!double.IsNaN(lb) && lb > 5) jr = ApproachProfile.Radius(jv, Math.Min(lb, 60));
+                        ApproachChart.PlanSink = LearnedSink; ApproachChart.PlanDecelA = EffDecel; ApproachChart.PlanApp = ApproachProfile.AppSpeed(stall);
+                        ApproachChart.PlanLearned = "learned: r " + Math.Round(jr) + " m @ " + Math.Round(jv) + " m/s" + (double.IsNaN(lb) ? " (G rating)" : " (bank " + Math.Round(lb) + ")") + ", sink " + ApproachProfile.SinkLimit(LearnedSink, ApproachChart.MaxSink).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : "") + ", decel " + EffDecel.ToString("0.00") + ", app " + Math.Round(ApproachChart.PlanApp);
                         double inb = NavigationMath.Bearing(lat, lon, Lat, Lon), cth = FlightPolicy.Wrap(NavigationMath.Bearing(Lat, Lon, lat, lon) - course) * Math.PI / 180;
                         double crs = NavigationMath.Distance(Lat, Lon, lat, lon, radius) * Math.Sin(cth);
                         EntryChart = EntryPolicy.Pick(inb, course, crs);
