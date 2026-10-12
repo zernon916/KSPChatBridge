@@ -354,6 +354,7 @@ namespace KSPChatBridge
         }
         /// <summary>Oct 12: a join route may be at most 2.5x the direct distance + 20 km (live: 74 km for an 11 km direct, 4 min wandering at 700 m).</summary>
         /// <summary>Oct 12 (A300 overshoot 03:29): approach energy from the learned profile. Sink limit = learned descent sink (idle dives), fallback the old fixed cap.</summary>
+        internal static double LandingPitchMin(double desiredVs) { return desiredVs < -6 ? -12 : -5; }
         internal static double SinkLimit(double learnedSink, double fallback) { return double.IsNaN(learnedSink) || learnedSink <= 1 ? fallback : learnedSink; }
         internal const double HighM = 50, FastMs = 10;
         /// <summary>High (above the planned path) or fast (over the planned speed): idle + speedbrakes, steeper descent.</summary>
@@ -362,7 +363,7 @@ namespace KSPChatBridge
         internal static double RecoverSink(double speed, double slope, double aboveM, double learnedSink)
         {
             double path = Math.Max(4.5, speed * Math.Max(slope, .052));
-            return Math.Max(path, Math.Min(SinkLimit(learnedSink, 15), path + .05 * Math.Max(0, aboveM)));
+            return Math.Max(path, Math.Min(SinkLimit(learnedSink, 15), path + .1 * Math.Max(0, aboveM)));   // Oct 12: full learned sink by ~100-150 m high
         }
         /// <summary>Decel used for the plan: learned idle decel, boosted by the speedbrakes when the craft has them (flaps only below their limit, so not counted).</summary>
         internal static double PlanDecel(double decelA, bool airbrakes) { return double.IsNaN(decelA) || decelA <= 0 ? decelA : decelA * (airbrakes ? BrakeGain : 1); }
@@ -908,6 +909,30 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>Oct 12: waypoints the user placed on the MAP/CHART editor this session (saved or not), per runway key.</summary>
+    internal static class UserWaypoints
+    {
+        static readonly Dictionary<string, List<ApproachChart.Wp>> byKey = new Dictionary<string, List<ApproachChart.Wp>>(); internal static int Version;
+        internal static void Put(string key, List<ApproachChart.Wp> wps) { byKey[key ?? ""] = wps ?? new List<ApproachChart.Wp>(); Version++; }
+        internal static List<ApproachChart.Wp> Get(string key) { List<ApproachChart.Wp> l; return byKey.TryGetValue(key ?? "", out l) ? l : new List<ApproachChart.Wp>(); }
+        internal static void Clear() { byKey.Clear(); Version++; }
+        /// <summary>The first user WP ahead (within 75 deg of the track), at least minM away and nearer than the runway; null + why otherwise.</summary>
+        internal static ApproachChart.Wp Pick(List<ApproachChart.Wp> wps, double lat, double lon, double track, double thrLat, double thrLon, double radius, double minM, out string why)
+        {
+            why = ""; ApproachChart.Wp best = null; double bd = double.MaxValue; double direct = NavigationMath.Distance(lat, lon, thrLat, thrLon, radius); var skips = new List<string>();
+            foreach (var w in wps)
+            {
+                double d = NavigationMath.Distance(lat, lon, w.Lat, w.Lon, radius), off = Math.Abs(FlightPolicy.Wrap(NavigationMath.Bearing(lat, lon, w.Lat, w.Lon) - track));
+                if (off > 75) { skips.Add(w.Name + " behind (" + Math.Round(off) + " deg off the track)"); continue; }
+                if (d < minM) { skips.Add(w.Name + " too close (" + Math.Round(d) + " m < " + Math.Round(minM) + " m)"); continue; }
+                if (d > direct + 5000) { skips.Add(w.Name + " beyond the runway"); continue; }
+                if (d < bd) { bd = d; best = w; }
+            }
+            why = (best != null ? "user WP " + best.Name + " used (" + (bd / 1000).ToString("0.0") + " km ahead)" : "") + (skips.Count > 0 ? (best != null ? "; " : "") + "user WP skipped: " + string.Join(", ", skips.ToArray()) : "");
+            return best;
+        }
+    }
+
     internal sealed class RunwayMission
     {
         /// <summary>Cross-track error predicted tau s ahead (+ = right of course): damps the centerline intercept.</summary>
@@ -956,7 +981,7 @@ namespace KSPChatBridge
         internal double Cross, Along;
         internal string Why = "";
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
-        internal ApproachOverride Override; internal string Key = "";
+        internal ApproachOverride Override; internal string Key = ""; int seenUserWp = -1;
         internal ApproachChart Chart; internal List<ApproachChart.Wp> Route; internal int RouteIndex; internal string RouteLog = "";
         internal string SmoothLog = "", JoinLog = "", EntryChart = "", EntryLog = "";
         internal double Crab, RouteStartLat, RouteStartLon, LegXte, CrossI, lastAlong = double.NaN;
@@ -1040,6 +1065,7 @@ namespace KSPChatBridge
             {
                 if (Route != null && holdLast && RouteIndex >= Route.Count) RouteIndex = Route.Count - 1;
                 if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
+                if (Route != null && seenUserWp >= 0 && seenUserWp != UserWaypoints.Version) Route = null;   // user waypoints changed: replan the join (logged via JoinLog)
                 if (Route == null)
                 {
                     stepsSinceRebuild = 0; holdLast = false; Rebuilds++;
@@ -1056,6 +1082,19 @@ namespace KSPChatBridge
                         jw = jw + " [" + EntryLog + "]";
                         if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
                         JoinLog = join != null ? jw : jw + "; long final entry";
+                        var uw = UserWaypoints.Get(Key); seenUserWp = UserWaypoints.Version;
+                        if (uw.Count > 0)
+                        {   // Oct 12 (2nd attempt): a WP Luke placed ahead on the MAP/CHART is flown first, then the chart join from there
+                            string uwhy; var u = UserWaypoints.Pick(uw, lat, lon, track, Lat, Lon, radius, Math.Max(1500, .5 * jr), out uwhy);
+                            if (u != null)
+                            {
+                                if (double.IsNaN(u.Alt) || u.Alt <= 0) u.Alt = Math.Max(Chart.LongAlt, Math.Min(altitude, Chart.LongAlt + 3000));
+                                string jw2; var j2 = Chart.BestJoin(u.Lat, u.Lon, NavigationMath.Bearing(lat, lon, u.Lat, u.Lon), u.Alt, jv, jr, radius, out jw2, EntryChart);
+                                Route = new List<ApproachChart.Wp> { u }; Route.AddRange(j2 ?? new List<ApproachChart.Wp> { Chart.Long }); Chart.RouteFixAlt = Chart.LongAlt;
+                                JoinLog = uwhy + ", then " + jw2;
+                            }
+                            else JoinLog = jw + "; " + uwhy;
+                        }
                     }
                     else JoinLog = "short final (head-on)";
                     RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, lat, lon);
@@ -1087,7 +1126,7 @@ namespace KSPChatBridge
                     }
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = Chart != null ? ApproachProfile.EntryAlt(wp.Alt, Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)), altitude) : wp.Alt;   // Oct 12: consistent with the intercept plan
-                    DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 10), 15);   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
+                    DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 15), 15);   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
                     EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
                     OffLine = ApproachProfile.BadlyOff(LegXte, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), false);
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
@@ -1106,7 +1145,7 @@ namespace KSPChatBridge
                 DesiredHeading = merging ? LocalizerCourse.Heading(course, cross, icR, icTrk, speed, RollS) : LocalizerCourse.Heading(course, cross, icR);   // shared localizer capture law (legs + LOC)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, EffDecel));   // intercept: join speed, never above the final schedule
-                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 12), 10);
+                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 15), 10);
                 EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; if (RebuildDue(stepsSinceRebuild) || Route == null || Route.Count == 0) Route = null; else { holdLast = true; RouteIndex = Route.Count - 1; } }   // never descend unaligned

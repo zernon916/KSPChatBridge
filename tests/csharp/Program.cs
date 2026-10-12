@@ -1787,6 +1787,13 @@ class Program
                     var jf = chj.BestJoin(fLa, fLo, 297, chj.LongAlt + 2500, 200, fr, 600000, out jw);
                     Check(jf != null && jf.Count >= 3 && jf[jf.Count - 1].Lat == chj.Long.Lat, "48 km out with ample distance: flies the chart fixes, not straight to the FAF (" + jw + ")");
                     Check(!ApproachChart.JoinAngleOk(80, false, 10000, 6000) && ApproachChart.JoinAngleOk(80, false, 30000, 6000) && !ApproachChart.JoinAngleOk(150, false, 30000, 6000) && ApproachChart.JoinAngleOk(30, false, 10000, 6000) && ApproachChart.SkipCost(20000, 3) == 0 && ApproachChart.SkipCost(48000, 2) == 16000, "join angle: 45 deg near, 120 deg far; skip cost only with ample distance");
+                }                {   // Oct 12 2nd attempt: an unsaved user WP right ahead must be flown first
+                    double pLa, pLo, wLa, wLo; NavigationMath.Offset(thrLa, thrLo, 117, 40000, 600000, out pLa, out pLo); NavigationMath.Offset(pLa, pLo, 297, 8000, 600000, out wLa, out wLo);
+                    string uw; var wps = new List<ApproachChart.Wp> { new ApproachChart.Wp { Name = "WP9", Lat = wLa, Lon = wLo }, new ApproachChart.Wp { Name = "WPB", Lat = pLa + (pLa - wLa), Lon = pLo + (pLo - wLo) } };
+                    var u = UserWaypoints.Pick(wps, pLa, pLo, 297, thrLa, thrLo, 600000, 1500, out uw);
+                    Check(u != null && u.Name == "WP9" && uw.Contains("used") && uw.Contains("WPB behind"), "user WP ahead used, one behind skipped (" + uw + ")");
+                    UserWaypoints.Put("K", wps); Check(UserWaypoints.Get("K").Count == 2 && UserWaypoints.Get("X").Count == 0, "user WPs per runway");
+                    Check(ApproachProfile.RecoverSink(156, .052, 150, 28) >= 23 && ApproachProfile.RecoverSink(156, .052, 300, double.NaN) == 15 && ApproachProfile.LandingPitchMin(-14) == -12 && ApproachProfile.LandingPitchMin(-3) == -5, "above GS: up to learned sink (fallback 15), pitch floor relaxed");
                 }                var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
                 Check(jw.Contains("altitude") && (j3 == null || j3[0].Name != chj.ApexLeft.Name), "4 km too high: close fixes rejected for descent (" + jw + ")");
                 {   // Luke 3:12 PM bug: joins along the LINE, forward in chart order only, prefer the leg we are on, no 40 g structure

@@ -615,6 +615,7 @@ namespace KSPChatBridge
                     else
                     {
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
+                        descentPitchMin = ApproachProfile.LandingPitchMin(runway.DesiredVs);   // Oct 12: -5 deg floor capped recapture sink; allow -12 when a steep sink is asked
                         if (runway.EnergyLog.Length > 0) { ChatLog.Write("approach", runway.EnergyLog); runway.EnergyLog = ""; }
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }

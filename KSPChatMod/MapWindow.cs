@@ -52,7 +52,7 @@ namespace KSPChatBridge
         internal static void RunwayStep(int d) { var m = Inst; if (m == null || m.runways.Count == 0) return; rwIdx = (rwIdx + d + m.runways.Count) % m.runways.Count; m.fixesFor = ""; }
         internal static void NextVariant() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return; NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, ""); string cur = ChartStore.Active(rw.Key); ChartStore.SetActive(rw.Key, vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]); m.fixesFor = ""; }
         internal static void AddWaypoint() { if (Inst != null) Inst.AddWp(); }
-        internal static void RemoveWaypoint() { var m = Inst; if (m == null) return; if (m.sel >= 0 && m.sel < m.fixes.Count && m.fixes[m.sel].Role != "faf" && m.fixes[m.sel].Role != "sf") { m.fixes.RemoveAt(m.sel); m.sel = -1; } else m.note = "Select a waypoint (FAF/SF are locked)."; }
+        internal static void RemoveWaypoint() { var m = Inst; if (m == null) return; if (m.sel >= 0 && m.sel < m.fixes.Count && m.fixes[m.sel].Role != "faf" && m.fixes[m.sel].Role != "sf") { if (m.added.Remove(m.fixes[m.sel])) { m.fixes.RemoveAt(m.sel); m.Publish(); } else m.fixes.RemoveAt(m.sel); m.sel = -1; } else m.note = "Select a waypoint (FAF/SF are locked)."; }
         internal static void SelectWp(int d) { var m = Inst; if (m == null || m.fixes.Count == 0) return; m.sel = m.sel < 0 ? (d > 0 ? 0 : m.fixes.Count - 1) : (m.sel + d + m.fixes.Count) % m.fixes.Count; }
         internal static void AltStep(double dm) { var m = Inst; if (m != null && m.sel >= 0 && m.sel < m.fixes.Count) m.fixes[m.sel].AltMsl += dm; }
         internal static void ToggleRef() { var m = Inst; if (m != null && m.sel >= 0 && m.sel < m.fixes.Count) { var f = m.fixes[m.sel]; f.Ref = f.Ref == "agl" ? "msl" : "agl"; } }
@@ -453,7 +453,7 @@ namespace KSPChatBridge
                 }
                 f.Lat = la; f.Lon = lo; e.Use();
             }
-            else if (e.type == EventType.MouseUp) dragging = false;
+            else if (e.type == EventType.MouseUp) { if (dragging) Publish(); dragging = false; }
         }
 
         void AddWp()
@@ -464,8 +464,11 @@ namespace KSPChatBridge
             var b = at < fixes.Count && fixes[at].Role == "wp" ? fixes[at] : fixes.Find(f => f.Role == "faf") ?? a;
             int n = fixes.FindAll(f => f.Role == "wp").Count + 1;
             fixes.Insert(at, new ApproachFile.EditFix { Role = "wp", Name = "WP" + n, Side = a.Side, Ref = a.Ref, Lat = (a.Lat + b.Lat) / 2 + (a == b ? .02 : 0), Lon = (a.Lon + b.Lon) / 2, AltMsl = a.AltMsl });
-            sel = at;
+            sel = at; added.Add(fixes[at]); Publish();
         }
+        readonly HashSet<ApproachFile.EditFix> added = new HashSet<ApproachFile.EditFix>();
+        /// <summary>Oct 12: WPs added this session (saved or not) go to the approach planner right away.</summary>
+        void Publish() { UserWaypoints.Put(fixesFor, fixes.FindAll(f => added.Contains(f)).ConvertAll(f => new ApproachChart.Wp { Name = f.Name, Lat = f.Lat, Lon = f.Lon, Alt = f.AltMsl })); }
 
         void Save(NativeFlightController.MapRunway rw)
         {
