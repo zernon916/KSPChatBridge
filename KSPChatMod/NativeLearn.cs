@@ -21,7 +21,7 @@ namespace KSPChatBridge
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
             // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
-            var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear();
+            var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear(); if ((profile == null || !profile.NoLand) && !queue.Contains(12)) queue.Add(12);   // box 12 checked by default (Oct 12)
             learn = new LearnFlight(profile, queue, true); lastLearn = null; learnRates.Reset(); learnTestsSaved = 0; learnPilotUntil = 0; learnPilotHad = false; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
             ChatLog.Write("learn", "test flight start: " + vessel.vesselName + " " + vessel.totalMass.ToString("0.0") + " t");
             if (vessel.LandedOrSplashed) { altitude = vessel.altitude + 300; heading = FlightGlobals.ship_heading; BeginHold(); return "Test flight: " + StartTakeoff(); }
@@ -59,11 +59,16 @@ namespace KSPChatBridge
                 ChatLog.Write("learn", "step " + learn.Phase + ": control overrides reset (thr " + Math.Round((double.IsNaN(gate.Out) ? 0 : gate.Out) * 100) + "%)");
                 if (learn.Phase == "wait" && !double.IsNaN(learn.HoldAlt))
                 {   // waiting: the normal hold flies altitude + heading (+ speed via the PI)
-                    altitude = learn.HoldAlt; heading = double.IsNaN(learn.HoldHdg) ? hdg : learn.HoldHdg; holdAltitude = holdHeading = true; capture = null;
+                    altitude = learn.HoldAlt; heading = double.IsNaN(learn.HoldHdg) ? hdg : learn.HoldHdg; holdAltitude = holdHeading = true; capture = null; ApFieldSync.Heading(heading);
                     ChatLog.Write("learn", "waiting: hold " + altitude.ToString("0") + " m hdg " + heading.ToString("000"));
                 }
             }
-            if (learn.Phase == "flyhome" && !double.IsNaN(learn.HoldHdg)) { altitude = learn.HoldAlt; heading = learn.HoldHdg; holdAltitude = holdHeading = true; capture = null; }   // box 12: great-circle course home on the normal holds
+            if (learn.Phase == "flyhome" && !double.IsNaN(learn.HoldHdg))
+            {   // box 12: great-circle course home on the normal holds. Targets only on change: capture = null every tick reset the level-off and porpoised (Oct 12)
+                if (!holdHeading || Math.Abs(FlightPolicy.Wrap(heading - learn.HoldHdg)) > .5) { heading = learn.HoldHdg; ApFieldSync.Heading(heading); }
+                if (!holdAltitude || Math.Abs(altitude - learn.HoldAlt) > 1) { altitude = learn.HoldAlt; capture = null; }
+                holdAltitude = holdHeading = true;
+            }
             directVs = null;
             if (!double.IsNaN(learn.SpeedTarget)) { holdSpeed = true; speed = learn.SpeedTarget; } else holdSpeed = false;   // speed steps fly the ONE speed PI
             directPitch = double.IsNaN(learn.Pitch) ? (double?)null : learn.Pitch;
@@ -315,7 +320,7 @@ namespace KSPChatBridge
             if (me.profile == null) return "Press LEARN: it takes off, climbs and waits; then check a box to run that test.";
             if (!LearnFlight.Toggle(me.profile, step)) { MfdNav.LearnCursor = LearnFlight.NextToggleable(MfdNav.LearnCursor); return LearnFlight.CodeName(step) + " is always flown (setup/landing) - cursor moved to " + LearnFlight.CodeName(LearnFlight.Codes[MfdNav.LearnCursor]) + "."; }
             me.SaveProfile(me.profile, false);   // a toggle is not a LEARN: no fingerprint re-stamp (would hide a hard mismatch)
-            return LearnFlight.CodeName(step) + (me.profile.Rerun.Contains(step) ? " checked: runs after the LEARN climb." : " unchecked.");
+            return LearnFlight.CodeName(step) + ((step == 12 ? !me.profile.NoLand : me.profile.Rerun.Contains(step)) ? " checked: runs after the LEARN climb." : " unchecked.");
         }
         internal static string LearnSkip()
         {

@@ -92,6 +92,8 @@ namespace KSPChatBridge
         internal void Note(string key, double value, double massT) { if (!double.IsNaN(value)) Samples.Add(new object[] { key, Math.Round(value, 3), Math.Round(massT, 3) }); }
         internal readonly PerfData Perf = new PerfData();
         internal readonly List<int> Rerun = new List<int>();
+        /// <summary>Box 12 (fly home + land) is checked by default; true = the user unchecked it.</summary>
+        internal bool NoLand;
         internal readonly List<double[]> SinkFlaps = new List<double[]>();
         /// <summary>Safe turn envelope: [speed, max sustained bank, g, turn rate deg/s, radius m, roll-in s, mass].</summary>
         internal readonly List<double[]> Envelope = new List<double[]>();
@@ -164,6 +166,7 @@ namespace KSPChatBridge
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
+            if (NoLand) dict["no_land"] = true;
             return dict;
         }
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
@@ -173,6 +176,7 @@ namespace KSPChatBridge
             p.Decel = D(d, "decel"); p.Accel = D(d, "accel"); p.Lag = D(d, "lag"); p.EconSpeed = D(d, "econ_speed"); p.EconThrottle = D(d, "econ_throttle"); p.FuelUsed = D(d, "fuel_used");
             object o; p.Complete = d.TryGetValue("complete", out o) && o is bool && (bool)o; p.Abort = d.TryGetValue("abort", out o) && o != null ? o.ToString() : "";             p.Date = d.TryGetValue("date", out o) && o != null ? o.ToString() : "";
             if (d.TryGetValue("fingerprint", out o)) p.Fingerprint = CraftFingerprint.FromDict(o as Dictionary<string, object>);
+            p.NoLand = d.TryGetValue("no_land", out o) && o is bool && (bool)o;
             var rr = d.TryGetValue("rerun", out o) ? o as System.Collections.IList : null; if (rr != null) foreach (var x in rr) { try { p.Rerun.Add(Convert.ToInt32(x)); } catch (Exception) { } }
             foreach (var key in new[] { "turns", "dives" })
                 if (d.TryGetValue(key, out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o)
@@ -275,6 +279,14 @@ namespace KSPChatBridge
         internal int ActiveTest { get { return activeTest; } }
         internal int TestsDone { get; private set; }
         internal double HoldAlt = double.NaN, HoldHdg = double.NaN;
+        /// <summary>Oct 12: plane_hold / set_heading during the Learn wait or fly-home: these win over the Learn targets (NaN = Learn's own).</summary>
+        internal double UserAlt = double.NaN, UserHdg = double.NaN, UserSpd = double.NaN;
+        internal void UserHold(double alt, double hdg, double spd)
+        {
+            if (!double.IsNaN(alt)) { UserAlt = alt; if (Phase == "wait" || Phase == "flyhome") HoldAlt = alt; }
+            if (!double.IsNaN(hdg)) { UserHdg = hdg; if (Phase == "wait" || Phase == "flyhome") HoldHdg = hdg; }
+            if (!double.IsNaN(spd)) UserSpd = spd;
+        }
         internal bool Waiting { get { return ManualMode && !Done && (Phase == "wait" || Phase == "climbback"); } }
         internal LearnFlight(PlaneProfile prev, IEnumerable<int> queue, bool manual)
         {
@@ -317,7 +329,7 @@ namespace KSPChatBridge
                 if (!setupUnchecked.Remove(code)) { setupUnchecked.Add(code); return CodeName(code) + " unchecked (" + (setupDone || StepNo > code ? "already flown; data kept" : "runs as setup") + ")."; }
                 return CodeName(code) + " checked.";
             }
-            if (code == 12 && !setupDone) { landRequested = true; return "Landing checked: flies home and lands once the climb is done."; }
+            if (code == 12 && !setupDone) { landRequested = !landRequested; return landRequested ? "Landing checked: flies home and lands once the climb is done." : "Landing unchecked: LEARN waits after the climb."; }
             if (code == 12) { landRequested = true; Queue.Clear(); if (activeTest != 0) { Ran.Add(activeTest); activeTest = 0; } if (!last.HomeKnown || last.HomeDist < HomeHandoff) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; } Go("flyhome", last, null); return "Ending the test flight: flying home to KSC 27, then landing."; }
             if (!Pickable(code)) return "Unknown test.";
             if (activeTest == code)
@@ -382,13 +394,13 @@ namespace KSPChatBridge
             {
                 int k = Codes[j]; string cur = j == cursor ? ">" : " ", ind = k == 91 || k == 101 ? "  " : "";
                 if (k == 1 || k == 2) { o.Add(cur + (setupUnchecked.Contains(k) ? "[ ] " : setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k) + " (auto)"); continue; }
-                if (k == 12) { o.Add(cur + "[ ] 12 Land KSC 27 + rollout (check to end)"); continue; }
+                if (k == 12) { o.Add(cur + (Phase == "flyhome" ? "[>] 12 Fly home + land KSC 27" : landRequested ? "[x] 12 Land KSC 27 + rollout (after the queue)" : "[ ] 12 Land KSC 27 + rollout (check to end)")); continue; }
                 string mark = activeTest == k ? "[>] " : Queue.Contains(k) || Ran.Contains(k) ? "[x] " : "[ ] ";
                 string extra = activeTest == k ? "" : Queue.Contains(k) ? " (queued)" : Ran.Contains(k) ? " (done)" : "";
                 o.Add(cur + ind + mark + CodeName(k) + extra);
                 if (activeTest == k) { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
             }
-            o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest) + ".");
+            o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : Phase == "flyhome" ? "Running 12 / fly home: course " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + " at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest) + ".");
             return o;
         }
         static bool Setup(int k) { return k <= 2 || k >= 12; }
@@ -623,6 +635,7 @@ namespace KSPChatBridge
         {
             if (ManualMode) ph = ManualRoute(ph, i, ref status);
             else { ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; } }
+            if (ph != "wait" && ph != "flyhome" && ph != "climbback") UserAlt = UserHdg = UserSpd = double.NaN;   // a test flies its own targets
             Phase = ph; aoaF = double.NaN; if (ph == "stall") stallArmed = false;
             spdF = double.NaN; prevThr = double.NaN; badThr = 0;
             sinkSlowAt = double.NaN; if (ph == "sinkdown" || ph == "sinkmap") { vsF = i.Vs; lastT = i.T; overAt = double.NaN; recThr = double.NaN; limThr = 0; limT = double.NaN; }
@@ -711,6 +724,7 @@ namespace KSPChatBridge
                 int k = codes[j]; string cur = j == cursor ? ">" : " ";
                 if (k == 91) o.Add(cur + (p.Rerun.Contains(91) ? "  [x] " : "  [ ] ") + "9b Flaps-full sink map");
                 else if (k == 101) o.Add(cur + (p.Rerun.Contains(101) ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
+                else if (k == 12) o.Add(cur + (p.NoLand ? "[ ] " : "[x] ") + "12 " + StepNames[11]);   // checked by default (Oct 12)
                 else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[x] " : "[ ] ") + k + " " + StepNames[k - 1]);
             }
             o.Add(p.Rerun.Count == 0 ? "All unchecked. LEARN takes off, climbs and waits; TOGGLE a box to run that test." : "LEARN runs " + p.Rerun.Count + " checked test(s) after the climb, then waits.");
@@ -721,11 +735,12 @@ namespace KSPChatBridge
         /// <summary>Checklist index of the nearest toggleable box at or after idx (wraps), so TOGGLE on a setup row never dead-ends.</summary>
         internal static int NextToggleable(int idx)
         {
-            for (int k = 0; k < Codes.Length; k++) { int j = (Math.Max(0, idx) + k) % Codes.Length; int c = Codes[j]; if (!Setup(c) || c == 91 || c == 101) return j; }
+            for (int k = 0; k < Codes.Length; k++) { int j = (Math.Max(0, idx) + k) % Codes.Length; int c = Codes[j]; if (!Setup(c) || c == 91 || c == 101 || c == 12) return j; }
             return 0;
         }
         internal static bool Toggle(PlaneProfile p, int step)
         {
+            if (p != null && step == 12) { p.NoLand = !p.NoLand; p.Rerun.Remove(12); return true; }
             if (p == null || ((step < 1 || step > StepCount || Setup(step)) && step != 91 && step != 101)) return false;
             if (!p.Rerun.Remove(step)) p.Rerun.Add(step); p.Rerun.Sort(); return true;
         }
@@ -957,15 +972,15 @@ namespace KSPChatBridge
                 case "flyhome":
                     {   // box 12: great-circle course to KSC 27 at the learned econ speed; hand off to the ferry + approach within 60 km
                         double c = P.Perf.CruiseSpeed, vmx = P.Perf.MaxLevel;
-                        SpeedTarget = !double.IsNaN(c) && c > 0 && (double.IsNaN(vmx) || c < .95 * vmx) ? c : WaitSpeed(i);
-                        HoldAlt = ClimbAlt; if (i.HomeKnown) HoldHdg = i.HomeBrg;
+                        SpeedTarget = !double.IsNaN(UserSpd) ? UserSpd : !double.IsNaN(c) && c > 0 && (double.IsNaN(vmx) || c < .95 * vmx) ? c : WaitSpeed(i);
+                        HoldAlt = !double.IsNaN(UserAlt) ? UserAlt : ClimbAlt; if (!double.IsNaN(UserHdg)) HoldHdg = UserHdg; else if (i.HomeKnown) HoldHdg = i.HomeBrg;   // a user hold wins (Oct 12)
                         if (!i.HomeKnown || i.HomeDist < HomeHandoff) { Finish(false, ""); return; }
-                        if (i.T >= homeNoteT) { homeNoteT = i.T + 30; Status = "Flying home: " + (i.HomeDist / 1000).ToString("0") + " km to KSC 27, course " + i.HomeBrg.ToString("000") + " at " + SpeedTarget.ToString("0") + " m/s."; }
+                        if (i.T >= homeNoteT) { homeNoteT = i.T + 30; Status = "Flying home: " + (i.HomeDist / 1000).ToString("0") + " km to KSC 27, course " + HoldHdg.ToString("000") + (double.IsNaN(UserHdg) ? "" : " (yours)") + " at " + SpeedTarget.ToString("0") + " m/s."; }
                         return;
                     }
                 case "wait":
                     if (landRequested && Queue.Count == 0 && setupDone) { Go("flyhome", i, null); return; }
-                    SpeedTarget = double.IsNaN(waitSpeed) ? WaitSpeed(i) : waitSpeed;   // pitch/bank/throttle: the normal altitude + heading + speed hold
+                    SpeedTarget = !double.IsNaN(UserSpd) ? UserSpd : double.IsNaN(waitSpeed) ? WaitSpeed(i) : waitSpeed;   // pitch/bank/throttle: the normal altitude + heading + speed hold
                     if (Queue.Count > 0) { int code = Queue[0]; Queue.RemoveAt(0); StartTest(code, i); }
                     return;
                 case "sinkclimb":
@@ -1124,6 +1139,12 @@ namespace KSPChatBridge
     internal enum SurfRole { Flap, Slat, RollFlap, Brake, Aileron, Pitch, Yaw, Other, Unknown }
     internal static class SurfaceRoles
     {
+        /// <summary>Oct 12: the surface-role log line once per vessel or when a role changes; part positions (flex jitter) do not count.</summary>
+        internal static bool ShouldLog(ref string last, string vesselKey, string line)
+        {
+            string k = vesselKey + "|" + System.Text.RegularExpressions.Regex.Replace(line ?? "", @" @-?[\d.]+/-?[\d.]+/-?[\d.]+| span [\d.]+", "");
+            if (k == last) return false; last = k; return true;
+        }
         /// <summary>Role from a part tag/name: "brake"/"spoiler" -> Brake, "slat" -> Slat, "flap" -> Flap, "aileron" -> Aileron, "none" -> Other; else null (untagged).</summary>
         internal static SurfRole? FromTag(string tag)
         {

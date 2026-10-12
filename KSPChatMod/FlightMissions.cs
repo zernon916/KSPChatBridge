@@ -379,6 +379,13 @@ namespace KSPChatBridge
     {
         internal const double GRate = 1.25, RollRate = 30;
         static double N(double bankDeg) { double c = Math.Cos(Math.Min(85, Math.Abs(bankDeg)) * Math.PI / 180); return 1 / c; }
+        /// <summary>Heading-hold bank step: g-onset ramp (or straight to want when snap), then the class/learned roll-rate step. Stores the
+        /// result in bankCmd itself so the next tick continues from it (Oct 12: the caller's assignment was lost and every turn stalled at ~1 deg).</summary>
+        internal static double HoldBank(ref double bankCmd, string cls, double want, double dt, double onsetRoll, bool snap, double learnedRoll)
+        {
+            bankCmd = CraftClass.RollStep(cls, bankCmd, snap ? want : Bank(bankCmd, want, dt, GRate, onsetRoll), dt, learnedRoll);
+            return bankCmd;
+        }
         internal static double Bank(double prev, double target, double dt, double gRate = GRate, double rollRate = RollRate)
         {
             if (dt <= 0) return prev;

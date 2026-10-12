@@ -708,7 +708,7 @@ namespace KSPChatBridge
                 if (!vessel.LandedOrSplashed && !directBank.HasValue)
                 {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry); LEARN roll rate when known
                     double want = bank; double onsetRoll = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(learnedRoll, 10, 60) : TurnOnset.RollRate;
-                    bank = CraftClass.RollStep(CraftCls, bankCmd, bankOverride && learn != null && learn.TurnPhase ? want : TurnOnset.Bank(bankCmd, want, dt, TurnOnset.GRate, onsetRoll), dt, learnedRoll);   // Learn stress turns: roll in at the learned roll rate, no gentle g-onset bankCmd = bank;
+                    bank = TurnOnset.HoldBank(ref bankCmd, CraftCls, want, dt, onsetRoll, bankOverride && learn != null && learn.TurnPhase, learnedRoll);   // Learn stress turns: roll in at the learned roll rate, no gentle g-onset. HoldBank stores bankCmd (Oct 12: the inline 'bankCmd = bank;' had ended up inside this comment, so the heading hold never rolled past ~1 deg)
                     if (Math.Abs(want) > 30 && Math.Abs(bankPrevWant) < 10) gTraceUntil = Time.realtimeSinceStartup + 6;
                     bankPrevWant = want;
                     if (Time.realtimeSinceStartup < gTraceUntil && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + .5f; ChatLog.Write("g", "turn entry: want=" + want.ToString("0") + " cmd=" + bankCmd.ToString("0") + " bank=" + Roll().ToString("0") + " n=" + vessel.geeForce.ToString("0.00")); }
@@ -1098,6 +1098,8 @@ namespace KSPChatBridge
                     directPitch = null; BeginHold();
                     if (!holdSpeed) FlightInputHandler.state.mainThrottle = vessel.ctrlState.mainThrottle;   // speed hold off: the pilot's throttle continues from here (not a stale 0)
                     ChatLog.Write("ap", "hold engage alt=" + altitude.ToString("0") + " hdg=" + heading.ToString("000") + " spd=" + speed.ToString("0") + " off=" + string.Join(",", new List<string>(off).ToArray()) + " thr=" + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%");
+                    if (holdHeading) ApFieldSync.Heading(heading);
+                    if (learn != null && !learn.Done) learn.UserHold(holdAltitude ? altitude : double.NaN, holdHeading ? heading : double.NaN, holdSpeed && Num(a, "speed", -1) > 0 ? speed : double.NaN);   // Oct 12: a user hold during Learn wait / fly-home wins
                     if (vessel.LandedOrSplashed) { altitude = Math.Max(altitude, vessel.altitude + 300); return StartTakeoff(); }
                     return "Local aircraft holds engaged.";
                 case "takeoff":
@@ -1255,7 +1257,8 @@ namespace KSPChatBridge
                     double rel = Num(a, "relative", double.NaN);
                     heading = double.IsNaN(rel) ? Num(a, "heading", FlightGlobals.ship_heading) : (FlightGlobals.ship_heading + rel + 360) % 360;
                     if (!Active) { var h = new Dictionary<string, object> { { "heading", heading }, { "altitude_m", -1.0 }, { "speed", -1.0 } }; string r0 = Command("plane_hold", h); if (!Active) return r0; }
-                    holdHeading = true; directBank = null;
+                    holdHeading = true; directBank = null; ApFieldSync.Heading(heading);
+                    if (learn != null && !learn.Done) learn.UserHold(double.NaN, heading, double.NaN);   // Oct 12: chat heading wins over Learn wait / fly-home
                     return (double.IsNaN(rel) ? "Heading " : "Turning " + rel.ToString("0", CultureInfo.InvariantCulture) + " deg to heading ") + heading.ToString("000", CultureInfo.InvariantCulture) + ".";
                 }
                 case "set_speed":

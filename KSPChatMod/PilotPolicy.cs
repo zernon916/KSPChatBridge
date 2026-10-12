@@ -134,6 +134,13 @@ namespace KSPChatBridge
         internal static bool Airbrakes(bool on, double v, double target) { return on ? v > target + 5 : v > target + 15; }
     }
 
+    /// <summary>Oct 12: headings set from chat / plane_hold / Learn fly-home are pushed to the autopilot window's Heading field.</summary>
+    internal static class ApFieldSync
+    {
+        static string pending;
+        internal static void Heading(double h) { if (double.IsNaN(h)) return; pending = (((Math.Round(h) % 360) + 360) % 360).ToString("0", System.Globalization.CultureInfo.InvariantCulture); }
+        internal static string Take() { var p = pending; pending = null; return p; }
+    }
     internal static class PilotPolicy
     {
         /// <summary>Never fly slower than this airborne (Luke 6:29 PM: A300 held 77 m/s at idle into the sea).</summary>

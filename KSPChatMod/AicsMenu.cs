@@ -208,6 +208,7 @@ namespace KSPChatBridge
             Hold(ref apAlt, "Altitude", ref apAltT, "m");
             GUILayout.BeginHorizontal(); GUILayout.Space(20); apAgl = GUILayout.Toggle(apAgl, apAgl ? "AGL (above ground / runway)" : "MSL (sea level)"); GUILayout.EndHorizontal();
             Hold(ref apVs, "Vertical speed", ref apVsT, "m/s");
+            { string sh = ApFieldSync.Take(); if (sh != null) { apHdgT = sh; apHdg = true; } }   // heading set from chat / Learn
             Hold(ref apHdg, "Heading", ref apHdgT, "°");
             Hold(ref apRoll, "Roll", ref apRollT, "°");
             Hold(ref apSpd, "Speed (actual)", ref apSpdT, "m/s");

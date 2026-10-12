@@ -72,7 +72,7 @@ namespace KSPChatBridge
                    .Append(" -> ").Append(role == SurfRole.Unknown ? "unknown (leading edge, left alone)" : role.ToString().ToLowerInvariant()).Append(" [").Append(why).Append("]; ");
             }
             string s2 = log.ToString();
-            if (s2 != surfLog) { surfLog = s2; ChatLog.Write("flaps", "surfaces (" + (surfTagged ? "TAGGED: tags only" : "auto-detect") + ", " + flaps.Count + " high-lift, " + brakeSurfs.Count + " brake): " + s2); }
+            if (SurfaceRoles.ShouldLog(ref surfLog, vessel != null ? vessel.id.ToString() : "", s2)) { ChatLog.Write("flaps", "surfaces (" + (surfTagged ? "TAGGED: tags only" : "auto-detect") + ", " + flaps.Count + " high-lift, " + brakeSurfs.Count + " brake): " + s2); }
         }
         /// <summary>Brake surfaces follow the Brakes action group (deploy), so spoilers not wired to the AG still act as airbrakes; only what we deployed is retracted.</summary>
         void BrakeSurfacesTick()

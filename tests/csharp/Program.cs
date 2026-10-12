@@ -367,7 +367,7 @@ class Program
                     && !double.IsNaN(pp.Liftoff) && !double.IsNaN(pp.Decel) && !double.IsNaN(pp.Accel) && pp.Turns.Count >= 2 && pp.Envelope.Count >= 1 && pp.Turns[0].Length >= 10 && !double.IsNaN(pp.Turns[0][6]) && pp.Dives.Count >= 1 && pp.Stall > 30 && pp.Stall < 75, "learn flight runs all steps: " + string.Join(">", lf.Visited) + " | " + pp.Summary() + " env=" + pp.Envelope.Count + " passPlan=" + passPlan + " redo=" + string.Join(",", lf.Redo));
             }
             {   // Luke 11:26 PM: toggle steps after the first test; LEARN re-runs only unchecked steps (+ takeoff/climb/landing), keeping the rest
-                Check(!LearnFlight.Toggle(pp, 1) && !LearnFlight.Toggle(pp, 12) && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
+                Check(!LearnFlight.Toggle(pp, 1) && LearnFlight.Toggle(pp, 12) && pp.NoLand && LearnFlight.Toggle(pp, 5) && pp.Rerun.Count == 1, "toggle: test steps uncheck, setup steps can't");
                 var pr = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
                 Check(pr.Rerun.Count == 1 && pr.Rerun[0] == 5, "re-run selection persisted");
                 var pcl = LearnFlight.ProfileChecklist(pr, 4); Check(pcl[4].StartsWith(">[x] 5") && pcl[3].StartsWith(" [ ] 4") && pcl[0].StartsWith(" [*] 1"), "toggle view (Oct 11): cursor, boxes start unchecked, [x] = run that test");

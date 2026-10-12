@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -136,7 +136,7 @@ internal static class ThrottleLearnTests
         // queue from the pre-flight checklist (boxes checked before LEARN)
         var pf = new PlaneProfile(); LearnFlight.Toggle(pf, 5); var lq = new LearnFlight(pf, pf.Rerun, true);
         Check(lq.Queue.Count == 1 && lq.Queue[0] == 5 && lq.P.Rerun.Count == 0, "boxes checked before LEARN queue those tests");
-        Check(LearnFlight.ProfileChecklist(new PlaneProfile(), 0).TrueForAll(l => !l.Contains("[x]")), "pre-flight checklist: all unchecked");
+        Check(LearnFlight.ProfileChecklist(new PlaneProfile(), 0).TrueForAll(l => !l.Contains("[x]") || l.Contains("[x] 12")), "pre-flight checklist: all unchecked except 12 (checked by default)");
     }
 
     static void Live()
@@ -189,6 +189,41 @@ internal static class ThrottleLearnTests
     // live 21:11-21:18 Stearwing A300 (49 t, EAS stall 74 -> TAS 107 at 5 km, rho .58)
     // Luke 9:27 PM: A300 top-of-wing spoilers were deployed as flaps in 9b
     // live 22:27: 12 checked before LEARN was dropped from the queue; after 10b it climbed back to 5 km and waited forever, 117 km out
+    // Oct 12 live (Stearwing A300, 47 t): heading hold never rolled past ~1 deg, user holds lost to Learn, "running 0", box 12 unchecked, flaps log spam
+    static void Oct12Hold()
+    {
+        // 1/2: the heading-hold bank step keeps its own state; the lost 'bankCmd = bank' stuck every turn at < 1.5 deg
+        double bc = 0, b = 0; for (double t = 0; t < 10; t += .02) b = TurnOnset.HoldBank(ref bc, "heavy", 25, .02, 20, false, 60);
+        Check(Near(b, 25, .01) && Near(bc, 25, .01), "heading hold rolls to the commanded 25 deg bank within 10 s (" + b.ToString("0.0") + ")");
+        double bl = 0; for (double t = 0; t < 10; t += .02) bl = TurnOnset.HoldBank(ref bc, "light", -20, .02, 20, false, double.NaN);
+        Check(Near(bl, -20, .01), "light class reverses to -20 deg (" + bl.ToString("0.0") + ")");
+        // flyhome steers on the course, and a user hold during flyhome wins
+        var lf = new LearnFlight(null, new[] { 12 }, true); var q = In(0, 3000); q.HomeKnown = true; q.HomeDist = 117000; q.HomeBrg = 280; q.Landed = false;
+        for (double t = 0; t < 600 && lf.Phase != "flyhome"; t += .5) { q.T = t; q.Alt = Math.Min(5000, 3000 + t * 20); lf.Step(q); }
+        q.T += .5; lf.Step(q);
+        Check(lf.Phase == "flyhome" && double.IsNaN(lf.Bank) && lf.HoldHdg == 280, "flyhome: no learn bank override, the normal heading hold flies course 280");
+        var cl = lf.ManualChecklist(-1);
+        Check(cl.Exists(l => l.Contains("Running 12 / fly home")) && cl.Exists(l => l.Contains("[>] 12")) && !cl.Exists(l => l.Contains("Running 0")), "status shows 12 / fly home, not running 0");
+        lf.UserHold(5200, 282, 220); q.T += .5; lf.Step(q);
+        Check(lf.HoldHdg == 282 && lf.HoldAlt == 5200 && lf.SpeedTarget == 220, "user plane_hold / set_heading during flyhome wins (hdg " + lf.HoldHdg + ")");
+        lf.UserHold(double.NaN, 300, double.NaN); q.T += .5; lf.Step(q);
+        Check(lf.HoldHdg == 300 && lf.HoldAlt == 5200, "set_heading alone keeps the user altitude");
+        // window field sync
+        ApFieldSync.Heading(282); string f = ApFieldSync.Take();
+        Check(f == "282" && ApFieldSync.Take() == null, "heading pushed to the autopilot window field once");
+        ApFieldSync.Heading(359.7); Check(ApFieldSync.Take() == "0", "window heading wraps 360 -> 0");
+        // 4: box 12 checked by default, persists when unchecked
+        var p = new PlaneProfile();
+        Check(LearnFlight.ProfileChecklist(p, -1).Exists(l => l.Contains("[x] 12")), "box 12 checked by default");
+        Check(LearnFlight.Toggle(p, 12) && p.NoLand && LearnFlight.ProfileChecklist(p, -1).Exists(l => l.Contains("[ ] 12")), "TOGGLE unchecks box 12");
+        var p2 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(p.ToDict())) as Dictionary<string, object>);
+        Check(p2.NoLand && !PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(new PlaneProfile().ToDict())) as Dictionary<string, object>).NoLand, "box 12 state survives save/load");
+        var lw = new LearnFlight(null, null, true); Check(lw.Request(12).Contains("checked") && lw.LandRequested && lw.Request(12).Contains("unchecked") && !lw.LandRequested, "box 12 toggles before the climb is done");
+        // 5: surfaces log once per vessel / on change only
+        string last = ""; string a1 = "Elevon 4 @9.3/-5.6/0.3 span 0.63 TE top defl-up -> flap [tag 'flap']; ", a2 = "Elevon 4 @9.3/-5.6/0.2 span 0.63 TE top defl-up -> flap [tag 'flap']; ";
+        Check(SurfaceRoles.ShouldLog(ref last, "v1", a1) && !SurfaceRoles.ShouldLog(ref last, "v1", a2) && !SurfaceRoles.ShouldLog(ref last, "v1", a1), "flaps surfaces line not repeated for position jitter");
+        Check(SurfaceRoles.ShouldLog(ref last, "v1", a1.Replace("-> flap", "-> brake")) && SurfaceRoles.ShouldLog(ref last, "v2", a1.Replace("-> flap", "-> brake")), "logged again on a role change or a new vessel");
+    }
     static void FlyHome()
     {
         var lf = new LearnFlight(null, new[] { 12 }, true); var q = In(0, 3000); q.HomeKnown = true; q.HomeDist = 117000; q.HomeBrg = 280; q.Landed = false;
@@ -269,8 +304,8 @@ internal static class ThrottleLearnTests
     static void LearnMenu()
     {
         int last = LearnFlight.Codes.Length - 1; int j = LearnFlight.NextToggleable(last);
-        Check(LearnFlight.Codes[last] == 12 && LearnFlight.Toggle(new PlaneProfile(), LearnFlight.Codes[j]), "TOGGLE on box 12 moves the cursor to a toggleable box (" + LearnFlight.Codes[j] + ")");
-        Check(!LearnFlight.Toggle(new PlaneProfile(), 12) && LearnFlight.Toggle(new PlaneProfile(), LearnFlight.Codes[LearnFlight.NextToggleable(0)]), "setup rows skipped from the top too");
+        Check(LearnFlight.Codes[last] == 12 && j == last && LearnFlight.Toggle(new PlaneProfile(), 12), "box 12 is toggleable (checked by default; TOGGLE unchecks it)");
+        Check(LearnFlight.Toggle(new PlaneProfile(), 12) && LearnFlight.Toggle(new PlaneProfile(), LearnFlight.Codes[LearnFlight.NextToggleable(0)]), "setup rows skipped from the top too");
         MfdNav.LearnCursor = last; MfdNav.AboutOffset = 7; MfdNav.ResetLearnMenu();
         Check(MfdNav.LearnCursor == 0 && MfdNav.AboutOffset == 0, "revert/reload resets the Learn menu cursor");
     }
