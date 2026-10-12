@@ -1170,7 +1170,7 @@ namespace KSPChatBridge
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
                 if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
                 double above = altitude - DesiredAltitude;
-                if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.RecoverSink(speed, Chart != null ? Chart.Slope : .052, above, LearnedSink));   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
+                if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.SinkLimit(LearnedSink, 15));   // Luke Oct 12: ALTITUDE over speed - high = full learned sink even if fast (idle+brakes/flaps bleed speed; overspeed protection unchanged)   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
                 EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -2);
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
                 DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
