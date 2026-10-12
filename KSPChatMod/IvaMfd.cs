@@ -21,6 +21,20 @@ namespace KSPChatBridge
         // Luke 6:40 PM: RPM's FlatMon40x10Screen is only the inner text rect; the visible glass opening is larger and its centre sits
         // up/right of it. Scale + offset (offset in units of the inner rect size, + = right / up) fill the whole glass.
         [KSPField] public float glassScaleX = 1.30f, glassScaleY = 1.12f, glassOffsetX = .10f, glassOffsetY = .07f;
+        /// <summary>Oct 12 (Luke): global IVA nudge for every AICS screen (fraction of the screen size, + = right / up; scale multiplier), tunable without a rebuild:
+        /// PluginData/iva_screen_offset.txt "offsetX offsetY scale" (default -0.03 0.03 1.04 = a bit left and up, slightly larger to cover RPM's glass).</summary>
+        internal static float NudgeX = -.03f, NudgeY = .03f, NudgeScale = 1.04f; static bool nudgeRead;
+        static void ReadNudge()
+        {
+            if (nudgeRead) return; nudgeRead = true; string p = Path.Combine(AicsCore.PluginDataDirectory, "iva_screen_offset.txt");
+            try
+            {
+                if (!File.Exists(p)) { File.WriteAllText(p, "-0.03 0.03 1.04\n# offsetX offsetY scale for every AICS IVA screen: fraction of the screen, + = right / up; reloads on the next IVA load\n"); return; }
+                var f = File.ReadAllLines(p)[0].Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries); var ci = System.Globalization.CultureInfo.InvariantCulture;
+                if (f.Length > 0) NudgeX = float.Parse(f[0], ci); if (f.Length > 1) NudgeY = float.Parse(f[1], ci); if (f.Length > 2) NudgeScale = Mathf.Clamp(float.Parse(f[2], ci), .5f, 2f);
+            }
+            catch (Exception ex) { Debug.Log("[KSPChatBridge] iva_screen_offset.txt unreadable: " + ex.Message); }
+        }
         [KSPField] public bool rpmHost = false, autoOrient = false, autoSize = false;   // set on RasterPropMonitorBasicMFD by AICS_IVA.cfg
         internal bool Active { get { return built; } }
         /// <summary>Default page per screen, in prop order: MAP / ILS / AP / CHART / COMMS, then repeat.</summary>
@@ -78,7 +92,14 @@ namespace KSPChatBridge
             if (rpmHost || autoOrient)
             {
                 int idx = 0; if (internalProp.internalModel != null) foreach (var pr in internalProp.internalModel.props) { if (pr == internalProp) break; foreach (var x in pr.internalModules) if (x is AicsIvaMfd) { idx++; break; } }
-                OpenItem(DefaultPage(idx)); Debug.Log("[KSPChatBridge] IVA MFD on RPM screen #" + idx + " -> " + item);
+                var im = internalProp.internalModel; Transform st = im != null && im.seats != null && im.seats.Count > 0 ? im.seats[0].seatTransform : null;
+                if (st != null)
+                {   // Oct 12: default page by left->right position seen from the pilot seat (prop order put every screen on the same few pages)
+                    int n = 0, rank = 0; float me = Vector3.Dot(internalProp.transform.position - st.position, st.right);
+                    foreach (var pr in im.props) { bool has = false; foreach (var x in pr.internalModules) if (x is AicsIvaMfd) { has = true; break; } if (!has) continue; n++; if (pr != internalProp && Vector3.Dot(pr.transform.position - st.position, st.right) < me) rank++; }
+                    OpenItem(MfdNav.PositionPage(rank, n));
+                }
+                else OpenItem(DefaultPage(idx)); Debug.Log("[KSPChatBridge] IVA MFD on RPM screen #" + idx + " -> " + item);
             }
             MfdFont.Ensure();   // the shared face + unlit materials (the chrome and the shared MAP / CHART / ILS page draw alike)
             rt = new RenderTexture(IvaLayout.W, IvaLayout.H, 0, RenderTextureFormat.ARGB32) { filterMode = FilterMode.Bilinear, useMipMap = false }; rt.Create();
@@ -117,7 +138,8 @@ namespace KSPChatBridge
                     width = Mathf.Abs(Vector3.Dot(b.size, rgt)); height = Mathf.Abs(Vector3.Dot(b.size, u));
                     float nScale = Mathf.Max(1e-4f, scr.TransformVector(n).magnitude); lift = 0;
                     Vector3 shift = -rgt * (glassOffsetX * width) + u * (glassOffsetY * height);   // texture right = face -X = -rgt
-                    width *= glassScaleX; height *= glassScaleY;
+                    ReadNudge(); shift += -rgt * (NudgeX * width) + u * (NudgeY * height);   // Oct 12: global left/up nudge (iva_screen_offset.txt)
+                    width *= glassScaleX * NudgeScale; height *= glassScaleY * NudgeScale;
                     face.transform.localPosition = b.center + shift + n * (Mathf.Abs(Vector3.Dot(b.extents, n)) + .0015f / nScale);   // 1.5 mm proud of RPM's glass
                     Debug.Log("[KSPChatBridge] IVA MFD flush on " + screenTransform + ": local size " + width.ToString("F4") + "x" + height.ToString("F4") + " n=" + n + " up=" + u);
                 }
@@ -263,7 +285,7 @@ namespace KSPChatBridge
 
         // text-field rows on the screen (rows counted from the top of the screen box)
         int Cols { get { return (int)((IvaLayout.Screen.Wd - 12) / CellW(TextPx)); } }
-        const int TextPx = 16;
+        const int TextPx = 22;   // Oct 12 (Luke): larger IVA text, fewer lines per page (was 16)
         int Rows { get { return (int)((IvaLayout.Screen.Ht - 8) / (TextPx + 3)); } }
         void ScreenClick(float y)
         {

@@ -182,6 +182,12 @@ namespace KSPChatBridge
         return AboutOffset;
     }
     internal static void AboutScroll(int d) { AboutOffset = Math.Max(0, AboutOffset + d); }
+    /// <summary>Oct 12 (Luke, Mk3 5 screens): default page by position left->right: leftmost MAP, centre COMMS, rightmost AUTOPILOT, the others ILS / CHART.</summary>
+    internal static string PositionPage(int rank, int count)
+    {
+        if (count <= 1) return "aircraft"; if (rank <= 0) return "map"; if (rank >= count - 1) return "aircraft";
+        if (rank == count / 2) return "intercom"; return rank < count / 2 ? "ils" : "chart";
+    }
     internal static string DefaultPage(int index) { var p = new[] { "map", "ils", "aircraft", "chart", "all" }; return p[((index % p.Length) + p.Length) % p.Length]; }
     }
 }
