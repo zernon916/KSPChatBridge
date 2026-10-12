@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -182,6 +182,17 @@ internal static class ThrottleLearnTests
             if (t > 120) { lo = Math.Min(lo, cmd); hi = Math.Max(hi, cmd); }
         }
         return new[] { hi - lo, alt };
+    }
+    static void GraphSeries()
+    {
+        var c = new PerfCurve("climb", "alt_km", "m/s", "none");
+        for (int k = 0; k < 100; k++) c.Add(100 - k * .5, 5, k * .05);   // 0..4.95 km, raw samples every 50 m
+        var b = c.GraphSeries(); Check(b.Count == 1 && b[0].Value.Count == 10, "climb graph averaged into 0.5 km bins (" + b[0].Value.Count + ")");
+        Check(Math.Abs(b[0].Value[0][1] - (100 - 4.5 * .5)) < 1e-6, "bin y = mean of its samples");
+        var t = new PerfCurve("turn_g", "bank,spd", "g", "none");
+        foreach (double v in new[] { 300.0, 250, 90 }) foreach (double bank in new[] { 10.0, 20, 30 }) t.Add(1 / Math.Cos(bank * Math.PI / 180), 5, bank, v + bank * .1);
+        var p = t.GraphSeries();
+        Check(p.Count == 3 && p[0].Value.Count == 3 && Math.Abs(p[0].Key - 302) < .5 && Math.Abs(p[2].Key - 92) < .5, "turn graph: one line per speed pass, labelled with measured speed");
     }
     static void HighLowTurns()
     {

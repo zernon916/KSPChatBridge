@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace KSPChatBridge
@@ -83,6 +83,41 @@ namespace KSPChatBridge
             return o;
         }
 
+        /// <summary>For graphing: y averaged into x bins of width bin (climb graph: altitude bins, not every raw sample).</summary>
+        internal List<double[]> Binned(double bin)
+        {
+            if (!(bin > 0)) return Series1D();
+            var map = new SortedDictionary<long, double[]>(); // bin -> [sumX, sumY, n]
+            foreach (var p in Points)
+            {
+                if (p.Length < 3) continue; long k = (long)Math.Floor(p[0] / bin);
+                double[] a; if (!map.TryGetValue(k, out a)) map[k] = a = new double[3];
+                a[0] += p[0]; a[1] += p[p.Length - 2]; a[2]++;
+            }
+            var o = new List<double[]>(); foreach (var kv in map) o.Add(new[] { kv.Value[0] / kv.Value[2], kv.Value[1] / kv.Value[2] });
+            return o;
+        }
+        /// <summary>For graphing 2-D turn curves (bank, spd): one series per speed pass. A pass starts when bank stops increasing
+        /// (the ladder restarts at 10 deg). Each series: label speed (mean measured spd of the pass) and (bank, y) points.</summary>
+        internal List<KeyValuePair<double, List<double[]>>> PassSeries()
+        {
+            var o = new List<KeyValuePair<double, List<double[]>>>(); List<double[]> cur = null; double prevX = double.NaN, spdSum = 0; int n = 0;
+            foreach (var p in Points)
+            {
+                if (p.Length < 4) continue;
+                if (cur == null || !(p[0] > prevX)) { if (cur != null) o.Add(new KeyValuePair<double, List<double[]>>(spdSum / Math.Max(1, n), cur)); cur = new List<double[]>(); spdSum = 0; n = 0; }
+                cur.Add(new[] { p[0], p[p.Length - 2] }); spdSum += p[1]; n++; prevX = p[0];
+            }
+            if (cur != null) o.Add(new KeyValuePair<double, List<double[]>>(spdSum / Math.Max(1, n), cur));
+            return o;
+        }
+        /// <summary>Series the About page draws: turn curves per pass, climb averaged into 0.5 km bins, others 1-D means.</summary>
+        internal List<KeyValuePair<double, List<double[]>>> GraphSeries()
+        {
+            if (Dim >= 2 && XLabel.StartsWith("bank")) return PassSeries();
+            var s = Name == "climb" ? Binned(.5) : Series1D();
+            return new List<KeyValuePair<double, List<double[]>>> { new KeyValuePair<double, List<double[]>>(double.NaN, s) };
+        }
         internal List<object> ToList()
         {
             var o = new List<object>();
