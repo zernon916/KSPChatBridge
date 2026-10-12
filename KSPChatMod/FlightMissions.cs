@@ -366,6 +366,17 @@ namespace KSPChatBridge
         }
         /// <summary>Decel used for the plan: learned idle decel, boosted by the speedbrakes when the craft has them (flaps only below their limit, so not counted).</summary>
         internal static double PlanDecel(double decelA, bool airbrakes) { return double.IsNaN(decelA) || decelA <= 0 ? decelA : decelA * (airbrakes ? BrakeGain : 1); }
+        /// <summary>Oct 12 19:14 (A300 564 m low at the intercept): entry-leg altitude never below the next leg's plan (fix alt / 3 deg path);
+        /// already below it -> hold the current altitude, never keep descending.</summary>
+        internal static double EntryAlt(double wpAlt, double pathAlt, double altitude)
+        {
+            if (double.IsNaN(pathAlt)) return wpAlt;
+            return altitude <= pathAlt ? Math.Max(wpAlt, altitude) : Math.Max(wpAlt, pathAlt);
+        }
+        /// <summary>Oct 12 19:13: speedbrakes only above the planned speed (retract below it); HIGH alone never holds them out.</summary>
+        internal static bool BrakesWanted(bool speedHoldWants, bool high, double speed, double plan) { return speed > plan && (speedHoldWants || high); }
+        /// <summary>Idle when high only while not slow: below plan - 5 the speed hold flies the throttle.</summary>
+        internal static bool IdleWanted(bool high, double speed, double plan) { return high && speed > plan - 5; }
         internal static double MaxJoinPath(double direct) { return 3 * direct + 30000; }
         internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed); }
         /// <summary>Oct 12: badly off the line -> hold altitude (no glidepath descent) until re-established. Final: > 400 m or > 30 deg; legs: > 1.5 km or > 60 deg.</summary>
@@ -1068,7 +1079,7 @@ namespace KSPChatBridge
                         ArcBank = PathCurvature.Bank(speed, PathCurvature.Ahead(kB, kN, dw, speed), TurnBank > 0 ? TurnBank : 30);
                     }
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
-                    DesiredAltitude = wp.Alt;
+                    DesiredAltitude = Chart != null ? ApproachProfile.EntryAlt(wp.Alt, Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)), altitude) : wp.Alt;   // Oct 12: consistent with the intercept plan
                     DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 10), 15);   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
                     EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
                     OffLine = ApproachProfile.BadlyOff(LegXte, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), false);

@@ -21,7 +21,10 @@ internal static class ThrottleLearnTests
         Check(ApproachProfile.SinkLimit(double.NaN, 10) == 10 && ApproachProfile.SinkLimit(28, 10) == 28, "approach sink limit: learned dive sink, fixed fallback");
         Check(ApproachProfile.EnergyHigh(800, 156, 150) && ApproachProfile.EnergyHigh(0, 171, 150) && !ApproachProfile.EnergyHigh(20, 152, 150), "energy high: >50 m above path or >10 m/s fast");
         Check(ApproachProfile.RecoverSink(156, .052, 800, 28) > 2 * 156 * .052 && ApproachProfile.RecoverSink(156, .052, 800, 28) <= 28 && ApproachProfile.RecoverSink(156, .052, 0, 28) < 9, "high on final: steeper descent, within learned sink");
-        Check(ApproachProfile.PlanDecel(.5, true) > .5 && double.IsNaN(ApproachProfile.PlanDecel(double.NaN, true)), "plan decel: learned decel boosted by speedbrakes");
+        // Oct 12 19:12-19:15 A300: entry planned 700 m to 24 km, intercept planned 1325 -> 564 m low; brakes out at 145 vs plan 171
+        Check(ApproachProfile.EntryAlt(700, 1325, 3640) == 1325 && ApproachProfile.EntryAlt(700, 1325, 761) == 761 && ApproachProfile.EntryAlt(1500, 1325, 761) == 1500 && ApproachProfile.EntryAlt(700, double.NaN, 3000) == 700, "entry alt: never below the next leg's plan; low -> hold, never descend");
+        Check(!ApproachProfile.BrakesWanted(true, true, 145, 171) && !ApproachProfile.BrakesWanted(false, true, 170, 171) && ApproachProfile.BrakesWanted(false, true, 180, 171) && ApproachProfile.BrakesWanted(true, false, 185, 171), "speedbrakes only above plan speed (HIGH alone below plan: retracted)");
+        Check(!ApproachProfile.IdleWanted(true, 150, 171) && ApproachProfile.IdleWanted(true, 168, 171) && !ApproachProfile.IdleWanted(false, 200, 171), "high: idle unless slower than plan - 5 (then the speed hold flies the throttle)");        Check(ApproachProfile.PlanDecel(.5, true) > .5 && double.IsNaN(ApproachProfile.PlanDecel(double.NaN, true)), "plan decel: learned decel boosted by speedbrakes");
         var rm = new RunwayMission(); rm.GoAroundReset();
         Check(rm.GateCooldown == RunwayMission.GateCooldownSteps && RunwayMission.GateCooldownSteps >= 1000, "go-around arms a ~30 s gate cooldown");
     }
