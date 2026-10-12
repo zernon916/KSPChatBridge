@@ -24,14 +24,21 @@ namespace KSPChatBridge
         internal static string Letter(int test) { int b = BaseTest(test); return b == 9 || b == 10 ? "c" : "b"; }
         internal static string Label(int test) { return BaseTest(test) + Letter(test) + " Engine restart (surprise)"; }
         /// <summary>Checklist row for a recorded drill (crew always FAILED).</summary>
-        internal static string Row(int test, double s, double altLoss, double spdLoss, bool ok)
+        internal static string Row(int test, double s, double altLoss, double spdLoss, bool ok, bool passed = false)
         {
-            return "  [x] " + Label(test) + ": crew FAILED" + (ok ? ", restart " + s.ToString("0.0") + " s" : ", forced restart") + ", -" + Math.Max(0, altLoss).ToString("0") + " m, -" + Math.Max(0, spdLoss).ToString("0") + " m/s";
+            return "  [x] " + Label(test) + ": crew " + (passed ? "PASSED" : "FAILED") + (ok ? ", restart " + s.ToString("0.0") + " s" : ", forced restart") + ", -" + Math.Max(0, altLoss).ToString("0") + " m, -" + Math.Max(0, spdLoss).ToString("0") + " m/s";
         }
         internal static readonly string[] PilotCalm = { "Hmm. Quiet in here, isn't it?", "Nobody touch anything. Totally under control.", "Huh, would you look at that. Engines are... resting.", "Stay calm. I've done this a hundred times. On purpose, even." };
         internal static readonly string[] PilotLaugh = { "HA! You should see your faces, {names}! Planned test, you sissies - and you ALL failed.", "Engines back. That was a drill, {names}. Crew panic test: failed. Spectacularly.",
             "Hahaha! Surprise engine drill! Grade for {names}: F. Big fat F.", "Relax, I switched them off myself. {name}, I heard that scream. Crew panic test... FAILED. Every one of you.", "Did somebody scream? {name} screamed. Test over - {names}, you all failed.", "{name}, you screamed louder than the engines GROANING back to life!" };
-        internal const string FailedLine = "Crew panic test: FAILED";
+        internal const string FailedLine = "Crew panic test: FAILED", PassedLine = "Crew panic test: PASSED";
+        /// <summary>Oct 12 (Luke): 2% of drills the crew stays calm / catches on - no panic, smug crew, grudging pilot, PASSED.</summary>
+        internal const double PassP = .02;
+        internal static bool RollPass(double u) { return u < PassP; }
+        internal static readonly string[] CrewSmug = { "Engines off at altitude? Nice try. We know a drill when we see one.", "Called it. That's the surprise drill. Wake us when it's over.", "Not even spilling my snack. Drill, right?", "We read the Learn checklist too, you know." };
+        internal static readonly string[] PilotImpressed = { "...Huh. Nobody screamed. Fine, {names}: you PASSED. Don't let it go to your heads.", "Well, well. Cool as ice, {names}. Crew panic test: passed. I'll get you next time.",
+            "{name}, you didn't even flinch? Ugh. Fine. You all passed." };
+        internal static string LaughPromptPass(string pilot, IList<string> names) { return "You are " + pilot + ", the pilot. You secretly switched the engines off mid-flight as a surprise drill, but the crew - " + Names(names) + " - stayed totally calm and saw through it. Be grudgingly impressed, address them BY NAME, admit they PASSED the crew panic test. One or two short lines, no quotes, no name prefix."; }
         /// <summary>First names, "A", "A and B", "A, B and C"; "you lot" with nobody else aboard.</summary>
         internal static string Names(IList<string> names)
         {
@@ -48,7 +55,7 @@ namespace KSPChatBridge
 
         readonly Random rng;
         internal EngineDrill(Random rng = null) { this.rng = rng ?? new Random(); }
-        internal bool Used, Running, Ok; internal int Test; internal double Seconds = double.NaN, AltLoss = double.NaN, SpdLoss = double.NaN;
+        internal bool Used, Running, Ok, Passed; internal int Test; internal double Seconds = double.NaN, AltLoss = double.NaN, SpdLoss = double.NaN;
         double armAt = double.NaN, t0, alt0, spd0, minAlt, minSpd; bool panicked, restarted;
 
         /// <summary>One tick. eligible from Eligible(); thrust = current / max thrust (0..1).</summary>
@@ -60,7 +67,7 @@ namespace KSPChatBridge
                 if (!eligible) return Act.None;
                 if (double.IsNaN(armAt)) { armAt = now + ArmMinS + rng.NextDouble() * (ArmMaxS - ArmMinS); return Act.None; }
                 if (now < armAt) return Act.None;
-                Used = Running = true; Test = test; t0 = now; alt0 = minAlt = alt; spd0 = minSpd = speed; return Act.Shutdown;
+                Used = Running = true; Passed = RollPass(rng.NextDouble()); Test = test; t0 = now; alt0 = minAlt = alt; spd0 = minSpd = speed; return Act.Shutdown;
             }
             minAlt = Math.Min(minAlt, alt); minSpd = Math.Min(minSpd, speed); double dt = now - t0;
             if (agl < MinAgl || dt > ForceS) { Finish(now, false); return Act.ForceRestart; }

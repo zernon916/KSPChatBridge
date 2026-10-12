@@ -280,6 +280,11 @@ internal static class ThrottleLearnTests
             var rp = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
             Check(rp.DrillTest == 91 && rp.DrillRow(91) != null && rp.DrillRow(91).Contains("9c Engine restart (surprise): crew FAILED") && rp.DrillRow(10) == null && LearnFlight.ProfileChecklist(rp, 0).Exists(l => l.Contains("9c Engine restart")), "drill saved to the profile, shown as 9c sub-item: crew FAILED");
             Check(EngineDrill.Laugh("{name}, you screamed louder than the engines GROANING back to life!", new List<string> { "Bill Kerman", "Bob Kerman" }) == "Bill, you screamed louder than the engines GROANING back to life!" && EngineDrill.Names(new List<string> { "Bill Kerman", "Bob Kerman", "Val Kerman" }) == "Bill, Bob and Val" && EngineDrill.LaughPrompt("Jeb", new List<string> { "Bill Kerman" }, 6, 100).Contains("Bill"), "drill pilot lines use the real crew names");
+            int passN = 0; var pr = new Random(7); for (int k = 0; k < 20000; k++) { var dd = new EngineDrill(new Random(pr.Next())); for (int s = 0; s < 3000 && !dd.Used; s++) dd.Step(s * .1, true, 4, 6000, 6000, 200, 1); if (dd.Passed) passN++; }
+            Check(passN > 20000 * .013 && passN < 20000 * .027 && EngineDrill.RollPass(.019) && !EngineDrill.RollPass(.021), "drill: crew passes ~2% (" + passN + "/20000)");
+            var pq = new PlaneProfile(); pq.DrillTest = 4; pq.DrillS = 5; pq.DrillAltLoss = 10; pq.DrillSpdLoss = 2; pq.DrillOk = true; pq.DrillPassed = true;
+            var rq = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pq.ToDict())) as Dictionary<string, object>);
+            Check(rq.DrillPassed && rq.DrillRow(4).Contains("4b Engine restart (surprise): crew PASSED") && EngineDrill.Laugh(EngineDrill.PilotImpressed[0], new List<string> { "Bill Kerman" }).Contains("Bill") && EngineDrill.PassedLine == "Crew panic test: PASSED", "drill pass: saved, PASSED row, pilot grudging by name");
         }
         var cl = new LearnFlight(); var c = In(0, 5000); c.StallGuess = 84; c.Speed = 150; cl.Step(c); cl.Phase = "stallprep"; c.T = 1; cl.Step(c);
         Check(cl.Throttle == 1 && cl.Pitch > 0, "stallprep below 10 km: full power climb (thr " + cl.Throttle + ")");

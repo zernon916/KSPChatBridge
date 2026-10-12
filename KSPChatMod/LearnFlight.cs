@@ -121,8 +121,8 @@ namespace KSPChatBridge
             double vy = !double.IsNaN(Perf.CruiseSpeed) && Perf.CruiseSpeed > 0 ? Math.Min(ScaleSpeed(Perf.CruiseSpeed, M0, mass) * .85, 1.55 * stall) : 1.4 * stall;
             return Math.Max(1.3 * stall, vy);
         }
-        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN, Ceiling = double.NaN, DrillS = double.NaN, DrillAltLoss = double.NaN, DrillSpdLoss = double.NaN; internal int DrillTest; internal bool DrillOk;   // hidden engine-restart drill (DrillTest 0 = none)
-        internal string DrillRow(int k) { int b = EngineDrill.BaseTest(DrillTest); return DrillTest != 0 && (b == 9 ? 91 : b == 10 ? 101 : b) == k ? EngineDrill.Row(DrillTest, DrillS, DrillAltLoss, DrillSpdLoss, DrillOk) : null; }
+        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN, Ceiling = double.NaN, DrillS = double.NaN, DrillAltLoss = double.NaN, DrillSpdLoss = double.NaN; internal int DrillTest; internal bool DrillOk, DrillPassed;   // hidden engine-restart drill (DrillTest 0 = none)
+        internal string DrillRow(int k) { int b = EngineDrill.BaseTest(DrillTest); return DrillTest != 0 && (b == 9 ? 91 : b == 10 ? 101 : b) == k ? EngineDrill.Row(DrillTest, DrillS, DrillAltLoss, DrillSpdLoss, DrillOk, DrillPassed) : null; }
         // Ceiling: learned practical ceiling (m), climb < 1 m/s at full power for 60 s
         /// <summary>Oct 12 stall timing (clean / flaps FULL): cut->break, break->terminal sink, recovery; losses from the BREAK.</summary>
         internal readonly StallTiming StallT = new StallTiming(), FlapStallT = new StallTiming();
@@ -170,7 +170,7 @@ namespace KSPChatBridge
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "ceiling", N(Ceiling) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
-            if (DrillTest != 0) dict["engine_drill"] = new List<object> { DrillTest, Math.Round(DrillS, 2), Math.Round(DrillAltLoss, 1), Math.Round(DrillSpdLoss, 1), DrillOk ? 1 : 0 };
+            if (DrillTest != 0) dict["engine_drill"] = new List<object> { DrillTest, Math.Round(DrillS, 2), Math.Round(DrillAltLoss, 1), Math.Round(DrillSpdLoss, 1), DrillOk ? 1 : 0, DrillPassed ? 1 : 0 };
             if (StallT.Present) dict["stall_timing"] = StallT.ToDict(); if (FlapStallT.Present) dict["flap_stall_timing"] = FlapStallT.ToDict();
             if (NoLand) dict["no_land"] = true;
             return dict;
@@ -194,7 +194,7 @@ namespace KSPChatBridge
                 }
             if (d.TryGetValue("turn_envelope", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 6) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.Envelope.Add(ar); }
             p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit"); p.Ceiling = D(d, "ceiling");
-            if (d.TryGetValue("engine_drill", out o) && o is System.Collections.IList) { var l = (System.Collections.IList)o; if (l.Count >= 5) { var ci = System.Globalization.CultureInfo.InvariantCulture; p.DrillTest = Convert.ToInt32(l[0], ci); p.DrillS = Convert.ToDouble(l[1], ci); p.DrillAltLoss = Convert.ToDouble(l[2], ci); p.DrillSpdLoss = Convert.ToDouble(l[3], ci); p.DrillOk = Convert.ToDouble(l[4], ci) > .5; } }
+            if (d.TryGetValue("engine_drill", out o) && o is System.Collections.IList) { var l = (System.Collections.IList)o; if (l.Count >= 5) { var ci = System.Globalization.CultureInfo.InvariantCulture; p.DrillTest = Convert.ToInt32(l[0], ci); p.DrillS = Convert.ToDouble(l[1], ci); p.DrillAltLoss = Convert.ToDouble(l[2], ci); p.DrillSpdLoss = Convert.ToDouble(l[3], ci); p.DrillOk = Convert.ToDouble(l[4], ci) > .5; if (l.Count >= 6) p.DrillPassed = Convert.ToDouble(l[5], ci) > .5; } }
             if (d.TryGetValue("flap_sub", out o) && o is bool) p.FlapSub = (bool)o; if (d.TryGetValue("flap_stall_sub", out o) && o is bool) p.FlapStallSub = (bool)o;
             if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
