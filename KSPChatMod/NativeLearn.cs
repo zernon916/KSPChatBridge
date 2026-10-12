@@ -393,6 +393,8 @@ namespace KSPChatBridge
                 case 1:
                     string ts = p != null && !double.IsNaN(p.Stall) ? "TEST" : me.learner != null && me.learner.Confidence > .5 ? "LIVE " + Math.Round(me.learner.Confidence * 100) + "%" : "EST";
                     o.Add("Stall    " + F0(me.stall) + " m/s " + ts + (p != null && !double.IsNaN(p.StallAltLoss) ? ", recovery -" + F0(p.StallAltLoss) + " m" : ""));
+                    if (p != null && p.StallT.Present) o.AddRange(p.StallT.About("Stall10 "));
+                    if (p != null && p.FlapStallT.Present) o.AddRange(p.FlapStallT.About("Stall10b"));
                     o.Add("Liftoff  " + F0(p != null && !double.IsNaN(p.Liftoff) ? p.LiftoffAt(m) : me.liftoffSpeed) + " m/s " + (p != null && !double.IsNaN(p.Liftoff) ? "TEST" : double.IsNaN(me.liftoffSpeed) ? "EST" : "LIVE"));
                     o.Add("Approach " + F0(ApproachProfile.AppSpeed(me.stall)) + " m/s (1.35 Vs)");
                     if (me.flaps.Count > 0 || me.farFlaps) o.Add(FlapLine + (p != null && !double.IsNaN(p.FlapStall) ? ", flaps-full stall " + F0(PlaneProfile.ScaleSpeed(p.FlapStall, p.M0, m)) + " TEST (" + (p.FlapStall - p.Stall).ToString("+0;-0") + ")" : ""));

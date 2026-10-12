@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -222,6 +222,33 @@ internal static class ThrottleLearnTests
         double bc = 0, b = 0; for (double t = 0; t < 8; t += .02) b = TurnOnset.HoldBank(ref bc, "heavy", -17, .02, 20, false, double.NaN);
         Check(b < -16, "approach join turn reaches the 17 deg chart bank (" + b.ToString("0.0") + ")");
     }
+    // Oct 12: stall tests 10/10b start at 10 km; three timed phases; altitude loss from the BREAK, not the throttle cut
+    static void Oct12StallTiming()
+    {
+        Check(LearnFlight.StallAlt == 10000, "stall tests start at 10 km");
+        var cl = new LearnFlight(); var c = In(0, 5000); c.StallGuess = 84; c.Speed = 150; cl.Step(c); cl.Phase = "stallprep"; c.T = 1; cl.Step(c);
+        Check(cl.Throttle == 1 && cl.Pitch > 0, "stallprep below 10 km: full power climb (thr " + cl.Throttle + ")");
+        Check(!LearnFlight.StallBroke(.5, -12, 10, -30) && LearnFlight.StallBroke(1, 4, 9, -3) == false && LearnFlight.StallBroke(1, 1, 9, -3) && LearnFlight.StallBroke(1, 5, 6, -16), "break = nose can't stay level at full back stick (or sink > 15)");
+        var lf = new LearnFlight(); var q = In(0, LearnFlight.StallAlt); q.StallGuess = 84; q.Speed = 120; q.Rho = 1.225; lf.Step(q); lf.Phase = "stall";
+        double t = 0, alt = LearnFlight.StallAlt, vs = -20, v = 120, pitch = 2, cutAlt = alt, minAlt = alt, breakAlt = double.NaN;
+        for (int k = 0; k < 6000 && !lf.Done && lf.Phase != "wait" && lf.Phase != "climbback"; k++)
+        {
+            t += .1; q.T = t; q.Alt = alt; q.Vs = vs; q.Speed = v; q.Pitch = pitch; lf.Step(q);
+            if (lf.Phase == "stall") { v -= .1; pitch = v > 92 ? Math.Min(8, pitch + .05) : pitch - .3; vs = -20; }
+            else if (lf.Phase == "stallsink") { if (double.IsNaN(breakAlt)) breakAlt = alt; pitch = Math.Max(-15, pitch - .3); vs += (-35 - vs) * .1 / 2; v += .05; }
+            else if (lf.Phase == "stallrec") { double cmd = double.IsNaN(lf.Pitch) ? 0 : lf.Pitch; pitch += Math.Max(-.4, Math.Min(.4, cmd - pitch)); v += .3; vs = Math.Min(2, vs + .4); if (v > 1.3 * 84 && pitch > -1 && vs >= 0) pitch = Math.Max(pitch, 0); }
+            alt += vs * .1; minAlt = Math.Min(minAlt, alt);
+        }
+        var st = lf.P.StallT;
+        Check(st.Present && st.CutToBreakS > 20 && st.BreakSpeed < 92 && st.BreakSpeed > 80, "phase 1: cut->break " + st.CutToBreakS.ToString("0") + " s at " + st.BreakSpeed.ToString("0") + " m/s");
+        Check(!double.IsNaN(st.SinkS) && st.SinkS > 2 && st.SinkLoss > 0 && st.TerminalVs < -25, "phase 2: break->terminal sink " + st.SinkS.ToString("0") + " s, -" + st.SinkLoss.ToString("0") + " m at " + st.TerminalVs.ToString("0") + " m/s");
+        Check(!double.IsNaN(st.RecoverS) && st.RecoverS > 0 && Math.Abs(st.TotalLoss - (breakAlt - minAlt)) < 30, "phase 3: recovery " + st.RecoverS.ToString("0") + " s, total -" + st.TotalLoss.ToString("0") + " m from the break (sim " + (breakAlt - minAlt).ToString("0") + ")");
+        Check(Math.Abs(lf.P.StallAltLoss - st.TotalLoss) < 1 && lf.P.StallAltLoss < (cutAlt - minAlt) - 300, "stall alt loss counts from the break, not the throttle cut (" + lf.P.StallAltLoss.ToString("0") + " vs " + (cutAlt - minAlt).ToString("0") + " from the cut)");
+        var rt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
+        Check(rt.StallT.Present && Near(rt.StallT.SinkLoss, Math.Round(st.SinkLoss, 2), .01) && !rt.FlapStallT.Present, "stall timing saved in the profile");
+        var ab = rt.StallT.About("Stall10 ");
+        Check(ab.Count == 3 && ab[0].Contains("cut>break") && ab[1].Contains("break>sink") && ab[2].Contains("from break"), "About page lines: " + string.Join(" | ", ab.ToArray()));
+    }
     static void Oct12Hold()
     {
         // 1/2: the heading-hold bank step keeps its own state; the lost 'bankCmd = bank' stuck every turn at < 1.5 deg
@@ -343,14 +370,14 @@ internal static class ThrottleLearnTests
     }
     static void StallZoom()
     {
-        var lf = new LearnFlight(); var q = In(0, 4000); q.Speed = 318; q.StallGuess = 70; q.Rho = .6; lf.Step(q); lf.Phase = "stall"; lf.Step(q);
+        var lf = new LearnFlight(); var q = In(0, 4000); q.Vs = -1; q.Speed = 318; q.StallGuess = 70; q.Rho = .6; lf.Step(q); lf.Phase = "stall"; lf.Step(q);
         double[][] log = { new[] { 318, -2.6 }, new[] { 303, -.9 }, new[] { 282, 5.4 }, new[] { 254.0, 16 }, new[] { 217, 31.6 }, new[] { 168, 52.6 }, new[] { 112, 77.3 }, new[] { 85, 89.9 }, new[] { 37, 42.6 }, new[] { 11, 41.7 } };
         double t = .1;
         foreach (var r in log) for (int k = 0; k < 20; k++) { t += .1; q.T = t; q.Speed = r[0]; q.Pitch = r[1]; lf.Step(q); }
         Check(double.IsNaN(lf.P.Stall), "zoom replay: no stall recorded (got " + lf.P.Stall + ")");
         Check(lf.Status != null && lf.Status.Contains("zoom"), "zoom replay: aborted with a notice (" + lf.Status + ")");
         // stallprep does not hand over to the stall while still fast
-        var sp = new LearnFlight(); var s = In(0, 4000); s.Speed = 318; s.StallGuess = 70; sp.Step(s); sp.Phase = "stallprep";
+        var sp = new LearnFlight(); var s = In(0, LearnFlight.StallAlt); s.Speed = 318; s.StallGuess = 70; sp.Step(s); sp.Phase = "stallprep";
         for (double tt = .1; tt < 30; tt += .1) { s.T = tt; sp.Step(s); }
         Check(sp.Phase == "stallprep" && Math.Abs(sp.SpeedTarget - 98) < .5, "stallprep: holds 1.4x stall target and waits while fast (" + sp.Phase + ")");
         // real stall at 4 km is stored as sea-level EAS
@@ -413,7 +440,7 @@ internal static class ThrottleLearnTests
         for (double t = 0; t < 120; t += dt)
         {
             var o = new LearnIn { T = t, Speed = v, Alt = altOld, Vs = v * Math.Sin(gam * Math.PI / 180), Pitch = nose, GroundSpeed = Math.Max(30, v * Math.Cos(gam * Math.PI / 180)), G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
-            double cmdO = LearnFlight.Level(o, LearnFlight.StallAlt);
+            double cmdO = LearnFlight.Level(o, 4000.0);
             nose += Math.Max(-4 * dt, Math.Min(4 * dt, (cmdO - nose) * dt / 2));
             gam += ((nose - 2) - gam) * dt / 1.5; altOld += v * Math.Sin(gam * Math.PI / 180) * dt;
         }
@@ -421,14 +448,14 @@ internal static class ThrottleLearnTests
         for (double t = 0; t < 300; t += dt)
         {
             var n = new LearnIn { T = t, Speed = v, Alt = altNew, Vs = v * Math.Sin(gam * Math.PI / 180), Pitch = nose, GroundSpeed = Math.Max(30, v * Math.Cos(gam * Math.PI / 180)), G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
-            double cmd = LearnFlight.DescentPitch(n, LearnFlight.StallAlt, dive.DiveSinkAt(altNew));
+            double cmd = LearnFlight.DescentPitch(n, 4000.0, dive.DiveSinkAt(altNew));
             nose += Math.Max(-4 * dt, Math.Min(4 * dt, (cmd - nose) * dt / 2));
             gam += ((nose - 2) - gam) * dt / 1.5; altNew += v * Math.Sin(gam * Math.PI / 180) * dt;
-            if (Math.Abs(altNew - LearnFlight.StallAlt) < 200) break;
+            if (Math.Abs(altNew - 4000.0) < 200) break;
         }
         Check(altNew < altOld - 1500, "stallprep DescentPitch from 10 km beats Level creep (new " + altNew.ToString("0") + " vs old " + altOld.ToString("0") + ")");
-        Check(altNew < LearnFlight.StallAlt + 500, "DescentPitch reaches near 4 km from 10 km (" + altNew.ToString("0") + ")");
-        var high = new LearnIn { T = 1, Speed = 315, Alt = 10000, Vs = -20, Pitch = -5, GroundSpeed = 300, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        Check(altNew < 4000.0 + 500, "DescentPitch reaches near 4 km from 10 km (" + altNew.ToString("0") + ")");
+        var high = new LearnIn { T = 1, Speed = 315, Alt = 16000, Vs = -20, Pitch = -5, GroundSpeed = 300, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
         var highLf = new LearnFlight(); highLf.P.Dives.Add(new[] { 15.0, 28, 10, 5.5 }); highLf.Phase = "stallprep"; highLf.Step(high);
         Check(highLf.Throttle == 0 && highLf.Pitch < -2, "stallprep idles and noses down from 10 km (thr " + highLf.Throttle.ToString("0.00") + ", pitch " + highLf.Pitch.ToString("0.0") + ")");
         var near = new LearnIn { T = 1, Speed = 200, Alt = LearnFlight.StallAlt + 80, Vs = -2, Pitch = 2, GroundSpeed = 200, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };

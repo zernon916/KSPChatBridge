@@ -460,7 +460,7 @@ class Program
             withF.P.FlapStall = 70; var rtf = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(withF.P.ToDict())) as Dictionary<string, object>);
             Check(rtf.SinkFlaps.Count == 6 && rtf.FlapStall == 70 && rtf.FlapSub, "flap data saved in the profile");
             // optional flaps-full stall after the clean stall
-            var ls = new LearnFlight(); ls.P.Stall = 84; var sq = new LearnIn { T = 0, Speed = 120, Alt = 4000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, HasFlaps = true }; ls.Step(sq); ls.Phase = "stallrec"; sq.T = 10; sq.Vs = 3; sq.Speed = 120; ls.Step(sq); ls.Step(sq);
+            var ls = new LearnFlight(); ls.P.Stall = 84; var sq = new LearnIn { T = 0, Speed = 120, Alt = LearnFlight.StallAlt, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 84, Mass = 48, HasFlaps = true }; ls.Step(sq); ls.Phase = "stallrec"; sq.T = 10; sq.Vs = 3; sq.Speed = 120; ls.Step(sq); ls.Step(sq);
             Check(ls.Phase == "stallprep" && ls.Flaps == 3 && !ls.Done, "optional flaps-full stall runs after the clean stall when fuel allows");
             var ls2 = new LearnFlight(); ls2.P.Stall = 84; sq.FuelFrac = .45; ls2.Step(sq); ls2.Phase = "stallrec"; sq.T = 20; ls2.Step(sq); ls2.Step(sq);
             Check(ls2.Done, "flaps-full stall skipped when fuel is low");
