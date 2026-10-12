@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -200,6 +200,23 @@ internal static class ThrottleLearnTests
         for (double t = 1; t < 25 && lf.Phase == "vmax"; t += .5) { q.T = t; q.Speed = 310 + Math.Min(2, t * .05); lf.Step(q); }
         Check(lf.Phase == "rates" && Math.Abs(lf.SpeedTarget - q.Speed) < 5, "vmax -> rates at current speed, no ratesprep bleed (" + lf.Phase + " @" + lf.SpeedTarget.ToString("0") + ")");
         bool cut = false; Check(LearnFlight.RatesElevator(.2, .1, 5.5, 9, ref cut) == 0 && cut, "G-limited pitch pull still cuts above 0.6x limit");
+    }
+    static void TurnHoldDamp()
+    {
+        // Old: Level + TurnPitch double-counted AoA (climbs); new TurnPitchCmd uses TurnPitch as AoA floor only.
+        var old = PorpoiseSim(i => FlightPolicy.Clamp(LearnFlight.Level(i, LearnFlight.ClimbAlt) + ApproachProfile.TurnPitch(45), -10, 20), 5300);
+        var neu = PorpoiseSim(i => LearnFlight.TurnPitchCmd(i, 45, LearnFlight.ClimbAlt), 5300);
+        Check(old[1] > neu[1] + 50, "replay: Level+TurnPitch add climbs more than TurnPitchCmd (old " + old[1].ToString("0") + " vs " + neu[1].ToString("0") + ")");
+        foreach (double a0 in new[] { 5300.0, 5000.0, 5600.0 })
+        {
+            var r = PorpoiseSim(i => LearnFlight.TurnPitchCmd(i, 45, LearnFlight.ClimbAlt), a0);
+            Check(r[0] < 2.5, "turn altitude hold damped from " + a0 + " m (cmd swing " + r[0].ToString("0.00") + ")");
+            Check(Math.Abs(r[1] - LearnFlight.ClimbAlt) < 250, "turn hold stays near 5 km from " + a0 + " (settled " + r[1].ToString("0") + ")");
+        }
+        Check(ApproachProfile.TurnPitch(60) > 2, "TurnPitch back-pressure still applied at 60 deg bank");
+        var lf = new LearnFlight(); var q = In(0, 5200); q.Speed = 250; q.GroundSpeed = 250; lf.Step(q); lf.Phase = "turn"; lf.P.Perf.CruiseSpeed = 250;
+        q.T = 1; q.Bank = 45; q.Pitch = 5; q.Vs = 0; lf.Step(q);
+        Check(!double.IsNaN(lf.Pitch) && lf.Pitch < 12, "turn commands pitch toward ClimbAlt hold, not a raw Level+TurnPitch stack (" + lf.Pitch.ToString("0.0") + ")");
     }
     static void PrepPorpoise()
     {

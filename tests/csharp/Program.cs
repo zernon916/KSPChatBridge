@@ -351,11 +351,11 @@ class Program
               Check(stopped && lf.LandingDone && Math.Abs(lf.P.Perf.Rollout - 30.5) < 1 && lf.Checklist()[11].StartsWith("[>] 12") == false, "landing rollout measured (step 12 done)");
               var rt4 = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(lf.P.ToDict())) as Dictionary<string, object>);
               Check(rt4.Perf.HasCruise && Math.Abs(rt4.Perf.Rollout - lf.P.Perf.Rollout) < .01 && Math.Abs(rt4.Perf.PctPerMin("climb") - pf.PctPerMin("climb")) < .01, "perf data saved in the profile"); }
-            { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
-                // level turns: above the entry altitude and climbing -> nose comes down (not 20 deg up); slow -> more throttle
-                var q2 = q; q2.T = 2; q2.Alt = 3060; q2.Vs = 4; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
-                q2.T = 3; q2.Alt = 3000; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.SpeedTarget; bool noLever = double.IsNaN(lc2.Throttle); q2.T = 4; q2.Speed = 112; lc2.Step(q2);
-                Check(pHi < 3 && lc2.Bank == 10 && noLever && !double.IsNaN(thSlow) && thSlow == lc2.SpeedTarget, "level turn: holds altitude (pitch " + pHi.ToString("0.0") + "), speed PI (SpeedTarget only) holds speed");
+            { var lc2 = new LearnFlight(); var q = new LearnIn { Speed = 150, Alt = LearnFlight.ClimbAlt, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, GroundSpeed = 150, Pitch = 3, Vs = 0 }; lc2.Step(q); lc2.Phase = "turn"; q.T = 1; lc2.Step(q); var c1 = lc2.Checklist();
+                // level turns hold ClimbAlt (5 km): above it and climbing -> nose comes down; slow -> SpeedTarget (PI), no learn Throttle
+                var q2 = q; q2.T = 2; q2.Alt = LearnFlight.ClimbAlt + 60; q2.Vs = 4; q2.GroundSpeed = 150; q2.Pitch = 5; q2.Throttle = .5; lc2.Step(q2); double pHi = lc2.Pitch;
+                q2.T = 3; q2.Alt = LearnFlight.ClimbAlt; q2.Vs = 0; q2.Speed = 92; lc2.Step(q2); double thSlow = lc2.SpeedTarget; bool noLever = double.IsNaN(lc2.Throttle); q2.T = 4; q2.Speed = 112; lc2.Step(q2);
+                Check(pHi < 3 && lc2.Bank == 10 && noLever && !double.IsNaN(thSlow) && thSlow == lc2.SpeedTarget, "level turn: holds ClimbAlt (pitch " + pHi.ToString("0.0") + "), speed PI (SpeedTarget only) holds speed");
               Check(c1[5].StartsWith("[x] 6") && c1[6].StartsWith("[>] 7") && c1[7].Contains("bank 10 deg") && c1[8].StartsWith("[ ] 8"), "checklist mid-flight: [>] current with sub-progress, [ ] pending");
               q.T = 2; q.FuelFrac = .3; lc2.Step(q); var c2 = lc2.Checklist(); Check(c2[6].StartsWith("[-] 7") && c2[10].StartsWith("[-] 11") && c2[11].StartsWith("[>] 12") && c2[c2.Count - 1].Contains("fuel"), "checklist on abort: [-] from the aborted step, landing current"); }
             {

@@ -516,8 +516,17 @@ namespace KSPChatBridge
             if (double.IsNaN(spdF)) { spdF = i.Speed; spdTrend = 0; } else if (dt > 0) { spdTrend += ((i.Speed - spdF) / dt - spdTrend) * Math.Min(1, dt / 1.0); spdF = i.Speed; }   // speed trend (m/s2, 1 s EMA)
         }
         internal double LoadG { get { return gF; } }
-        /// <summary>Turn pitch: altitude hold (Level) plus load-factor back-pressure for the bank (ApproachProfile.TurnPitch).</summary>
-        internal static double TurnPitchCmd(LearnIn i, double bank, double alt) { return FlightPolicy.Clamp(Level(i, alt) + ApproachProfile.TurnPitch(bank), -10, 20); }
+        /// <summary>Turn pitch: same damped FPA altitude hold as prep (Level), with TurnPitch as the AoA floor for the bank —
+        /// not added on top of Level's measured AoA (that double-counted and porpoised/climbed during banks).</summary>
+        internal static double TurnPitchCmd(LearnIn i, double bank, double alt)
+        {
+            double vsT = double.IsNaN(alt) ? 0 : FlightPolicy.Clamp((alt - i.Alt) * .03, -10, 10);
+            double gam = i.Fpa, v = Math.Max(30, i.GroundSpeed), bp = ApproachProfile.TurnPitch(bank);
+            if (double.IsNaN(gam)) return FlightPolicy.Clamp(3 + bp + (vsT - i.Vs) * .15, -10, 20);
+            double aoa = Math.Max(FlightPolicy.Clamp(i.Pitch - gam, -5, 15), bp);
+            double gT = Math.Asin(FlightPolicy.Clamp(vsT / v, -1, 1)) * 180 / Math.PI;
+            return FlightPolicy.Clamp(aoa + gT + .5 * (gT - gam), -10, 20);
+        }
         /// <summary>Throttle really not tracking: well slow, speed not recovering, lever low AND not moving up. A lever still ramping up
         /// (gate rate / spool lag) or speed already coming back is the PI working, not a fault.</summary>
         bool ThrottleNotTracking(LearnIn i, double vT, double dt)
@@ -792,7 +801,7 @@ namespace KSPChatBridge
                         }
                         double vT = passSpeed;
                         SpeedTarget = vT;   // ONE throttle authority: the controller's speed PI (full power as needed); no learn Throttle
-                        Pitch = TurnPitchCmd(i, b, a0);   // altitude hold + load-factor back-pressure for the bank
+                        Pitch = TurnPitchCmd(i, b, ClimbAlt);   // hold the 5 km test altitude (not ratcheting a0); TurnPitch AoA floor
                         // controls must track (Luke 10:33 / 11:06). Throttle fault -> step invalid. Nose error only counts once the bank is
                         // reached, and only ends the bank after an earlier bank succeeded; otherwise TurnAltLoss (150 m) judges altitude.
                         if (!double.IsNaN(reachAt) && Math.Abs(Pitch - i.Pitch) > BadPitchDeg) badPitch += tick; else badPitch = Math.Max(0, badPitch - tick);
