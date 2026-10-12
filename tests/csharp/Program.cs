@@ -1782,7 +1782,12 @@ class Program
                     var jh = chj.BestJoin(hLa, hLo, 30, chj.LongAlt, hv, hr, 600000, out jw);
                     Check(jh != null && jh.Count >= 1, "heavy craft far off-axis always gets a reachable join (" + jw + ")");
                 }
-                var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
+                {   // Oct 12 19:12 live: A300 48 km out on 297 deg inbound (27 deg off), 200 m/s r ~6-7 km: flew straight to the FAF (297/330 unreachable)
+                    double fLa, fLo; NavigationMath.Offset(thrLa, thrLo, 117, 48000, 600000, out fLa, out fLo); double fr = ApproachProfile.Radius(200, 34);
+                    var jf = chj.BestJoin(fLa, fLo, 297, chj.LongAlt + 2500, 200, fr, 600000, out jw);
+                    Check(jf != null && jf.Count >= 3 && jf[jf.Count - 1].Lat == chj.Long.Lat, "48 km out with ample distance: flies the chart fixes, not straight to the FAF (" + jw + ")");
+                    Check(!ApproachChart.JoinAngleOk(80, false, 10000, 6000) && ApproachChart.JoinAngleOk(80, false, 30000, 6000) && !ApproachChart.JoinAngleOk(150, false, 30000, 6000) && ApproachChart.JoinAngleOk(30, false, 10000, 6000) && ApproachChart.SkipCost(20000, 3) == 0 && ApproachChart.SkipCost(48000, 2) == 16000, "join angle: 45 deg near, 120 deg far; skip cost only with ample distance");
+                }                var j3 = chj.BestJoin(bLa, bLo, 180, chj.LongAlt + 4000, v, r, 600000, out jw);
                 Check(jw.Contains("altitude") && (j3 == null || j3[0].Name != chj.ApexLeft.Name), "4 km too high: close fixes rejected for descent (" + jw + ")");
                 {   // Luke 3:12 PM bug: joins along the LINE, forward in chart order only, prefer the leg we are on, no 40 g structure
                     var sideR = chj.Side(true);

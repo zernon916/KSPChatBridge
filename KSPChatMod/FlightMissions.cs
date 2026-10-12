@@ -787,6 +787,12 @@ namespace KSPChatBridge
         /// Dubins turn-straight-turn reach at its radius, arriving on the leg track; descent/climb within 10/15 m/s at its speed;
         /// terrain 150 m below the path. Picks the shortest total path to touchdown; null = none (fall back to the long final).</summary>
         internal const double JoinStep = 300, MaxIntercept = 45, MaxSink = 25; internal Wp JoinPoint;
+        /// <summary>Oct 12 19:12 (A300, 48 km out, 297/330 "unreachable"): the 45 deg bearing-vs-leg limit only applies near the point (< 3 turn radii);
+        /// farther out the Dubins path already turns onto the leg track, only points well behind (> 120 deg) are refused. With ample distance
+        /// (> 35 km direct) each skipped chart fix costs 8 km, so it flies entry -> downwind/base -> long final instead of short-cutting to the FAF.</summary>
+        internal const double FarJoinRadii = 3, FarMaxIntercept = 120, AmpleJoinM = 35000, SkipCostM = 8000;
+        internal static bool JoinAngleOk(double icpt, bool onLeg, double toJ, double turnR) { return onLeg || toJ <= turnR || icpt <= MaxIntercept || (toJ >= FarJoinRadii * turnR && icpt <= FarMaxIntercept); }
+        internal static double SkipCost(double direct, double skipped) { return direct > AmpleJoinM ? Math.Max(0, skipped) * SkipCostM : 0; }
         internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why, string entry = null)
         {
             why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
@@ -814,7 +820,7 @@ namespace KSPChatBridge
                         double toJ = NavigationMath.Distance(lat, lon, j.Lat, j.Lon, radius), brg = NavigationMath.Bearing(lat, lon, j.Lat, j.Lon);
                         double icpt = Math.Abs(FlightPolicy.Wrap(legTrack - brg)), hdgErr = Math.Abs(FlightPolicy.Wrap(heading - legTrack));
                         bool onLeg = hdgErr < 30 && toJ < 6000 && icpt < 60;   // already flying this leg: the point ahead on it
-                        if (icpt > MaxIntercept && !onLeg && toJ > turnR) { nReach++; continue; }   // never a point behind / against the line direction
+                        if (!JoinAngleOk(icpt, onLeg, toJ, turnR)) { nReach++; continue; }   // never a point behind / against the line direction (near it: 45 deg)
                         var jp = xy(j.Lat, j.Lon);
                         double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
                         if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) { nReach++; continue; }
@@ -830,6 +836,7 @@ namespace KSPChatBridge
                         for (int q = kk == steps || a == null ? i + 1 : i; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
                         rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
                         double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.5 * direct + 15000)) * 2 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
+                        cost += SkipCost(direct, i - 1 + fr);   // Oct 12: ample distance -> fly the chart from its first fix, no FAF short-cut
                         if (onLeg) cost *= .6;   // prefer the leg we are already heading along
                         if (cost < bestCost) { bestCost = cost; best = route; JoinPoint = j; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
