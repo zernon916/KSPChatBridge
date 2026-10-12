@@ -389,8 +389,14 @@ class Program
                     "selective re-run flies only step 5 (+setup), keeps other data: " + string.Join(">", rf.Visited) + " t" + rf.P.Turns.Count + "/" + turns0 + " d" + rf.P.Dives.Count + "/" + dives0 + " s" + rf.P.Stall + "/" + stall0 + " c" + rf.P.ClimbAccel + "/" + climb0 + " vm" + rf.P.Perf.MaxLevel);
                 Check(rcl[6].StartsWith("[x] 7") && rcl[6].Contains("kept") && rcl[11].StartsWith("[>] 12"), "re-run checklist marks kept steps");
                 var vf = new LearnFlight(); var vq = new LearnIn { Speed = 100, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, T = 0 }; vf.Step(vq); vf.Phase = "vmax";
-                for (int s = 1; s <= 500; s++) { vq.T = s; vq.Speed = 100 + s * .2; vf.Step(vq); }
+                for (int s = 1; s <= 500; s++) { vq.T = s; vq.Speed = 100 + s * .3; vf.Step(vq); }   // 3 m/s per 10 s — still accelerating
                 Check(vf.Phase == "vmax", "max level speed keeps going past 120 s while still accelerating (timeout 600 s)");
+                // settle: ≤2 m/s gain over 10 s ends the run (even if still a bit short of absolute Vmax)
+                var vmaxSettle = new LearnFlight(); var vqs = new LearnIn { Speed = 200, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20, T = 0, GroundSpeed = 200 }; vmaxSettle.Step(vqs); vmaxSettle.Phase = "vmax";
+                for (int s = 1; s <= 15; s++) { vqs.T = s; vqs.Speed = 200 + s * .5; vmaxSettle.Step(vqs); }   // still accelerating ~0.5 m/s per s
+                Check(vmaxSettle.Phase == "vmax", "vmax still running while gaining >2 m/s / 10 s");
+                for (int s = 16; s <= 40; s++) { vqs.T = s; vqs.Speed = 207.5 + (s - 15) * .15; vmaxSettle.Step(vqs); }   // ~1.5 m/s over 10 s → settle
+                Check(vmaxSettle.Phase != "vmax" && !double.IsNaN(vmaxSettle.P.Perf.MaxLevel) && vmaxSettle.P.Perf.MaxLevel >= 207, "vmax settles at ≤2 m/s gain / 10 s (max=" + vmaxSettle.P.Perf.MaxLevel.ToString("0.0") + ", ph=" + vmaxSettle.Phase + ")");
             }
             // abort rules: fuel < 40 %, part lost, stress, g
             Func<LearnIn, string> ab = x => { var l2 = new LearnFlight(); l2.Step(new LearnIn { T = 0, Speed = 150, Alt = 3000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 60, Mass = 20 }); x.T = 1; l2.Step(x); return l2.Aborted ? l2.Reason : ""; };

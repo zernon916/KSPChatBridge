@@ -369,6 +369,8 @@ namespace KSPChatBridge
         internal const double TurnPrepTimeout = 120; internal const double SinkAlt = 5000, RampWait = 5, SinkSpeedFactor = 1.25; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
         double sinkThr, vsF, lastVsF, lastT, prevT, stepAt, vs0, lagS = double.NaN, stepThr = double.NaN; bool lagDone; int tries; string resume = "sinkdown";
         double climbFuel0 = double.NaN, cruiseFuel0 = double.NaN, spoolAt = double.NaN, vmaxV, vmaxT, prevStepT = double.NaN;
+        /// <summary>Max-level run ends when speed gains this little or less over 10 s.</summary>
+        internal const double VmaxSettleMs = 2;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
         double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
         internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 90;
@@ -756,7 +758,8 @@ namespace KSPChatBridge
                     return;
                 case "vmax":
                     Throttle = 1; Pitch = Level(i); Bank = 0;
-                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV < 1 || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, "Slowing to " + ratesSpeed.ToString("0") + " m/s for the roll/pitch rate checks (not at max speed)."); return; } vmaxV = i.Speed; vmaxT = i.T; }
+                    // Top speed reached when gain ≤2 m/s over 10 s (being ~10 m/s short of absolute Vmax is fine).
+                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV <= VmaxSettleMs || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, "Slowing to " + ratesSpeed.ToString("0") + " m/s for the roll/pitch rate checks (not at max speed)."); return; } vmaxV = i.Speed; vmaxT = i.T; }
                     if (dt <= 10) { vmaxV = i.Speed; vmaxT = i.T; }
                     return;
                 case "ratesprep":
