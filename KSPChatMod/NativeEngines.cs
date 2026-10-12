@@ -28,6 +28,12 @@ namespace KSPChatBridge
             if (count > 0) ChatWindow.Notice("Local pilot: restart requested for " + count + " engine(s).");
         }
         internal void Cancel() { restart.Cancel(); }
+        /// <summary>Oct 12 hidden engine drill: shut every running (selected) engine down quietly; returns how many.</summary>
+        internal static int ShutdownAll(Vessel vessel)
+        {
+            int n = 0; foreach (Part part in vessel.parts) foreach (var engine in part.FindModulesImplementing<ModuleEngines>()) if (Selected(engine) && engine.EngineIgnited) { engine.Shutdown(); n++; }
+            return n;
+        }
         internal static void Takeoff(Vessel vessel)
         {
             foreach (Part part in vessel.parts) foreach (var engine in part.FindModulesImplementing<ModuleEngines>())

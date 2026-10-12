@@ -96,6 +96,33 @@ namespace KSPChatBridge
 
         System.Collections.IEnumerator After(float seconds, Action act) { yield return new WaitForSeconds(seconds); act(); }
 
+        /// <summary>Oct 12 hidden engine drill (EngineDrill): engines off quietly, crew panics at 2 s, pilot restarts at 4 s, then laughs: crew FAILED.</summary>
+        void EngineDrillTick(double now, double thrust)
+        {
+            if (learn == null || vessel == null) return; var d = learn.Drill; int test = learn.ActiveTest != 0 ? learn.ActiveTest : learn.StepNo;
+            var a = d.Step(now, EngineDrill.Eligible(learn.Phase, test, vessel.altitude, vessel.radarAltitude, lowEnergy, learn.Done), test, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, thrust);
+            if (a == EngineDrill.Act.None) return;
+            if (a == EngineDrill.Act.Shutdown) { int n = NativeEngines.ShutdownAll(vessel); ChatLog.Write("learn", "engine drill (hidden): " + n + " engine(s) off during " + LearnFlight.CodeName(test) + " at " + vessel.altitude.ToString("0") + " m, " + vessel.srfSpeed.ToString("0") + " m/s"); return; }
+            if (a == EngineDrill.Act.Panic) { stallCrewNext = 0; StallCrewKind("engine_drill", "both engines quiet"); return; }
+            if (a == EngineDrill.Act.Restart || a == EngineDrill.Act.ForceRestart) { NativeEngines.Takeoff(vessel); ChatLog.Write("learn", "engine drill: restart" + (a == EngineDrill.Act.ForceRestart ? " FORCED (safety)" : "") + " after " + (d.Seconds > 0 ? d.Seconds : now).ToString("0.0") + " s"); if (a == EngineDrill.Act.Restart) return; }
+            // done (or forced): record + the pilot's verdict
+            var P = learn.P; P.DrillTest = d.Test; P.DrillS = d.Seconds; P.DrillAltLoss = d.AltLoss; P.DrillSpdLoss = d.SpdLoss; P.DrillOk = d.Ok;
+            profile = P; SaveProfile(P);
+            ChatLog.Write("learn", "engine drill " + EngineDrill.Label(d.Test) + ": " + (d.Ok ? "airstart OK" : "forced/aborted") + ", " + d.Seconds.ToString("0.0") + " s, alt lost " + d.AltLoss.ToString("0") + " m, speed lost " + d.SpdLoss.ToString("0") + " m/s; crew FAILED");
+            var crew = CrewOf(vessel); var pl = CrewVoice.Pilot(crew); string pname = pl == null ? "Pilot" : pl.Value.Key;
+            var others = new List<string>(); foreach (var c in crew) if (c.Key != pname) others.Add(c.Key);
+            string canned = EngineDrill.Laugh(d.Pick(EngineDrill.PilotLaugh), others), failed = "[INTERCOM] " + EngineDrill.FailedLine + (others.Count > 0 ? " (" + EngineDrill.Names(others) + ")" : "");
+            bool asked = InModAiHost.TryCrewLine("You write short, characterful Kerbal crew intercom lines.", EngineDrill.LaughPrompt(pname, others, d.Seconds, d.AltLoss), txt =>
+            {
+                string s = (txt ?? "").Trim().Trim('"'); if (string.IsNullOrEmpty(s) || s.Trim().Length < 4) s = canned;
+                ChatWindow.Notice(IntercomTalk.Fmt(pname, "pilot", s.Trim())); ChatWindow.Notice(failed);
+            }, 120);
+            if (!asked) { ChatWindow.Notice(IntercomTalk.Fmt(pname, "pilot", canned)); ChatWindow.Notice(failed); }
+        }
+        void StallCrewKind(string kind, string part)
+        {
+            if (Time.realtimeSinceStartup < stallCrewNext) return; stallCrewNext = Time.realtimeSinceStartup + (float)CrewChatter.StallCooldownS; CrewEmergency(kind, part);
+        }
         float stallCrewNext;
         /// <summary>Oct 12: crew reaction to a stall (stall emergency, or a Learn stall break): cooldown ~50 s; during Learn the pilot says it's a test.</summary>
         void StallCrew()

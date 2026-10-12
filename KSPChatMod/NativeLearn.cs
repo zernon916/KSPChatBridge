@@ -49,6 +49,7 @@ namespace KSPChatBridge
             var i = BuildIn(t, frac, rate, tr, stress, pitch);
             learn.Step(i);
             if (learn.TestsDone != learnTestsSaved) { learnTestsSaved = learn.TestsDone; profile = learn.P; SaveProfile(learn.P); ChatLog.Write("learn", "test done, profile saved: " + learn.P.Summary()); }
+            EngineDrillTick(t, i.ThrustFrac);
             if (learn.Phase == "stallsink") StallCrew();   // Oct 12: the stall break (power idle, so the emergency branch may not fire)
             if (learn.Status != learnLast) { learnLast = learn.Status; ChatLog.Write("learn", learn.Phase + ": " + learn.Status); ChatWindow.Notice("[LEARN] " + learn.Status); }
             DoneCheck();

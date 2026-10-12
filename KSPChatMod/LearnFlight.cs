@@ -121,7 +121,9 @@ namespace KSPChatBridge
             double vy = !double.IsNaN(Perf.CruiseSpeed) && Perf.CruiseSpeed > 0 ? Math.Min(ScaleSpeed(Perf.CruiseSpeed, M0, mass) * .85, 1.55 * stall) : 1.4 * stall;
             return Math.Max(1.3 * stall, vy);
         }
-        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN, Ceiling = double.NaN;   // Ceiling: learned practical ceiling (m), climb < 1 m/s at full power for 60 s
+        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN, Ceiling = double.NaN, DrillS = double.NaN, DrillAltLoss = double.NaN, DrillSpdLoss = double.NaN; internal int DrillTest; internal bool DrillOk;   // hidden engine-restart drill (DrillTest 0 = none)
+        internal string DrillRow(int k) { int b = EngineDrill.BaseTest(DrillTest); return DrillTest != 0 && (b == 9 ? 91 : b == 10 ? 101 : b) == k ? EngineDrill.Row(DrillTest, DrillS, DrillAltLoss, DrillSpdLoss, DrillOk) : null; }
+        // Ceiling: learned practical ceiling (m), climb < 1 m/s at full power for 60 s
         /// <summary>Oct 12 stall timing (clean / flaps FULL): cut->break, break->terminal sink, recovery; losses from the BREAK.</summary>
         internal readonly StallTiming StallT = new StallTiming(), FlapStallT = new StallTiming();
         internal bool FlapSub = true, FlapStallSub = true;   // 9b / 10b sub-steps (toggle-able)   // steps unchecked for the next LEARN (persisted)
@@ -168,6 +170,7 @@ namespace KSPChatBridge
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "ceiling", N(Ceiling) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
+            if (DrillTest != 0) dict["engine_drill"] = new List<object> { DrillTest, Math.Round(DrillS, 2), Math.Round(DrillAltLoss, 1), Math.Round(DrillSpdLoss, 1), DrillOk ? 1 : 0 };
             if (StallT.Present) dict["stall_timing"] = StallT.ToDict(); if (FlapStallT.Present) dict["flap_stall_timing"] = FlapStallT.ToDict();
             if (NoLand) dict["no_land"] = true;
             return dict;
@@ -191,6 +194,7 @@ namespace KSPChatBridge
                 }
             if (d.TryGetValue("turn_envelope", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 6) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.Envelope.Add(ar); }
             p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit"); p.Ceiling = D(d, "ceiling");
+            if (d.TryGetValue("engine_drill", out o) && o is System.Collections.IList) { var l = (System.Collections.IList)o; if (l.Count >= 5) { var ci = System.Globalization.CultureInfo.InvariantCulture; p.DrillTest = Convert.ToInt32(l[0], ci); p.DrillS = Convert.ToDouble(l[1], ci); p.DrillAltLoss = Convert.ToDouble(l[2], ci); p.DrillSpdLoss = Convert.ToDouble(l[3], ci); p.DrillOk = Convert.ToDouble(l[4], ci) > .5; } }
             if (d.TryGetValue("flap_sub", out o) && o is bool) p.FlapSub = (bool)o; if (d.TryGetValue("flap_stall_sub", out o) && o is bool) p.FlapStallSub = (bool)o;
             if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
@@ -241,6 +245,7 @@ namespace KSPChatBridge
         internal bool LandingDone; double rollM, rollPrevT = double.NaN, rollStartT = double.NaN;
         internal bool WantTakeoff, Done, Aborted;
         internal readonly PlaneProfile P = new PlaneProfile();
+        internal readonly EngineDrill Drill = new EngineDrill();   // hidden mid-flight engine restart drill (once per run)
         /// <summary>Selective re-run (Luke 11:26 PM): only these steps are flown; takeoff, climb and landing always run as setup. Null = full test.</summary>
         internal readonly HashSet<int> Skipped = new HashSet<int>();
         /// <summary>SKIP (Luke 11:36 PM): end the current step, keep its partial data, mark [-], move on. Not during the takeoff roll or the landing.</summary>
@@ -409,6 +414,7 @@ namespace KSPChatBridge
                 string extra = activeTest == k ? "" : Queue.Contains(k) ? " (queued)" : Ran.Contains(k) ? " (done)" : "";
                 o.Add(cur + ind + mark + CodeName(k) + extra);
                 if (activeTest == k) { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
+                { string dr = P.DrillRow(k); if (dr != null) o.Add(" " + dr); }
             }
             o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : Phase == "flyhome" ? "Running 12 / fly home: course " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + " at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest) + ".");
             return o;
@@ -740,6 +746,7 @@ namespace KSPChatBridge
                 else if (k == 101) o.Add(cur + (p.Rerun.Contains(101) ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
                 else if (k == 12) o.Add(cur + (p.NoLand ? "[ ] " : "[x] ") + "12 " + StepNames[11]);   // checked by default (Oct 12)
                 else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[x] " : "[ ] ") + k + " " + StepNames[k - 1]);
+                { string dr = p.DrillRow(k); if (dr != null) o.Add(" " + dr); }
             }
             o.Add(p.Rerun.Count == 0 ? "All unchecked. LEARN takes off, climbs and waits; TOGGLE a box to run that test." : "LEARN runs " + p.Rerun.Count + " checked test(s) after the climb, then waits.");
             return o;
@@ -777,6 +784,7 @@ namespace KSPChatBridge
                 if (k == 12 && LandingDone) extra = " (rollout " + P.Perf.Rollout.ToString("0") + " m)";
                 o.Add(mark + " " + k + " " + StepNames[k - 1] + extra);
                 if (mark == "[>]") { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
+                { string dr = P.DrillRow(k == 9 ? 91 : k == 10 ? 101 : k); if (dr != null) o.Add(dr); }
             }
             if (Aborted) o.Add("Aborted: " + Reason);
             return o;

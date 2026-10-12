@@ -260,6 +260,27 @@ internal static class ThrottleLearnTests
     static void Oct12StallTiming()
     {
         Check(LearnFlight.StallAlt == 10000, "stall tests start at 10 km");
+        {   // Oct 12 hidden engine drill: trigger rules, timing (off, panic 2 s, restart 4 s), records, lettering, crew always FAILS
+            Check(EngineDrill.Eligible("cruise", 4, 6000, 6000, false, false) && !EngineDrill.Eligible("cruise", 4, 4900, 4900, false, false) && !EngineDrill.Eligible("takeoff", 1, 6000, 6000, false, false)
+                && !EngineDrill.Eligible("flyhome", 12, 6000, 6000, false, false) && !EngineDrill.Eligible("stallsink", 10, 9000, 9000, false, false) && !EngineDrill.Eligible("stallrec", 101, 9000, 9000, false, false)
+                && !EngineDrill.Eligible("cruise", 4, 6000, 6000, true, false) && !EngineDrill.Eligible("cruise", 4, 6000, 2000, false, false) && EngineDrill.Eligible("sinkmap", 91, 5200, 5200, false, false), "engine drill: only in a test >= 5 km, never takeoff/home/stall break/low energy");
+            Check(EngineDrill.Label(91) == "9c Engine restart (surprise)" && EngineDrill.Label(9) == "9c Engine restart (surprise)" && EngineDrill.Label(10) == "10c Engine restart (surprise)" && EngineDrill.Label(4) == "4b Engine restart (surprise)" && EngineDrill.Label(11) == "11b Engine restart (surprise)", "drill lettering: next free letter (9c, 10c, else b)");
+            var d = new EngineDrill(new Random(1)); var acts = new List<EngineDrill.Act>(); double dAlt = 6000, spd = 200, thr = 1;
+            for (int s = 0; s < 4000 && !(d.Used && !d.Running); s++)
+            {
+                double dt0 = s * .1; var a = d.Step(dt0, true, 4, dAlt, dAlt, spd, thr); if (a != EngineDrill.Act.None) acts.Add(a);
+                if (a == EngineDrill.Act.Shutdown) thr = 0; if (d.Running) { dAlt -= 1; spd -= .2; } if (a == EngineDrill.Act.Restart) thr = .2; if (acts.Contains(EngineDrill.Act.Restart)) thr = Math.Min(1, thr + .02);
+            }
+            Check(acts.Count == 4 && acts[0] == EngineDrill.Act.Shutdown && acts[1] == EngineDrill.Act.Panic && acts[2] == EngineDrill.Act.Restart && acts[3] == EngineDrill.Act.Done && d.Ok && d.Seconds > 4 && d.AltLoss > 30 && d.SpdLoss > 5, "drill: off -> panic 2 s -> restart 4 s -> done, records time/alt/speed (" + string.Join(",", acts.ConvertAll(x => x.ToString()).ToArray()) + " " + d.Seconds.ToString("0.0") + " s)");
+            Check(d.Step(500, true, 4, 6000, 6000, 200, 1) == EngineDrill.Act.None, "drill: once per Learn run");
+            var f = new EngineDrill(new Random(2)); EngineDrill.Act fa = EngineDrill.Act.None; double ag = 3000;
+            for (int s = 0; s < 4000 && fa != EngineDrill.Act.ForceRestart; s++) { fa = f.Step(s * .1, true, 9, 5500, ag, 150, 0); if (f.Running) ag -= 5; }
+            Check(fa == EngineDrill.Act.ForceRestart && !f.Ok, "drill safety: no thrust / below 2500 m AGL -> forced restart, aborted");
+            var pp = new PlaneProfile(); pp.DrillTest = 91; pp.DrillS = 6.4; pp.DrillAltLoss = 120; pp.DrillSpdLoss = 9; pp.DrillOk = true;
+            var rp = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(pp.ToDict())) as Dictionary<string, object>);
+            Check(rp.DrillTest == 91 && rp.DrillRow(91) != null && rp.DrillRow(91).Contains("9c Engine restart (surprise): crew FAILED") && rp.DrillRow(10) == null && LearnFlight.ProfileChecklist(rp, 0).Exists(l => l.Contains("9c Engine restart")), "drill saved to the profile, shown as 9c sub-item: crew FAILED");
+            Check(EngineDrill.Laugh("{name}, you screamed louder than the engines GROANING back to life!", new List<string> { "Bill Kerman", "Bob Kerman" }) == "Bill, you screamed louder than the engines GROANING back to life!" && EngineDrill.Names(new List<string> { "Bill Kerman", "Bob Kerman", "Val Kerman" }) == "Bill, Bob and Val" && EngineDrill.LaughPrompt("Jeb", new List<string> { "Bill Kerman" }, 6, 100).Contains("Bill"), "drill pilot lines use the real crew names");
+        }
         var cl = new LearnFlight(); var c = In(0, 5000); c.StallGuess = 84; c.Speed = 150; cl.Step(c); cl.Phase = "stallprep"; c.T = 1; cl.Step(c);
         Check(cl.Throttle == 1 && cl.Pitch > 0, "stallprep below 10 km: full power climb (thr " + cl.Throttle + ")");
         Check(cl.Pitch <= LearnFlight.PrepClimbPitchMax + .01, "stallprep climb pitch capped (" + cl.Pitch.ToString("0.0") + ")");

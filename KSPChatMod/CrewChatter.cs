@@ -165,7 +165,7 @@ namespace KSPChatBridge
         }
         internal static readonly Dictionary<string, string> Facts = new Dictionary<string, string>
         {
-            { "stall", "the plane just stalled for real ({what}): nose dropping, the stall horn blaring, the pilot recovering" }, { "stall_test", "the plane is stalling ON PURPOSE ({what}, a planned Learn stall test): the crew panics anyway, then the pilot tells them to relax, it is a test" },
+            { "engine_drill", "the engines just went quiet mid-flight ({what}); the pilot is suspiciously calm - it is a secret planned drill, do not reveal it" }, { "stall", "the plane just stalled for real ({what}): nose dropping, the stall horn blaring, the pilot recovering" }, { "stall_test", "the plane is stalling ON PURPOSE ({what}, a planned Learn stall test): the crew panics anyway, then the pilot tells them to relax, it is a test" },
             { "parts", "the ship just lost the {what}" }, { "alarm", "a ship alarm just went off: {what}" }, { "landing", "the landing approach went wrong: {what}" }, { "tamper", "someone just changed the {what} settings mid-flight and you are putting them back" }, { "flameout", "an engine ({what}) just flamed out" },
             { "power", "the batteries are almost flat" }, { "overheat", "the {what} is overheating" },
         };
@@ -226,7 +226,7 @@ namespace KSPChatBridge
         /// <summary>Oct 12: stall reactions (real stall or Learn stall test): cooldown, and the crew's own stall panic lines (mixed with their trait pool).</summary>
         internal const double StallCooldownS = 50;
         static readonly string[] StallPanic = { "Why is the nose pointing at the GROUND?!", "The wings stopped working! Can wings stop working?!", "Is that horn supposed to be screaming?!", "My lunch just floated past my face!", "We're falling! Like, actually falling!", "I felt that in my teeth!" };
-        static bool StallKind(string kind) { return kind == "stall" || kind == "stall_test"; }
+        static bool StallKind(string kind) { return kind == "stall" || kind == "stall_test" || kind == "engine_drill"; }
         static readonly HashSet<string> Mech = new HashSet<string> { "parts", "flameout", "overheat", "prop_out", "rotor_brake", "rotor_torque", "heli_rpm", "heli_tail", "reverse", "tamper" };
         internal static readonly Dictionary<string, string[]> Lines = new Dictionary<string, string[]>
         {
@@ -343,6 +343,7 @@ namespace KSPChatBridge
         static readonly Dictionary<string, string[]> PilotLines = new Dictionary<string, string[]>
         {
             { "stall", new[] { "Stall! Nose down, power up - I've got it.", "We're stalling - recovering now, hold on!", "Easy... nose down, wings level. Flying again in a second.", "Stall warning! Pushing over, full power. Stay strapped in." } },
+            { "engine_drill", EngineDrill.PilotCalm },
             { "stall_test", new[] { "Relax, it's a TEST. We meant to do that!", "Everybody calm down - planned stall. It's on the checklist!", "Pipe down back there, it's a stall test. I'm doing this on purpose.", "That's the stall test, folks. Breathe. Seriously, breathe.", "Yes, the ground is getting closer. That's the plan. Mostly.", "It's science! Ask the scientist. Actually, don't." } },
             { "flameout", new[] { "Engine out! Hang on, relighting {part_the}...", "Lost {part_the}! Working the restart.", "Flameout! Give me a second, Captain." } },
             { "alarm", new[] { "Alarm - {part}. I'm on it, Captain.", "Got a warning light: {part}. Watching it closely." } },
