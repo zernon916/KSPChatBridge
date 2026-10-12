@@ -1237,6 +1237,15 @@ namespace KSPChatBridge
         /// <summary>Highest setting allowed at this speed: 0 above the limit (5 m/s hysteresis to keep what is out), else full.</summary>
         internal static int MaxAllowed(double ias, double limit, int current) { return ias <= limit || (current > 0 && ias <= limit + 5) ? 3 : 0; }
         /// <summary>Approach schedule: up until short final; 1 inside 2x the short-final fix, 2 inside it, full inside half of it and in the flare/rollout.</summary>
+        /// <summary>Oct 12 takeoff flaps: partial (2) for the roll; from 120 m AGL retract one step at a time, each only above 1.3x the stall of the next setting.</summary>
+        internal const int TakeoffFlaps = 2; internal const double RetractAgl = 120, RetractMargin = 1.3;
+        internal static double StallFor(int k, double clean, double ratio) { double r = !double.IsNaN(ratio) && ratio > .5 && ratio < 1 ? ratio : .85; return clean * (1 - (1 - r) * Math.Max(0, Math.Min(3, k)) / 3.0); }
+        internal static int TakeoffSetting(int current, bool grounded, double agl, double eas, double clean, double ratio)
+        {
+            if (grounded) return TakeoffFlaps;
+            if (agl < RetractAgl || current <= 0) return Math.Max(0, current);
+            int next = current - 1; return eas > RetractMargin * StallFor(next, clean, ratio) ? next : current;
+        }
         internal static int ApproachSetting(string phase, double distM, double shortFix)
         {
             if (phase == "flare" || phase == "rollout" || phase == "stopped") return 3;

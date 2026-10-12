@@ -139,6 +139,28 @@ namespace KSPChatBridge
     }
 
     /// <summary>Oct 12: headings set from chat / plane_hold / Learn fly-home are pushed to the autopilot window's Heading field.</summary>
+    /// <summary>Oct 12 auto lights: on just before dusk (sun below +3 deg at the vessel), off just after sunrise (above +5 deg).
+    /// Acts on crossings only, so the pilot can still switch them by hand.</summary>
+    internal static class AutoLights
+    {
+        internal const double OnBelow = 3, OffAbove = 5;
+        internal static double ElevationDeg(double ux, double uy, double uz, double sx, double sy, double sz)
+        {
+            double nu = Math.Sqrt(ux * ux + uy * uy + uz * uz), ns = Math.Sqrt(sx * sx + sy * sy + sz * sz);
+            if (nu <= 0 || ns <= 0) return double.NaN;
+            return Math.Asin(Math.Max(-1, Math.Min(1, (ux * sx + uy * sy + uz * sz) / (nu * ns)))) * 180 / Math.PI;
+        }
+        /// <summary>+1 = switch on, -1 = switch off, 0 = leave alone.</summary>
+        internal static int Step(ref double prevElev, double elev)
+        {
+            if (double.IsNaN(elev)) return 0;
+            double p = prevElev; prevElev = elev;
+            if (double.IsNaN(p)) return elev < OnBelow ? 1 : 0;
+            if (p >= OnBelow && elev < OnBelow) return 1;
+            if (p <= OffAbove && elev > OffAbove) return -1;
+            return 0;
+        }
+    }
     internal static class ApFieldSync
     {
         static string pending;

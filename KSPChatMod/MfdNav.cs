@@ -33,7 +33,7 @@ namespace KSPChatBridge
         {
             var g = new List<Group>();
             Func<string, string, bool, Item[], Group> G = (id, l, m, it) => { var x = new Group { Id = id, Label = l, NeedsMj = m }; x.Items.AddRange(it); return x; };
-            g.Add(G("ap", "AUTOPILOT", false, new[] { new Item("aircraft", "AIRCRAFT", 0), new Item("approach", "APPROACH", 1), new Item("guidance", "LAND GUID", 2), new Item("taxi", "TAXI", 12),
+            g.Add(G("ap", "AUTOPILOT", false, new[] { new Item("aircraft", "AIRCRAFT", 0), new Item("approach", "APPROACH", 1), new Item("taxi", "TAXI", 12),
                 new Item("about", "ABOUT PLANE"), new Item("trim", "TRIM"), new Item("abort", "ABORT/STAT", 13), new Item("orbitap", "ORBITAL AP", 7), new Item("capture", "CAPTURE", 5), new Item("docking", "DOCKING", 6), new Item("sunlock", "SUN LOCK", 8) }));
             g.Add(G("map", "MAP", false, new[] { new Item("map", "MAP"), new Item("chart", "CHART"), new Item("ils", "ILS") }));
             g.Add(G("plan", "PLAN", false, new[] { new Item("flightplan", "FLIGHT PLAN", 3), new Item("orbitplan", "ORBIT PLAN", 4) }));
@@ -156,7 +156,11 @@ namespace KSPChatBridge
         internal static bool CoversPanels(int count, bool mj)
         {
             var seen = new HashSet<int>(); foreach (var g in Groups(mj)) foreach (var it in g.Items) if (it.Panel >= 0) seen.Add(it.Panel);
+            if (seen.Contains(1)) seen.Add(GuidancePanel);   // Oct 12: Landing Guidance is drawn inside the Approach panel
             for (int i = 0; i < count; i++) if (!seen.Contains(i)) return false; return true;
+        }
+        internal const int GuidancePanel = 2;
+        static void GuidanceMergedMarker() {
         }
         /// <summary>ABOUT/LEARN page scroll (Luke 8:25 PM), shared by the outside panel and the IVA screens: line offset; follows
     /// the [>] current step when it changes, manual SCROLL keys / wheel otherwise.</summary>

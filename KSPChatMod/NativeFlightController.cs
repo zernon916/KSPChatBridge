@@ -556,7 +556,7 @@ namespace KSPChatBridge
                         directBank = 0; speed = profile != null ? Math.Max(ClimbSpeedTarget(), 1.5 * stall) : 200;   // no profile: unchanged roll target
                         parkingReleased = true;
                         if (vessel.ActionGroups[KSPActionGroup.Brakes]) SetGroup(vessel, KSPActionGroup.Brakes, false);   // live bug: brakes were held until the 5%-stepped throttle reached 60%
-                        if (vessel.radarAltitude > 25) SetGroup(vessel, KSPActionGroup.Gear, false);
+                        if (TakeoffMission.GearUp(vessel.radarAltitude, vessel.verticalSpeed)) SetGroup(vessel, KSPActionGroup.Gear, false);   // Oct 12: after a positive climb
                         if (tground != null && vessel.LandedOrSplashed)
                         {   // gentle ground roll: rate-limited, speed-scaled steering + rudder toward the takeoff line
                             double err = tground.HeadingError(FlightGlobals.ship_heading, tground.CrossTrack(vessel.latitude, vessel.longitude, vessel.mainBody.Radius));
@@ -684,7 +684,7 @@ namespace KSPChatBridge
                 }
                 double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
                 if (!directVs.HasValue) { targetVs *= CraftClass.VsScale(CraftCls); targetVs = CraftClass.SlewVs(ref vsSlew, targetVs, dt, CraftCls); } else vsSlew = targetVs;   // heavy: gentle altitude corrections, VS command slewed (porpoise, Oct 12)
-                ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
+                ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.CruiseSpeed = profile == null ? double.NaN : !double.IsNaN(profile.Perf.CruiseSpeed) && profile.Perf.CruiseSpeed > 0 ? profile.Perf.CruiseSpeed : profile.EconSpeed; ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
                 bool landBank = mode == "landing" && runway != null && runway.TurnBank > 0;   // G-rated approach turns (and explicit "bank 60")   // "bank 60, land nearest"
@@ -1314,6 +1314,7 @@ namespace KSPChatBridge
         }
         string StartTakeoff()
         {
+            takeoffFlaps = true;   // Oct 12: partial flaps for the roll (no-op without tagged flaps)
             if (props.HasLift(vessel)) { Stop(); return "Use helicopter hover for a rotorcraft takeoff."; }
             bool wheels = false, wings = false;
             foreach (Part part in vessel.parts)

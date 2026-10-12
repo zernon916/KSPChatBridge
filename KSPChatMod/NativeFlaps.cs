@@ -11,7 +11,7 @@ namespace KSPChatBridge
         sealed class FlapSnap { internal bool Deploy, Invert; internal float Angle; }
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
-        int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps; Vessel flapVessel;
+        int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
         internal static int FlapSetting { get { return instance == null ? 0 : instance.flapSet; } }
         internal static bool HasFlapsNow { get { return instance != null && instance.flaps.Count > 0; } }
         /// <summary>"FLAPS UP" / "FLAPS 2" / "FLAPS FULL" (+ limit); "" when the craft has no usable flaps.</summary>
@@ -94,6 +94,12 @@ namespace KSPChatBridge
         }
         int FlapsWanted()
         {
+            if (takeoffFlaps && mode != "landing")
+            {   // Oct 12: partial flaps for the roll, stepped retraction after 120 m AGL
+                int w = FlapsPolicy.TakeoffSetting(flapSet, vessel.LandedOrSplashed, vessel.radarAltitude, Eas(), stall, ApproachProfile.FlapRatio);
+                if (w == 0 && flapSet == 0 && !vessel.LandedOrSplashed) takeoffFlaps = false;
+                return w;
+            }
             if (learn != null && !learn.Done) return Math.Max(0, learn.Flaps);
             if (goAroundFlaps)
             {   // keep them until a positive climb for 3 s, then retract

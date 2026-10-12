@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -248,6 +248,45 @@ internal static class ThrottleLearnTests
         Check(rt.StallT.Present && Near(rt.StallT.SinkLoss, Math.Round(st.SinkLoss, 2), .01) && !rt.FlapStallT.Present, "stall timing saved in the profile");
         var ab = rt.StallT.About("Stall10 ");
         Check(ab.Count == 3 && ab[0].Contains("cut>break") && ab[1].Contains("break>sink") && ab[2].Contains("from break"), "About page lines: " + string.Join(" | ", ab.ToArray()));
+    }
+    // Oct 12 batch: takeoff flaps + gear, cruise to long final, no descent off the line, lead-turn lineup, auto lights, Land Guide in the AICS box
+    static void Oct12Batch()
+    {
+        double cs = 79, r = .8;
+        Check(FlapsPolicy.TakeoffSetting(0, true, 0, 0, cs, r) == FlapsPolicy.TakeoffFlaps && FlapsPolicy.TakeoffFlaps > 0 && FlapsPolicy.TakeoffFlaps < 3, "takeoff roll: partial flaps");
+        Check(FlapsPolicy.TakeoffSetting(2, false, 80, 200, cs, r) == 2, "below 120 m AGL: flaps stay");
+        double s1 = FlapsPolicy.StallFor(1, cs, r);
+        Check(FlapsPolicy.TakeoffSetting(2, false, 150, 1.3 * s1 - 1, cs, r) == 2 && FlapsPolicy.TakeoffSetting(2, false, 150, 1.3 * s1 + 1, cs, r) == 1, "step 2->1 only above 1.3x the setting-1 stall");
+        Check(FlapsPolicy.TakeoffSetting(1, false, 150, 1.3 * cs - 1, cs, r) == 1 && FlapsPolicy.TakeoffSetting(1, false, 150, 1.3 * cs + 1, cs, r) == 0, "step 1->up only above 1.3x the clean stall");
+        Check(!TakeoffMission.GearUp(5, 3) && !TakeoffMission.GearUp(40, -1) && TakeoffMission.GearUp(40, 2), "gear up after a positive climb");
+        // cruise speed on entry/join, held to long final
+        ApproachProfile.CruiseSpeed = 142;
+        Check(Near(ApproachProfile.EntrySpeed(79), 142) && Near(ApproachProfile.FinalSchedule(13000, 79, .8), 142) && ApproachProfile.FinalSchedule(2000, 79, .8) < 142, "approach: cruise speed to long final, then the bleed");
+        ApproachProfile.CruiseSpeed = double.NaN;
+        Check(Near(ApproachProfile.EntrySpeed(79), ApproachProfile.Speed(79)), "no learned cruise: old join speed");
+        // badly off the line: hold altitude
+        Check(ApproachProfile.BadlyOff(500, 0, true) && ApproachProfile.BadlyOff(0, 40, true) && !ApproachProfile.BadlyOff(100, 10, true) && ApproachProfile.BadlyOff(2000, 0, false) && !ApproachProfile.BadlyOff(800, 30, false), "badly off the line (final 400 m / 30 deg, legs 1.5 km / 60 deg)");
+        // lineup: lead turn with the roll-in, never crosses the line
+        foreach (var st0 in new[] { new[] { 3000.0, 30 }, new[] { 2000.0, 30 }, new[] { -2500.0, 30 }, new[] { 800.0, 10 } })
+        {
+            double x0 = st0[0], v = 150, course = 270, psi = course - Math.Sign(x0) * st0[1], b = 0, x = x0, minSide = double.MaxValue, rollRate = 10, rr = v * v / (9.81 * Math.Tan(25 * Math.PI / 180));
+            for (double t = 0; t < 300; t += .05)
+            {
+                double h = LocalizerCourse.Heading(course, x, rr, psi, v, 25 / rollRate);
+                double want = FlightPolicy.Clamp(.5 * FlightPolicy.Wrap(h - psi), -25, 25); b += FlightPolicy.Clamp(want - b, -rollRate * .05, rollRate * .05);
+                psi += 9.81 * Math.Tan(b * Math.PI / 180) / v * 180 / Math.PI * .05; x += v * Math.Sin(FlightPolicy.Wrap(psi - course) * Math.PI / 180) * .05;
+                minSide = Math.Min(minSide, Math.Sign(x0) * x);
+            }
+            Check(minSide > -60 && Math.Abs(x) < 60, "lineup from " + x0 + " m merges without crossing (worst " + minSide.ToString("0") + " m past, ends " + x.ToString("0") + " m)");
+        }
+        // auto lights
+        Check(Near(AutoLights.ElevationDeg(0, 0, 1, 1, 0, 0), 0) && Near(AutoLights.ElevationDeg(0, 0, 1, 0, 0, 1), 90), "sun elevation from up / sun vectors");
+        double pe = double.NaN;
+        Check(AutoLights.Step(ref pe, 20) == 0 && AutoLights.Step(ref pe, 10) == 0 && AutoLights.Step(ref pe, 2.9) == 1 && AutoLights.Step(ref pe, 1) == 0 && AutoLights.Step(ref pe, 4) == 0 && AutoLights.Step(ref pe, 5.1) == -1 && AutoLights.Step(ref pe, 30) == 0, "lights on before dusk, off after sunrise, hysteresis, crossings only");
+        double pn = double.NaN; Check(AutoLights.Step(ref pn, -10) == 1, "loaded at night: lights on");
+        // Land Guide in the AICS box approach panel, no separate entry
+        bool sep = false, appr = false; foreach (var g in MfdNav.Groups(false)) foreach (var it in g.Items) { if (it.Id == "guidance") sep = true; if (it.Id == "approach") appr = true; }
+        Check(!sep && appr, "Land Guide merged into the APPROACH page (no separate LAND GUID entry)");
     }
     static void Oct12Hold()
     {

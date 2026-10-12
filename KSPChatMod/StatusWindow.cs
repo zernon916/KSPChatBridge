@@ -70,7 +70,7 @@ namespace KSPChatBridge
 
         void Update()
         {
-            Blink();
+            Blink(); AutoLightsTick();
             if (Time.realtimeSinceStartup < nextPoll) return;
             nextPoll = Time.realtimeSinceStartup + 1f;
             PollStatus();
@@ -98,6 +98,19 @@ namespace KSPChatBridge
         static bool Unacked() { return master[0] != "" && Seq() > ackSeq; }
 
         // ---------------------------------------------------------------- MAYDAY light blinking
+        static double sunPrev = double.NaN; static Vessel sunVessel; float nextSun;
+        /// <summary>Oct 12: lights on just before dusk, off just after sunrise (sun elevation at the vessel).</summary>
+        void AutoLightsTick()
+        {
+            if (blinking || !HighLogic.LoadedSceneIsFlight || Time.realtimeSinceStartup < nextSun) return;
+            nextSun = Time.realtimeSinceStartup + 2;
+            Vessel v = FlightGlobals.ActiveVessel;
+            if (v == null || v.mainBody == null || Planetarium.fetch == null || Planetarium.fetch.Sun == null || v.mainBody == Planetarium.fetch.Sun) return;
+            if (v != sunVessel) { sunVessel = v; sunPrev = double.NaN; }
+            Vector3d pos = v.GetWorldPos3D(), up = (pos - v.mainBody.position).normalized, s = (Planetarium.fetch.Sun.position - pos).normalized;
+            double el = AutoLights.ElevationDeg(up.x, up.y, up.z, s.x, s.y, s.z); int a = AutoLights.Step(ref sunPrev, el);
+            if (a != 0 && v.ActionGroups[KSPActionGroup.Light] != (a > 0)) { NativeFlightController.SetGroup(v, KSPActionGroup.Light, a > 0); ChatLog.Write("lights", (a > 0 ? "auto ON" : "auto OFF") + " (sun " + el.ToString("0.0") + " deg)"); }
+        }
         void Blink()
         {
             Vessel v = HighLogic.LoadedSceneIsFlight ? FlightGlobals.ActiveVessel : null;

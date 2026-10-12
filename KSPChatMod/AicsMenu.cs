@@ -304,10 +304,13 @@ namespace KSPChatBridge
             if (GUILayout.Button("Powered descent here")) ChatWindow.ToolFromMenu("land_here", "{}");
             if (GUILayout.Button("Abort")) ChatWindow.ToolFromMenu("abort", "{}");
             GUILayout.EndHorizontal();
+            GUILayout.Label("Landing guidance", small);   // Oct 12: the Land Guide lives in the Approach panel of the AICS box / MFD
+            GuidanceBody();
             LandingLine();
         }
 
-        void Guidance()
+        void Guidance() { GuidanceBody(); LandingLine(); }
+        void GuidanceBody()
         {
             GUILayout.Label("Saved spots, Mark position, lat/lon entry: Landing window.", small);
             GUILayout.BeginHorizontal();
@@ -338,7 +341,6 @@ namespace KSPChatBridge
                 }
                 GUILayout.EndHorizontal();
             }
-            LandingLine();
         }
 
         void FlightPlan()
