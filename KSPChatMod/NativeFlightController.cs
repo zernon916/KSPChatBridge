@@ -684,7 +684,7 @@ namespace KSPChatBridge
                 }
                 double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
                 if (!directVs.HasValue) { targetVs *= CraftClass.VsScale(CraftCls); targetVs = CraftClass.SlewVs(ref vsSlew, targetVs, dt, CraftCls); } else vsSlew = targetVs;   // heavy: gentle altitude corrections, VS command slewed (porpoise, Oct 12)
-                if (runway != null) { runway.FlapStepsLeft = flaps.Count > 0 ? Math.Max(0, 3 - flapSet) : 0; runway.HasAirbrakes = brakeSurfs.Count > 0; }
+                if (runway != null) { double lr = profile != null ? profile.Perf.RollRate : double.NaN; runway.RollS = !double.IsNaN(lr) && lr > 5 ? 25 / FlightPolicy.Clamp(lr, 6, 60) : double.NaN; } if (runway != null) { runway.FlapStepsLeft = flaps.Count > 0 ? Math.Max(0, 3 - flapSet) : 0; runway.HasAirbrakes = brakeSurfs.Count > 0; }
                 ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.CruiseSpeed = profile == null ? double.NaN : !double.IsNaN(profile.Perf.CruiseSpeed) && profile.Perf.CruiseSpeed > 0 ? profile.Perf.CruiseSpeed : profile.EconSpeed; ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));

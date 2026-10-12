@@ -905,6 +905,7 @@ namespace KSPChatBridge
         /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
         internal static double PredictedNow = double.NaN, AppNow = double.NaN;
         /// <summary>Oct 12: after a go-around no gate re-runs for ~30 s (live: 3 go-arounds in 0.5 s).</summary>
+        internal double RollS = double.NaN;   // learned roll-in time, s (lineup lead)
         internal int GateCooldown; internal const int GateCooldownSteps = 1500;
         internal double DecelA = double.NaN, LastStallEst = 45;   // measured idle(+airbrake) decel for this craft; NaN = conservative default
         /// <summary>LEARN sink-map hint for flare VS (m/s positive down); NaN = default 1 m/s (AUTOPILOT_REVIEW #6).</summary>
@@ -1058,7 +1059,9 @@ namespace KSPChatBridge
             if (Phase == "intercept")
             {
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
-                DesiredHeading = LocalizerCourse.Heading(course, cross, speed * speed / (9.81 * Math.Tan(Math.Max(5, TurnBank > 0 ? TurnBank : 25) * Math.PI / 180)));   // Oct 12: the predictive lead law (LocalizerCourse 6-arg) is not wired here yet: it broke the 90 deg side-entry approach replay   // shared localizer capture law (legs + LOC)
+                double icR = speed * speed / (9.81 * Math.Tan(Math.Max(5, TurnBank > 0 ? TurnBank : 25) * Math.PI / 180)), icTrk = double.IsNaN(track) ? heading : track;
+                bool merging = !double.IsNaN(icTrk) && Math.Abs(FlightPolicy.Wrap(icTrk - course)) < 45 && Math.Abs(cross) < 2 * icR;   // Oct 12: lead-turn merge (learned roll-in) once closing at an intercept angle; steep side entries keep the plain law (90 deg replay)
+                DesiredHeading = merging ? LocalizerCourse.Heading(course, cross, icR, icTrk, speed, RollS) : LocalizerCourse.Heading(course, cross, icR);   // shared localizer capture law (legs + LOC)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, DecelA));   // intercept: join speed, never above the final schedule
                 DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
