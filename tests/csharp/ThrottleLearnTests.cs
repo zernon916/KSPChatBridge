@@ -6,12 +6,26 @@ using KSPChatBridge;
 internal static class ThrottleLearnTests
 {
     static int fails, passes;
+    static void Oct12Gate()
+    {
+        double p;
+        // log 02:22-02:24: 140 m/s at 4 km, learned 0.8 m/s2, 3 flap steps to come, airbrakes -> makes landing speed, no go-around
+        Check(!ApproachProfile.PredictTooFast(140, 4000, 75, .8, 3, true, RunwayMission.FastAtGate, out p) && p < ApproachProfile.AppSpeed(75) + 1, "log 02:23: 140 m/s at 4 km with learned decel + flaps to come is not too fast (pred " + p.ToString("0") + ")");
+        Check(!ApproachProfile.PredictTooFast(164, 8700, 75, .8, 3, true, RunwayMission.FastAtGate, out p), "164 m/s at 8.7 km not too fast");
+        Check(ApproachProfile.PredictTooFast(200, 2000, 75, .8, 0, false, RunwayMission.FastAtGate, out p), "200 m/s at 2 km, no flaps/brakes left: too fast (pred " + p.ToString("0") + ")");
+        Check(!ApproachProfile.PredictTooFast(250, 1500, 75, double.NaN, 0, false, RunwayMission.FastAtGate, out p) && double.IsNaN(p), "no learned decel: never a speed go-around");
+        Check(Ils.SpeedBand(140, 105, 101, 101) == "green" && Ils.SpeedBand(140, 105) == "red" && Ils.SpeedBand(140, 105, 130, 101) == "red", "ILS speed cue judges predicted touchdown speed");
+        Check(!Ils.Callouts(new Ils.Reading(), 300, true, 140, 105, 101, 101).Contains("TOO FAST"), "no TOO FAST callout when prediction makes it");
+        Check(ApproachProfile.MaxJoinPath(11000) < 74000, "74 km join for 11 km direct rejected");
+        var rm = new RunwayMission(); rm.GoAroundReset();
+        Check(rm.GateCooldown == RunwayMission.GateCooldownSteps && RunwayMission.GateCooldownSteps >= 1000, "go-around arms a ~30 s gate cooldown");
+    }
     static void Check(bool ok, string what) { if (ok) passes++; else { fails++; Console.WriteLine("FAIL throttle/learn: " + what); } }
     static bool Near(double a, double b, double tol = 1e-6) { return Math.Abs(a - b) <= tol; }
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }

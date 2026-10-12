@@ -2077,7 +2077,7 @@ class Program
                 for (int i = 0; i < 20000; i++)
                 {
                     bool gnd = alt <= el + .01;
-                    m.Step(la, lo, alt, alt - el, v, gnd, 600000, 45, crs, crs);
+                    m.LearnedDecel = dragK * v * v; m.Step(la, lo, alt, alt - el, v, gnd, 600000, 45, crs, crs);
                     if (m.Phase == "go around") return "GA " + m.Why + " v=" + v.ToString("0") + " d=" + m.Distance.ToString("0") + " des=" + m.DesiredSpeed.ToString("0") + " vs=" + vs.ToString("0.0");
                     if (gnd) { touchVs = vs; break; }
                     if (m.Distance < 1000 && double.IsNaN(fastAt1k)) fastAt1k = v - 1.3 * 45;

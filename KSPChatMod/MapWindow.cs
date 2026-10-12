@@ -320,7 +320,7 @@ namespace KSPChatBridge
             rows.Add(new KeyValuePair<string, Color>("LOC  " + r.LocDeg.ToString("+0.00;-0.00") + "  XTK " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "R" : "L"), Text));
             rows.Add(new KeyValuePair<string, Color>("G/S  " + r.GsDeg.ToString("+0.00;-0.00") + "  " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "HIGH" : "LOW"), Text));
             rows.Add(new KeyValuePair<string, Color>("CRS  " + Math.Round(r.Course).ToString("000") + "   HAT " + Math.Round(hat) + " m", Text));
-            string band = Ils.SpeedBand(ias, tgt);
+            string band = Ils.SpeedBand(ias, tgt, RunwayMission.PredictedNow, RunwayMission.AppNow);
             rows.Add(new KeyValuePair<string, Color>("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt), band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red));
             rows.Add(new KeyValuePair<string, Color>("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s", Text));
             { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) rows.Add(new KeyValuePair<string, Color>(fl, Text)); }
@@ -331,7 +331,7 @@ namespace KSPChatBridge
             {
                 double fh = Ils.FdHeading(r, v.srfSpeed), fv = Ils.FdVs(r, v.srfSpeed), dh = FlightPolicy.Wrap(fh - FlightGlobals.ship_heading), dv = fv - v.verticalSpeed;
                 rows.Add(new KeyValuePair<string, Color>("FD   " + (dh < -2 ? "<< LEFT" : dh > 2 ? "RIGHT >>" : "ON CRS") + "  " + (dv > 2 ? "UP" : dv < -2 ? "DOWN" : "ON PATH"), Text));
-                var co = Ils.Callouts(r, hat, gear, ias, tgt); if (co.Count > 0) rows.Add(new KeyValuePair<string, Color>(string.Join(" ", co.ToArray()), new Color(1, .7f, 0)));
+                var co = Ils.Callouts(r, hat, gear, ias, tgt, RunwayMission.PredictedNow, RunwayMission.AppNow); if (co.Count > 0) rows.Add(new KeyValuePair<string, Color>(string.Join(" ", co.ToArray()), new Color(1, .7f, 0)));
             }
             else rows.Add(new KeyValuePair<string, Color>("FD   " + (guidance ? "no signal" : "off (GUIDE)"), Text));
             int ip = IlsPx(area); float wd = dw - 8, rx = area.width - dw + 6, ry = 2;

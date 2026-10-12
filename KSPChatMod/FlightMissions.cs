@@ -337,6 +337,23 @@ namespace KSPChatBridge
         internal const double NoFlapHeavy = 1.75, NoFlapLight = 1.45;
         /// <summary>Oct 12: learned econ / cruise speed (NaN = none). Entry and join fly it; the final schedule holds it to the long-final fix.</summary>
         internal static double CruiseSpeed = double.NaN;
+        /// <summary>Oct 12 predictive speed gate: learned decel boosted by the flap steps still to come and the airbrakes.</summary>
+        internal const double FlapStepGain = .15, BrakeGain = 1.3;
+        internal static double PredictSpeed(double v, double distM, double decelA, int flapStepsLeft, bool airbrakes, double floor)
+        {
+            if (double.IsNaN(decelA) || decelA <= 0 || distM <= 0) return v;
+            double a = decelA * (1 + FlapStepGain * Math.Max(0, flapStepsLeft)) * (airbrakes ? BrakeGain : 1);
+            return Math.Max(floor, Math.Sqrt(Math.Max(0, v * v - 2 * a * distM)));
+        }
+        /// <summary>Too fast only when the learned-decel prediction to touchdown misses landing speed + margin. No learned decel: never (keep landing).</summary>
+        internal static bool PredictTooFast(double v, double distThrM, double stall, double decelA, int flapStepsLeft, bool airbrakes, double margin, out double predicted)
+        {
+            predicted = double.NaN; if (double.IsNaN(decelA) || decelA <= 0) return false;
+            double app = AppSpeed(stall); predicted = PredictSpeed(v, distThrM, decelA, flapStepsLeft, airbrakes, app);
+            return predicted - app > margin;
+        }
+        /// <summary>Oct 12: a join route may be at most 2.5x the direct distance + 20 km (live: 74 km for an 11 km direct, 4 min wandering at 700 m).</summary>
+        internal static double MaxJoinPath(double direct) { return 3 * direct + 30000; }
         internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed); }
         /// <summary>Oct 12: badly off the line -> hold altitude (no glidepath descent) until re-established. Final: > 400 m or > 30 deg; legs: > 1.5 km or > 60 deg.</summary>
         internal static bool BadlyOff(double xteM, double hdgErrDeg, bool onFinal) { double x = Math.Abs(xteM), h = Math.Abs(hdgErrDeg); return onFinal ? x > 400 || h > 30 : x > 1500 || h > 60; }
@@ -788,7 +805,7 @@ namespace KSPChatBridge
                         var route = new List<Wp> { j };
                         for (int q = kk == steps || a == null ? i + 1 : i; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
                         rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
-                        double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.5 * direct + 15000)) * 2;   // penalize a path much longer than direct
+                        double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.5 * direct + 15000)) * 2 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
                         if (onLeg) cost *= .6;   // prefer the leg we are already heading along
                         if (cost < bestCost) { bestCost = cost; best = route; JoinPoint = j; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
@@ -883,6 +900,12 @@ namespace KSPChatBridge
         internal bool Gear, Brakes; int replanHold, sinceReplan = 100000;
         internal double Distance;
         internal const double FastAtShort = 15, FastAtGate = 10;
+        /// <summary>Oct 12: speed-gate inputs (set by the controller): learned decel (NaN = none -> no speed go-around), flap steps still to come, airbrakes.</summary>
+        internal double LearnedDecel = double.NaN; internal int FlapStepsLeft; internal bool HasAirbrakes;
+        /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
+        internal static double PredictedNow = double.NaN, AppNow = double.NaN;
+        /// <summary>Oct 12: after a go-around no gate re-runs for ~30 s (live: 3 go-arounds in 0.5 s).</summary>
+        internal int GateCooldown; internal const int GateCooldownSteps = 1500;
         internal double DecelA = double.NaN, LastStallEst = 45;   // measured idle(+airbrake) decel for this craft; NaN = conservative default
         /// <summary>LEARN sink-map hint for flare VS (m/s positive down); NaN = default 1 m/s (AUTOPILOT_REVIEW #6).</summary>
         internal double FlareSinkHint = double.NaN;
@@ -905,7 +928,7 @@ namespace KSPChatBridge
         internal Ils.Reading Ils; internal bool LocCoupled, GsCoupled; internal const double LocRange = 18000;
         internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
-        internal void GoAroundReset() { LocCoupled = GsCoupled = false; Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        internal void GoAroundReset() { GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanSpeed, PlanBank, PlanRadius, PlanG, TurnBank, LastStall = 45; internal List<ApproachChart.Wp> RawRoute;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
@@ -970,7 +993,7 @@ namespace KSPChatBridge
             LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
             TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.PhaseBank(Phase, speed, stall);
-            stepsSinceRebuild++;
+            stepsSinceRebuild++; if (GateCooldown > 0) GateCooldown--;
             if (Phase == "entry")
             {
                 if (Route != null && holdLast && RouteIndex >= Route.Count) RouteIndex = Route.Count - 1;
@@ -1067,10 +1090,11 @@ namespace KSPChatBridge
                 double fs = Override != null ? Override.FlareStartM : 15;
                 double fv = Override != null ? Override.FlareSinkMs : (!double.IsNaN(FlareSinkHint) ? FlareSinkHint : 1);
                 if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s; FlareSinkHint from LEARN sink table when present
-                double fastBy = speed - ApproachProfile.FinalSchedule(Distance + 1500, stall, DecelA);   // decel lag allowance   // gates follow the schedule, only inside the short final
-                if (Phase == "final" && Distance < ApproachChart.ShortFix && Distance > GateDistance && fastBy > FastAtShort) { Phase = "go around"; Why = "too fast at the short final (+" + fastBy.ToString("0") + " m/s)"; }
-                if (Phase == "final" && Distance <= GateDistance && Distance > 100 && speed - ApproachProfile.AppSpeed(stall) > FastAtGate) { Phase = "go around"; Why = "too fast at 1 km (+" + (speed - ApproachProfile.AppSpeed(stall)).ToString("0") + " m/s)"; }
-                if (Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
+                // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
+                double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
+                PredictedNow = predSpd; AppNow = ApproachProfile.AppSpeed(stall);
+                if (GateCooldown <= 0 && Phase == "final" && Distance < ApproachChart.ShortFix && Distance > 100 && predFast) { Phase = "go around"; Why = "too fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ")"; }
+                if (GateCooldown <= 0 && Phase == "final" && Distance < GateDistance && Distance > 100 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
                 if (!grounded && along > length - 200 && hat > 3) { Phase = "go around"; Why = "overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"; }

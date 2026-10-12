@@ -132,13 +132,20 @@ namespace KSPChatBridge
         internal static double FdHeading(Reading r, double speed) { return (r.Course - FlightPolicy.Clamp(Math.Atan2(r.CrossM, Math.Max(1500, 10 * speed)) * 180 / Math.PI, -30, 30) + 360) % 360; }
         internal static double FdVs(Reading r, double speed) { return FlightPolicy.Clamp(-speed * Math.Tan(GlideDeg * Math.PI / 180) - .1 * r.AboveGsM, -15, 3); }
         /// <summary>IAS vs target approach speed: green within 5, amber within 10, else red.</summary>
+        /// <summary>Oct 12: with a learned-decel prediction, "fast" is judged on the predicted touchdown speed vs landing speed (slow stays vs the target).</summary>
+        internal static string SpeedBand(double ias, double target, double predicted, double app)
+        {
+            if (double.IsNaN(predicted) || double.IsNaN(app)) return SpeedBand(ias, target);
+            double d = Math.Max(predicted - app, target - ias); return d <= 5 ? "green" : d <= 10 ? "amber" : "red";
+        }
         internal static string SpeedBand(double ias, double target) { double d = Math.Abs(ias - target); return d <= 5 ? "green" : d <= 10 ? "amber" : "red"; }
         /// <summary>Text callouts (no audio): GEAR inside 3 km gear up, TOO FAST/SLOW, GLIDESLOPE off the path, MINIMUMS at 60 m above the threshold.</summary>
-        internal static List<string> Callouts(Reading r, double hat, bool gearDown, double ias, double target)
+        internal static List<string> Callouts(Reading r, double hat, bool gearDown, double ias, double target, double predicted = double.NaN, double app = double.NaN)
         {
             var c = new List<string>(); if (!r.Front) return c;
             if (!gearDown && r.DmeM < 3000) c.Add("GEAR");
-            if (ias > target + 10) c.Add("TOO FAST"); else if (ias < target - 5) c.Add("SLOW");
+            bool fast = !double.IsNaN(predicted) && !double.IsNaN(app) ? predicted > app + 10 : ias > target + 10;   // Oct 12: predicted touchdown speed when learned
+            if (fast) c.Add("TOO FAST"); else if (ias < target - 5) c.Add("SLOW");
             if (r.DmeM < 10000 && Math.Abs(r.AboveGsM) > Math.Max(15, .02 * r.DmeM)) c.Add("GLIDESLOPE");
             if (hat < 60 && hat > 20) c.Add("MINIMUMS");
             return c;
@@ -170,9 +177,9 @@ namespace KSPChatBridge
             L("LOC " + Bar(-Ils.Needle(r.LocDeg, Ils.LocFullScale), cols - 4, '#'));
             L("G/S " + Bar(Ils.Needle(r.GsDeg, Ils.GsFullScale), cols - 4, '#'));
             L("X-TRK " + Math.Abs(r.CrossM).ToString("0", CultureInfo.InvariantCulture) + " m " + (r.CrossM > 0 ? "R" : "L") + "  GS " + Math.Abs(r.AboveGsM).ToString("0", CultureInfo.InvariantCulture) + " m " + (r.AboveGsM > 0 ? "HI" : "LO"));
-            L("IAS " + Math.Round(ias) + "/" + Math.Round(target) + " " + Ils.SpeedBand(ias, target).ToUpperInvariant() + "  VS " + vs.ToString("+0;-0", CultureInfo.InvariantCulture));
+            L("IAS " + Math.Round(ias) + "/" + Math.Round(target) + " " + Ils.SpeedBand(ias, target, RunwayMission.PredictedNow, RunwayMission.AppNow).ToUpperInvariant() + "  VS " + vs.ToString("+0;-0", CultureInfo.InvariantCulture));
             L("GEAR " + (gear ? "DN" : "UP") + "  " + (brakes ? "BRK" : "   ") + "  HAT " + Math.Round(hat) + " m");
-            var co = Ils.Callouts(r, hat, gear, ias, target); if (co.Count > 0) L(string.Join(" ", co.ToArray()));
+            var co = Ils.Callouts(r, hat, gear, ias, target, RunwayMission.PredictedNow, RunwayMission.AppNow); if (co.Count > 0) L(string.Join(" ", co.ToArray()));
             if (!r.Front) L("BEHIND THE RUNWAY");
             return sb.ToString();
         }

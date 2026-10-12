@@ -605,7 +605,7 @@ namespace KSPChatBridge
                         double dA = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : double.NaN; string dSrc = "learned decel";
                         if (double.IsNaN(dA) || dA <= 0) { dSrc = "live decel learner"; dA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true); }
                         if (double.IsNaN(dA) || dA <= 0) { dSrc = "default mass estimate"; dA = ApproachProfile.MassDecel(vessel.totalMass); }
-                        runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA);
+                        runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA); runway.LearnedDecel = dSrc == "default mass estimate" ? double.NaN : dA;   // Oct 12: predictive speed gate needs learned data
                     }
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
@@ -684,6 +684,7 @@ namespace KSPChatBridge
                 }
                 double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
                 if (!directVs.HasValue) { targetVs *= CraftClass.VsScale(CraftCls); targetVs = CraftClass.SlewVs(ref vsSlew, targetVs, dt, CraftCls); } else vsSlew = targetVs;   // heavy: gentle altitude corrections, VS command slewed (porpoise, Oct 12)
+                if (runway != null) { runway.FlapStepsLeft = flaps.Count > 0 ? Math.Max(0, 3 - flapSet) : 0; runway.HasAirbrakes = brakeSurfs.Count > 0; }
                 ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.CruiseSpeed = profile == null ? double.NaN : !double.IsNaN(profile.Perf.CruiseSpeed) && profile.Perf.CruiseSpeed > 0 ? profile.Perf.CruiseSpeed : profile.EconSpeed; ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
@@ -780,7 +781,8 @@ namespace KSPChatBridge
                     double st = SinkThrottle(directVs.Value);
                     if (!double.IsNaN(st)) throttle = runway.Phase == "flare" ? st : .5 * throttle + .5 * st;
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
-            if ((landFloor && mode == "landing" || lowEnergy) && !vessel.LandedOrSplashed) { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch
+            if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
+                { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
