@@ -286,6 +286,15 @@ namespace KSPChatBridge
         {
             return ToggleLearnCode(step);
         }
+        /// <summary>Clean Learn slate for a new vessel object (revert, scene reload, vessel switch): the old state machine, its landing
+        /// hand-off, direct overrides and the MFD checklist cursor all reset so the menu can never be left pointing at a dead Learn.</summary>
+        void ResetLearnState()
+        {
+            if (learn != null || lastLearn != null) ChatLog.Write("learn", "Learn state reset (new vessel object: revert / reload / switch)");
+            learn = null; lastLearn = null; learnTestsSaved = 0; learnPilotUntil = 0; learnPilotHad = false; learnRates.Reset();
+            directPitch = null; directBank = null; directVs = null; bankOverride = false; pendingCircle = null; learnPhaseSeen = "";
+            MfdNav.ResetLearnMenu();
+        }
         internal static string ToggleLearnCode(int step)
         {
             var me = instance; if (me == null) return "No active vessel.";
@@ -295,7 +304,7 @@ namespace KSPChatBridge
                 string r = me.learn.Request(step); ChatLog.Write("learn", "box " + LearnFlight.CodeName(step) + ": " + r); return r;
             }
             if (me.profile == null) return "Press LEARN: it takes off, climbs and waits; then check a box to run that test.";
-            if (!LearnFlight.Toggle(me.profile, step)) return "Step " + step + " is setup (always flown).";
+            if (!LearnFlight.Toggle(me.profile, step)) { MfdNav.LearnCursor = LearnFlight.NextToggleable(MfdNav.LearnCursor); return LearnFlight.CodeName(step) + " is always flown (setup/landing) - cursor moved to " + LearnFlight.CodeName(LearnFlight.Codes[MfdNav.LearnCursor]) + "."; }
             me.SaveProfile(me.profile, false);   // a toggle is not a LEARN: no fingerprint re-stamp (would hide a hard mismatch)
             return LearnFlight.CodeName(step) + (me.profile.Rerun.Contains(step) ? " checked: runs after the LEARN climb." : " unchecked.");
         }

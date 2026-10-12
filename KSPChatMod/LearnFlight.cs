@@ -672,6 +672,12 @@ namespace KSPChatBridge
         }
         /// <summary>Profile checklist rows: steps 1..12 with the flap sub-steps 9b (91) and 10b (101).</summary>
         internal static readonly int[] Codes = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 91, 10, 101, 11, 12 };
+        /// <summary>Checklist index of the nearest toggleable box at or after idx (wraps), so TOGGLE on a setup row never dead-ends.</summary>
+        internal static int NextToggleable(int idx)
+        {
+            for (int k = 0; k < Codes.Length; k++) { int j = (Math.Max(0, idx) + k) % Codes.Length; int c = Codes[j]; if (!Setup(c) || c == 91 || c == 101) return j; }
+            return 0;
+        }
         internal static bool Toggle(PlaneProfile p, int step)
         {
             if (p == null || ((step < 1 || step > StepCount || Setup(step)) && step != 91 && step != 101)) return false;

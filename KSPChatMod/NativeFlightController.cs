@@ -228,7 +228,7 @@ namespace KSPChatBridge
             if (vessel == active) return;
             Stop();
             if (vessel != null) vessel.OnFlyByWire -= Fly;
-            vessel = active; originals.Clear(); parkingSet = parkingReleased = false;
+            vessel = active; originals.Clear(); parkingSet = parkingReleased = false; ResetLearnState();   // revert / reload / switch: no Learn state or menu cursor survives onto another vessel object
             if (vessel == null) return;
             ChatLog.Write("vessel", "switched to " + vessel.vesselName + " (" + vessel.GetTotalMass().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " t, " + vessel.parts.Count + " parts)");
             vessel.OnFlyByWire += Fly;

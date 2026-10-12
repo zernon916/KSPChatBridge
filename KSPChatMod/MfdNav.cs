@@ -165,6 +165,7 @@ namespace KSPChatBridge
     internal static readonly float[][] OverlayColors = { new[] { .35f, .9f, 1f }, new[] { .85f, 1f, .85f }, new[] { 1f, 1f, 1f }, new[] { .75f, .5f, .5f }, new[] { 1f, .69f, .13f }, new[] { .49f, 1f, .49f } };
     internal static int AboutPage, LearnCursor;
     internal static void MoveCursor(int d, int n) { LearnCursor = Math.Max(0, Math.Min(n - 1, LearnCursor + d)); }
+        internal static void ResetLearnMenu() { LearnCursor = 0; AboutOffset = 0; }
     internal static void AboutTurn(int d, int pages) { AboutPage = ((AboutPage + d) % pages + pages) % pages; AboutOffset = 0; aboutCur = -1; }
     internal static int AboutOffset; static int aboutCur = -1;
     internal static int AboutWindow(List<string> lines, int rows)

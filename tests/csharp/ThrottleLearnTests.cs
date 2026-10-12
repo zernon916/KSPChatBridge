@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -185,6 +185,15 @@ internal static class ThrottleLearnTests
         return new[] { hi - lo, alt };
     }
     // live 20:20:17-20:20:53: stall test entered at 318 m/s, looped to 90 deg nose-up, apex 8.6 m/s saved as "stall"
+    // live 20:27: after box 12 -> ferry, TOGGLE kept answering "Step 12 is setup (always flown)" with the cursor parked on 12
+    static void LearnMenu()
+    {
+        int last = LearnFlight.Codes.Length - 1; int j = LearnFlight.NextToggleable(last);
+        Check(LearnFlight.Codes[last] == 12 && LearnFlight.Toggle(new PlaneProfile(), LearnFlight.Codes[j]), "TOGGLE on box 12 moves the cursor to a toggleable box (" + LearnFlight.Codes[j] + ")");
+        Check(!LearnFlight.Toggle(new PlaneProfile(), 12) && LearnFlight.Toggle(new PlaneProfile(), LearnFlight.Codes[LearnFlight.NextToggleable(0)]), "setup rows skipped from the top too");
+        MfdNav.LearnCursor = last; MfdNav.AboutOffset = 7; MfdNav.ResetLearnMenu();
+        Check(MfdNav.LearnCursor == 0 && MfdNav.AboutOffset == 0, "revert/reload resets the Learn menu cursor");
+    }
     static void StallZoom()
     {
         var lf = new LearnFlight(); var q = In(0, 4000); q.Speed = 318; q.StallGuess = 70; q.Rho = .6; lf.Step(q); lf.Phase = "stall"; lf.Step(q);
