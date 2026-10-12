@@ -63,6 +63,7 @@ namespace KSPChatBridge
                     ChatLog.Write("learn", "waiting: hold " + altitude.ToString("0") + " m hdg " + heading.ToString("000"));
                 }
             }
+            if (learn.Phase == "flyhome" && !double.IsNaN(learn.HoldHdg)) { altitude = learn.HoldAlt; heading = learn.HoldHdg; holdAltitude = holdHeading = true; capture = null; }   // box 12: great-circle course home on the normal holds
             directVs = null;
             if (!double.IsNaN(learn.SpeedTarget)) { holdSpeed = true; speed = learn.SpeedTarget; } else holdSpeed = false;   // speed steps fly the ONE speed PI
             directPitch = double.IsNaN(learn.Pitch) ? (double?)null : learn.Pitch;
@@ -104,7 +105,7 @@ namespace KSPChatBridge
             foreach (Part p in vessel.parts) { foreach (PartModule pm in p.Modules) { var en = pm as ModuleEngines; if (en != null && en.EngineIgnited) { thr += en.finalThrust; thrMax += en.maxThrust; } } foreach (PartResource r in p.Resources) { double v; res.TryGetValue(r.resourceName, out v); res[r.resourceName] = v + r.amount; } }
             var used = new List<string>(); foreach (var kv in res) { double pv; if (resPrev.TryGetValue(kv.Key, out pv) && kv.Value < pv - 1e-6 && kv.Key != "ElectricCharge" && kv.Key != "IntakeAir") used.Add(kv.Key); } resPrev = res;
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
-                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = PilotPolicy.TasStall(stall, vessel.atmDensity), Rho = vessel.atmDensity, Mass = vessel.totalMass,
+                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = PilotPolicy.TasStall(stall, vessel.atmDensity), Rho = vessel.atmDensity, HomeKnown = vessel.mainBody != null && vessel.mainBody.bodyName == "Kerbin", HomeDist = vessel.mainBody == null ? 0 : NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.Lat, KscRunway.Lon27, vessel.mainBody.Radius), HomeBrg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, KscRunway.Lat, KscRunway.Lon27), Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
                 HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = learnRates.RollRate, PitchRate = learnRates.PitchRate, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }

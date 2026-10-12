@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -188,6 +188,23 @@ internal static class ThrottleLearnTests
     // live 20:27: after box 12 -> ferry, TOGGLE kept answering "Step 12 is setup (always flown)" with the cursor parked on 12
     // live 21:11-21:18 Stearwing A300 (49 t, EAS stall 74 -> TAS 107 at 5 km, rho .58)
     // Luke 9:27 PM: A300 top-of-wing spoilers were deployed as flaps in 9b
+    // live 22:27: 12 checked before LEARN was dropped from the queue; after 10b it climbed back to 5 km and waited forever, 117 km out
+    static void FlyHome()
+    {
+        var lf = new LearnFlight(null, new[] { 12 }, true); var q = In(0, 3000); q.HomeKnown = true; q.HomeDist = 117000; q.HomeBrg = 280; q.Landed = false;
+        string seen = "";
+        for (double t = 0; t < 600 && !lf.Done; t += .5) { q.T = t; q.Alt = Math.Min(5000, 3000 + t * 20); lf.Step(q); if (!seen.Contains(lf.Phase + ",")) seen += lf.Phase + ","; if (lf.Phase == "flyhome") break; }
+        Check(lf.LandRequested && lf.Phase == "flyhome", "box 12 checked before LEARN: flies home once set up (phases " + seen + ")");
+        q.T += .5; lf.Step(q);
+        Check(lf.HoldHdg == 280 && lf.HoldAlt == LearnFlight.ClimbAlt && !double.IsNaN(lf.SpeedTarget) && !lf.Done, "flyhome: great-circle course 280 at 5 km, econ speed target");
+        q.T += .5; q.HomeDist = 59000; lf.Step(q);
+        Check(lf.Done && !lf.Aborted, "within 60 km: hands off to the ferry + approach landing");
+        // climb-back never preempts 12: a test ends low with 12 requested -> flyhome, not climbback
+        var lb = new LearnFlight(null, new[] { 3 }, true); var b = In(0, 5000); b.HomeKnown = true; b.HomeDist = 200000; b.HomeBrg = 90;
+        for (double t = 0; t < 120 && lb.ActiveTest != 3; t += .5) { b.T = t; lb.Step(b); }
+        lb.Request(12);
+        Check(lb.Phase == "flyhome", "box 12 during a test: straight to flyhome (" + lb.Phase + ")");
+    }
     static void Surfaces()
     {
         Check(SurfaceRoles.FromTag("Flap L") == SurfRole.Flap && SurfaceRoles.FromTag("spoiler") == SurfRole.Brake && SurfaceRoles.FromTag("speedbrake") == SurfRole.Brake

@@ -185,7 +185,7 @@ namespace KSPChatBridge
 
     internal struct LearnIn
     {
-        internal double Rho; /* air density kg/m3, 0 = unknown */ internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
+        internal double Rho; /* air density kg/m3, 0 = unknown */ internal bool HomeKnown; internal double HomeDist, HomeBrg; /* to KSC 27, m / deg */ internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
         /// <summary>TurnRate = heading rate (wrapTo180(dHdg)/dt, smoothed); CourseRate = velocity-vector track rate; Heading deg.</summary>
         internal double CourseRate, Heading;
         /// <summary>Flight-path angle (deg) from Vs and the horizontal surface speed; NaN without a horizontal speed (then nose pitch is used).</summary>
@@ -264,7 +264,7 @@ namespace KSPChatBridge
         {
             ManualMode = manual;
             if (prev != null) { prior = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P.Rerun.Clear(); }
-            if (queue != null) foreach (int k in queue) Enqueue(k);
+            if (queue != null) foreach (int k in queue) { if (k == 12) landRequested = true; Enqueue(k); }   // 12 checked before LEARN: land when the queue is done (live 22:27: it was dropped and the plane waited forever)
         }
         /// <summary>Queue in checklist order (9, 9b, 10, 10b, 11): profile Rerun is numerically sorted, which put 91/101 after 11 (live 21:17).</summary>
         /// <summary>Flaps FULL only on station: 9b in the sink map (or settling at 5 km), 10b at 4 km for the stall and its recovery.
@@ -301,7 +301,8 @@ namespace KSPChatBridge
                 if (!setupUnchecked.Remove(code)) { setupUnchecked.Add(code); return CodeName(code) + " unchecked (" + (setupDone || StepNo > code ? "already flown; data kept" : "runs as setup") + ")."; }
                 return CodeName(code) + " checked.";
             }
-            if (code == 12) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; }
+            if (code == 12 && !setupDone) { landRequested = true; return "Landing checked: flies home and lands once the climb is done."; }
+            if (code == 12) { landRequested = true; Queue.Clear(); if (activeTest != 0) { Ran.Add(activeTest); activeTest = 0; } if (!last.HomeKnown || last.HomeDist < HomeHandoff) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; } Go("flyhome", last, null); return "Ending the test flight: flying home to KSC 27, then landing."; }
             if (!Pickable(code)) return "Unknown test.";
             if (activeTest == code)
                 return "Unchecked the running test: " + Skip();
@@ -330,6 +331,13 @@ namespace KSPChatBridge
         /// (climbing back to 5 km first when low).</summary>
         string ManualRoute(string ph, LearnIn i, ref string status)
         {
+            if (ph != "flyhome" && landRequested && Queue.Count == 0 && setupDone && (ph == "climbback" || ph == "wait" || activeTest != 0 && Array.IndexOf(ActiveSteps(activeTest), StepOf(ph, idx)) < 0)) ph = "flyhome";   // box 12 is never preempted by the climb-back
+            if (ph == "flyhome")
+            {
+                if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; activeTest = 0; }
+                setupDone = true; flapPass = stallFlapPass = false; status = (status != null ? status.Trim() + " " : "") + "Flying home to KSC 27 at the econ speed, then landing.";
+                return ph;
+            }
             if (ph == "climbback" || ph == "wait") { if (ph == "wait" && i.Alt < ClimbAlt - 500 && !waitHere) ph = "climbback"; }
             else
             {
@@ -392,6 +400,7 @@ namespace KSPChatBridge
         /// <summary>Max-level run ends when speed gains this little or less over 10 s.</summary>
         internal const double VmaxSettleMs = 2;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
+        bool landRequested; double homeNoteT; internal const double HomeHandoff = 60000; internal bool LandRequested { get { return landRequested; } }
         double sinkSlowAt = double.NaN; internal const double SinkSlowS = 4;   // sink map stops only when slow for 4 s (live 21:12: one transient sample ended it with 0 points)
         bool stallZoom, stallArmed; internal const double StallEntryFactor = 1.6, StallValidPitch = 25, StallZoomPitch = 35;
         double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
@@ -929,7 +938,17 @@ namespace KSPChatBridge
                     Throttle = 1; Pitch = LevelOff(i, ClimbAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; SampleClimb(i);   // climb-back / sinkclimb: 5 km (ClimbAlt == SinkAlt)
                     if (i.Alt >= ClimbAlt - 100 || dt > 600) Go("wait", i, "Back at 5 km. Waiting: check a test box to run it; you can fly manually any time.");
                     return;
+                case "flyhome":
+                    {   // box 12: great-circle course to KSC 27 at the learned econ speed; hand off to the ferry + approach within 60 km
+                        double c = P.Perf.CruiseSpeed, vmx = P.Perf.MaxLevel;
+                        SpeedTarget = !double.IsNaN(c) && c > 0 && (double.IsNaN(vmx) || c < .95 * vmx) ? c : WaitSpeed(i);
+                        HoldAlt = ClimbAlt; if (i.HomeKnown) HoldHdg = i.HomeBrg;
+                        if (!i.HomeKnown || i.HomeDist < HomeHandoff) { Finish(false, ""); return; }
+                        if (i.T >= homeNoteT) { homeNoteT = i.T + 30; Status = "Flying home: " + (i.HomeDist / 1000).ToString("0") + " km to KSC 27, course " + i.HomeBrg.ToString("000") + " at " + SpeedTarget.ToString("0") + " m/s."; }
+                        return;
+                    }
                 case "wait":
+                    if (landRequested && Queue.Count == 0 && setupDone) { Go("flyhome", i, null); return; }
                     SpeedTarget = double.IsNaN(waitSpeed) ? WaitSpeed(i) : waitSpeed;   // pitch/bank/throttle: the normal altitude + heading + speed hold
                     if (Queue.Count > 0) { int code = Queue[0]; Queue.RemoveAt(0); StartTest(code, i); }
                     return;
