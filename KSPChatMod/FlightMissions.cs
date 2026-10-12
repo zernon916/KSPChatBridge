@@ -353,6 +353,19 @@ namespace KSPChatBridge
             return predicted - app > margin;
         }
         /// <summary>Oct 12: a join route may be at most 2.5x the direct distance + 20 km (live: 74 km for an 11 km direct, 4 min wandering at 700 m).</summary>
+        /// <summary>Oct 12 (A300 overshoot 03:29): approach energy from the learned profile. Sink limit = learned descent sink (idle dives), fallback the old fixed cap.</summary>
+        internal static double SinkLimit(double learnedSink, double fallback) { return double.IsNaN(learnedSink) || learnedSink <= 1 ? fallback : learnedSink; }
+        internal const double HighM = 50, FastMs = 10;
+        /// <summary>High (above the planned path) or fast (over the planned speed): idle + speedbrakes, steeper descent.</summary>
+        internal static bool EnergyHigh(double aboveM, double speed, double plannedSpeed) { return aboveM > HighM || speed > plannedSpeed + FastMs; }
+        /// <summary>High on final: sink to rejoin the path - path sink plus 5% of the height excess per s, at most the learned sink (fallback 15).</summary>
+        internal static double RecoverSink(double speed, double slope, double aboveM, double learnedSink)
+        {
+            double path = Math.Max(4.5, speed * Math.Max(slope, .052));
+            return Math.Max(path, Math.Min(SinkLimit(learnedSink, 15), path + .05 * Math.Max(0, aboveM)));
+        }
+        /// <summary>Decel used for the plan: learned idle decel, boosted by the speedbrakes when the craft has them (flaps only below their limit, so not counted).</summary>
+        internal static double PlanDecel(double decelA, bool airbrakes) { return double.IsNaN(decelA) || decelA <= 0 ? decelA : decelA * (airbrakes ? BrakeGain : 1); }
         internal static double MaxJoinPath(double direct) { return 3 * direct + 30000; }
         internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed); }
         /// <summary>Oct 12: badly off the line -> hold altitude (no glidepath descent) until re-established. Final: > 400 m or > 30 deg; legs: > 1.5 km or > 60 deg.</summary>
@@ -902,6 +915,16 @@ namespace KSPChatBridge
         internal const double FastAtShort = 15, FastAtGate = 10;
         /// <summary>Oct 12: speed-gate inputs (set by the controller): learned decel (NaN = none -> no speed go-around), flap steps still to come, airbrakes.</summary>
         internal double LearnedDecel = double.NaN; internal int FlapStepsLeft; internal bool HasAirbrakes;
+        /// <summary>Oct 12: learned descent sink (m/s, from LEARN idle dives; NaN = fixed fallbacks), energy state and the per-leg energy log line.</summary>
+        internal double LearnedSink = double.NaN; internal bool EnergyHigh; internal string EnergyLog = ""; double energyBucket = double.NaN; string energyKey = "";
+        double EffDecel { get { return ApproachProfile.PlanDecel(DecelA, HasAirbrakes); } }
+        void EnergyNote(double altitude, double speed, double plannedAlt, int leg)
+        {   // one line per leg / phase and every 2 km: planned vs actual altitude and speed, distance to the threshold
+            double b = Math.Floor(Distance / 2000); string key = Phase + "/" + leg;
+            if (key == energyKey && b == energyBucket) return; energyKey = key; energyBucket = b;
+            EnergyLog = "energy " + Phase + " leg " + leg + ": " + (Distance / 1000).ToString("0.0") + " km to thr, alt plan " + plannedAlt.ToString("0") + " act " + altitude.ToString("0") + " (" + (altitude - plannedAlt).ToString("+0;-0") + " m), spd plan " + DesiredSpeed.ToString("0") + " act " + speed.ToString("0")
+                + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + (EnergyHigh ? " -> HIGH/FAST: idle + speedbrakes, steeper" : "");
+        }
         /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
         internal static double PredictedNow = double.NaN, AppNow = double.NaN;
         /// <summary>Oct 12: after a go-around no gate re-runs for ~30 s (live: 3 go-arounds in 0.5 s).</summary>
@@ -1046,7 +1069,8 @@ namespace KSPChatBridge
                     }
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = wp.Alt;
-                    DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -10, 15);
+                    DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 10), 15);   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
+                    EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
                     OffLine = ApproachProfile.BadlyOff(LegXte, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), false);
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
@@ -1063,8 +1087,9 @@ namespace KSPChatBridge
                 bool merging = !double.IsNaN(icTrk) && Math.Abs(FlightPolicy.Wrap(icTrk - course)) < 45 && Math.Abs(cross) < 2 * icR;   // Oct 12: lead-turn merge (learned roll-in) once closing at an intercept angle; steep side entries keep the plain law (90 deg replay)
                 DesiredHeading = merging ? LocalizerCourse.Heading(course, cross, icR, icTrk, speed, RollS) : LocalizerCourse.Heading(course, cross, icR);   // shared localizer capture law (legs + LOC)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
-                DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, DecelA));   // intercept: join speed, never above the final schedule
-                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -12, 10);
+                DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, EffDecel));   // intercept: join speed, never above the final schedule
+                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 12), 10);
+                EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; if (RebuildDue(stepsSinceRebuild) || Route == null || Route.Count == 0) Route = null; else { holdLast = true; RouteIndex = Route.Count - 1; } }   // never descend unaligned
             }
@@ -1082,11 +1107,14 @@ namespace KSPChatBridge
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);
                 OffLine = hat > 60 && ApproachProfile.BadlyOff(latDev, trackErr, true);
                 if (OffLine) DesiredAltitude = Math.Max(DesiredAltitude, altitude);   // Oct 12: hold altitude until re-established on the line (A300 nearly hit the water off the line)   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
-                DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall, DecelA);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
+                DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall, EffDecel);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
                 double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
                 if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
+                double above = altitude - DesiredAltitude;
+                if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.RecoverSink(speed, Chart != null ? Chart.Slope : .052, above, LearnedSink));   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
+                EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -2);
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
                 DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final

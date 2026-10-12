@@ -17,6 +17,11 @@ internal static class ThrottleLearnTests
         Check(Ils.SpeedBand(140, 105, 101, 101) == "green" && Ils.SpeedBand(140, 105) == "red" && Ils.SpeedBand(140, 105, 130, 101) == "red", "ILS speed cue judges predicted touchdown speed");
         Check(!Ils.Callouts(new Ils.Reading(), 300, true, 140, 105, 101, 101).Contains("TOO FAST"), "no TOO FAST callout when prediction makes it");
         Check(ApproachProfile.MaxJoinPath(11000) < 74000, "74 km join for 11 km direct rejected");
+        // Oct 12 03:29 A300 overshoot: 1117 m at 4.8 km (path ~320), 156 m/s, throttle 46-69%, sink capped at the path rate
+        Check(ApproachProfile.SinkLimit(double.NaN, 10) == 10 && ApproachProfile.SinkLimit(28, 10) == 28, "approach sink limit: learned dive sink, fixed fallback");
+        Check(ApproachProfile.EnergyHigh(800, 156, 150) && ApproachProfile.EnergyHigh(0, 171, 150) && !ApproachProfile.EnergyHigh(20, 152, 150), "energy high: >50 m above path or >10 m/s fast");
+        Check(ApproachProfile.RecoverSink(156, .052, 800, 28) > 2 * 156 * .052 && ApproachProfile.RecoverSink(156, .052, 800, 28) <= 28 && ApproachProfile.RecoverSink(156, .052, 0, 28) < 9, "high on final: steeper descent, within learned sink");
+        Check(ApproachProfile.PlanDecel(.5, true) > .5 && double.IsNaN(ApproachProfile.PlanDecel(double.NaN, true)), "plan decel: learned decel boosted by speedbrakes");
         var rm = new RunwayMission(); rm.GoAroundReset();
         Check(rm.GateCooldown == RunwayMission.GateCooldownSteps && RunwayMission.GateCooldownSteps >= 1000, "go-around arms a ~30 s gate cooldown");
     }

@@ -605,7 +605,8 @@ namespace KSPChatBridge
                         double dA = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : double.NaN; string dSrc = "learned decel";
                         if (double.IsNaN(dA) || dA <= 0) { dSrc = "live decel learner"; dA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true); }
                         if (double.IsNaN(dA) || dA <= 0) { dSrc = "default mass estimate"; dA = ApproachProfile.MassDecel(vessel.totalMass); }
-                        runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA); runway.LearnedDecel = dSrc == "default mass estimate" ? double.NaN : dA;   // Oct 12: predictive speed gate needs learned data
+                        runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA); runway.LearnedDecel = dSrc == "default mass estimate" ? double.NaN : dA;
+                        runway.LearnedSink = profile != null && profile.Dives != null && profile.Dives.Count > 0 ? PilotPolicy.DescentSink(profile.Dives, vessel.srfSpeed, PilotPolicy.CapSpeed) : double.NaN;   // Oct 12: approach descent limit from the learned idle dives   // Oct 12: predictive speed gate needs learned data
                     }
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
@@ -614,9 +615,10 @@ namespace KSPChatBridge
                     else
                     {
                         heading = runway.DesiredHeading; altitude = runway.DesiredAltitude; speed = runway.DesiredSpeed; directVs = runway.DesiredVs;
+                        if (runway.EnergyLog.Length > 0) { ChatLog.Write("approach", runway.EnergyLog); runway.EnergyLog = ""; }
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
-                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && SpeedHold.Airbrakes(on, vessel.srfSpeed, runway.DesiredSpeed); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
+                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && SpeedHold.Airbrakes(on, vessel.srfSpeed, runway.DesiredSpeed) || (runway.EnergyHigh && vessel.srfSpeed > ApproachProfile.AppSpeed(stall) + 5); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
                         runway.Heavy = CraftClass.Gentle(CraftCls);
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
                         landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && RunwayMission.BelowGsM(runway.Ils) > RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
@@ -781,6 +783,8 @@ namespace KSPChatBridge
                     double st = SinkThrottle(directVs.Value);
                     if (!double.IsNaN(st)) throttle = runway.Phase == "flare" ? st : .5 * throttle + .5 * st;
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
+                if (mode == "landing" && runway != null && runway.EnergyHigh && !vessel.LandedOrSplashed && vessel.srfSpeed > runway.DesiredSpeed - 5 && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
+                { throttle = 0; throttleWhy = "approach high/fast: idle"; }   // Oct 12 (A300 03:29): sink-map blend held 46-69% while 800 m high and 20+ m/s fast
             if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
                 { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
