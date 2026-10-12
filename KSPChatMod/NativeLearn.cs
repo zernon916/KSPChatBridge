@@ -22,7 +22,7 @@ namespace KSPChatBridge
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
             // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
             var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear(); if ((profile == null || !profile.NoLand) && !queue.Contains(12)) queue.Add(12);   // box 12 checked by default (Oct 12)
-            learn = new LearnFlight(profile, queue, true); lastLearn = null; learnRates.Reset(); learnTestsSaved = 0; learnPilotUntil = 0; learnPilotHad = false; MfdNav.AboutPage = AboutTitles.Length - 1; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
+            learn = new LearnFlight(profile, queue, true); lastLearn = null; learnRates.Reset(); learnTestsSaved = 0; learnPilotUntil = 0; learnPilotHad = false; MfdNav.AboutOffset = 0; learnParts = vessel.parts.Count; learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN; learnLast = "";
             ChatLog.Write("learn", "test flight start: " + vessel.vesselName + " " + vessel.totalMass.ToString("0.0") + " t");
             if (vessel.LandedOrSplashed) { altitude = vessel.altitude + 300; heading = FlightGlobals.ship_heading; BeginHold(); return "Test flight: " + StartTakeoff(); }
             BeginHold(); return "Test flight started from the air.";
@@ -295,7 +295,7 @@ namespace KSPChatBridge
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
         double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
         /// <summary>LEARN page cursor/toggle (Luke 11:26 PM). True when the cursor keys are in toggle mode (no flight running).</summary>
-        internal static bool LearnToggleMode { get { var me = instance; return me != null && MfdNav.AboutPage == AboutTitles.Length - 1 && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
+        internal static bool LearnToggleMode { get { var me = instance; return me != null && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
         internal static string ToggleLearnStep(int step)
         {
             return ToggleLearnCode(step);
@@ -347,7 +347,6 @@ namespace KSPChatBridge
                 var o = new List<string>(AboutBase);
                 var me = instance; var pr = me != null ? me.profile : null;
                 if (pr != null) foreach (var c in pr.Curves.Graphable()) o.Add("CURVE:" + c.Name);
-                o.Add("LEARN");
                 return o.ToArray();
             }
         }
@@ -378,7 +377,7 @@ namespace KSPChatBridge
                 o.Add("[outside MFD draws the graph; IVA shows this table]");
                 return o;
             }
-            int basePg = title == "LEARN" ? 99 : Array.IndexOf(AboutBase, title);
+            int basePg = Array.IndexOf(AboutBase, title);
             switch (basePg)
             {
                 case 0:
@@ -388,7 +387,7 @@ namespace KSPChatBridge
                     else if (me.pendingCarryFrom != null) o.Add("No profile under this name — match \"" + me.pendingCarryFrom + "\" (say carry profile)");
                     o.Add("Stall " + F0(me.stall) + "  Approach " + F0(ApproachProfile.AppSpeed(me.stall)) + "  Liftoff " + F0(p != null && !double.IsNaN(p.Liftoff) ? p.LiftoffAt(m) : me.liftoffSpeed) + " m/s");
                     if (p != null) { double fr, tot; me.FuelState(out fr, out tot); o.Add("Range " + F0(p.Perf.RangeKm(fr)) + " km  Endurance " + F0(p.Perf.EnduranceMin(fr)) + " min (now " + Math.Round(fr * 100) + "% fuel)"); }
-                    if (lf != null) o.Add("Learn: step " + Math.Min(lf.StepNo, LearnFlight.StepCount) + "/" + LearnFlight.StepCount + (lf.Done ? (lf.Aborted ? " aborted" : " done") : "") + " (page 5)");
+                    if (lf != null) o.Add("Learn: step " + Math.Min(lf.StepNo, LearnFlight.StepCount) + "/" + LearnFlight.StepCount + (lf.Done ? (lf.Aborted ? " aborted" : " done") : "") + " (LEARN page)");
                     break;
                 case 1:
                     string ts = p != null && !double.IsNaN(p.Stall) ? "TEST" : me.learner != null && me.learner.Confidence > .5 ? "LIVE " + Math.Round(me.learner.Confidence * 100) + "%" : "EST";
@@ -436,14 +435,22 @@ namespace KSPChatBridge
                         o.Add("Mass " + v.totalMass.ToString("0.000") + " t");
                         break;
                     }
-                default:
-                    if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); break; }
-                    if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); break; }
-                    if (p == null) { o.Add("No test flight yet. LEARN starts one."); break; }
-                    o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));
-                    break;
             }
                         return o;
+        }
+        /// <summary>LEARN page (Oct 12, Luke: moved out of ABOUT into its own LEARN item): the test checklist / picker, shown directly.</summary>
+        internal static List<string> LearnLines()
+        {
+            var o = new List<string>(); var me = instance;
+            string vname = me != null && me.vessel != null ? me.vessel.vesselName : "";
+            o.Add("LEARN  " + vname);
+            if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
+            var p = me.profile; var lf = me.learn ?? me.lastLearn;
+            if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); return o; }
+            if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); return o; }
+            if (p == null) { o.Add("No test flight yet. LEARN starts one."); return o; }
+            o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));
+            return o;
         }
         /// <summary>Current ABOUT curve for outside-MFD graph drawing; null when not on a CURVE page.</summary>
         internal static PerfCurve AboutCurve()

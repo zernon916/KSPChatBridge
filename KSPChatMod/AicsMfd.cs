@@ -323,6 +323,12 @@ namespace KSPChatBridge
                         int off = MfdNav.AboutWindow(al2, vis); if (Mathf.Abs(aboutApplied - off) > 0) { mfdScroll.y = off * lh; aboutApplied = off; } else if (Event.current.type == EventType.ScrollWheel) { MfdNav.AboutOffset = Mathf.RoundToInt(mfdScroll.y / lh); aboutApplied = MfdNav.AboutOffset; }
                         foreach (var l in al2) GUILayout.Label(l, scrText); break;
                     }
+                case "learn":
+                    {   // Oct 12: LEARN checklist moved out of ABOUT; same scrolling / [>] follow as ABOUT
+                        var ll = NativeFlightController.LearnLines(); float lh = Mathf.Max(10, scrText.fontSize * 1.45f); int vis = Mathf.Max(4, (int)((mfdRect.height * .55f) / lh));
+                        int off = MfdNav.AboutWindow(ll, vis); if (Mathf.Abs(aboutApplied - off) > 0) { mfdScroll.y = off * lh; aboutApplied = off; } else if (Event.current.type == EventType.ScrollWheel) { MfdNav.AboutOffset = Mathf.RoundToInt(mfdScroll.y / lh); aboutApplied = MfdNav.AboutOffset; }
+                        foreach (var l in ll) GUILayout.Label(l, scrText); break;
+                    }
                 case "systems":
                     GUILayout.Label(StatusWindow.RotorsTab ? "ROTORS" : "OVERVIEW", scrHead);
                     foreach (var r in StatusWindow.SystemRows())
@@ -388,14 +394,14 @@ namespace KSPChatBridge
         }
         internal static void OnKey(string item, string key)
         {
-            if (item == "about" && NativeFlightController.LearnToggleMode && (key == "SCROLL UP" || key == "SCROLL DN")) { MfdNav.MoveCursor(key == "SCROLL UP" ? -1 : 1, LearnFlight.Codes.Length); return; }
-            if (item == "about" && key == "SKIP") { Tool("learn_skip", "{}"); return; }
-            if (item == "about" && key == "TOGGLE") { ChatWindow.Notice("[LEARN] " + NativeFlightController.ToggleLearnCode(LearnFlight.Codes[Math.Max(0, Math.Min(LearnFlight.Codes.Length - 1, MfdNav.LearnCursor))])); return; }
-            if (item == "about" && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }
-            if (item == "about" && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
+            if (item == "learn" && NativeFlightController.LearnToggleMode && (key == "SCROLL UP" || key == "SCROLL DN")) { MfdNav.MoveCursor(key == "SCROLL UP" ? -1 : 1, LearnFlight.Codes.Length); return; }
+            if (item == "learn" && key == "SKIP") { Tool("learn_skip", "{}"); return; }
+            if (item == "learn" && key == "TOGGLE") { ChatWindow.Notice("[LEARN] " + NativeFlightController.ToggleLearnCode(LearnFlight.Codes[Math.Max(0, Math.Min(LearnFlight.Codes.Length - 1, MfdNav.LearnCursor))])); return; }
+            if ((item == "about" || item == "learn") && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }
+            if ((item == "about" || item == "learn") && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
             if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }
             if (item == "about" && key == ">") { MfdNav.AboutTurn(1, NativeFlightController.AboutTitles.Length); return; }
-            if (item == "about" && key == "LEARN") { Tool("learn_plane", "{}"); return; }
+            if ((item == "about" || item == "learn") && key == "LEARN") { Tool("learn_plane", "{}"); return; }
             if (key == null) return;
             switch (item)
             {
