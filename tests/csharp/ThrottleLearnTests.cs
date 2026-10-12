@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -156,14 +156,15 @@ internal static class ThrottleLearnTests
     // live 17:53 (Aeris 3A, 8.6 km): every Learn slowdown sat at 100% - the stall emergency read the TAS speed targets on IAS
     static double PipeThrottle(string phase, bool fixedPath, out LearnFlight lf, double seconds = 40)
     {
-        lf = new LearnFlight(); var q = In(0, 8600); q.Speed = 336; q.StallGuess = 120; q.Throttle = 1; lf.Step(q); lf.Phase = phase;
+        const double rho = .26; double es = fixedPath ? 60 : 120;   // fixed: stall is sea-level EAS, Learn gets it as TAS at this density
+        lf = new LearnFlight(); var q = In(0, 8600); q.Speed = 336; q.StallGuess = fixedPath ? PilotPolicy.TasStall(es, rho) : es; q.Throttle = 1; lf.Step(q); lf.Phase = phase;
         var sh = new SpeedHold(); var gt = new ThrottleGate(); gt.Step(1, .1); double v = 336, thr = 1;
         for (double t = .1; t <= seconds; t += .1)
         {
             q.T = t; q.Speed = v; q.Throttle = thr; lf.Step(q);
             double want = !double.IsNaN(lf.SpeedTarget) ? sh.Step(lf.SpeedTarget, v, .1, thr) : double.IsNaN(lf.Throttle) ? thr : lf.Throttle; string kind = "pi";
-            double ias = .3 * v, judged = fixedPath ? PilotPolicy.EmergencySpeed(true, lf.Phase, ias, v) : ias;
-            if (PilotPolicy.StallEmergency(judged, v, 120, 120)) { want = 1; kind = "emergency"; }
+            double ias = .3 * v, eas = v * Math.Sqrt(rho / PilotPolicy.Rho0);
+            if (fixedPath ? PilotPolicy.StallEmergency(eas, v, rho, es, es) : ias < 1.15 * es && ias <= 1.5 * es) { want = 1; kind = "emergency"; }   // unfixed = the old IAS-only rule
             thr = gt.Step(want, .1, kind); v += (6 * thr - .00004 * v * v) * .1;
         }
         return thr;
@@ -182,6 +183,24 @@ internal static class ThrottleLearnTests
             if (t > 120) { lo = Math.Min(lo, cmd); hi = Math.Max(hi, cmd); }
         }
         return new[] { hi - lo, alt };
+    }
+    // live 20:20:17-20:20:53: stall test entered at 318 m/s, looped to 90 deg nose-up, apex 8.6 m/s saved as "stall"
+    static void StallZoom()
+    {
+        var lf = new LearnFlight(); var q = In(0, 4000); q.Speed = 318; q.StallGuess = 70; q.Rho = .6; lf.Step(q); lf.Phase = "stall"; lf.Step(q);
+        double[][] log = { new[] { 318, -2.6 }, new[] { 303, -.9 }, new[] { 282, 5.4 }, new[] { 254.0, 16 }, new[] { 217, 31.6 }, new[] { 168, 52.6 }, new[] { 112, 77.3 }, new[] { 85, 89.9 }, new[] { 37, 42.6 }, new[] { 11, 41.7 } };
+        double t = .1;
+        foreach (var r in log) for (int k = 0; k < 20; k++) { t += .1; q.T = t; q.Speed = r[0]; q.Pitch = r[1]; lf.Step(q); }
+        Check(double.IsNaN(lf.P.Stall), "zoom replay: no stall recorded (got " + lf.P.Stall + ")");
+        Check(lf.Status != null && lf.Status.Contains("zoom"), "zoom replay: aborted with a notice (" + lf.Status + ")");
+        // stallprep does not hand over to the stall while still fast
+        var sp = new LearnFlight(); var s = In(0, 4000); s.Speed = 318; s.StallGuess = 70; sp.Step(s); sp.Phase = "stallprep";
+        for (double tt = .1; tt < 30; tt += .1) { s.T = tt; sp.Step(s); }
+        Check(sp.Phase == "stallprep" && Math.Abs(sp.SpeedTarget - 98) < .5, "stallprep: holds 1.4x stall target and waits while fast (" + sp.Phase + ")");
+        // real stall at 4 km is stored as sea-level EAS
+        var ok = new LearnFlight(); var o = In(0, 4000); o.Speed = 100; o.StallGuess = 80; o.Rho = .6; ok.Step(o); ok.Phase = "stall"; ok.Step(o);
+        double v = 100; for (double tt = .1; tt < 60 && ok.Phase == "stall"; tt += .1) { o.T = tt; v = Math.Max(85, v - .3); o.Speed = v; o.Pitch = 8; if (tt > 33) { o.Pitch = -15; o.Vs = -30; } ok.Step(o); }
+        Check(Math.Abs(ok.P.Stall - 85 * Math.Sqrt(.6 / 1.225)) < .5, "measured stall stored as EAS (" + ok.P.Stall.ToString("0.0") + ")");
     }
     static void GraphSeries()
     {
@@ -258,7 +277,7 @@ internal static class ThrottleLearnTests
         Check(highLf.Throttle == 0 && highLf.Pitch < -2, "stallprep idles and noses down from 10 km (thr " + highLf.Throttle.ToString("0.00") + ", pitch " + highLf.Pitch.ToString("0.0") + ")");
         var near = new LearnIn { T = 1, Speed = 200, Alt = LearnFlight.StallAlt + 80, Vs = -2, Pitch = 2, GroundSpeed = 200, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
         var hold = new LearnFlight(); hold.Phase = "stallprep"; hold.Step(near);
-        Check(hold.Throttle > .5 && Math.Abs(hold.Pitch) < 8, "near 4 km: power back on for level settle, not still diving");
+        Check(Math.Abs(hold.SpeedTarget - 1.4 * 60) < .5 && Math.Abs(hold.Pitch) < 8, "near 4 km: level settle on a 1.4x stall speed target, not still diving");
     }
     static void DescentToTestAlt()
     {
@@ -316,13 +335,23 @@ internal static class ThrottleLearnTests
     }
     static void LearnThrottleStuck()
     {
-        Check(PilotPolicy.EmergencySpeed(true, "ratesprep", 130, 336) == 336 && PilotPolicy.EmergencySpeed(false, null, 130, 336) == 130 && PilotPolicy.EmergencySpeed(true, "stall", 130, 336) == 130, "emergency speed: srf during Learn tests, IAS otherwise / in the stall test");
+        // live 20:27 (ferry after Learn, 8.3 km): 'stall emergency: ias=92 srf=368 stall=131 est=131' every frame
+        Check(92 < 1.15 * 131 && 92 < 1.5 * 131, "repro 20:27: the old rule (KSP IAS 92 vs the sea-level stall, IAS-only guard) fires");
+        double eas2027 = 368 * Math.Sqrt(.28 / PilotPolicy.Rho0);
+        Check(!PilotPolicy.StallEmergency(eas2027, 368, .28, 131, 131), "20:27 fixed: EAS " + eas2027.ToString("0") + " vs 131 stall -> no emergency");
+        Check(!PilotPolicy.StallEmergency(0, 368, .28, 131, 131) && !PilotPolicy.StallEmergency(double.NaN, 450, .28, 131, 131), "bad q -> srf/density guard, no emergency at 368-450 m/s");
+        Check(!PilotPolicy.StallEmergency(80, 450, .28, 131, 131), "guard: srf > 1.5x TAS stall estimate never fires, whatever EAS says");
+        Check(PilotPolicy.StallEmergency(140, 140 / Math.Sqrt(.28 / PilotPolicy.Rho0), .28, 131, 131), "genuinely slow at altitude (EAS 140 < 151) still fires");
+        Check(Math.Abs(PilotPolicy.Eas(.5 * .28 * 368 * 368 / 1000, 368) - eas2027) < .5, "EAS from dynamic pressure");
+        Check(Math.Abs(PilotPolicy.SafeBank(30, 195, 131, 0)) >= 10 && Math.Abs(PilotPolicy.SafeBank(30, 230, 131, 0)) == 30 && Math.Abs(PilotPolicy.SafeBank(30, 92, 131, 0)) == 5, "turns: EAS 195 turns (>= 10 deg), 230 free; old IAS 92 clamped the ferry turn to 5 deg");
+        Check(!PilotPolicy.LowEnergy(false, eas2027, 131, 20, 7700), "low energy judged on EAS: not low at 368 m/s / 8.3 km");
+        Check(!PilotPolicy.StallPlausible(8.6, 131, 163.6) && PilotPolicy.StallPlausible(120, 131, 163.6) && !PilotPolicy.StallPlausible(170, 131, 163.6) && PilotPolicy.StallPlausible(50, 45.7, double.NaN), "stall sanity: 8.6 junk and > liftoff rejected; 120 kept");
         LearnFlight lf; double before = PipeThrottle("wait", false, out lf);
-        Check(before > .99, "repro: wait at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
+        Check(before > .99, "repro: wait at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + " ph " + lf.Phase + " tgt " + lf.SpeedTarget + " thr " + lf.Throttle + ")");
         foreach (var ph in new[] { "wait" })
         {
             double thr = PipeThrottle(ph, true, out lf);
-            Check(thr < .6, "Learn " + ph + " (speed target / learn throttle) can reduce throttle at altitude: " + thr.ToString("0.00") + " after 40 s");
+            Check(thr < .6, "Learn " + ph + " (speed target / learn throttle) can reduce throttle at altitude: " + thr.ToString("0.00") + " after 40 s ph " + lf.Phase + " tgt " + lf.SpeedTarget + " thr " + lf.Throttle);
         }
         // turnprep/sinkprep high above the test altitude now idle for DescentPitch (also cuts throttle)
         Check(PipeThrottle("turnprep", true, out lf) < .6, "turnprep high: idle descent cuts throttle");

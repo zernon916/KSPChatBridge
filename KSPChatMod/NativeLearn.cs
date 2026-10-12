@@ -104,7 +104,7 @@ namespace KSPChatBridge
             foreach (Part p in vessel.parts) { foreach (PartModule pm in p.Modules) { var en = pm as ModuleEngines; if (en != null && en.EngineIgnited) { thr += en.finalThrust; thrMax += en.maxThrust; } } foreach (PartResource r in p.Resources) { double v; res.TryGetValue(r.resourceName, out v); res[r.resourceName] = v + r.amount; } }
             var used = new List<string>(); foreach (var kv in res) { double pv; if (resPrev.TryGetValue(kv.Key, out pv) && kv.Value < pv - 1e-6 && kv.Key != "ElectricCharge" && kv.Key != "IntakeAir") used.Add(kv.Key); } resPrev = res;
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
-                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = stall, Mass = vessel.totalMass,
+                FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = PilotPolicy.TasStall(stall, vessel.atmDensity), Rho = vessel.atmDensity, Mass = vessel.totalMass,
                 Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
                 HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = learnRates.RollRate, PitchRate = learnRates.PitchRate, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
@@ -174,9 +174,17 @@ namespace KSPChatBridge
         }
 
         /// <summary>learned=false (checkbox toggles): keep the stored fingerprint and the current trust; only a LEARN write re-stamps.</summary>
-        void SaveProfile(PlaneProfile p, bool learned = true)
+        /// <summary>Reject junk stalls (below max(0.4x estimate, liftoff/2) or above liftoff): keep the estimate, log it (live 20:20: 8.6 m/s).</summary>
+        void CheckStall(PlaneProfile p)
         {
-            p.Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+            if (p == null || double.IsNaN(p.Stall)) return;
+            double est = StallEstimate(), lo = double.IsNaN(p.Liftoff) ? liftoffSpeed : p.Liftoff;
+            if (PilotPolicy.StallPlausible(p.Stall, est, lo)) return;
+            ChatLog.Write("learn", "stall " + p.Stall.ToString("0.0") + " m/s rejected (estimate " + est.ToString("0") + ", liftoff " + (double.IsNaN(lo) ? "-" : lo.ToString("0")) + ") - keeping the estimate");
+            p.Stall = double.NaN; p.StallAltLoss = double.NaN;
+        }        void SaveProfile(PlaneProfile p, bool learned = true)
+        {
+            CheckStall(p); p.Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
             // Fingerprint only at LEARN write (and step toggles on the same craft) — never refreshed from Bind alone.
             if (learned && vessel != null) { p.Fingerprint = CaptureFingerprint(vessel); if (p.Fingerprint != null) p.Fingerprint.LearnedName = vessel.vesselName; }
             string n = vessel.vesselName; Bucket("plane_profiles")[n] = p.ToDict();
@@ -185,7 +193,7 @@ namespace KSPChatBridge
             if (!double.IsNaN(p.Lag)) { Bucket("throttle_lag")[n] = Math.Round(p.Lag, 2); shold.SetLag(p.Lag); lagMeasured = true; }
             if (!double.IsNaN(p.Decel) && p.Decel > 0) Decel.Learn(n, 1.6 * (double.IsNaN(p.Stall) ? stall : p.Stall), p.Decel, false);
             profile = p; if (learned) { profileTrusted = true; profileMatch = CraftFingerprint.Match.Ok; pendingCarryFrom = null; }
-            if (!double.IsNaN(p.Stall)) stallGuess = p.Stall; stall = LearnedStall();
+            CheckStall(p); if (!double.IsNaN(p.Stall)) stallGuess = p.Stall; stall = LearnedStall();
             ApplyProfileTrust();
             try { Save(); } catch (Exception) { }
         }

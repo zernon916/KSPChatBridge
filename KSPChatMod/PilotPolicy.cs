@@ -601,16 +601,33 @@ namespace KSPChatBridge
         }
         /// <summary>Airborne near-stall power slam: under 1.15x the (sane) stall, and never above 1.5x the estimated stall
         /// (Luke 14:18 log: fired every ~28 s at 280-306 m/s with no learned stall). Bad IAS (NaN/0) falls back to surface speed.</summary>
-        /// <summary>Speed the stall emergency judges. LEARN targets, stops and stall numbers are all surface speed (srfSpeed), so while a Learn test flies (not its takeoff/stall phases) the emergency uses srfSpeed too; at altitude IAS sits far below srfSpeed and a TAS speed target read as "below 1.15x stall" pinned 100% throttle in every Learn phase (live 17:53).</summary>
-        internal static double EmergencySpeed(bool learnActive, string learnPhase, double ias, double srf)
+        // ---- ONE stall speed type (live 20:27): every stall value (liftoff/1.25, learned test, estimate) is sea-level EQUIVALENT airspeed.
+        // Stall is a dynamic-pressure limit, so it is compared with EAS = sqrt(2q/rho0) - never KSP's indicatedAirSpeed (at 8.3 km it read 92
+        // at 368 m/s srf, ~half the real EAS, and fired the emergency every frame). Learn flies surface speed, so it gets TasStall(stall, rho).
+        internal const double Rho0 = 1.225;
+        /// <summary>Equivalent airspeed from dynamic pressure (kPa); falls back to srf when q is unknown.</summary>
+        internal static double Eas(double qKPa, double srf) { return qKPa > 0 && !double.IsNaN(qKPa) && !double.IsInfinity(qKPa) ? Math.Sqrt(2000 * qKPa / Rho0) : srf; }
+        /// <summary>Sea-level (EAS) stall -> true-airspeed stall at density rho (no air / sea level -> unchanged).</summary>
+        internal static double TasStall(double easStall, double rho) { return rho > 1e-3 && !double.IsNaN(rho) && rho < Rho0 ? easStall * Math.Sqrt(Rho0 / rho) : easStall; }
+        /// <summary>TAS stall -> sea-level EAS (Learn's measured stall is surface speed at the test altitude).</summary>
+        internal static double EasStall(double tasStall, double rho) { return rho > 1e-3 && !double.IsNaN(rho) && rho < Rho0 ? tasStall * Math.Sqrt(rho / Rho0) : tasStall; }
+        /// <summary>Save/load sanity: a stall below max(0.4x estimate, liftoff/2) or above the liftoff speed is junk (live 20:20: a zoom apex saved 8.6 m/s).</summary>
+        internal static bool StallPlausible(double s, double est, double liftoff)
         {
-            bool learnOwns = learnActive && learnPhase != null && learnPhase != "takeoff" && learnPhase != "start" && learnPhase != "stall" && learnPhase != "stallrec";
-            return learnOwns || double.IsNaN(ias) || ias <= 0 ? srf : ias;
+            if (double.IsNaN(s) || s <= 0) return false;
+            bool lo = !double.IsNaN(liftoff) && liftoff > 0;
+            double floor = Math.Max(double.IsNaN(est) ? 0 : .4 * est, lo ? liftoff / 2 : 0);
+            return s >= floor && (!lo || s <= liftoff);
         }
-        internal static bool StallEmergency(double ias, double srf, double stall, double estimate)
+        /// <summary>Sea-level form (rho = rho0): eas vs stall.</summary>
+        internal static bool StallEmergency(double eas, double srf, double stall, double estimate) { return StallEmergency(eas, srf, Rho0, stall, estimate); }
+        /// <summary>Airborne near-stall power slam: EAS under 1.15x the (sane) stall. Hard guard: never when surface speed is above 1.5x the
+        /// estimated stall converted to TAS at this density (independent of q/IAS). Bad EAS (NaN/0) falls back to srf converted to EAS.</summary>
+        internal static bool StallEmergency(double eas, double srf, double rho, double stall, double estimate)
         {
-            double v = double.IsNaN(ias) || double.IsInfinity(ias) || ias <= 0 ? srf : ias;
-            if (double.IsNaN(v) || double.IsInfinity(v)) return false;
+            if (double.IsNaN(srf) || double.IsInfinity(srf)) return false;
+            if (srf > 1.5 * TasStall(StallEstimate(estimate, double.NaN), rho)) return false;
+            double v = double.IsNaN(eas) || double.IsInfinity(eas) || eas <= 0 ? EasStall(srf, rho) : eas;
             if (v > 1.5 * StallEstimate(estimate, double.NaN)) return false;
             return v < 1.15 * SaneStall(stall, estimate);
         }

@@ -185,7 +185,7 @@ namespace KSPChatBridge
 
     internal struct LearnIn
     {
-        internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
+        internal double Rho; /* air density kg/m3, 0 = unknown */ internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
         /// <summary>TurnRate = heading rate (wrapTo180(dHdg)/dt, smoothed); CourseRate = velocity-vector track rate; Heading deg.</summary>
         internal double CourseRate, Heading;
         /// <summary>Flight-path angle (deg) from Vs and the horizontal surface speed; NaN without a horizontal speed (then nose pitch is used).</summary>
@@ -372,6 +372,7 @@ namespace KSPChatBridge
         /// <summary>Max-level run ends when speed gains this little or less over 10 s.</summary>
         internal const double VmaxSettleMs = 2;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
+        bool stallZoom, stallArmed; internal const double StallEntryFactor = 1.6, StallValidPitch = 25, StallZoomPitch = 35;
         double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
         internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 90;
         /// <summary>Step 6 test speed: learned cruise or 2x stall (the lower), never under 1.6x stall.</summary>
@@ -576,7 +577,7 @@ namespace KSPChatBridge
         {
             if (ManualMode) ph = ManualRoute(ph, i, ref status);
             else { ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; } }
-            Phase = ph; aoaF = double.NaN;
+            Phase = ph; aoaF = double.NaN; if (ph == "stall") stallArmed = false;
             spdF = double.NaN; prevThr = double.NaN; badThr = 0;
             if (ph == "sinkdown" || ph == "sinkmap") { vsF = i.Vs; lastT = i.T; overAt = double.NaN; recThr = double.NaN; limThr = 0; limT = double.NaN; }
             if (ph == "wait") { HoldAlt = waitHere ? Math.Round(i.Alt / 100) * 100 : ClimbAlt; HoldHdg = i.Heading; waitSpeed = WaitSpeed(i); } t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = crSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN;
@@ -948,24 +949,30 @@ namespace KSPChatBridge
                     {   // From high (e.g. 10 km @ 315 m/s): idle and descend at learned/allowed sink, LevelOff into 4 km — don't creep at -4..-10 with 80% throttle.
                         Bank = 0;
                         if (i.Alt > StallAlt + 150) { Throttle = 0; Pitch = DescentPitch(i, StallAlt, DiveSinkAt(i.Alt)); }
-                        else { Throttle = .8; Pitch = Level(i, StallAlt); }
+                        else { SpeedTarget = 1.4 * i.StallGuess; Pitch = Level(i, StallAlt); }   // actually slow down before the stall (live 20:20: entered at 318 m/s and zoomed)
                         // Allow time to descend from high (e.g. 10 km @ ~28 m/s ≈ 4 min); old 180 s timed out mid-creep.
                         double prepCap = Math.Max(180, 60 + Math.Max(0, a0 - StallAlt) / 10);
-                        if ((Math.Abs(i.Alt - StallAlt) < 150 && Math.Abs(i.Vs) < 5 && dt > 5) || dt > prepCap) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
+                        if ((Math.Abs(i.Alt - StallAlt) < 150 && Math.Abs(i.Vs) < 5 && i.Speed < StallEntryFactor * i.StallGuess && dt > 5) || dt > prepCap) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
                         return;
                     }
                 case "stall":
                     {
-                        Throttle = 0; Bank = 0; Elevator = FlightPolicy.Clamp(dt * .03, 0, 1); minV = Math.Min(minV, i.Speed);
+                        Throttle = 0; Bank = 0; Elevator = FlightPolicy.Clamp(dt * .03, 0, 1);
+                        if (!stallArmed) { minV = double.MaxValue; stallZoom = false; stallArmed = true; }
+                        if (i.Pitch < StallValidPitch && i.Speed < 2 * i.StallGuess) minV = Math.Min(minV, i.Speed);   // nose-high / far-too-fast samples are a zoom, not a stall
                         if (i.Pitch > maxPitch) maxPitch = i.Pitch;
+                        if (maxPitch > StallZoomPitch) { stallZoom = true; stallArmed = false; Go("stallrec", i, "Stall test aborted: zoom climb (nose " + maxPitch.ToString("0") + " deg) - no stall recorded."); return; }
                         bool broke = Elevator >= .95 && (i.Pitch < -10 || i.Vs < -25);
-                        if (broke || dt > 90) { if (stallFlapPass) { P.FlapStall = minV; P.Note("flap_stall", minV, i.Mass); P.Curves.Stall.Add(minV, i.Mass, 3); } else { P.Stall = minV; P.Note("stall", P.Stall, i.Mass); P.Curves.Stall.Add(minV, i.Mass, 0); } Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
+                        if ((broke || dt > 90) && minV == double.MaxValue) { stallZoom = true; stallArmed = false; Go("stallrec", i, "Stall test: no valid sample (too fast / nose high) - no stall recorded."); return; }
+                        if (broke || dt > 90) { stallArmed = false; double se = PilotPolicy.EasStall(minV, i.Rho);   // stored as sea-level EAS (the one stall type)
+                            if (stallFlapPass) { P.FlapStall = se; P.Note("flap_stall", se, i.Mass); P.Curves.Stall.Add(se, i.Mass, 3); } else { P.Stall = se; P.Note("stall", P.Stall, i.Mass); P.Curves.Stall.Add(se, i.Mass, 0); } Go("stallrec", i, "Stall at " + minV.ToString("0") + " m/s. Recovering: nose down, full power, wings level."); }
                         return;
                     }
                 case "stallrec":
                     Throttle = 1; Bank = 0; minAlt = Math.Min(minAlt, i.Alt);
-                    Pitch = i.Speed < 1.3 * P.Stall ? -10 : Level(i);
-                    if ((i.Vs > 0 && i.Speed > 1.3 * P.Stall && dt > 3) || dt > 60) {
+                    Pitch = i.Speed < 1.3 * i.StallGuess ? -10 : Level(i);   // StallGuess is TAS here; P.Stall is sea-level EAS
+                    if ((i.Vs > 0 && i.Speed > 1.3 * i.StallGuess && dt > 3) || dt > 60) {
+                        if (stallZoom) { stallZoom = false; stallFlapPass = false; EndTest(i); return; }
                         if (stallFlapPass) { P.FlapStallAltLoss = a0 - minAlt; P.Note("flap_stall_alt_loss", P.FlapStallAltLoss, i.Mass); stallFlapPass = false; EndTest(i); }
                         else { P.StallAltLoss = a0 - minAlt; P.Note("stall_alt_loss", P.StallAltLoss, i.Mass);
                             if (!ManualMode && i.HasFlaps && P.FlapStallSub && i.FuelFrac > .55 && i.Alt > 2500) { stallFlapPass = true; Go("stallprep", i, "Optional: stall again with flaps FULL."); } else EndTest(i); }
