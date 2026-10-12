@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -217,6 +217,37 @@ internal static class ThrottleLearnTests
         var lf = new LearnFlight(); var q = In(0, 5200); q.Speed = 250; q.GroundSpeed = 250; lf.Step(q); lf.Phase = "turn"; lf.P.Perf.CruiseSpeed = 250;
         q.T = 1; q.Bank = 45; q.Pitch = 5; q.Vs = 0; lf.Step(q);
         Check(!double.IsNaN(lf.Pitch) && lf.Pitch < 12, "turn commands pitch toward ClimbAlt hold, not a raw Level+TurnPitch stack (" + lf.Pitch.ToString("0.0") + ")");
+    }
+    static void StallPrepDescend()
+    {
+        var lf = new LearnFlight(); lf.P.Dives.Add(new[] { 15.0, 28, 10, 5.5 }); // learned ~28 m/s sink
+        Check(Math.Abs(lf.DiveSinkAt(10000) - 28) < .1, "stallprep uses learned dive sink above 4.5 km");
+        Check(Math.Abs(new LearnFlight().DiveSinkAt(10000) - LearnFlight.SinkMaxHigh) < .1, "no dives -> SinkMaxAt fallback");
+        double altOld = 10000, altNew = 10000, v = 315, nose = 0, gam = 0, dt = .2;
+        for (double t = 0; t < 120; t += dt)
+        {
+            var o = new LearnIn { T = t, Speed = v, Alt = altOld, Vs = v * Math.Sin(gam * Math.PI / 180), Pitch = nose, GroundSpeed = Math.Max(30, v * Math.Cos(gam * Math.PI / 180)), G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+            double cmdO = LearnFlight.Level(o, LearnFlight.StallAlt);
+            nose += Math.Max(-4 * dt, Math.Min(4 * dt, (cmdO - nose) * dt / 2));
+            gam += ((nose - 2) - gam) * dt / 1.5; altOld += v * Math.Sin(gam * Math.PI / 180) * dt;
+        }
+        nose = 0; gam = 0; var dive = new LearnFlight(); dive.P.Dives.Add(new[] { 15.0, 28, 10, 5.5 });
+        for (double t = 0; t < 300; t += dt)
+        {
+            var n = new LearnIn { T = t, Speed = v, Alt = altNew, Vs = v * Math.Sin(gam * Math.PI / 180), Pitch = nose, GroundSpeed = Math.Max(30, v * Math.Cos(gam * Math.PI / 180)), G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+            double cmd = LearnFlight.DescentPitch(n, LearnFlight.StallAlt, dive.DiveSinkAt(altNew));
+            nose += Math.Max(-4 * dt, Math.Min(4 * dt, (cmd - nose) * dt / 2));
+            gam += ((nose - 2) - gam) * dt / 1.5; altNew += v * Math.Sin(gam * Math.PI / 180) * dt;
+            if (Math.Abs(altNew - LearnFlight.StallAlt) < 200) break;
+        }
+        Check(altNew < altOld - 1500, "stallprep DescentPitch from 10 km beats Level creep (new " + altNew.ToString("0") + " vs old " + altOld.ToString("0") + ")");
+        Check(altNew < LearnFlight.StallAlt + 500, "DescentPitch reaches near 4 km from 10 km (" + altNew.ToString("0") + ")");
+        var high = new LearnIn { T = 1, Speed = 315, Alt = 10000, Vs = -20, Pitch = -5, GroundSpeed = 300, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        var highLf = new LearnFlight(); highLf.P.Dives.Add(new[] { 15.0, 28, 10, 5.5 }); highLf.Phase = "stallprep"; highLf.Step(high);
+        Check(highLf.Throttle == 0 && highLf.Pitch < -2, "stallprep idles and noses down from 10 km (thr " + highLf.Throttle.ToString("0.00") + ", pitch " + highLf.Pitch.ToString("0.0") + ")");
+        var near = new LearnIn { T = 1, Speed = 200, Alt = LearnFlight.StallAlt + 80, Vs = -2, Pitch = 2, GroundSpeed = 200, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        var hold = new LearnFlight(); hold.Phase = "stallprep"; hold.Step(near);
+        Check(hold.Throttle > .5 && Math.Abs(hold.Pitch) < 8, "near 4 km: power back on for level settle, not still diving");
     }
     static void PrepPorpoise()
     {

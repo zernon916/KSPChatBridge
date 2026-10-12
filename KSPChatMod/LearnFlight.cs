@@ -485,6 +485,27 @@ namespace KSPChatBridge
             if (double.IsNaN(alt) || alt <= SinkLowAlt) return SinkMax; if (alt >= SinkHighAlt) return SinkMaxHigh;
             return SinkMax + (SinkMaxHigh - SinkMax) * (alt - SinkLowAlt) / (SinkHighAlt - SinkLowAlt);
         }
+        /// <summary>Allowed descent sink (m/s) to a test altitude: best learned dive sink when available, else SinkMaxAt (no-profile fallback).</summary>
+        internal double DiveSinkAt(double alt)
+        {
+            double cap = SinkMaxAt(alt), learned = 0;
+            foreach (var d in P.Dives) if (d != null && d.Length > 1 && !double.IsNaN(d[1])) learned = Math.Max(learned, d[1]);
+            return learned > 5 ? FlightPolicy.Clamp(learned, 5, cap) : cap;
+        }
+        /// <summary>Descent to a test altitude: command a flight-path sink up to sinkMs, then blend into Level with the same LevelLead as climb capture.</summary>
+        internal static double DescentPitch(LearnIn i, double target, double sinkMs)
+        {
+            if (double.IsNaN(target)) return Level(i);
+            double above = i.Alt - target; if (above <= 0) return Level(i, target);
+            double sink = Math.Max(5, sinkMs), lead = FlightPolicy.Clamp(sink * LevelLead, 150, 3000);
+            double v = Math.Max(30, i.GroundSpeed), gamT = -Math.Asin(FlightPolicy.Clamp(sink / v, 0, .95)) * 180 / Math.PI;
+            double gam = i.Fpa, dive;
+            if (double.IsNaN(gam)) dive = FlightPolicy.Clamp(gamT, -45, 15);
+            else { double aoa = FlightPolicy.Clamp(i.Pitch - gam, -5, 15); dive = FlightPolicy.Clamp(aoa + gamT + .5 * (gamT - gam), -45, 15); }
+            if (above >= lead) return dive;
+            double lvl = Level(i, target), f = FlightPolicy.Clamp(above / lead, 0, 1);
+            return lvl + (dive - lvl) * f;
+        }
         internal double SinkFiltered { get { return vsF; } }
         void FilterVs(LearnIn i) { if (i.T < lastT) lastT = i.T; vsF += (i.Vs - vsF) * Math.Min(1, (i.T - lastT) / 2); lastT = i.T; }
         double SpeedPitch(LearnIn i, double factor = 1.2)
@@ -921,9 +942,15 @@ namespace KSPChatBridge
                         return;
                     }
                 case "stallprep":
-                    Throttle = .8; Pitch = Level(i, StallAlt); Bank = 0;
-                    if ((Math.Abs(i.Alt - StallAlt) < 150 && Math.Abs(i.Vs) < 3 && dt > 5) || dt > 180) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
-                    return;
+                    {   // From high (e.g. 10 km @ 315 m/s): idle and descend at learned/allowed sink, LevelOff into 4 km — don't creep at -4..-10 with 80% throttle.
+                        Bank = 0;
+                        if (i.Alt > StallAlt + 150) { Throttle = 0; Pitch = DescentPitch(i, StallAlt, DiveSinkAt(i.Alt)); }
+                        else { Throttle = .8; Pitch = Level(i, StallAlt); }
+                        // Allow time to descend from high (e.g. 10 km @ ~28 m/s ≈ 4 min); old 180 s timed out mid-creep.
+                        double prepCap = Math.Max(180, 60 + Math.Max(0, a0 - StallAlt) / 10);
+                        if ((Math.Abs(i.Alt - StallAlt) < 150 && Math.Abs(i.Vs) < 5 && dt > 5) || dt > prepCap) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
+                        return;
+                    }
                 case "stall":
                     {
                         Throttle = 0; Bank = 0; Elevator = FlightPolicy.Clamp(dt * .03, 0, 1); minV = Math.Min(minV, i.Speed);
