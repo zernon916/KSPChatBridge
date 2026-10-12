@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -249,6 +249,24 @@ internal static class ThrottleLearnTests
         var hold = new LearnFlight(); hold.Phase = "stallprep"; hold.Step(near);
         Check(hold.Throttle > .5 && Math.Abs(hold.Pitch) < 8, "near 4 km: power back on for level settle, not still diving");
     }
+    static void DescentToTestAlt()
+    {
+        var lf = new LearnFlight(); lf.P.Dives.Add(new[] { 10.0, 26, 5, 5.5 }); lf.P.Dives.Add(new[] { 20.0, 32, 8, 5.5 });
+        Check(lf.DiveSinkAt(8000) >= 26 && lf.DiveSinkAt(8000) <= LearnFlight.SinkMaxHigh + .1, "descent sink from learned dives, capped by SinkMaxAt");
+        var high = new LearnIn { T = 1, Speed = 280, Alt = 8000, Vs = -5, Pitch = 0, GroundSpeed = 280, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        lf.Phase = "turnprep"; lf.Step(high);
+        Check(lf.Throttle == 0 && lf.Pitch < LearnFlight.Level(high, LearnFlight.ClimbAlt) - 1, "turnprep from 8 km: idle DescentPitch, not Level creep (pitch " + lf.Pitch.ToString("0.0") + ")");
+        var sink = new LearnFlight(); sink.P.Dives.Add(new[] { 15.0, 27, 5, 5.5 }); sink.Phase = "sinkprep";
+        var sIn = new LearnIn { T = 1, Speed = 200, Alt = 7500, Vs = -5, Pitch = 0, GroundSpeed = 200, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        sink.Step(sIn);
+        Check(sink.Throttle == 0 && sink.Pitch < -1, "sinkprep from high: DescentPitch to 5 km");
+        // LevelOff lead: near target, DescentPitch blends toward Level (not full dive)
+        var near = new LearnIn { T = 1, Speed = 250, Alt = LearnFlight.ClimbAlt + 100, Vs = -8, Pitch = -2, GroundSpeed = 250, G = 1, GLimit = 8, FuelFrac = .8, Mass = 5.5, StallGuess = 60 };
+        double diveFar = LearnFlight.DescentPitch(new LearnIn { Speed = 250, Alt = 9000, Vs = -25, Pitch = -8, GroundSpeed = 245, G = 1 }, LearnFlight.ClimbAlt, 28);
+        double diveNear = LearnFlight.DescentPitch(near, LearnFlight.ClimbAlt, 28);
+        Check(diveNear > diveFar, "DescentPitch LevelOff lead eases the dive near the test altitude (near " + diveNear.ToString("0.0") + " vs far " + diveFar.ToString("0.0") + ")");
+        Check(Math.Abs(new LearnFlight().DiveSinkAt(9000) - LearnFlight.SinkMaxHigh) < .1, "no-profile descent fallback stays on SinkMaxAt");
+    }
     static void PrepPorpoise()
     {
         var old = PorpoiseSim(i => FlightPolicy.Clamp(3 + (FlightPolicy.Clamp((5000 - i.Alt) * .05, -15, 15) - i.Vs) * .6, -10, 15), 5300);
@@ -288,13 +306,15 @@ internal static class ThrottleLearnTests
     static void LearnThrottleStuck()
     {
         Check(PilotPolicy.EmergencySpeed(true, "ratesprep", 130, 336) == 336 && PilotPolicy.EmergencySpeed(false, null, 130, 336) == 130 && PilotPolicy.EmergencySpeed(true, "stall", 130, 336) == 130, "emergency speed: srf during Learn tests, IAS otherwise / in the stall test");
-        LearnFlight lf; double before = PipeThrottle("turnprep", false, out lf);
-        Check(before > .99, "repro: turnprep at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
-        foreach (var ph in new[] { "turnprep", "wait", "sinkprep" })
+        LearnFlight lf; double before = PipeThrottle("wait", false, out lf);
+        Check(before > .99, "repro: wait at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
+        foreach (var ph in new[] { "wait" })
         {
             double thr = PipeThrottle(ph, true, out lf);
             Check(thr < .6, "Learn " + ph + " (speed target / learn throttle) can reduce throttle at altitude: " + thr.ToString("0.00") + " after 40 s");
         }
+        // turnprep/sinkprep high above the test altitude now idle for DescentPitch (also cuts throttle)
+        Check(PipeThrottle("turnprep", true, out lf) < .6, "turnprep high: idle descent cuts throttle");
         // ratesprep (legacy) immediately skips bleed-down and runs rates at current speed
         var lr = new LearnFlight(); var r = In(0, 5000); r.Speed = 336; r.StallGuess = 120; lr.Step(r); lr.Phase = "ratesprep";
         r.T = .5; lr.Step(r);

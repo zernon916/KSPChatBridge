@@ -866,7 +866,9 @@ namespace KSPChatBridge
                     }
                 case "turnprep":
                     {
-                        double vT = TurnPrepSpeed(i); Bank = 0; Pitch = Level(i, ClimbAlt); SpeedTarget = vT;   // turns fly at the 5 km test altitude
+                        double vT = TurnPrepSpeed(i); Bank = 0;   // turns fly at the 5 km test altitude
+                        if (i.Alt > ClimbAlt + 200) { Throttle = 0; SpeedTarget = double.NaN; Pitch = DescentPitch(i, ClimbAlt, DiveSinkAt(i.Alt)); }   // learned/allowed sink, not Level's -10 m/s creep
+                        else { Pitch = Level(i, ClimbAlt); SpeedTarget = vT; }
                         if ((Math.Abs(i.Speed - vT) < Math.Max(5, .03 * vT) && Math.Abs(i.Alt - ClimbAlt) < 400) || dt > TurnPrepTimeout) { idx = 0; Go("turn", i, "Turn 10 deg bank at " + vT.ToString("0") + " m/s."); }
                         return;
                     }
@@ -889,10 +891,11 @@ namespace KSPChatBridge
                         return;
                     }
                 case "sinkprep":
-                    if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = LevelOff(i, SinkAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
+                    if (i.Alt > SinkAlt + 200) { Throttle = 0; Pitch = DescentPitch(i, SinkAlt, DiveSinkAt(i.Alt)); }   // down to 5 km at learned/allowed sink
+                    else if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = LevelOff(i, SinkAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
                     else { Throttle = .5; Pitch = SpeedPitch(i, SinkSpeedFactor); FilterVs(i); Throttle = Math.Max(Throttle, SinkLimit(i)); }
                     Bank = 0; if (double.IsNaN(sinkStart)) sinkStart = i.T;
-                    if ((i.Alt >= SinkAlt - 200 && i.Speed <= (SinkSpeedFactor + .03) * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
+                    if ((i.Alt >= SinkAlt - 200 && i.Alt <= SinkAlt + 200 && i.Speed <= (SinkSpeedFactor + .03) * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "climbback":
                     Throttle = 1; Pitch = LevelOff(i, ClimbAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; SampleClimb(i);   // climb-back / sinkclimb: 5 km (ClimbAlt == SinkAlt)
