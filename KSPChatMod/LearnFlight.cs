@@ -299,7 +299,7 @@ namespace KSPChatBridge
             if (queue != null) foreach (int k in queue) { if (k == 12) landRequested = true; Enqueue(k); }   // 12 checked before LEARN: land when the queue is done (live 22:27: it was dropped and the plane waited forever)
         }
         /// <summary>Queue in checklist order (9, 9b, 10, 10b, 11): profile Rerun is numerically sorted, which put 91/101 after 11 (live 21:17).</summary>
-        /// <summary>Flaps FULL only on station: 9b in the sink map (or settling at 5 km), 10b at 4 km for the stall and its recovery.
+        /// <summary>Flaps FULL only on station: 9b in the sink map (or settling at 5 km), 10b at 10 km for the stall and its recovery.
         /// Up for every descent/climb to the test altitude, every climb-back and once the test ends, aborts or is skipped.</summary>
         internal int FlapsFor(string ph, double alt)
         {
@@ -314,7 +314,7 @@ namespace KSPChatBridge
             for (int j = 0; j < Queue.Count; j++) if (Array.IndexOf(Codes, Queue[j]) > ki) { at = j; break; }
             Queue.Insert(at, k);
         }
-        /// <summary>Tests flown at the 4 km stall altitude: no climb back to 5 km in between.</summary>
+        /// <summary>Tests flown at the 10 km stall altitude: no climb back to 5 km in between.</summary>
         /// <summary>Stall break: full back stick and the nose falls 3 deg below its peak while not above level+2, or the sink passes 15 m/s.</summary>
         internal static bool StallBroke(double elevator, double pitch, double stickPeak, double vs)
         {
@@ -384,7 +384,7 @@ namespace KSPChatBridge
                 if (activeTest != 0 && Array.IndexOf(ActiveSteps(activeTest), k) >= 0) return ph;
                 ph = i.Alt < ClimbAlt - 500 && !waitHere ? "climbback" : "wait";
             }
-            if (ph == "climbback" && Queue.Count > 0 && AtStallAlt(Queue[0])) ph = "wait";   // next test is at 4 km: go straight there (live 21:16: climbed to 5 km, then "level at 4 km first")
+            if (ph == "climbback" && Queue.Count > 0 && AtStallAlt(Queue[0])) ph = "wait";   // next test is at 10 km: go straight there (live 21:16: climbed to 5 km, then "level at 4 km first")
             string pre = status ?? "";
             if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest) + " done. " + (status ?? ""); activeTest = 0; }
             setupDone = true; flapPass = stallFlapPass = false;
@@ -692,7 +692,7 @@ namespace KSPChatBridge
         }
 
         void EndTest(LearnIn i) { if (ManualMode) Go("wait", i, null); else Finish(false, ""); }
-        internal static readonly string[] StepNames = { "Takeoff + ground roll", "Climb to 5 km", "Idle decel / full-power accel", "Econ cruise 60 s", "Max level speed", "Roll / pitch rates", "Max safe turn / envelope", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 4 km", "Stall recovery", "Land KSC 27 + rollout" };
+        internal static readonly string[] StepNames = { "Takeoff + ground roll", "Climb to 5 km", "Idle decel / full-power accel", "Econ cruise 60 s", "Max level speed", "Roll / pitch rates", "Max safe turn / envelope", "Idle dives 5-20 deg", "Sink map 0-10 m/s", "Stall at 10 km", "Stall recovery", "Land KSC 27 + rollout" };
         internal static int StepCount { get { return StepNames.Length; } }
         LearnIn last; int stepAtDone = -1;
         /// <summary>1..9 for the current phase.</summary>
@@ -1002,9 +1002,9 @@ namespace KSPChatBridge
                 case "sinkmap":
                     {
                         Pitch = SpeedPitch(i, SinkSpeedFactor); Bank = 0;
-                        if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { SinkDone(i, "Sink map: 10 min cap reached, keeping " + SinkTbl.Count + " points. Level at 4 km for the stall test."); return; }
+                        if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { SinkDone(i, "Sink map: 10 min cap reached, keeping " + SinkTbl.Count + " points. Level at 10 km for the stall test."); return; }
                         if (i.Speed < 1.15 * i.StallGuess) { if (double.IsNaN(sinkSlowAt)) sinkSlowAt = i.T; } else sinkSlowAt = double.NaN;
-                        if (!double.IsNaN(sinkSlowAt) && i.T - sinkSlowAt >= SinkSlowS) { SinkDone(i, "Sink map stopped (speed under 1.15x stall); " + SinkTbl.Count + " points. level at 4 km for the stall test."); return; }
+                        if (!double.IsNaN(sinkSlowAt) && i.T - sinkSlowAt >= SinkSlowS) { SinkDone(i, "Sink map stopped (speed under 1.15x stall); " + SinkTbl.Count + " points. level at 10 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         FilterVs(i);
                         if (Phase == "sinkdown")
@@ -1030,12 +1030,12 @@ namespace KSPChatBridge
                             P.Curves.Sink.Add(SinkTargets[idx], i.Mass, stepThr, i.Speed, flapPass ? 3 : 0); if (lagDone) P.Curves.ThrottleLag.Add(lagS, i.Mass, .01); idx--;
                         }
                         lastVsF = vsF;
-                        if (idx < 0) SinkDone(i, "Sink map done (" + SinkTbl.Count + " points). Level at 4 km for the stall test.");
+                        if (idx < 0) SinkDone(i, "Sink map done (" + SinkTbl.Count + " points). Level at 10 km for the stall test.");
                         else if (stepThr >= 1 && i.T - prevT >= RampWait) SinkDone(i, "Sink map: full power reached at " + (-vsF).ToString("0.0") + " m/s sink; " + SinkTbl.Count + " points.");
                         return;
                     }
                 case "stallprep":
-                    {   // From high (e.g. 10 km @ 315 m/s): idle and descend at learned/allowed sink, LevelOff into 4 km — don't creep at -4..-10 with 80% throttle.
+                    {   // From high (e.g. 10 km @ 315 m/s): idle and descend at learned/allowed sink, LevelOff into 10 km — don't creep at -4..-10 with 80% throttle.
                         Bank = 0;
                         if (i.Alt > StallAlt + 150) { Throttle = 0; Pitch = DescentPitch(i, StallAlt, DiveSinkAt(i.Alt)); }
                         else if (i.Alt < StallAlt - 300) { Throttle = 1; Pitch = LevelOff(i, StallAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); }   // Oct 12: climb to the 10 km start

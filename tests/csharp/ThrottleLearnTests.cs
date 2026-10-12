@@ -426,7 +426,7 @@ internal static class ThrottleLearnTests
         // 9b / 10b queue in checklist order (profile Rerun is sorted 9,10,11,91,101)
         var qf = new LearnFlight(null, new[] { 9, 10, 11, 91, 101 }, true);
         Check(string.Join(",", qf.Queue.ConvertAll(x => x.ToString()).ToArray()) == "9,91,10,101,11", "queue order 9,9b,10,10b,11 (" + string.Join(",", qf.Queue.ConvertAll(x => x.ToString()).ToArray()) + ")");
-        Check(LearnFlight.AtStallAlt(11) && LearnFlight.AtStallAlt(101) && !LearnFlight.AtStallAlt(9), "10/10b/11 fly at 4 km");
+        Check(LearnFlight.AtStallAlt(11) && LearnFlight.AtStallAlt(101) && !LearnFlight.AtStallAlt(9), "10/10b/11 fly at 10 km");
     }
     static void LearnMenu()
     {
