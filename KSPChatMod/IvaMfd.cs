@@ -280,8 +280,10 @@ namespace KSPChatBridge
             }
             if (Comms && label == "SEND") { focused = chatF; Submit(); return; }
             if (Comms && label == "CLEAR") { chatF.Set(""); return; }
-            AicsMenu.OnKey(Item, label);
+            if (MfdNav.LearnKeyAction(Item, label) == "open") { OpenItem("learn"); return; }
+            Pressing = true; try { AicsMenu.OnKey(Item, label); } finally { Pressing = false; }
         }
+        internal static bool Pressing;
 
         // text-field rows on the screen (rows counted from the top of the screen box)
         int Cols { get { return (int)((IvaLayout.Screen.Wd - 12) / CellW(TextPx)); } }

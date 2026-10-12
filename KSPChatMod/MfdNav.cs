@@ -79,6 +79,10 @@ namespace KSPChatBridge
         /// <summary>RPM-style fuel field: "LF 85%", "!Empty!" below 1%, "" when the craft carries none.</summary>
         internal static string FuelStatus(double amount, double cap) { if (cap <= 0) return ""; double f = amount / cap; return f < .01 ? "!Empty!" : "LF " + (100 * f).ToString("0") + "%"; }
         internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
+        /// <summary>Set by the flight controller: a Learn flight is running (LEARN page key shows RUNNING; there is no Learn abort).</summary>
+        internal static Func<bool> LearnRunning;
+        /// <summary>Oct 12: the LEARN key on ABOUT / AIRCRAFT only navigates to the LEARN page; START LEARN on that page starts it.</summary>
+        internal static string LearnKeyAction(string item, string key) { if (key == "LEARN" && (item == "about" || item == "aircraft" || item == "learn")) return "open"; if (key == "START LEARN" && item == "learn") return "start"; if (key == "RUNNING" && item == "learn") return "status"; return null; }
         static string[] RightKeys(string item)
         {
             switch (item)
@@ -87,7 +91,7 @@ namespace KSPChatBridge
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
                 case "about": return new[] { "LEARN", "<", ">", "SCROLL UP", "SCROLL DN" };
-                case "learn": return new[] { "LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };
+                case "learn": return new[] { LearnRunning != null && LearnRunning() ? "RUNNING" : "START LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };   // Oct 12: only START LEARN starts a flight
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };

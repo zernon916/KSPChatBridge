@@ -19,6 +19,7 @@ namespace KSPChatBridge
         {
             if (vessel == null) return "No active vessel.";
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
+            MfdNav.LearnRunning = () => instance != null && instance.learn != null && !instance.learn.Done;
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
             // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
             var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear(); if ((profile == null || !profile.NoLand) && !queue.Contains(12)) queue.Add(12);   // box 12 checked by default (Oct 12)

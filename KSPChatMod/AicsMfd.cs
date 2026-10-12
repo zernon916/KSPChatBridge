@@ -401,7 +401,10 @@ namespace KSPChatBridge
             if ((item == "about" || item == "learn") && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
             if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }
             if (item == "about" && key == ">") { MfdNav.AboutTurn(1, NativeFlightController.AboutTitles.Length); return; }
-            if ((item == "about" || item == "learn") && key == "LEARN") { Tool("learn_plane", "{}"); return; }
+            var la = MfdNav.LearnKeyAction(item, key);
+            if (la == "open") { if (!AicsIvaMfd.Pressing) ShowMfdItem("learn"); return; }   // navigation only (IVA opens its own page)
+            if (la == "start") { Tool("learn_plane", "{}"); return; }
+            if (la == "status") { ChatWindow.Notice("[LEARN] " + NativeFlightController.LearnStatus); return; }
             if (key == null) return;
             switch (item)
             {
@@ -447,7 +450,7 @@ namespace KSPChatBridge
             switch (key)
             {
                 case "TAKEOFF": Tool("takeoff", "{}"); break; case "LAND": Tool("land", "{}"); break; case "GO AROUND": Tool("go_around", "{}"); break;
-                case "ABORT": Tool("abort", "{}"); break; case "STOP": Tool("stop_current", "{}"); break; case "STATUS": Tool("autopilot_status", "{}"); break; case "LEARN": Tool("learn_plane", "{}"); break;
+                case "ABORT": Tool("abort", "{}"); break; case "STOP": Tool("stop_current", "{}"); break; case "STATUS": Tool("autopilot_status", "{}"); break; case "LEARN": break;   // handled above: opens the LEARN page
             }
         }
     }
