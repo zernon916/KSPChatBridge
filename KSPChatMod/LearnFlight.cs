@@ -121,7 +121,7 @@ namespace KSPChatBridge
             double vy = !double.IsNaN(Perf.CruiseSpeed) && Perf.CruiseSpeed > 0 ? Math.Min(ScaleSpeed(Perf.CruiseSpeed, M0, mass) * .85, 1.55 * stall) : 1.4 * stall;
             return Math.Max(1.3 * stall, vy);
         }
-        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN;
+        internal double FlapStall = double.NaN, FlapStallAltLoss = double.NaN, FlapLimit = double.NaN, Ceiling = double.NaN;   // Ceiling: learned practical ceiling (m), climb < 1 m/s at full power for 60 s
         /// <summary>Oct 12 stall timing (clean / flaps FULL): cut->break, break->terminal sink, recovery; losses from the BREAK.</summary>
         internal readonly StallTiming StallT = new StallTiming(), FlapStallT = new StallTiming();
         internal bool FlapSub = true, FlapStallSub = true;   // 9b / 10b sub-steps (toggle-able)   // steps unchecked for the next LEARN (persisted)
@@ -166,7 +166,7 @@ namespace KSPChatBridge
             var dict = new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
-                { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
+                { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "ceiling", N(Ceiling) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
             if (StallT.Present) dict["stall_timing"] = StallT.ToDict(); if (FlapStallT.Present) dict["flap_stall_timing"] = FlapStallT.ToDict();
             if (NoLand) dict["no_land"] = true;
@@ -190,7 +190,7 @@ namespace KSPChatBridge
                     (key == "turns" ? p.Turns : p.Dives).Add(a);
                 }
             if (d.TryGetValue("turn_envelope", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 6) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.Envelope.Add(ar); }
-            p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit");
+            p.FlapStall = D(d, "flap_stall"); p.FlapStallAltLoss = D(d, "flap_stall_alt_loss"); p.FlapLimit = D(d, "flap_limit"); p.Ceiling = D(d, "ceiling");
             if (d.TryGetValue("flap_sub", out o) && o is bool) p.FlapSub = (bool)o; if (d.TryGetValue("flap_stall_sub", out o) && o is bool) p.FlapStallSub = (bool)o;
             if (d.TryGetValue("sink_flaps", out o) && o is System.Collections.IList) foreach (var r in (System.Collections.IList)o) { var l = r as System.Collections.IList; if (l == null || l.Count < 3) continue; var ar = new double[l.Count]; for (int j = 0; j < l.Count; j++) { try { ar[j] = l[j] == null ? double.NaN : Convert.ToDouble(l[j], System.Globalization.CultureInfo.InvariantCulture); } catch (Exception) { ar[j] = double.NaN; } } p.SinkFlaps.Add(ar); }
             if (d.TryGetValue("perf", out o)) p.Perf.FromDict(o as Dictionary<string, object>);
@@ -304,7 +304,7 @@ namespace KSPChatBridge
         internal int FlapsFor(string ph, double alt)
         {
             if (flapPass && (ph == "sinkdown" || ph == "sinkmap" || (ph == "sinkprep" && Math.Abs(alt - SinkAlt) <= 200))) return 3;
-            if (stallFlapPass && (ph == "stall" || ph == "stallsink" || ph == "stallrec" || (ph == "stallprep" && Math.Abs(alt - StallAlt) < 150))) return 3;
+            if (stallFlapPass && (ph == "stall" || ph == "stallsink" || ph == "stallrec" || (ph == "stallprep" && Math.Abs(alt - StallTarget) < 150))) return 3;
             return 0;
         }
         void Enqueue(int k)
@@ -430,6 +430,10 @@ namespace KSPChatBridge
             }
             return ph;
         }
+        /// <summary>Stall test altitude: 10 km, or 250 m under the learned practical ceiling when lower (Stearwing A300 stuck at ~7.67 km).</summary>
+        internal static double StallTargetFor(double ceiling) { return double.IsNaN(ceiling) || ceiling <= 0 ? StallAlt : Math.Min(StallAlt, ceiling - CeilingMargin); }
+        internal double StallTarget { get { return StallTargetFor(P.Ceiling); } }
+        internal const double CeilingMargin = 250, CeilingVs = 1, CeilingWait = 60, PrepClimbPitchMax = 15; double ceilSince = double.NaN;
         internal const double ClimbAlt = 5000, StallAlt = 10000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, TurnSpikeG = 1.0, TurnSpikeStress = .97, LoadTau = .5, Seg = 20, DiveSeg = 10;
         internal static readonly int[] Banks = { 10, 20, 30, 40, 45, 50, 55, 60, 65, 70, 75, 80 }; /* stress test: short dwell, ladder runs to the real limit */ internal const double TurnSeg = 10; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };   // max-safe-turn stress test (Luke 10:06 AM) internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
         internal const double TurnPrepTimeout = 120; internal const double SinkAlt = 5000, RampWait = 5, SinkSpeedFactor = 1.25; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
@@ -1037,12 +1041,23 @@ namespace KSPChatBridge
                 case "stallprep":
                     {   // From high (e.g. 10 km @ 315 m/s): idle and descend at learned/allowed sink, LevelOff into 10 km — don't creep at -4..-10 with 80% throttle.
                         Bank = 0;
-                        if (i.Alt > StallAlt + 150) { Throttle = 0; Pitch = DescentPitch(i, StallAlt, DiveSinkAt(i.Alt)); }
-                        else if (i.Alt < StallAlt - 300) { Throttle = 1; Pitch = LevelOff(i, StallAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); }   // Oct 12: climb to the 10 km start
-                        else { SpeedTarget = 1.4 * i.StallGuess; Pitch = Level(i, StallAlt); }   // actually slow down before the stall (live 20:20: entered at 318 m/s and zoomed)
+                        double sAlt = StallTarget;
+                        if (i.Alt > sAlt + 150) { ceilSince = double.NaN; Throttle = 0; Pitch = DescentPitch(i, sAlt, DiveSinkAt(i.Alt)); }
+                        else if (i.Alt < sAlt - 300)
+                        {   // Oct 12: climb to the stall start; capped climb pitch (flat 30 deg sat at the A300's 7.67 km ceiling, nose ~1.5)
+                            Throttle = 1; Pitch = LevelOff(i, sAlt, Math.Min(PrepClimbPitchMax, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)));
+                            if (i.Vs >= CeilingVs) ceilSince = double.NaN;
+                            else if (double.IsNaN(ceilSince)) ceilSince = i.T;
+                            else if (i.T - ceilSince >= CeilingWait)
+                            {   // practical ceiling: save it, stall 250 m under it (this run and the next)
+                                P.Ceiling = i.Alt; P.Note("ceiling", i.Alt, i.Mass); ceilSince = double.NaN;
+                                Status = "Ceiling reached: climb under " + CeilingVs.ToString("0") + " m/s at full power for " + CeilingWait.ToString("0") + " s at " + i.Alt.ToString("0") + " m (saved). Stall test at " + StallTarget.ToString("0") + " m.";
+                            }
+                        }
+                        else { ceilSince = double.NaN; SpeedTarget = 1.4 * i.StallGuess; Pitch = Level(i, sAlt); }   // actually slow down before the stall (live 20:20: entered at 318 m/s and zoomed)
                         // Allow time to descend from high (e.g. 10 km @ ~28 m/s ≈ 4 min); old 180 s timed out mid-creep.
-                        double prepCap = Math.Max(180, 60 + Math.Abs(a0 - StallAlt) / 8);
-                        if ((Math.Abs(i.Alt - StallAlt) < 150 && Math.Abs(i.Vs) < 5 && i.Speed < StallEntryFactor * i.StallGuess && dt > 5) || dt > prepCap) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
+                        double prepCap = Math.Max(180, 60 + Math.Abs(a0 - sAlt) / 8);
+                        if ((Math.Abs(i.Alt - sAlt) < 150 && Math.Abs(i.Vs) < 5 && i.Speed < StallEntryFactor * i.StallGuess && dt > 5) || dt > prepCap) Go("stall", i, "Stall test: power idle, back-stick until the nose drops.");
                         return;
                     }
                 case "stall":

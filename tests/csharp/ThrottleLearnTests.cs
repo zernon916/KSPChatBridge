@@ -257,6 +257,15 @@ internal static class ThrottleLearnTests
         Check(LearnFlight.StallAlt == 10000, "stall tests start at 10 km");
         var cl = new LearnFlight(); var c = In(0, 5000); c.StallGuess = 84; c.Speed = 150; cl.Step(c); cl.Phase = "stallprep"; c.T = 1; cl.Step(c);
         Check(cl.Throttle == 1 && cl.Pitch > 0, "stallprep below 10 km: full power climb (thr " + cl.Throttle + ")");
+        Check(cl.Pitch <= LearnFlight.PrepClimbPitchMax + .01, "stallprep climb pitch capped (" + cl.Pitch.ToString("0.0") + ")");
+        Check(LearnFlight.StallTargetFor(double.NaN) == 10000 && LearnFlight.StallTargetFor(7670) == 7420 && LearnFlight.StallTargetFor(12000) == 10000, "stall alt = min(10 km, learned ceiling - 250 m)");
+        {   // A300 live 02:43: full power, vs ~0 at 7670 m for 60 s -> ceiling saved, stall target 7420, profile round-trips it
+            var ce = new LearnFlight(); var k = In(0, 7670); k.StallGuess = 84; k.Speed = 219; k.Vs = .3; ce.Step(k); ce.Phase = "stallprep";
+            for (int s = 1; s <= 650; s++) { k.T = s * .1; ce.Step(k); }
+            Check(Math.Abs(ce.P.Ceiling - 7670) < 1 && ce.StallTarget == 7420 && ce.Status.Contains("Ceiling reached"), "climb < 1 m/s for 60 s: ceiling saved, stall at ceiling - 250 (" + ce.P.Ceiling + ", " + ce.Status + ")");
+            var ceRt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(ce.P.ToDict())) as Dictionary<string, object>);
+            Check(Math.Abs(ceRt.Ceiling - 7670) < 1, "ceiling persists in the profile");
+        }
         Check(!LearnFlight.StallBroke(.5, -12, 10, -30) && LearnFlight.StallBroke(1, 4, 9, -3) == false && LearnFlight.StallBroke(1, 1, 9, -3) && LearnFlight.StallBroke(1, 5, 6, -16), "break = nose can't stay level at full back stick (or sink > 15)");
         var lf = new LearnFlight(); var q = In(0, LearnFlight.StallAlt); q.StallGuess = 84; q.Speed = 120; q.Rho = 1.225; lf.Step(q); lf.Phase = "stall";
         double t = 0, alt = LearnFlight.StallAlt, vs = -20, v = 120, pitch = 2, cutAlt = alt, minAlt = alt, breakAlt = double.NaN;

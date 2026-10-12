@@ -79,7 +79,7 @@ namespace KSPChatBridge
                 learnTraceNext = t + 2; double fpa = PilotPolicy.FlightPathAngle(vessel.verticalSpeed, hs);
                 ChatLog.Write("learn", learn.Phase + " cmd bank " + (double.IsNaN(learn.Bank) ? "-" : learn.Bank.ToString("0")) + " act " + Roll().ToString("0") + ", cmd pitch " + (double.IsNaN(learn.Pitch) ? "-" : learn.Pitch.ToString("0")) + " nose " + pitch.ToString("0.0") + " fpa " + fpa.ToString("0.0")
                     + ", hdg rate " + learnRates.HeadingRate.ToString("0.0") + " course rate " + learnRates.CourseRate.ToString("0.0") + " roll rate " + learnRates.RollRate.ToString("0.0") + " pitch rate " + learnRates.PitchRate.ToString("0.0")
-                    + ", thr " + ((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100).ToString("0.00") + "%, spd " + vessel.srfSpeed.ToString("0"));
+                    + ", thr " + ((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100).ToString("0.00") + "%, spd " + vessel.srfSpeed.ToString("0") + ", shaped " + lastDesiredPitch.ToString("0.0") + " elev " + elevator.ToString("0.00") + (CraftClass.Gentle(CraftCls) ? " (heavy: pitch rate g-limited " + CraftClass.HeavyPitchG.ToString("0.0") + " g)" : "") + (Math.Abs(elevator) > .98 ? " PITCH LIMITED: elevator saturated, no authority" : !double.IsNaN(learn.Pitch) && learn.Pitch - pitch > 5 && lastDesiredPitch - pitch < 2 ? " PITCH LIMITED: shaper/g-limit" : ""));
             }
         }
         double learnTraceNext; string learnPhaseSeen = "";
