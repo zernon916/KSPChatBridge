@@ -2223,8 +2223,19 @@ class Program
             bool back = bh[MfdNav.BackKey] == null; foreach (var g in MfdNav.Groups(true)) foreach (var it in g.Items) back &= MfdNav.Bottom(false, it.Id, 0, MfdNav.Pages(g))[MfdNav.BackKey] == "BACK";
             Check(back, "BACK at the same key (bottom-left) on every page except HOME");
             Check(Array.IndexOf(MfdNav.Right("taxi"), "HANGAR") >= 0 && MfdNav.SmartMode("RETRO") == "RETROGRADE" && Array.IndexOf(MfdNav.Right("mjguide"), "EXEC NODE") >= 0, "context keys: taxi to hangar, MechJeb modes");
-            Check(MfdNav.ChatKind("You: hi") == "pilot" && MfdNav.ChatKind("AICS: Taxi arrived") == "system" && MfdNav.ChatKind("[SYSTEM] CAUTION: x") == "system" && MfdNav.ChatKind("Jebediah: roger") == "intercom" && MfdNav.ChatShows("all", "anything"), "COMMS filter pages: PILOT / SYSTEM / INTERCOM / ALL");
+            Check(MfdNav.ChatKind("You: hi") == "pilot" && MfdNav.ChatKind("AICS: Taxi arrived") == "system" && MfdNav.ChatKind("[SYSTEM] CAUTION: x") == "system" && MfdNav.ChatKind("Jebediah: roger") == "reply" && MfdNav.ChatShows("all", "anything"), "COMMS filter pages: PILOT / SYSTEM / INTERCOM / ALL");
         Check(MfdNav.ChatShows("intercom", "[COMMS] Bill (Eng): Are we there yet?") && MfdNav.ChatShows("intercom", "[INTERCOM] Jebediah (Pilot): hi") && MfdNav.ChatShows("intercom", "Jebediah: I'm autopiloting") && MfdNav.ChatShows("intercom", "You: hi") && !MfdNav.ChatShows("intercom", "[SYSTEM] WARNING: x") && !MfdNav.ChatShows("system", "[COMMS] Bill (Eng): x") && !MfdNav.ChatShows("intercom", "[LEARN] Test 10"), "INTERCOM shows all crew talk + your lines; SYSTEM keeps system/LEARN");
+        {   // Oct 12 COMMS full pass: one check per channel over every message source
+            string you = "You: land at KSC", rJeb = "Jebediah: I'm autopiloting, Captain.", rAp = "Autopilot: holding 5000 m", cChat = "[INTERCOM] Jebediah (Pilot): She's flying nicely today.", eng = "[COMMS] Bill (Eng): Any chance we arrive this week?",
+                drill = "[INTERCOM] Crew panic test: FAILED (Bill and Bob)", learn = "[LEARN] Test 10 Stall at 10 km: power idle", sys = "[SYSTEM] WARNING: landing gear lowered", aics = "AICS: Taxi arrived", sci = "[SCIENCE] Goo observation transmitted",
+                note = "Local autoland: going around - not lined up", ferry = "FERRY: runway 60 km", flight = "Test flight started from the air.";
+            var all = new[] { you, rJeb, rAp, cChat, eng, drill, learn, sys, aics, sci, note, ferry, flight };
+            Func<string, string[]> on = pg => Array.FindAll(all, l => MfdNav.ChatShows(pg, l));
+            Check(string.Join("|", on("system")) == string.Join("|", new[] { learn, sys, aics, sci, note, ferry, flight }), "COMMS SYSTEM: only [LEARN]/[SYSTEM]/AICS/alarm/science/notices (" + string.Join(" || ", on("system")) + ")");
+            Check(string.Join("|", on("pilot")) == string.Join("|", new[] { you, rJeb, rAp }), "COMMS PILOT: your lines + the pilot / Autopilot replies (" + string.Join(" || ", on("pilot")) + ")");
+            Check(string.Join("|", on("intercom")) == string.Join("|", new[] { you, rJeb, rAp, cChat, eng, drill }), "COMMS INTERCOM: crew chatter / reactions / drill + replies + your lines (" + string.Join(" || ", on("intercom")) + ")");
+            Check(on("all").Length == all.Length, "COMMS ALL: everything");
+        }
         Check(MfdNav.PositionPage(0, 5) == "map" && MfdNav.PositionPage(2, 5) == "intercom" && MfdNav.PositionPage(4, 5) == "aircraft" && MfdNav.PositionPage(1, 5) == "ils" && MfdNav.PositionPage(3, 5) == "chart", "IVA default pages by position: MAP left, COMMS centre, AUTOPILOT right");
             Check(MfdNav.IsMultiplayer(new[] { "KSPChatBridge", "LmpClient" }) && MfdNav.IsMultiplayer(new[] { "DarkMultiPlayer" }) && !MfdNav.IsMultiplayer(new[] { "MechJeb2" }), "Luna Multiplayer / DMP detected -> single-player warning");
             Check(MfdNav.RpmHidden("auto", true) && !MfdNav.RpmHidden("auto", false) && MfdNav.RpmHidden("off", false) && !MfdNav.RpmHidden("on", true), "RPM AICS pages auto/on/off: auto hides them where the native MFD is");

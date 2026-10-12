@@ -142,11 +142,19 @@ namespace KSPChatBridge
         {
             string l = line ?? "";
             if (l.StartsWith("You:") || l.StartsWith("You (")) return "pilot";
-            if (l.StartsWith("[INTERCOM]") || l.StartsWith("[COMMS]")) return "intercom";   // Oct 12: crew chatter / engineer lines were caught by the "[" -> system rule
-            if (l.StartsWith("AICS") || l.StartsWith("[SYSTEM]") || l.StartsWith("[") || l.StartsWith("SYSTEM") || l.StartsWith("CAUTION") || l.StartsWith("WARNING") || l.StartsWith("MAYDAY")) return "system";
-            return "intercom";
+            if (l.StartsWith("[INTERCOM]") || l.StartsWith("[COMMS]")) return "intercom";   // Oct 12: crew chatter / reactions / drill lines (IntercomTalk.Fmt)
+            if (l.StartsWith("AICS") || l.StartsWith("[") || l.StartsWith("SYSTEM") || l.StartsWith("CAUTION") || l.StartsWith("WARNING") || l.StartsWith("MAYDAY")) return "system";   // [SYSTEM] [LEARN] [ALERT] ...
+            // Oct 12: a reply to the player is "Name: text" (CrewVoice.Line: pilot kerbal first name or "Autopilot"); every other untagged notice
+            // ("Local autoland: ...", "FERRY: ...", "Test flight ...") is a system message
+            int c = l.IndexOf(": "); string sp = c > 0 ? l.Substring(0, c) : "";
+            if (sp.Length >= 2 && sp.Length <= 20 && char.IsUpper(sp[0]) && sp.IndexOf(' ') < 0 && sp != sp.ToUpperInvariant()) { foreach (var ch in sp) if (!char.IsLetter(ch) && ch != '-' && ch != '\'') return "system"; return "reply"; }
+            return "system";
         }
-        internal static bool ChatShows(string page, string line) { string k = ChatKind(line); return page == "all" || k == page || (page == "intercom" && k == "pilot"); }   // INTERCOM = the crew conversation, your own lines included
+        internal static bool ChatShows(string page, string line)
+        {   // SYSTEM: system only. PILOT: your lines + the replies to you. INTERCOM: crew talk + replies + your lines. ALL: everything.
+            string k = ChatKind(line);
+            return page == "all" || k == page || (page == "pilot" && k == "reply") || (page == "intercom" && (k == "pilot" || k == "reply"));
+        }   // INTERCOM = the crew conversation, your own lines included
 
         static readonly string[] MpAssemblies = { "LmpClient", "LunaMultiplayer", "LmpCommon", "DarkMultiPlayer", "DMPClient", "KMP", "KerbalMultiPlayer" };
         /// <summary>A multiplayer mod (Luna Multiplayer, DarkMultiPlayer, ...) is loaded: AICS is single-player only.</summary>
