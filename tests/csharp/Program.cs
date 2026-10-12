@@ -1147,6 +1147,13 @@ class Program
         var lines = cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 100);
         Check(lines.Count == crew.Count && lines[0].Name == "Sidry Kerman" && lines.Exists(l => l.ToString().Contains("Bob (Sci)")), "emergency: pilot first, then every named kerbal (Luke)");
         Check(cc.Emergency("parts", "Wing", crew, "Sidry Kerman", 105).Count == 0, "emergency chatter rate-limited per member");
+        {   // Oct 12: stall reactions - crew panics first, pilot answers last; during Learn it's a test
+            var sc = new CrewChatter(new Random(3)); var st = sc.Emergency("stall_test", "test 10 Stall", crew, "Sidry Kerman", 500);
+            Check(st.Count >= 2 && st[st.Count - 1].Trait == "pilot" && st[0].Trait != "pilot" && st[st.Count - 1].Canned.Length > 0, "stall test: crew panic first, then the pilot (" + string.Join(" | ", st.ConvertAll(x => x.Name + ": " + x.Canned).ToArray()) + ")");
+            var sr = new CrewChatter(new Random(4)).Emergency("stall", "stall warning", crew, "Sidry Kerman", 500);
+            Check(sr.Count >= 2 && sr[sr.Count - 1].Trait == "pilot" && !sr[sr.Count - 1].Canned.Contains("TEST"), "real stall: pilot recovers seriously");
+            Check(CrewPrompts.FactsFor("stall_test", "test 10", 1).Contains("ON PURPOSE") && CrewChatter.StallCooldownS >= 45 && CrewChatter.StallCooldownS <= 60, "stall_test facts + 45-60 s cooldown");
+        }
         var tc = new CrewChatter(new Random(2)); int posted = 0;
         for (int s = 0; s < 1200; s++) { var o = tc.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN); if (s < 120) Check(o.Count == 0, "no trip chatter in the first 2 min"); posted += o.Count; }
         Check(posted > 0, "trip chatter posts on a long flight");

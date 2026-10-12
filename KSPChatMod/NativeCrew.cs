@@ -96,6 +96,14 @@ namespace KSPChatBridge
 
         System.Collections.IEnumerator After(float seconds, Action act) { yield return new WaitForSeconds(seconds); act(); }
 
+        float stallCrewNext;
+        /// <summary>Oct 12: crew reaction to a stall (stall emergency, or a Learn stall break): cooldown ~50 s; during Learn the pilot says it's a test.</summary>
+        void StallCrew()
+        {
+            if (Time.realtimeSinceStartup < stallCrewNext) return; stallCrewNext = Time.realtimeSinceStartup + (float)CrewChatter.StallCooldownS;
+            bool test = learn != null && !learn.Done;
+            CrewEmergency(test ? "stall_test" : "stall", test ? (learn.ActiveTest != 0 ? "test " + LearnFlight.CodeName(learn.ActiveTest) : "Learn " + learn.Phase) : "stall warning");
+        }
         /// <summary>Problem events: pilot first, then every named kerbal aboard, staggered, rate-limited, canned fallback.</summary>
         internal static void CrewEmergency(string kind, string part)
         {
