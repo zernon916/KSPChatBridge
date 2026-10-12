@@ -784,7 +784,7 @@ namespace KSPChatBridge
                     double st = SinkThrottle(directVs.Value);
                     if (!double.IsNaN(st)) throttle = runway.Phase == "flare" ? st : .5 * throttle + .5 * st;
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
-                if (mode == "landing" && runway != null && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
+                if (mode == "landing" && runway != null && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
                 { throttle = 0; throttleWhy = "approach high/fast: idle"; }   // Oct 12 (A300 03:29): sink-map blend held 46-69% while 800 m high and 20+ m/s fast
             if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
                 { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch

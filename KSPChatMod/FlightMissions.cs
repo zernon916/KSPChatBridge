@@ -375,9 +375,12 @@ namespace KSPChatBridge
             return altitude <= pathAlt ? Math.Max(wpAlt, altitude) : Math.Max(wpAlt, pathAlt);
         }
         /// <summary>Oct 12 19:13: speedbrakes only above the planned speed (retract below it); HIGH alone never holds them out.</summary>
-        internal static bool BrakesWanted(bool speedHoldWants, bool high, double speed, double plan) { return speed > plan && (speedHoldWants || high); }
+        internal static bool BrakesWanted(bool speedHoldWants, bool high, double speed, double plan) { return speed > plan + (speedHoldWants || high ? 0 : 2); }   // Luke Oct 12: airbrakes whenever above plan
         /// <summary>Idle when high only while not slow: below plan - 5 the speed hold flies the throttle.</summary>
-        internal static bool IdleWanted(bool high, double speed, double plan) { return high && speed > plan - 5; }
+        internal static bool IdleWanted(bool high, double speed, double plan, bool nearShort = false) { return (high && speed > plan - 5) || (nearShort && speed > plan + AggressiveFastM); }
+        /// <summary>Luke Oct 12: well over plan (> 15 m/s) inside 2x the short-final fix = idle + airbrakes + flaps together.</summary>
+        internal const double AggressiveFastM = 15;
+        internal static bool NearShort(string phase, double distM) { return (phase == "final" || phase == "intercept") && distM < 2 * ApproachChart.ShortFix; }
         internal static double MaxJoinPath(double direct) { return 3 * direct + 30000; }
         internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed); }
         /// <summary>Oct 12: badly off the line -> hold altitude (no glidepath descent) until re-established. Final: > 400 m or > 30 deg; legs: > 1.5 km or > 60 deg.</summary>

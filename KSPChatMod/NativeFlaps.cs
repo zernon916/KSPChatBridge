@@ -108,7 +108,7 @@ namespace KSPChatBridge
                 if (climbSince >= 0 && Time.realtimeSinceStartup - climbSince > 3) { goAroundFlaps = false; return 0; }
                 return flapSet;
             }
-            if (mode == "landing" && runway != null) return FlapsPolicy.ApproachSetting(runway.Phase, runway.Distance, ApproachChart.ShortFix);
+            if (mode == "landing" && runway != null) { int sch = FlapsPolicy.ApproachSetting(runway.Phase, runway.Distance, ApproachChart.ShortFix); bool air = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"; return air ? Math.Max(sch, FlapsPolicy.EarlySetting(Eas(), FlapLimit(), flapSet)) : sch; }   // Luke Oct 12: early flaps by speed
             return 0;
         }
         void FlapsTick()

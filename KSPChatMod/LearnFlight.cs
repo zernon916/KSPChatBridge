@@ -1273,6 +1273,9 @@ namespace KSPChatBridge
             if (agl < RetractAgl || current <= 0) return Math.Max(0, current);
             int next = current - 1; return eas > RetractMargin * StallFor(next, clean, ratio) ? next : current;
         }
+        /// <summary>Luke Oct 12: flaps EARLY - each step as soon as EAS is under that step's limit (1 = limit, 2 = 0.93x, full = 0.86x; +5 m/s to keep), any airborne approach phase.</summary>
+        internal static double StepLimit(int k, double limit) { return limit * (1 - .07 * (Math.Max(1, Math.Min(3, k)) - 1)); }
+        internal static int EarlySetting(double eas, double limit, int current) { int w = 0; for (int k = 1; k <= 3; k++) if (eas <= StepLimit(k, limit) + (current >= k ? 5 : 0)) w = k; return w; }
         internal static int ApproachSetting(string phase, double distM, double shortFix)
         {
             if (phase == "flare" || phase == "rollout" || phase == "stopped") return 3;
