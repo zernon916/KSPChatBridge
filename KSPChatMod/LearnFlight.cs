@@ -267,6 +267,14 @@ namespace KSPChatBridge
             if (queue != null) foreach (int k in queue) Enqueue(k);
         }
         /// <summary>Queue in checklist order (9, 9b, 10, 10b, 11): profile Rerun is numerically sorted, which put 91/101 after 11 (live 21:17).</summary>
+        /// <summary>Flaps FULL only on station: 9b in the sink map (or settling at 5 km), 10b at 4 km for the stall and its recovery.
+        /// Up for every descent/climb to the test altitude, every climb-back and once the test ends, aborts or is skipped.</summary>
+        internal int FlapsFor(string ph, double alt)
+        {
+            if (flapPass && (ph == "sinkdown" || ph == "sinkmap" || (ph == "sinkprep" && Math.Abs(alt - SinkAlt) <= 200))) return 3;
+            if (stallFlapPass && (ph == "stall" || ph == "stallrec" || (ph == "stallprep" && Math.Abs(alt - StallAlt) < 150))) return 3;
+            return 0;
+        }
         void Enqueue(int k)
         {
             if (!Pickable(k) || Queue.Contains(k)) return;
@@ -304,6 +312,7 @@ namespace KSPChatBridge
         }
         void StartTest(int code, LearnIn i)
         {
+            if ((code == 91 || code == 101) && !i.HasFlaps) { Status = "Test " + CodeName(code) + " skipped: no flaps on this craft (tag surfaces \"flap\" in the SPH)."; return; }
             activeTest = code; flapPass = code == 91; stallFlapPass = code == 101; string n = "Test " + CodeName(code) + ": ";
             switch (code)
             {
@@ -765,7 +774,7 @@ namespace KSPChatBridge
                 if (i.GLimit > 0 && i.G > (turning ? TurnSpikeG : GAbort) * i.GLimit) { Finish(true, "g " + i.G.ToString("0.0") + " near the " + i.GLimit.ToString("0") + " g limit"); return; }
             }
             if (Math.Abs(i.Vs) < 3 && i.FuelRate > 0 && !double.IsNaN(i.Throttle) && i.Throttle > .1 && (Phase == "recover" || Phase == "stallprep" || Phase == "accel")) econ.Add(new[] { i.Speed, i.Throttle, i.FuelRate });
-            Flaps = flapPass || stallFlapPass ? 3 : 0;
+            Flaps = FlapsFor(Phase, i.Alt);
             P.Perf.Feed(Cat(Phase), i, prevStepT); prevStepT = i.T;
             double dt = i.T - t0; Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN; double tick = double.IsNaN(tickPrevT) ? 0 : Math.Max(0, i.T - tickPrevT); tickPrevT = i.T; FilterLoad(i, tick);
             switch (Phase)
@@ -1075,6 +1084,39 @@ namespace KSPChatBridge
 
 namespace KSPChatBridge
 {
+    /// <summary>Control-surface role (Luke 9:27 PM, A300 spoilers were deployed as flaps). Flap / Slat / RollFlap are high-lift (deployed with
+    /// the flap setting); Brake surfaces follow the airbrake logic; the rest are never deployed.</summary>
+    internal enum SurfRole { Flap, Slat, RollFlap, Brake, Aileron, Pitch, Yaw, Other, Unknown }
+    internal static class SurfaceRoles
+    {
+        /// <summary>Role from a part tag/name: "brake"/"spoiler" -> Brake, "slat" -> Slat, "flap" -> Flap, "aileron" -> Aileron, "none" -> Other; else null (untagged).</summary>
+        internal static SurfRole? FromTag(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return null; string t = tag.ToLowerInvariant();
+            if (t.Contains("brake") || t.Contains("spoiler")) return SurfRole.Brake;
+            if (t.Contains("slat")) return SurfRole.Slat;
+            if (t.Contains("flap")) return SurfRole.Flap;
+            if (t.Contains("aileron")) return SurfRole.Aileron;
+            if (t == "none") return SurfRole.Other;
+            return null;
+        }
+        internal static bool HighLift(SurfRole r) { return r == SurfRole.Flap || r == SurfRole.Slat || r == SurfRole.RollFlap; }
+        /// <summary>Geometry auto-detect (no tags on the craft). span01 = |lateral| / half-span (0 root .. 1 tip); chord +1 leading edge, -1 trailing,
+        /// 0 unknown; vert +1 on the wing's top surface, -1 bottom, 0 in line; defl +1 deploy deflects down, -1 up, 0 unknown;
+        /// brakeAg = deploy bound to the Brakes action group; aero = stock airbrake (ModuleAeroSurface).</summary>
+        internal static SurfRole Classify(bool pitch, bool yaw, bool roll, bool aero, bool brakeAg, double span01, int chord, int vert, int defl)
+        {
+            if (aero || brakeAg) return SurfRole.Brake;                        // stock airbrake / spoiler wired to Brakes
+            if (vert > 0 && chord != 1) return SurfRole.Brake;                  // sits on top of the wing (ahead of the flaps): spoiler
+            if (pitch) return SurfRole.Pitch;                                  // elevators / canards / elevons: never deployed
+            if (yaw && !roll) return SurfRole.Yaw;
+            if (yaw) return SurfRole.Other;
+            if (chord == 1) return roll ? SurfRole.Aileron : SurfRole.Unknown;   // front edge: stock aero gives slats no real lift - left alone unless tagged "slat"
+            if (chord == 0 && vert == 0 && defl < 0) return roll ? SurfRole.Aileron : SurfRole.Brake;   // unknown position, deploys upward
+            if (!roll) return SurfRole.Flap;                                   // dedicated trailing-edge surface
+            return span01 >= .55 ? SurfRole.Aileron : SurfRole.RollFlap;       // outboard roll = aileron; inboard roll-only = flaperon
+        }
+    }
     internal enum FlapKind { Pitch, Flap, RollFlap, Other }
     /// <summary>Flap rules (Luke 9:45 AM).</summary>
     internal static class FlapsPolicy

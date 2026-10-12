@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -187,6 +187,26 @@ internal static class ThrottleLearnTests
     // live 20:20:17-20:20:53: stall test entered at 318 m/s, looped to 90 deg nose-up, apex 8.6 m/s saved as "stall"
     // live 20:27: after box 12 -> ferry, TOGGLE kept answering "Step 12 is setup (always flown)" with the cursor parked on 12
     // live 21:11-21:18 Stearwing A300 (49 t, EAS stall 74 -> TAS 107 at 5 km, rho .58)
+    // Luke 9:27 PM: A300 top-of-wing spoilers were deployed as flaps in 9b
+    static void Surfaces()
+    {
+        Check(SurfaceRoles.FromTag("Flap L") == SurfRole.Flap && SurfaceRoles.FromTag("spoiler") == SurfRole.Brake && SurfaceRoles.FromTag("speedbrake") == SurfRole.Brake
+            && SurfaceRoles.FromTag("slat") == SurfRole.Slat && SurfaceRoles.FromTag("") == null && SurfaceRoles.FromTag("auto") == null, "tags: flap / brake|spoiler / slat; empty or auto = untagged");
+        // Classify(pitch, yaw, roll, aero, brakeAg, span01, chord, vert, defl)
+        Check(SurfaceRoles.Classify(false, false, false, false, false, .4, 0, 1, -1) == SurfRole.Brake, "A300 spoiler: dedicated surface on top of the wing -> brake, not flap");
+        Check(SurfaceRoles.Classify(false, false, false, false, true, .4, -1, 0, 1) == SurfRole.Brake, "surface wired to the Brakes action group -> brake");
+        Check(SurfaceRoles.Classify(false, false, false, true, false, .2, 0, 0, 0) == SurfRole.Brake, "stock airbrake -> brake");
+        Check(SurfaceRoles.Classify(false, false, false, false, false, .3, -1, 0, 1) == SurfRole.Flap, "inboard trailing-edge dedicated surface -> flap");
+        Check(SurfaceRoles.Classify(false, false, false, false, false, .3, 1, 0, 1) == SurfRole.Unknown && !SurfaceRoles.HighLift(SurfRole.Unknown), "untagged leading edge -> unknown, left alone");
+        Check(SurfaceRoles.Classify(false, false, true, false, false, .8, -1, 0, 0) == SurfRole.Aileron && SurfaceRoles.Classify(false, false, true, false, false, .3, -1, 0, 1) == SurfRole.RollFlap, "outboard roll = aileron, inboard roll-only = flaperon");
+        Check(SurfaceRoles.Classify(true, false, true, false, false, .9, -1, 0, 1) == SurfRole.Pitch, "pitch surfaces never deploy");
+        Check(SurfaceRoles.HighLift(SurfRole.Slat) && SurfaceRoles.HighLift(SurfRole.Flap) && !SurfaceRoles.HighLift(SurfRole.Brake), "tagged slats deploy with flaps; brakes never do");
+        // 9b / 10b flaps only on station; up for climb-backs and after the test
+        var lf = new LearnFlight(null, new[] { 91 }, true); var q = In(0, 5000); q.HasFlaps = true; lf.Step(q);
+        Check(lf.FlapsFor("sinkmap", 5000) == 0, "no flaps outside a flaps test");
+        var nf = new LearnFlight(null, new[] { 91, 101 }, true); var r = In(0, 5000); r.HasFlaps = false; nf.Step(r); nf.Phase = "wait"; for (int k = 1; k < 5; k++) { r.T = k * .1; nf.Step(r); }
+        Check(nf.Queue.Count == 0 && nf.Phase == "wait" && nf.Status.Contains("no flaps"), "9b/10b skipped with a notice when the craft has no flaps (" + nf.Status + ")");
+    }
     static void A300Run()
     {
         double tas = PilotPolicy.TasStall(74, .58);

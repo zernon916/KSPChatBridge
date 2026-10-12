@@ -177,7 +177,10 @@ namespace KSPChatBridge
         /// <summary>Reject junk stalls (below max(0.4x estimate, liftoff/2) or above liftoff): keep the estimate, log it (live 20:20: 8.6 m/s).</summary>
         void CheckStall(PlaneProfile p)
         {
-            if (p == null || double.IsNaN(p.Stall)) return;
+            if (p == null) return;
+            if (!double.IsNaN(p.FlapStall) && !PilotPolicy.StallPlausible(p.FlapStall, .7 * StallEstimate(), double.IsNaN(p.Liftoff) ? liftoffSpeed : p.Liftoff))
+            { ChatLog.Write("learn", "flaps-full stall " + p.FlapStall.ToString("0.0") + " m/s rejected - keeping none"); p.FlapStall = double.NaN; p.FlapStallAltLoss = double.NaN; }
+            if (double.IsNaN(p.Stall)) return;
             double est = StallEstimate(), lo = double.IsNaN(p.Liftoff) ? liftoffSpeed : p.Liftoff;
             if (PilotPolicy.StallPlausible(p.Stall, est, lo)) return;
             ChatLog.Write("learn", "stall " + p.Stall.ToString("0.0") + " m/s rejected (estimate " + est.ToString("0") + ", liftoff " + (double.IsNaN(lo) ? "-" : lo.ToString("0")) + ") - keeping the estimate");
