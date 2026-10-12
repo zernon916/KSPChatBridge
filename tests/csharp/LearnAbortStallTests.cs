@@ -11,17 +11,14 @@ internal static class LearnAbortStallTests
 
     internal static void Run()
     {
-        // 1) step 6: vmax ends -> ratesprep (slow to a moderate speed), never straight to the pull
+        // 1) step 6: vmax ends -> rates at the current (high) speed; no bleed-down. G-limited pull kept.
         var lf = new LearnFlight(); lf.Phase = "vmax"; double t = 0;
         for (; t < 40 && lf.Phase == "vmax"; t += .5) lf.Step(In(t, 300));
-        Check(lf.Phase == "ratesprep", "after vmax expected ratesprep, got " + lf.Phase);
-        Check(lf.StepNo == 6, "ratesprep is step 6");
-        lf.Step(In(t, 300)); t += .5;   // first ratesprep frame sets the speed target
-        Check(!double.IsNaN(lf.SpeedTarget) && lf.SpeedTarget <= 2 * 72 + .1 && lf.SpeedTarget >= 1.6 * 72 - .1, "rates speed ~2x stall, got " + lf.SpeedTarget);
+        Check(lf.Phase == "rates", "after vmax expected rates at current speed, got " + lf.Phase);
+        Check(lf.StepNo == 6, "rates is step 6");
+        lf.Step(In(t, 300)); t += .5;
+        Check(!double.IsNaN(lf.SpeedTarget) && Math.Abs(lf.SpeedTarget - 300) < .1, "rates holds the entry/vmax speed, got " + lf.SpeedTarget);
         double vT = lf.SpeedTarget;
-        for (double s = 300; t < 400 && lf.Phase == "ratesprep"; t += .5) { s = Math.Max(vT, s - 3); lf.Step(In(t, s)); }
-        Check(lf.Phase == "rates" && t < 120, "ratesprep settles into rates (not by timeout), got " + lf.Phase + " at " + t);
-        Check(lf.SpeedTarget == vT, "roll check holds the rate-check speed");
         // pull: G rises with elevator; must cut before 60% of the limit is exceeded much, never abort
         double t0 = t, maxElev = 0; bool sawCut = false;
         while (lf.Phase == "rates" && t - t0 < 11)

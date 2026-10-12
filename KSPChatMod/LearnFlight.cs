@@ -300,7 +300,7 @@ namespace KSPChatBridge
                 case 3: Go("decel", i, n + "throttle idle, recording deceleration for 20 s."); break;
                 case 4: cruiseFuel0 = i.FuelFrac; Go("cruise", i, n + "level cruise 60 s at the economy setting."); break;
                 case 5: vmaxV = i.Speed; vmaxT = i.T; Go("vmax", i, n + "full power, level."); break;
-                case 6: ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, n + "slowing to " + ratesSpeed.ToString("0") + " m/s first."); break;
+                case 6: ratesSpeed = i.Speed; ratesElev = 0; ratesCut = false; Go("rates", i, n + "roll/pitch rates at current " + i.Speed.ToString("0") + " m/s (no bleed-down)."); break;
                 case 7: BeginTurnEnvelope(i, n); break;
                 case 8: idx = 100; Go("dive", i, n + "idle, flight path " + DivePitch[0] + " deg down."); break;
                 case 9: case 91: if (code == 91) P.SinkFlaps.Clear(); else P.Sink.Clear(); sinkStart = double.NaN; limThr = 0; Go("sinkprep", i, n + "back to 5 km, slow to " + SinkSpeedFactor + "x stall."); break;
@@ -759,20 +759,20 @@ namespace KSPChatBridge
                 case "vmax":
                     Throttle = 1; Pitch = Level(i); Bank = 0;
                     // Top speed reached when gain ≤2 m/s over 10 s (being ~10 m/s short of absolute Vmax is fine).
-                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV <= VmaxSettleMs || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); ratesSpeed = RatesSpeed(i.StallGuess); ratesSteady = double.NaN; Go("ratesprep", i, "Slowing to " + ratesSpeed.ToString("0") + " m/s for the roll/pitch rate checks (not at max speed)."); return; } vmaxV = i.Speed; vmaxT = i.T; }
+                    if (dt > 10 && i.T - vmaxT >= 10) { if (i.Speed - vmaxV <= VmaxSettleMs || dt > 600) { P.Perf.MaxLevel = i.Speed; P.Note("max_level_speed", i.Speed, i.Mass); ratesSpeed = i.Speed; ratesElev = 0; ratesCut = false; Go("rates", i, "Roll and pitch rate checks at current " + i.Speed.ToString("0") + " m/s (no bleed-down): full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); Throttle = .8; SpeedTarget = ratesSpeed; return; } vmaxV = i.Speed; vmaxT = i.T; }
                     if (dt <= 10) { vmaxV = i.Speed; vmaxT = i.T; }
                     return;
                 case "ratesprep":
-                    {   // step 6 setup: never pull at vmax (Luke 14:18 log: 1.5 s at 60% elevator from 300 m/s = 8.6 g, test aborted)
-                        if (double.IsNaN(ratesSpeed)) ratesSpeed = RatesSpeed(i.StallGuess);
-                        SpeedTarget = ratesSpeed; Throttle = i.Speed > ratesSpeed + 10 ? 0 : .6; Pitch = Level(i, ClimbAlt); Bank = 0;   // back to the 5 km test altitude
-                        if (Math.Abs(i.Speed - ratesSpeed) < 10) { if (double.IsNaN(ratesSteady)) ratesSteady = i.T; } else ratesSteady = double.NaN;
-                        if ((!double.IsNaN(ratesSteady) && i.T - ratesSteady >= 3) || dt > RatesPrepTimeout) { bool late = dt > RatesPrepTimeout; ratesElev = 0; ratesCut = false; Go("rates", i, (late ? "Could not slow to " + ratesSpeed.ToString("0") + " m/s in " + RatesPrepTimeout.ToString("0") + " s - running the rate checks at " + i.Speed.ToString("0") + " m/s instead. " : "") + "Roll and pitch rate checks at " + i.Speed.ToString("0") + " m/s: full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit)."); }
-                        return;
+                    {   // Legacy phase: skip bleed-down — run rates at the current speed (same high→low idea as step 7).
+                        ratesSpeed = i.Speed; ratesElev = 0; ratesCut = false;
+                        Go("rates", i, "Roll and pitch rate checks at current " + i.Speed.ToString("0") + " m/s (no bleed-down): full roll, G-limited pull (cut at " + Math.Round(RatesG * 100) + "% of the g limit).");
+                        Throttle = .8; SpeedTarget = ratesSpeed; return;
                     }
                 case "rates":
                     {   // 0-2 s full right, 2-4 s full left, 4-7 s neutral (level), 7-8.5 s pull, 8.5-10 s relax; g-limited
-                        Throttle = .8; if (!double.IsNaN(ratesSpeed)) SpeedTarget = ratesSpeed; P.Perf.RollRate = Math.Max(double.IsNaN(P.Perf.RollRate) ? 0 : P.Perf.RollRate, dt < 4 ? Math.Abs(i.RollRate) : 0);
+                        // Hold current/entry speed (high→low into turns); G-limited pitch pull unchanged.
+                        if (double.IsNaN(ratesSpeed)) ratesSpeed = i.Speed;
+                        Throttle = .8; SpeedTarget = ratesSpeed; P.Perf.RollRate = Math.Max(double.IsNaN(P.Perf.RollRate) ? 0 : P.Perf.RollRate, dt < 4 ? Math.Abs(i.RollRate) : 0);
                         if (dt < 2) Aileron = 1; else if (dt < 4) Aileron = -1; else if (dt < 7) { Bank = 0; Pitch = Level(i); }
                         else if (dt < 8.5) { Bank = 0; Elevator = RatesElevator(ratesElev, tick, i.G, i.GLimit, ref ratesCut); ratesElev = Elevator; P.Perf.PitchRate = Math.Max(double.IsNaN(P.Perf.PitchRate) ? 0 : P.Perf.PitchRate, Math.Abs(i.PitchRate)); }
                         else { Bank = 0; Pitch = Level(i); }

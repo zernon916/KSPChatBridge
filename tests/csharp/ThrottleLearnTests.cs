@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); RatesAtCurrentSpeed();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -116,7 +116,7 @@ internal static class ThrottleLearnTests
         var cl = lf.ManualChecklist(0); bool allOpen = true; foreach (var l in cl) if (l.Contains("[x]") || l.Contains("[>]")) allOpen = false;
         Check(allOpen && cl.Count >= LearnFlight.Codes.Length, "every learn box starts unchecked");
         // any order: 6 first, then 3
-        lf.Request(6); q.T = 8; lf.Step(q); Check(lf.Phase == "ratesprep" && lf.ActiveTest == 6, "box 6 runs the rate checks (" + lf.Phase + ")");
+        lf.Request(6); q.T = 8; lf.Step(q); Check(lf.Phase == "rates" && lf.ActiveTest == 6, "box 6 runs the rate checks at current speed (" + lf.Phase + ")");
         Check(lf.ManualChecklist(-1).Exists(l => l.Contains("[>] 6")), "running test shows [>]");
         Check(lf.Request(3).Contains("queued"), "box 3 while 6 runs: queued");
         Check(lf.Skip().StartsWith("Skipped step 6"), "SKIP ends the running test");
@@ -194,6 +194,13 @@ internal static class ThrottleLearnTests
         var capped = new LearnFlight(); capped.P.Perf.CruiseSpeed = 250; capped.P.Perf.MaxLevel = 400;
         Check(capped.BuildTurnTargets(420, 60)[0] <= 380.1, "first pass soft-capped at 0.95x learned Vmax");
     }
+    static void RatesAtCurrentSpeed()
+    {
+        var lf = new LearnFlight(); var q = In(0, 5000); q.Speed = 310; lf.Step(q); lf.Phase = "vmax";
+        for (double t = 1; t < 25 && lf.Phase == "vmax"; t += .5) { q.T = t; q.Speed = 310 + Math.Min(2, t * .05); lf.Step(q); }
+        Check(lf.Phase == "rates" && Math.Abs(lf.SpeedTarget - q.Speed) < 5, "vmax -> rates at current speed, no ratesprep bleed (" + lf.Phase + " @" + lf.SpeedTarget.ToString("0") + ")");
+        bool cut = false; Check(LearnFlight.RatesElevator(.2, .1, 5.5, 9, ref cut) == 0 && cut, "G-limited pitch pull still cuts above 0.6x limit");
+    }
     static void PrepPorpoise()
     {
         var old = PorpoiseSim(i => FlightPolicy.Clamp(3 + (FlightPolicy.Clamp((5000 - i.Alt) * .05, -15, 15) - i.Vs) * .6, -10, 15), 5300);
@@ -233,17 +240,17 @@ internal static class ThrottleLearnTests
     static void LearnThrottleStuck()
     {
         Check(PilotPolicy.EmergencySpeed(true, "ratesprep", 130, 336) == 336 && PilotPolicy.EmergencySpeed(false, null, 130, 336) == 130 && PilotPolicy.EmergencySpeed(true, "stall", 130, 336) == 130, "emergency speed: srf during Learn tests, IAS otherwise / in the stall test");
-        LearnFlight lf; double before = PipeThrottle("ratesprep", false, out lf);
-        Check(before > .99, "repro: ratesprep at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
-        foreach (var ph in new[] { "ratesprep", "turnprep", "wait", "sinkprep" })
+        LearnFlight lf; double before = PipeThrottle("turnprep", false, out lf);
+        Check(before > .99, "repro: turnprep at 8.6 km with IAS-judged emergency stays at 100% (" + before.ToString("0.00") + ")");
+        foreach (var ph in new[] { "turnprep", "wait", "sinkprep" })
         {
             double thr = PipeThrottle(ph, true, out lf);
             Check(thr < .6, "Learn " + ph + " (speed target / learn throttle) can reduce throttle at altitude: " + thr.ToString("0.00") + " after 40 s");
         }
-        // ratesprep never reaching the target -> moves on after 90 s with a notice
+        // ratesprep (legacy) immediately skips bleed-down and runs rates at current speed
         var lr = new LearnFlight(); var r = In(0, 5000); r.Speed = 336; r.StallGuess = 120; lr.Step(r); lr.Phase = "ratesprep";
-        for (double t = .5; t < 95 && lr.Phase == "ratesprep"; t += .5) { r.T = t; lr.Step(r); }
-        Check(lr.Phase == "rates" && lr.Status.Contains("Could not slow"), "ratesprep times out at 90 s and moves on with a notice (" + lr.Phase + ": " + lr.Status + ")");
+        r.T = .5; lr.Step(r);
+        Check(lr.Phase == "rates" && !double.IsNaN(lr.SpeedTarget) && Math.Abs(lr.SpeedTarget - 336) < .1, "ratesprep skips bleed-down; rates at current speed (" + lr.Phase + " @" + lr.SpeedTarget.ToString("0") + ")");
     }
     // profile fingerprint: name stays the key, print is metadata
     static CraftFingerprint Fp(double dry, double lift, int parts, string root = "mk1pod") { return new CraftFingerprint { DryMass = dry, Lift = lift, Parts = parts, Engines = 1, Root = root, Intake = true }; }
