@@ -142,10 +142,11 @@ namespace KSPChatBridge
         {
             string l = line ?? "";
             if (l.StartsWith("You:") || l.StartsWith("You (")) return "pilot";
+            if (l.StartsWith("[INTERCOM]") || l.StartsWith("[COMMS]")) return "intercom";   // Oct 12: crew chatter / engineer lines were caught by the "[" -> system rule
             if (l.StartsWith("AICS") || l.StartsWith("[SYSTEM]") || l.StartsWith("[") || l.StartsWith("SYSTEM") || l.StartsWith("CAUTION") || l.StartsWith("WARNING") || l.StartsWith("MAYDAY")) return "system";
             return "intercom";
         }
-        internal static bool ChatShows(string page, string line) { return page == "all" || ChatKind(line) == page; }
+        internal static bool ChatShows(string page, string line) { string k = ChatKind(line); return page == "all" || k == page || (page == "intercom" && k == "pilot"); }   // INTERCOM = the crew conversation, your own lines included
 
         static readonly string[] MpAssemblies = { "LmpClient", "LunaMultiplayer", "LmpCommon", "DarkMultiPlayer", "DMPClient", "KMP", "KerbalMultiPlayer" };
         /// <summary>A multiplayer mod (Luna Multiplayer, DarkMultiPlayer, ...) is loaded: AICS is single-player only.</summary>
