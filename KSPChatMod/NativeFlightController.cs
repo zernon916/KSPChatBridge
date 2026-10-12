@@ -125,7 +125,7 @@ namespace KSPChatBridge
         }
         /// <summary>Equivalent airspeed (from dynamic pressure): the ONE speed every stall comparison uses.</summary>
         double Eas() { return vessel == null ? double.NaN : PilotPolicy.Eas(vessel.dynamicPressurekPa, vessel.srfSpeed); }
-        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, liftoffSpeed); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); return FlightPolicy.Clamp(s0, 20, 200); }
+        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, liftoffSpeed); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
         double stallEstimate = double.NaN;
         /// <summary>Lift-based stall estimate (liftoff/1.25 floor); the fallback whenever the learned/measured stall is missing or implausible.</summary>
         double StallEstimate() { return PilotPolicy.StallEstimate(double.IsNaN(stallEstimate) ? stallGuess : stallEstimate, liftoffSpeed); }
@@ -281,6 +281,7 @@ namespace KSPChatBridge
         double ClimbSpeedTarget()
         {
             double vy = profile != null ? profile.BestClimbSpeed(stall, vessel.totalMass) : double.NaN;
+            DecisionLog.Use("climb speed", double.IsNaN(vy) || vy <= 0 ? "default 1.8x stall" : "learned climb curve", double.IsNaN(vy) || vy <= 0 ? FlightPolicy.Clamp(1.8 * stall, 80, 200) : vy);
             return double.IsNaN(vy) || vy <= 0 ? FlightPolicy.Clamp(1.8 * stall, 80, 200) : FlightPolicy.Clamp(vy, 40, 250);   // no profile: the old 1.8x stall, 80-200
         }
         /// <summary>Hot-swap: charts/ mtimes every ~2 s; a changed chart reloads live (bad JSON keeps the old one) and an active approach replans from here.</summary>
@@ -535,7 +536,9 @@ namespace KSPChatBridge
                     { pitchIntegral = vsIntegral = 0; elevator = 0; bankCmd = 0; pitchShape.Reset(pitch); ChatLog.Write("g", "takeoff brake release: thr ramp 25%/s"); }
                     if (tground != null && tground.Released && tground.Since(nowT) < 5 && Time.realtimeSinceStartup >= gTraceNext)
                     { gTraceNext = Time.realtimeSinceStartup + .25f; ChatLog.Write("g", "release+" + tground.Since(nowT).ToString("0.00") + "s spd=" + vessel.srfSpeed.ToString("0.0") + " hdg=" + FlightGlobals.ship_heading.ToString("0.0") + " pit=" + pitch.ToString("0.0") + " q=" + q.ToString("0.0") + " thr=" + c.mainThrottle.ToString("0.00") + " wheel=" + tground.Wheel.ToString("0.00") + " yaw=" + tground.Yaw.ToString("0.00") + " elev=" + c.pitch.ToString("0.00") + " g=" + vessel.geeForce.ToString("0.0")); }
-                    directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed);
+                    double rotPr = profile != null ? profile.Perf.PitchRate : double.NaN, rotA = profile != null ? profile.AccelAt(vessel.totalMass) : double.NaN;
+                directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed, rotPr, rotA);
+                DecisionLog.Use("rotate Vr", double.IsNaN(liftoffSpeed) ? "default 1.15x stall" : !double.IsNaN(rotPr) && !double.IsNaN(rotA) ? "learned liftoff - pitch-rate lead" : "learned liftoff", takeoff.Vr);
                     if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; gate.Seed(0, "takeoff timeout on the ground"); SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
                     if (takeoff.Phase == "climbout complete")
                     {
@@ -599,10 +602,10 @@ namespace KSPChatBridge
                     if (landMass0 <= 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
                     if (landMass0 > 0)
                     {   // LEARN idle decel first (same as ferry), then live DecelLearner, then mass estimate (AUTOPILOT_REVIEW #5)
-                        double dA = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : double.NaN;
-                        if (double.IsNaN(dA) || dA <= 0) dA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true);
-                        if (double.IsNaN(dA) || dA <= 0) dA = ApproachProfile.MassDecel(vessel.totalMass);
-                        runway.DecelA = dA / Math.Sqrt(shold.K);
+                        double dA = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : double.NaN; string dSrc = "learned decel";
+                        if (double.IsNaN(dA) || dA <= 0) { dSrc = "live decel learner"; dA = Decel.Estimate(vessel.vesselName, ApproachProfile.HiSpeed(stall), ApproachProfile.AppSpeed(stall), true); }
+                        if (double.IsNaN(dA) || dA <= 0) { dSrc = "default mass estimate"; dA = ApproachProfile.MassDecel(vessel.totalMass); }
+                        runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA);
                     }
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
@@ -699,7 +702,8 @@ namespace KSPChatBridge
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight
                 double learnedPitch = profile != null && !double.IsNaN(profile.Perf.PitchRate) ? profile.Perf.PitchRate : double.NaN;
-                double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(TurnOnset.RollRate / learnedRoll, .5, 1.5) : 1;   // fast-rolling airframe -> less gain   // AUTOPILOT_REVIEW #7
+                DecisionLog.Use("roll rate", double.IsNaN(learnedRoll) || learnedRoll <= 5 ? "default " + TurnOnset.RollRate + " deg/s" : "learned roll rate", learnedRoll);
+            double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(TurnOnset.RollRate / learnedRoll, .5, 1.5) : 1;   // fast-rolling airframe -> less gain   // AUTOPILOT_REVIEW #7
                 double pitchGain = !double.IsNaN(learnedPitch) && learnedPitch > 5 ? FlightPolicy.Clamp(20 / learnedPitch, .5, 1.5) : 1;
                 if (!vessel.LandedOrSplashed && !directBank.HasValue)
                 {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry); LEARN roll rate when known
@@ -758,7 +762,7 @@ namespace KSPChatBridge
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
                 if (PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls))) c.pitch = elevator;
-                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; }   // below rotate: elevator slightly nose-down, no integrator wind-up
+                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
                 if (holdHeading || directBank.HasValue) c.roll = (float)FlightPolicy.Clamp(.014 * rollGain * (bank - roll) - .01 * p, -1, 1);
                 double targetThrottle = throttle;

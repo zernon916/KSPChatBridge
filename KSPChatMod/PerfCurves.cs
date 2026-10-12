@@ -84,6 +84,16 @@ namespace KSPChatBridge
         }
 
         /// <summary>For graphing: y averaged into x bins of width bin (climb graph: altitude bins, not every raw sample).</summary>
+        /// <summary>Batch 1: replace 1-D points by one averaged point per x bin (x, y, mass means). Returns the points removed.</summary>
+        internal int BinInPlace(double bin)
+        {
+            if (Dim != 1 || bin <= 0) return 0;
+            var map = new SortedDictionary<long, double[]>();
+            foreach (var p in Points) { long k = (long)Math.Floor(p[0] / bin); double[] a; if (!map.TryGetValue(k, out a)) map[k] = a = new double[4]; a[0] += p[0]; a[1] += p[1]; a[2] += p[2]; a[3]++; }
+            int before = Points.Count; Points.Clear();
+            foreach (var a in map.Values) Points.Add(new[] { a[0] / a[3], a[1] / a[3], a[2] / a[3] });
+            return before - Points.Count;
+        }
         internal List<double[]> Binned(double bin)
         {
             if (!(bin > 0)) return Series1D();

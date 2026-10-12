@@ -179,6 +179,11 @@ namespace KSPChatBridge
         void CheckStall(PlaneProfile p)
         {
             if (p == null) return;
+            DecisionLog.Sink = s => ChatLog.Write("profile", s);
+            try { CheckStallCore(p); } finally { foreach (var s in ProfileHygiene.Clean(p)) ChatLog.Write("learn", "profile " + s); }
+        }
+        void CheckStallCore(PlaneProfile p)
+        {
             if (!double.IsNaN(p.FlapStall) && !PilotPolicy.StallPlausible(p.FlapStall, .7 * StallEstimate(), double.IsNaN(p.Liftoff) ? liftoffSpeed : p.Liftoff))
             { ChatLog.Write("learn", "flaps-full stall " + p.FlapStall.ToString("0.0") + " m/s rejected - keeping none"); p.FlapStall = double.NaN; p.FlapStallAltLoss = double.NaN; }
             if (double.IsNaN(p.Stall)) return;

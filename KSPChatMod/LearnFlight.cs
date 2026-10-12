@@ -5,6 +5,22 @@ namespace KSPChatBridge
 {
     /// <summary>Craft shape snapshot saved with a LEARN profile (name stays the dictionary key). Used to catch
     /// "same name, different plane" without orphaning data on every SPH edit.</summary>
+    /// <summary>Batch 1 data hygiene (load + save): junk roll rates, flaps stall above clean, climb curve binned to 0.5 km. Returns one line per fix.</summary>
+    internal static class ProfileHygiene
+    {
+        internal const double MaxRollRate = 200, RollClamp = 60, ClimbBin = .5;
+        internal static List<string> Clean(PlaneProfile p)
+        {
+            var log = new List<string>(); if (p == null) return log;
+            if (!double.IsNaN(p.Perf.RollRate) && p.Perf.RollRate > MaxRollRate) { log.Add("roll rate " + p.Perf.RollRate.ToString("0") + " deg/s is junk (>" + MaxRollRate + "): clamped to " + RollClamp); p.Perf.RollRate = RollClamp; }
+            int n = 0; foreach (var pt in p.Curves.RollRate.Points) { int y = pt.Length - 2; if (y >= 0 && pt[y] > MaxRollRate) { pt[y] = RollClamp; n++; } }
+            if (n > 0) log.Add("roll rate curve: " + n + " point(s) over " + MaxRollRate + " deg/s clamped to " + RollClamp);
+            if (!double.IsNaN(p.FlapStall) && !double.IsNaN(p.Stall) && p.FlapStall >= p.Stall)
+            { log.Add("flaps-full stall " + p.FlapStall.ToString("0.0") + " m/s is not below the clean stall " + p.Stall.ToString("0.0") + ": rejected"); p.FlapStall = double.NaN; p.FlapStallAltLoss = double.NaN; }
+            int b = p.Curves.Climb.BinInPlace(ClimbBin); if (b > 0) log.Add("climb curve binned to " + ClimbBin + " km (" + p.Curves.Climb.Points.Count + " points, " + b + " merged)");
+            return log;
+        }
+    }
     internal sealed class CraftFingerprint
     {
         internal double DryMass = double.NaN, Lift = double.NaN;

@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -204,6 +204,29 @@ internal static class ThrottleLearnTests
         for (double t = 0; t < 120 && lb.ActiveTest != 3; t += .5) { b.T = t; lb.Step(b); }
         lb.Request(12);
         Check(lb.Phase == "flyhome", "box 12 during a test: straight to flyhome (" + lb.Phase + ")");
+    }
+    static void Batch1()
+    {
+        var p = new PlaneProfile(); p.Perf.RollRate = 540; p.Curves.RollRate.Add(400, 5.5, 200); p.Curves.RollRate.Add(40, 5.5, 150);
+        p.Stall = 60; p.FlapStall = 70;
+        for (int k = 0; k < 40; k++) p.Curves.Climb.Add(100 - k, 5.5, k * .1);   // 0..3.9 km every 100 m
+        var log = ProfileHygiene.Clean(p);
+        Check(p.Perf.RollRate == 60 && p.Curves.RollRate.Points[0][1] == 60 && p.Curves.RollRate.Points[1][1] == 40, "roll rate >200 deg/s clamped to 60 (sane points kept)");
+        Check(double.IsNaN(p.FlapStall) && p.Stall == 60, "flaps stall above the clean stall rejected");
+        Check(p.Curves.Climb.Points.Count == 8 && Math.Abs(p.Curves.Climb.Points[0][0] - .2) < 1e-9 && Math.Abs(p.Curves.Climb.Points[0][1] - 98) < 1e-9, "climb curve binned to 0.5 km (8 bins, means)");
+        Check(log.Count == 4, "one log line per hygiene fix (" + log.Count + ")");
+        var ok = new PlaneProfile(); ok.Perf.RollRate = 45; ok.Stall = 60; ok.FlapStall = 50; ok.Curves.Climb.Add(50, 5, 1.2);
+        Check(ProfileHygiene.Clean(ok).Count == 0 && ok.Perf.RollRate == 45 && ok.FlapStall == 50, "clean profile untouched");
+        Check(ProfileHygiene.Clean(new PlaneProfile()).Count == 0, "empty profile untouched");
+        Check(!PilotPolicy.StallPlausible(8.6, 131, 164), "junk 8.6 m/s stall still rejected");
+        // rotation: no learned data -> unchanged; Aeris (liftoff 164, accel 3.5, pitch rate 3) rotates earlier
+        Check(TakeoffMission.RotateSpeed(131, double.NaN, 3, 3.5) == 1.15 * 131 && Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01, "no profile / no rates: Vr unchanged");
+        double vr = TakeoffMission.RotateSpeed(131, 164, 3, 3.5);
+        Check(vr < .97 * 164 - 10 && vr >= .8 * 1.15 * 131, "Aeris: pitch-rate lead starts rotation earlier (Vr " + vr.ToString("0") + ")");
+        var seen = new List<string>(); DecisionLog.Reset(); DecisionLog.Sink = seen.Add;
+        DecisionLog.Use("stall", "default estimate", 131); DecisionLog.Use("stall", "default estimate", 130); DecisionLog.Use("stall", "learned stall", 70);
+        Check(seen.Count == 2 && seen[0].StartsWith("stall: default estimate"), "decision log: one line per source change");
+        DecisionLog.Sink = null; DecisionLog.Reset();
     }
     static void Surfaces()
     {

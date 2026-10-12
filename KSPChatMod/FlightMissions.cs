@@ -188,20 +188,37 @@ namespace KSPChatBridge
         static double MoveTowards(double a, double b, double d) { return Math.Abs(b - a) <= d ? b : a + Math.Sign(b - a) * d; }
     }
 
+    /// <summary>Batch 1: one log line per decision naming the learned curve or default it reads (only when the source changes).</summary>
+    internal static class DecisionLog
+    {
+        static readonly Dictionary<string, string> seen = new Dictionary<string, string>();
+        internal static Action<string> Sink;
+        internal static bool Use(string decision, string source, double value)
+        {
+            string s; if (seen.TryGetValue(decision, out s) && s == source) return false;
+            seen[decision] = source; if (Sink != null) Sink(decision + ": " + source + " (" + (double.IsNaN(value) ? "-" : value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)) + ")"); return true;
+        }
+        internal static void Reset() { seen.Clear(); }
+    }
     internal sealed class TakeoffMission
     {
         readonly double start;
         internal string Phase = "roll";
         internal double LiftoffSpeed = double.NaN, Vr;
         internal TakeoffMission(double now) { start = now; }
-        internal static double RotateSpeed(double stall, double liftoff)
+        internal const double RotPitch = 10;   // nose-up the rotation has to reach before the wheels unstick
+        /// <summary>Vr: 1.15x stall, or the measured liftoff speed (bounded). Batch 1: with a learned pitch rate + accel, start rotating early by
+        /// the speed gained while the nose comes up (accel x RotPitch / pitch rate) - the Aeris lifted at 164 m/s because rotation started at Vr.</summary>
+        internal static double RotateSpeed(double stall, double liftoff, double pitchRate = double.NaN, double accel = double.NaN)
         {
             double vr = 1.15 * FlightPolicy.Clamp(stall, 15, 200);
-            return double.IsNaN(liftoff) || liftoff < 10 ? vr : FlightPolicy.Clamp(.97 * liftoff, .8 * vr, 1.2 * vr);
+            if (double.IsNaN(liftoff) || liftoff < 10) return vr;
+            double lead = !double.IsNaN(pitchRate) && pitchRate > .5 && !double.IsNaN(accel) && accel > 0 ? FlightPolicy.Clamp(accel, 0, 15) * FlightPolicy.Clamp(RotPitch / pitchRate, .5, 6) : 0;
+            return FlightPolicy.Clamp(.97 * liftoff - lead, .8 * vr, 1.2 * vr);
         }
-        internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN)
+        internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN, double pitchRate = double.NaN, double accel = double.NaN)
         {
-            Vr = RotateSpeed(stall, liftoff);
+            Vr = RotateSpeed(stall, liftoff, pitchRate, accel);
             if (!grounded && double.IsNaN(LiftoffSpeed) && agl > 3) LiftoffSpeed = speed;
             if (agl >= 100 && !grounded) { Phase = "climbout complete"; return 9; }
             if (grounded && now - start > 120) { Phase = "takeoff timeout"; return 0; }
