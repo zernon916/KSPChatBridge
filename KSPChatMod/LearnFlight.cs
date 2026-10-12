@@ -1240,6 +1240,10 @@ namespace KSPChatBridge
         /// <summary>Oct 12 takeoff flaps: partial (2) for the roll; from 120 m AGL retract one step at a time, each only above 1.3x the stall of the next setting.</summary>
         internal const int TakeoffFlaps = 2; internal const double RetractAgl = 120, RetractMargin = 1.3;
         internal static double StallFor(int k, double clean, double ratio) { double r = !double.IsNaN(ratio) && ratio > .5 && ratio < 1 ? ratio : .85; return clean * (1 - (1 - r) * Math.Max(0, Math.Min(3, k)) / 3.0); }
+        /// <summary>Oct 12 (live 02:37): a Learn takeoff (phase start/takeoff/pullback) arms takeoff flaps like a normal takeoff.</summary>
+        internal static bool LearnTakeoffPhase(string phase) { return phase == "start" || phase == "takeoff" || phase == "pullback"; }
+        /// <summary>On the ground flaps were forced to 0 outside landing - takeoff flaps could never deploy. Only zero when no takeoff is armed.</summary>
+        internal static bool GroundZero(bool landed, string mode, bool takeoffArmed) { return landed && mode != "landing" && !takeoffArmed; }
         internal static int TakeoffSetting(int current, bool grounded, double agl, double eas, double clean, double ratio)
         {
             if (grounded) return TakeoffFlaps;

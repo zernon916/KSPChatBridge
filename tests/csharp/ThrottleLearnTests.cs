@@ -20,12 +20,27 @@ internal static class ThrottleLearnTests
         var rm = new RunwayMission(); rm.GoAroundReset();
         Check(rm.GateCooldown == RunwayMission.GateCooldownSteps && RunwayMission.GateCooldownSteps >= 1000, "go-around arms a ~30 s gate cooldown");
     }
+    static void Oct12LearnTakeoffFlaps()
+    {   // live 02:37: Learn takeoff on the Stearwing (12 tagged flaps) deployed none
+        bool armed = FlapsPolicy.LearnTakeoffPhase("takeoff") && FlapsPolicy.LearnTakeoffPhase("start") && !FlapsPolicy.LearnTakeoffPhase("climb");
+        Check(armed, "Learn takeoff phases arm takeoff flaps");
+        Check(!FlapsPolicy.GroundZero(true, "hold", true) && FlapsPolicy.GroundZero(true, "hold", false) && !FlapsPolicy.GroundZero(true, "landing", false), "ground gate no longer zeroes armed takeoff flaps (Learn mode is hold, normal is takeoff)");
+        Check(!FlapsPolicy.GroundZero(true, "takeoff", true), "normal takeoff roll keeps flaps");
+        int set = 0; double eas = 0, agl = 0; var steps = new System.Collections.Generic.List<int>();
+        for (int t = 0; t < 4000; t++)
+        {   // Learn takeoff path: roll, liftoff at 70, climb accelerating
+            bool gnd = eas < 70; eas = Math.Min(160, eas + .05); if (!gnd) agl += .3;
+            if (FlapsPolicy.GroundZero(gnd, "hold", true)) continue;
+            int w = FlapsPolicy.TakeoffSetting(set, gnd, agl, eas, 60, .85); if (w != set) { set += Math.Sign(w - set); steps.Add(set); }
+        }
+        Check(steps.Count == 2 * FlapsPolicy.TakeoffFlaps && steps[FlapsPolicy.TakeoffFlaps - 1] == FlapsPolicy.TakeoffFlaps && set == 0, "Learn takeoff: deploy to takeoff flaps on the roll, then retract step by step to up (" + string.Join(",", steps.ToArray()) + ")");
+    }
     static void Check(bool ok, string what) { if (ok) passes++; else { fails++; Console.WriteLine("FAIL throttle/learn: " + what); } }
     static bool Near(double a, double b, double tol = 1e-6) { return Math.Abs(a - b) <= tol; }
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
