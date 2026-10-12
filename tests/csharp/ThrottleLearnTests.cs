@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -186,6 +186,26 @@ internal static class ThrottleLearnTests
     }
     // live 20:20:17-20:20:53: stall test entered at 318 m/s, looped to 90 deg nose-up, apex 8.6 m/s saved as "stall"
     // live 20:27: after box 12 -> ferry, TOGGLE kept answering "Step 12 is setup (always flown)" with the cursor parked on 12
+    // live 21:11-21:18 Stearwing A300 (49 t, EAS stall 74 -> TAS 107 at 5 km, rho .58)
+    static void A300Run()
+    {
+        double tas = PilotPolicy.TasStall(74, .58);
+        var lf = new LearnFlight(); var q = In(0, 5000); q.Mass = 49; q.StallGuess = tas; q.Rho = .58; q.Speed = 1.25 * tas; q.Pitch = 2;
+        lf.Step(q); lf.Phase = "sinkdown"; double t = 0;
+        // throttle cut: one 2 s dip to 119 m/s (< 1.15x = 123) like 21:12:58, then pitch-for-speed recovers to 1.25x
+        for (int k = 0; k < 400; k++) { t += .1; q.T = t; q.Speed = k > 20 && k < 40 ? 119 : 1.25 * tas; q.Vs = -Math.Min(12, k * .05); lf.Step(q); if (lf.Phase != "sinkdown" && lf.Phase != "sinkmap") break; }
+        Check(lf.Phase == "sinkdown" || lf.Phase == "sinkmap", "A300 sink map: a 2 s dip under 1.15x stall does not stop the map (" + lf.Phase + ", " + lf.Status + ")");
+        for (int k = 0; k < 60; k++) { t += .1; q.T = t; q.Speed = 115; lf.Step(q); }
+        Check(lf.Status != null && lf.Status.Contains("under 1.15x"), "sustained slow (4 s) still stops it");
+        // sinkprep does not hand over while still too slow / nose far down
+        var sp = new LearnFlight(); var s = In(0, 5000); s.StallGuess = tas; s.Speed = 119; s.Pitch = -17; sp.Step(s); sp.Phase = "sinkprep";
+        for (double tt = .1; tt < 10; tt += .1) { s.T = tt; sp.Step(s); }
+        Check(sp.Phase == "sinkprep", "sinkprep waits for 1.18-1.28x stall and a settled nose (" + sp.Phase + ")");
+        // 9b / 10b queue in checklist order (profile Rerun is sorted 9,10,11,91,101)
+        var qf = new LearnFlight(null, new[] { 9, 10, 11, 91, 101 }, true);
+        Check(string.Join(",", qf.Queue.ConvertAll(x => x.ToString()).ToArray()) == "9,91,10,101,11", "queue order 9,9b,10,10b,11 (" + string.Join(",", qf.Queue.ConvertAll(x => x.ToString()).ToArray()) + ")");
+        Check(LearnFlight.AtStallAlt(11) && LearnFlight.AtStallAlt(101) && !LearnFlight.AtStallAlt(9), "10/10b/11 fly at 4 km");
+    }
     static void LearnMenu()
     {
         int last = LearnFlight.Codes.Length - 1; int j = LearnFlight.NextToggleable(last);

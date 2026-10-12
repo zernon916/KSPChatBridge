@@ -264,8 +264,18 @@ namespace KSPChatBridge
         {
             ManualMode = manual;
             if (prev != null) { prior = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(prev.ToDict())) as Dictionary<string, object>); P.Rerun.Clear(); }
-            if (queue != null) foreach (int k in queue) if (Pickable(k) && !Queue.Contains(k)) Queue.Add(k);
+            if (queue != null) foreach (int k in queue) Enqueue(k);
         }
+        /// <summary>Queue in checklist order (9, 9b, 10, 10b, 11): profile Rerun is numerically sorted, which put 91/101 after 11 (live 21:17).</summary>
+        void Enqueue(int k)
+        {
+            if (!Pickable(k) || Queue.Contains(k)) return;
+            int at = Queue.Count, ki = Array.IndexOf(Codes, k);
+            for (int j = 0; j < Queue.Count; j++) if (Array.IndexOf(Codes, Queue[j]) > ki) { at = j; break; }
+            Queue.Insert(at, k);
+        }
+        /// <summary>Tests flown at the 4 km stall altitude: no climb back to 5 km in between.</summary>
+        internal static bool AtStallAlt(int k) { return k == 10 || k == 11 || k == 101; }
         static bool Pickable(int k) { return (k >= 3 && k <= 11) || k == 91 || k == 101; }
         static int[] ActiveSteps(int code) { return code == 10 || code == 11 || code == 101 ? new[] { 10, 11 } : code == 91 ? new[] { 9 } : new[] { code }; }
         internal static string CodeName(int code) { return code == 91 ? "9b Flaps-full sink map" : code == 101 ? "10b Flaps-full stall" : code >= 1 && code <= StepCount ? code + " " + StepNames[code - 1] : code.ToString(); }
@@ -289,7 +299,7 @@ namespace KSPChatBridge
                 return "Unchecked the running test: " + Skip();
             if (Queue.Remove(code)) return "Test " + CodeName(code) + " unchecked (removed from the queue).";
             if (Ran.Remove(code)) return "Test " + CodeName(code) + " unchecked (data kept; check again to re-run).";
-            Queue.Add(code);
+            Enqueue(code);
             return Phase == "wait" ? "Starting test " + CodeName(code) + "." : !setupDone ? "Test " + CodeName(code) + " queued: runs once the climb is done." : "Test " + CodeName(code) + " queued: runs when the current test is done.";
         }
         void StartTest(int code, LearnIn i)
@@ -319,6 +329,7 @@ namespace KSPChatBridge
                 if (activeTest != 0 && Array.IndexOf(ActiveSteps(activeTest), k) >= 0) return ph;
                 ph = i.Alt < ClimbAlt - 500 && !waitHere ? "climbback" : "wait";
             }
+            if (ph == "climbback" && Queue.Count > 0 && AtStallAlt(Queue[0])) ph = "wait";   // next test is at 4 km: go straight there (live 21:16: climbed to 5 km, then "level at 4 km first")
             string pre = status ?? "";
             if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest) + " done. " + (status ?? ""); activeTest = 0; }
             setupDone = true; flapPass = stallFlapPass = false;
@@ -372,6 +383,7 @@ namespace KSPChatBridge
         /// <summary>Max-level run ends when speed gains this little or less over 10 s.</summary>
         internal const double VmaxSettleMs = 2;
         double reachAt = double.NaN; internal const double ReachTimeout = 20;
+        double sinkSlowAt = double.NaN; internal const double SinkSlowS = 4;   // sink map stops only when slow for 4 s (live 21:12: one transient sample ended it with 0 points)
         bool stallZoom, stallArmed; internal const double StallEntryFactor = 1.6, StallValidPitch = 25, StallZoomPitch = 35;
         double ratesSpeed = double.NaN, ratesSteady = double.NaN, ratesElev; bool ratesCut;
         internal const double RatesG = .6, RatesElevMax = .6, RatesRamp = .4, RatesPrepTimeout = 90;
@@ -579,7 +591,7 @@ namespace KSPChatBridge
             else { ph = SkipTo(ph); if (ph == "finish") { Finish(false, ""); return; } }
             Phase = ph; aoaF = double.NaN; if (ph == "stall") stallArmed = false;
             spdF = double.NaN; prevThr = double.NaN; badThr = 0;
-            if (ph == "sinkdown" || ph == "sinkmap") { vsF = i.Vs; lastT = i.T; overAt = double.NaN; recThr = double.NaN; limThr = 0; limT = double.NaN; }
+            sinkSlowAt = double.NaN; if (ph == "sinkdown" || ph == "sinkmap") { vsF = i.Vs; lastT = i.T; overAt = double.NaN; recThr = double.NaN; limThr = 0; limT = double.NaN; }
             if (ph == "wait") { HoldAlt = waitHere ? Math.Round(i.Alt / 100) * 100 : ClimbAlt; HoldHdg = i.Heading; waitSpeed = WaitSpeed(i); } t0 = i.T; v0 = i.Speed; a0 = i.Alt; minV = i.Speed; maxPitch = i.Pitch; minAlt = i.Alt; gSum = trSum = crSum = stMax = 0; n = 0; lagAt = double.NaN; reachAt = double.NaN;
             if (!Visited.Contains(ph)) Visited.Add(ph); if (status != null) Status = status;
         }
@@ -902,7 +914,7 @@ namespace KSPChatBridge
                     else if (i.Alt < SinkAlt - 200) { Throttle = 1; Pitch = LevelOff(i, SinkAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); SampleClimb(i); }   // climb-back: ~30 deg, less near 1.3x stall
                     else { Throttle = .5; Pitch = SpeedPitch(i, SinkSpeedFactor); FilterVs(i); Throttle = Math.Max(Throttle, SinkLimit(i)); }
                     Bank = 0; if (double.IsNaN(sinkStart)) sinkStart = i.T;
-                    if ((i.Alt >= SinkAlt - 200 && i.Alt <= SinkAlt + 200 && i.Speed <= (SinkSpeedFactor + .03) * i.StallGuess) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
+                    if ((i.Alt >= SinkAlt - 200 && i.Alt <= SinkAlt + 200 && i.Speed <= (SinkSpeedFactor + .03) * i.StallGuess && i.Speed >= (SinkSpeedFactor - .07) * i.StallGuess && Math.Abs(i.Pitch) < 10) || dt > 300) { sinkThr = 0; overAt = double.NaN; sinkStart = i.T; Go("sinkdown", i, "Sink map: throttle cut until the sink passes 10 m/s."); }
                     return;
                 case "climbback":
                     Throttle = 1; Pitch = LevelOff(i, ClimbAlt, PilotPolicy.ClimbBackPitch(i.Speed, i.StallGuess)); Bank = 0; SampleClimb(i);   // climb-back / sinkclimb: 5 km (ClimbAlt == SinkAlt)
@@ -921,7 +933,8 @@ namespace KSPChatBridge
                     {
                         Pitch = SpeedPitch(i, SinkSpeedFactor); Bank = 0;
                         if (!double.IsNaN(sinkStart) && i.T - sinkStart > SinkCap) { SinkDone(i, "Sink map: 10 min cap reached, keeping " + SinkTbl.Count + " points. Level at 4 km for the stall test."); return; }
-                        if (i.Speed < 1.15 * i.StallGuess) { SinkDone(i, "Sink map stopped (speed under 1.15x stall); " + SinkTbl.Count + " points. level at 4 km for the stall test."); return; }
+                        if (i.Speed < 1.15 * i.StallGuess) { if (double.IsNaN(sinkSlowAt)) sinkSlowAt = i.T; } else sinkSlowAt = double.NaN;
+                        if (!double.IsNaN(sinkSlowAt) && i.T - sinkSlowAt >= SinkSlowS) { SinkDone(i, "Sink map stopped (speed under 1.15x stall); " + SinkTbl.Count + " points. level at 4 km for the stall test."); return; }
                         if (i.Alt < 4000) { resume = Phase; Go("sinkclimb", i, "Sink map paused below 4 km: climbing back to 5 km, then resuming at " + Math.Round((Phase == "sinkdown" ? sinkThr : stepThr) * 100) + "% throttle."); return; }
                         FilterVs(i);
                         if (Phase == "sinkdown")
