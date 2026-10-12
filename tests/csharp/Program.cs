@@ -2137,7 +2137,7 @@ class Program
             Console.WriteLine("Airbrakes/dedupe/ILS zone/MFD: 9 behavior checks passed.");
         }
         {   // Luke 3:41 PM: final speed schedule (not 1.3x stall from 20 km)
-            Check(ApproachProfile.FinalSchedule(12000, 45) > 100 && ApproachProfile.FinalSchedule(12000, 45) <= 150 && ApproachProfile.FinalSchedule(8000, 80) == 150, "12->4 km: ~2.3x stall, cap 150");
+            Check(ApproachProfile.FinalSchedule(12000, 45) > 100 && ApproachProfile.FinalSchedule(12000, 45) <= 150 && ApproachProfile.FinalSchedule(12000, 80) == 150 && ApproachProfile.FinalSchedule(8000, 80) < 150, "long final: ~2.3x stall, cap 150; bleed starts at the 12 km fix (Oct 12)");
             double s3 = ApproachProfile.FinalSchedule(3000, 45), s2 = ApproachProfile.FinalSchedule(2000, 45);
             Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - 1.35 * 45) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
             Check(ApproachProfile.SaneStall(33) == 40 && ApproachProfile.SaneStall(double.NaN) >= 40, "stall estimate sanity floor");
@@ -2271,7 +2271,7 @@ class Program
             double a = dl.Estimate("Aeris 3A", 104, 54, true); Check(Math.Abs(a - 2.5) < .01 && double.IsNaN(dl.Estimate("Unknown", 104, 54, true)), "decel learned per craft (" + a.ToString("0.00") + ")");
             var back = DecelLearner.FromJson(dl.ToJson()); Check(Math.Abs(back.Estimate("Aeris 3A", 104, 54, true) - 2.5) < .01, "decel profile persists (JSON round trip)");
             double fast = ApproachProfile.DecelStartDist(45, 2.5), slow = ApproachProfile.DecelStartDist(45, double.NaN), v1 = ApproachProfile.HiSpeed(45), v2 = ApproachProfile.AppSpeed(45);
-            Check(Math.Abs(fast - (2000 + (v1 * v1 - v2 * v2) / 5 + 500)) < 1 && slow > fast, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
+            Check(Math.Abs(fast - Math.Max(12000, 2000 + (v1 * v1 - v2 * v2) / 5 + 500)) < 1 && slow >= fast && Math.Abs(ApproachProfile.DecelStartM(v1, v2, 2.5) - ((v1 * v1 - v2 * v2) / 5 + 500)) < 1, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
             Check(Math.Abs(ApproachProfile.FinalSchedule(fast, 45, 2.5) - v1) < .01 && Math.Abs(ApproachProfile.FinalSchedule(2000, 45, 2.5) - v2) < .01, "schedule: long-final speed until the decel point, approach speed by 2 km");
             Console.WriteLine("Measured decel: 4 behavior checks passed.");
         }

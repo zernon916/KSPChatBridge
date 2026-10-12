@@ -39,6 +39,8 @@ namespace KSPChatBridge
         internal const double Deadband = 1.5, Kp0 = .035, Ki0 = .004, Kd0 = .08, Rate0 = .04, Slew0 = 1.0;
         /// <summary>Step-and-wait: within NearBand m/s of the target the throttle moves in steps of at most FineStep, then holds.</summary>
         internal const double FineStep = .005, NearBand = 6, MinStep = .0015, SpoolBand = .02;
+        /// <summary>Oct 12: well below the target and not accelerating -> push the throttle (live: 57-72% with speed 40 m/s under).</summary>
+        internal const double FarBand = 10, MinSlew = .6, PushAcc = .15;
         double Kp = Kp0, Ki = Ki0, Kd = Kd0, Rate = Rate0, TargetSlew = Slew0, Lead;
         double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN, accF;
         double clk, stepGoal = double.NaN, waitT = double.NaN, waitV, lastStep, vF = double.NaN;
@@ -103,13 +105,15 @@ namespace KSPChatBridge
         {
             if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; model = outv; }
             if (dt <= 0) return outv;
-            cmd += FlightPolicy.Clamp(target - cmd, -TargetSlew * dt, TargetSlew * dt);
+            cmd += FlightPolicy.Clamp(target - cmd, -TargetSlew * dt, Math.Max(MinSlew, TargetSlew) * dt);   // Oct 12: speeding up slews at >= 0.6 m/s2 (0.25 on a 47 t jet took 200 s to ask for +50 m/s); slowing keeps the gentle slew
             double acc = (v - prevV) / dt; prevV = v; accF += (acc - accF) * Math.Min(1, dt / .5); vF = double.IsNaN(vF) ? v : vF + (v - vF) * Math.Min(1, dt / .5);
             model += (outv - model) * Math.Min(1, dt / Lag);   // throttle already commanded but not felt yet (lag model)
             double pending = Sens * (outv - model) * Lag;        // Smith-style: speed change still on its way from earlier throttle moves
             double err = cmd - (v + accF * Lead + pending), e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;   // anticipate: act on the speed we'll have
             double raw = i + Kp * e - Kd * accF;   // damping on the FILTERED acceleration (raw dv/dt is frame noise)
             double want = FlightPolicy.Clamp(raw, .05, 1), lim = Rate * dt, goal;
+            bool push = target - v > FarBand && accF < PushAcc;
+            if (push) want = 1;   // far under the target: full power until it accelerates (the Smith lead / slewed target hid the error)
             clk += dt; Waiting = false;
             if (Math.Abs(err) < NearBand)
             {   // step-and-wait: one small step, then hold until the speed answers or the learned lag has passed

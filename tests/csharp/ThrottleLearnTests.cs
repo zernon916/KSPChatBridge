@@ -11,7 +11,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -190,6 +190,38 @@ internal static class ThrottleLearnTests
     // Luke 9:27 PM: A300 top-of-wing spoilers were deployed as flaps in 9b
     // live 22:27: 12 checked before LEARN was dropped from the queue; after 10b it climbed back to 5 km and waited forever, 117 km out
     // Oct 12 live (Stearwing A300, 47 t): heading hold never rolled past ~1 deg, user holds lost to Learn, "running 0", box 12 unchecked, flaps log spam
+    // Oct 12 live approach (A300 into the water): speed under target at 57-72%, heavy porpoise, approach speed plan
+    static void Oct12Approach()
+    {
+        var sh = new SpeedHold(); sh.Configure(47, .35, 3); sh.SetLag(7);
+        double v = 170, thr = .6, eff = .6, maxThr = 0;
+        for (double t = 0; t < 240; t += .1) { thr = sh.Step(220, v, .1, thr); maxThr = Math.Max(maxThr, thr); eff += (thr - eff) * .1 / 7; v += 6 * (eff - (.6 + (v - 170) / 200)) * .1; }
+        Check(v > 210 && maxThr > .85, "47 t jet 50 m/s under the target: throttle pushes to full and reaches the speed (v " + v.ToString("0") + ", max thr " + maxThr.ToString("0.00") + ")");
+        double pv = double.NaN; CraftClass.SlewVs(ref pv, 0, .1, "heavy"); double s1 = CraftClass.SlewVs(ref pv, 20, 1, "heavy");
+        double pl = double.NaN; CraftClass.SlewVs(ref pl, 0, .1, "light");
+        Check(Near(s1, 1) && CraftClass.SlewVs(ref pl, 20, 1, "light") == 20, "heavy VS command slewed 1 m/s per s (porpoise damping); light unchanged");
+        // heavy altitude loop with pitch inertia: no porpoise around 5.2 km
+        double alt = 5000, vs = 0, prev = double.NaN, maxOver = 0; double? cap = null; int crossings = 0; double lastSign = -1;
+        for (double t = 0; t < 600; t += .1)
+        {
+            double tv = FlightPolicy.VerticalSpeed(alt, 5200, 25, 15, 1, 20, ref cap) * CraftClass.VsScale("heavy"); tv = CraftClass.SlewVs(ref prev, tv, .1, "heavy");
+            vs += (tv - vs) * .1 / 4; alt += vs * .1; if (t > 120) maxOver = Math.Max(maxOver, Math.Abs(alt - 5200));
+            double sg = Math.Sign(alt - 5200); if (sg != 0 && sg != lastSign) { crossings++; lastSign = sg; }
+        }
+        Check(maxOver < 40 && crossings <= 2, "heavy hold settles at 5.2 km without porpoising (dev " + maxOver.ToString("0") + " m, crossings " + crossings + ")");
+        // speed plan: cruise until the long-final fix, landing speed by 2 km; flaps-down stall; no flaps = faster clean speed
+        double st = 79, hi = ApproachProfile.HiSpeed(st);
+        Check(ApproachProfile.FinalSchedule(12500, st, .8) == hi && ApproachProfile.FinalSchedule(2000, st, .8) == ApproachProfile.AppSpeed(st) && ApproachProfile.FinalSchedule(7000, st, .8) < hi && ApproachProfile.FinalSchedule(7000, st, .8) > ApproachProfile.AppSpeed(st), "speed held to long final, bled gradually, landing speed at 2 km");
+        Check(ApproachProfile.DecelStartDist(st, 3) >= ApproachChart.LongFix, "no bleed before the long-final fix with a strong decel");
+        Check(Near(ApproachProfile.AppSpeed(st), 1.35 * st), "default landing speed 1.35x stall");
+        ApproachProfile.FlapRatio = .8; Check(Near(ApproachProfile.AppSpeed(st), 1.35 * st * .8), "flaps out: 1.35x the flaps-down stall");
+        ApproachProfile.HasFlaps = false; ApproachProfile.Heavy = true; Check(Near(ApproachProfile.AppSpeed(st), 1.75 * st), "no flaps, heavy: 1.75x clean stall");
+        ApproachProfile.HasFlaps = true; ApproachProfile.Heavy = false; ApproachProfile.FlapRatio = double.NaN;
+        Check(FlapsPolicy.ApproachSetting("final", 7000, ApproachChart.ShortFix) == 1 && FlapsPolicy.ApproachSetting("final", 3000, ApproachChart.ShortFix) == 2 && FlapsPolicy.ApproachSetting("final", 1500, ApproachChart.ShortFix) == 3, "flaps in steps down final");
+        // approach entry / ILS turns ride the same heading-hold bank step
+        double bc = 0, b = 0; for (double t = 0; t < 8; t += .02) b = TurnOnset.HoldBank(ref bc, "heavy", -17, .02, 20, false, double.NaN);
+        Check(b < -16, "approach join turn reaches the 17 deg chart bank (" + b.ToString("0.0") + ")");
+    }
     static void Oct12Hold()
     {
         // 1/2: the heading-hold bank step keeps its own state; the lost 'bankCmd = bank' stuck every turn at < 1.5 deg

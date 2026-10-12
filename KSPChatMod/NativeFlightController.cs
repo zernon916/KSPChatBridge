@@ -70,7 +70,7 @@ namespace KSPChatBridge
         RotorPark rotorPark;
         float nextRotorPark;
         float nextRotorTrim;
-        bool holdAltitude = true, holdHeading = true, holdSpeed = true;
+        bool holdAltitude = true, holdHeading = true, holdSpeed = true; double vsSlew = double.NaN;
         TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); readonly ThrottleGate gate = new ThrottleGate { Log = m => ChatLog.Write("throttle", m) }; string throttleKind = "pi", throttleWhy = ""; string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext, attTraceNext;
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         void ConfigureInertia()
@@ -683,7 +683,8 @@ namespace KSPChatBridge
                     return; // rotorcraft lift must never command main throttle
                 }
                 double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
-                if (!directVs.HasValue) targetVs *= CraftClass.VsScale(CraftCls);   // heavy: gentle altitude corrections
+                if (!directVs.HasValue) { targetVs *= CraftClass.VsScale(CraftCls); targetVs = CraftClass.SlewVs(ref vsSlew, targetVs, dt, CraftCls); } else vsSlew = targetVs;   // heavy: gentle altitude corrections, VS command slewed (porpoise, Oct 12)
+                ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
                 if (mode == "hold" && !double.IsNaN(terrainFloor) && vessel.altitude < terrainFloor)
                     targetVs = Math.Max(targetVs, FlightPolicy.Clamp((terrainFloor - vessel.altitude) * .08, 3, 25));
                 bool landBank = mode == "landing" && runway != null && runway.TurnBank > 0;   // G-rated approach turns (and explicit "bank 60")   // "bank 60, land nearest"

@@ -57,6 +57,13 @@ namespace KSPChatBridge
         internal static double ConservativeStall(double est, double liftoff) { return double.IsNaN(liftoff) || liftoff <= 0 ? est : Math.Max(est, liftoff / 1.25); }
         internal const double HeavyBank = 25, HeavyRollRate = 6, HeavyG = 1.15, HeavyPitchG = 1.4;
         internal static double MaxBank(string cls, double limit) { return Gentle(cls) ? Math.Min(limit, HeavyBank) : limit; }
+        internal const double HeavyVsAccel = 1.0;
+        /// <summary>Oct 12: heavy altitude hold porpoised around 5.0-5.2 km; the commanded vertical speed now changes at most 1 m/s per s (light: unchanged).</summary>
+        internal static double SlewVs(ref double prev, double want, double dt, string cls)
+        {
+            if (!Gentle(cls) || double.IsNaN(prev) || dt <= 0) { prev = want; return want; }
+            prev += FlightPolicy.Clamp(want - prev, -HeavyVsAccel * dt, HeavyVsAccel * dt); return prev;
+        }
         internal static double JoinG(string cls, double g) { return Gentle(cls) ? Math.Min(g, HeavyG) : g; }
         /// <summary>Roll toward want. LEARN roll rate (when known) drives the step for every class; else heavies use HeavyRollRate and light/fighter snap (AUTOPILOT_REVIEW #7/#10).</summary>
         internal static double RollStep(string cls, double cmd, double want, double dt, double learnedRollDegS = double.NaN)
@@ -311,7 +318,16 @@ namespace KSPChatBridge
             if (double.IsNaN(stall)) return UnmeasuredStallFloor;
             return TrustedStall ? FlightPolicy.Clamp(stall, 15, 180) : FlightPolicy.Clamp(stall, 40, 120);
         }
-        internal static double AppSpeed(double stall) { return 1.35 * SaneStall(stall); }
+        /// <summary>Oct 12 speed plan: landing speed 1.35x the flaps-down stall when the craft has flaps (FlapRatio = learned flap stall / clean stall),
+        /// no flaps: a faster clean speed (heavy 1.75x stall, else 1.45x).</summary>
+        internal static bool HasFlaps = true, Heavy; internal static double FlapRatio = double.NaN;
+        internal const double NoFlapHeavy = 1.75, NoFlapLight = 1.45;
+        internal static double AppSpeed(double stall)
+        {
+            double s = SaneStall(stall);
+            if (!HasFlaps) return (Heavy ? NoFlapHeavy : NoFlapLight) * s;
+            return 1.35 * s * (!double.IsNaN(FlapRatio) && FlapRatio > .5 && FlapRatio < 1 ? FlapRatio : 1);
+        }
         /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150, or 1.1x join when LEARN'd fast), linear decel to 1.35x stall by 2 km.</summary>
         internal static double HiSpeed(double stall)
         {
@@ -325,7 +341,8 @@ namespace KSPChatBridge
         /// <summary>Distance to the threshold where the decel from the long-final speed starts (ends at 2 km).</summary>
         /// <summary>No measured profile: decel scales down with mass (1.0 m/s^2 at 10 t, 0.45 at 50 t, floor 0.3).</summary>
         internal static double MassDecel(double massT) { return FlightPolicy.Clamp(1.0 * Math.Sqrt(10 / Math.Max(1, massT)), .3, 1.0); }
-        internal static double DecelStartDist(double stall, double a) { return DecelEnd + DecelStartM(HiSpeed(stall), AppSpeed(stall), a); }
+        /// <summary>Hold the long-final speed to the long-final fix (12 km), then bleed; earlier only when the decel needs more room.</summary>
+        internal static double DecelStartDist(double stall, double a) { return Math.Max(ApproachChart.LongFix, DecelEnd + DecelStartM(HiSpeed(stall), AppSpeed(stall), a)); }
         internal static double FinalSchedule(double distToThreshold, double stall, double decelA = double.NaN)
         {
             double hi = HiSpeed(stall), app = AppSpeed(stall), start = DecelStartDist(stall, decelA);
