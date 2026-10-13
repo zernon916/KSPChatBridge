@@ -1782,6 +1782,20 @@ class Program
                     var jh = chj.BestJoin(hLa, hLo, 30, chj.LongAlt, hv, hr, 600000, out jw);
                     Check(jh != null && jh.Count >= 1, "heavy craft far off-axis always gets a reachable join (" + jw + ")");
                 }
+                {   // T7 approach cone: more than 30 deg off the final course -> intercept point on the extended centerline, join <= 30 deg
+                    Check(double.IsNaN(ApproachChart.ConeJoinD(-48000, 10000, 70, 90.4, 2000, 12000)), "cone: inside 30 deg of the course -> no intercept point");
+                    Check(Math.Abs(ApproachChart.ConeJoinD(-48000, 10000, 40, 90.4, 2000, 12000) - (48000 - 10000 / Math.Tan(30 * Math.PI / 180) - 2000)) < 1, "cone: sized from the cross-track at 30 deg + one turn radius");
+                    Check(ApproachChart.ConeJoinD(-5000, 20000, 180, 90.4, 2000, 12000) == 12000, "cone: never closer than the shortest final");
+                    double kLa, kLo; NavigationMath.Offset(thrLa, thrLo, 270.4, 40000, 600000, out kLa, out kLo); NavigationMath.Offset(kLa, kLo, 0, 10000, 600000, out kLa, out kLo);
+                    var jk = chj.BestJoin(kLa, kLo, 180, chj.LongAlt, v, r, 600000, out jw);
+                    Check(jk != null && jw.Contains("approach cone") && jw.Contains("intercept capped at") && jw.Contains("join <= 30"), "40 km out, 10 km left, 90 deg off course: long-final intercept capped so the join is <= 30 deg (" + jw + ")");
+                    {   // cap infeasible (cone point inside the shortest final): full sweep kept, decision still logged
+                        double hv2 = 120, hr2 = ApproachProfile.Radius(hv2, CraftClass.HeavyBank), h2La, h2Lo;
+                        NavigationMath.Offset(thrLa, thrLo, 120, 28000, 600000, out h2La, out h2Lo);
+                        var jh2 = chj.BestJoin(h2La, h2Lo, 30, chj.LongAlt, hv2, hr2, 600000, out jw);
+                        Check(jh2 != null && jw.Contains("approach cone") && jw.Contains("shortest final"), "heavy craft 60 deg off: cone noted, sweep unchanged when the cap fits inside the shortest final (" + jw + ")");
+                    }
+                }
                 {   // Oct 12 19:12 live: A300 48 km out on 297 deg inbound (27 deg off), 200 m/s r ~6-7 km: flew straight to the FAF (297/330 unreachable)
                     double fLa, fLo; NavigationMath.Offset(thrLa, thrLo, 117, 48000, 600000, out fLa, out fLo); double fr = ApproachProfile.Radius(200, 34);
                     var jf = chj.BestJoin(fLa, fLo, 297, chj.LongAlt + 2500, 200, fr, 600000, out jw);
@@ -1817,7 +1831,7 @@ class Program
                 rmj.Step(bLa, bLo, 700, 700, v, false, 600000, 45, 180, 180);
                 Check(rmj.JoinLog.StartsWith("joined") && rmj.RawRoute != null && rmj.RawRoute[0].Name != rmj.Chart.DownLeftA.Name, "approach start uses the best join: " + rmj.JoinLog);
             }
-            Console.WriteLine("Nearest safe join: 7 behavior checks passed.");
+            Console.WriteLine("Nearest safe join: 12 behavior checks passed.");
             {
                 var ir = Ils.Compute(-.0485997, -74.724375 - 5000 / (600000 * Math.PI / 180), 69 + 300 * Math.Tan(3 * Math.PI / 180) + 5000 * Math.Tan(3 * Math.PI / 180), -.0485997, -74.724375, -.0502119, -74.490300, 69, 600000);
                 Check(Math.Abs(ir.DmeM - 5000) < 5 && Math.Abs(ir.CrossM) < 40 && Math.Abs(ir.AboveGsM) < 1 && Math.Abs(ir.GsDeg) < .02 && ir.Front, "ILS: on the 3 deg path 5 km out: DME 5 km, G/S centred (" + ir.AboveGsM.ToString("0.0") + " m, cross " + ir.CrossM.ToString("0") + " m)");

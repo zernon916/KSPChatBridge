@@ -830,6 +830,18 @@ namespace KSPChatBridge
         internal const double FarJoinRadii = 3, FarMaxIntercept = 120, AmpleJoinM = 35000, SkipCostM = 8000;
         internal static bool JoinAngleOk(double icpt, bool onLeg, double toJ, double turnR) { return onLeg || toJ <= turnR || icpt <= MaxIntercept || (toJ >= FarJoinRadii * turnR && icpt <= FarMaxIntercept); }
         internal static double SkipCost(double direct, double skipped) { return direct > AmpleJoinM ? Math.Max(0, skipped) * SkipCostM : 0; }
+        /// <summary>T7 approach cone: more than ConeDeg (30) off the final course -> an intercept point on the extended centerline, sized from the
+        /// learned turn radius: the capture covers the cross-track at a ConeDeg-or-less angle plus one turn radius to settle on that heading.
+        /// along/cross = metres from the threshold along the course (+ = past it) and across it (+ = right). Distance behind the threshold,
+        /// clamped to [finalMin, ConeMaxD]; NaN when already inside the cone (heading within ConeDeg of the course).</summary>
+        internal const double ConeDeg = 30, ConeMaxD = 45000;
+        internal static double ConeJoinD(double along, double cross, double heading, double course, double turnR, double finalMin)
+        {
+            if (double.IsNaN(along) || double.IsNaN(cross) || double.IsNaN(heading) || double.IsNaN(course)) return double.NaN;
+            if (Math.Abs(FlightPolicy.Wrap(heading - course)) <= ConeDeg) return double.NaN;
+            double fNeed = Math.Abs(cross) / Math.Tan(ConeDeg * Math.PI / 180) + Math.Max(0, turnR);
+            return FlightPolicy.Clamp(Math.Max(0, -along) - fNeed, finalMin, ConeMaxD);
+        }
         string flyOutWhy = "";
         internal static double FlyOutDistance(double turnR) { return FlightPolicy.Clamp(1.75 * turnR, 5000, 10000); }
         /// <summary>Fly-out-and-turn: a point FlyOutDistance upstream of the start fix on its inbound track; path = Dubins to it (arriving on the inbound track) + back to the fix + rest of the chart.</summary>
@@ -912,11 +924,23 @@ namespace KSPChatBridge
             if (best != null) bestCost = bestTotal;
             double fSink = ApproachProfile.SinkLimit(PlanSink, MaxSink), fApp = double.IsNaN(PlanApp) || PlanApp <= 0 ? .75 * speed : PlanApp;
             double finalMin = Math.Max(RunwayMission.FafDistance, Math.Min(15000, ApproachProfile.DecelStartM(speed, fApp, PlanDecelA)));   // shortest final the learned decel allows
+            // T7 approach cone: more than ConeDeg (30) off the final course -> the long-final INTERCEPT point is capped below
+            // (sized from the cross-track at a <= 30 deg angle + the learned turn radius) so the join onto the centerline is <= 30 deg.
+            double coneOff = Math.Abs(FlightPolicy.Wrap(heading - Course)), coneD = double.NaN; bool coneCap = false;
+            if (coneOff > ConeDeg)
+            {
+                double cE = Math.Sin(Course * Math.PI / 180), cN = Math.Cos(Course * Math.PI / 180);
+                coneD = ConeJoinD(me[0] * cE + me[1] * cN, me[0] * cN - me[1] * cE, heading, Course, turnR, finalMin);
+            }
             
             {   // Luke 5:56 PM (heavy craft, 330/330 unreachable): fall back to the nearest reachable point on the extended
                 // centerline (long final line), far enough out to roll out aligned with this plane's turn radius; no intercept limit.
                 double minD = finalMin + turnR;   // was FAF + 2r + 2 km: one turn radius to roll out is enough
-                for (double d = minD; d <= Math.Max(minD, 45000); d += 1000)
+                // T7: >30 deg off course -> cap the intercept at the cone-sized point so the join is <= 30 deg; the cap is inside
+                // the shortest final (no room for a <=30 deg capture) -> keep the full sweep, the cone cannot fit before the FAF.
+                coneCap = !double.IsNaN(coneD) && coneD >= minD;
+                double dMax = coneCap ? Math.Max(minD, Math.Min(coneD, ConeMaxD)) : Math.Max(minD, ConeMaxD);
+                for (double d = minD; d <= dMax; d += 1000)
                 {
                     double la, lo; NavigationMath.Offset(ThrLat, ThrLon, Course + 180, d, radius, out la, out lo); var jp = xy(la, lo);
                     double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], Course, turnR); if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) continue;
@@ -928,10 +952,10 @@ namespace KSPChatBridge
                     if (flose > 30000) { nAlt++; continue; }
                     nFallback++; double cost = reach + flose + d;
                     if (cost < bestCost) { bestCost = cost; var j = new Wp { Name = "long final -" + (d / 1000).ToString("0") + " km", Lat = la, Lon = lo, Alt = jAlt };
-                        best = new List<Wp> { j }; JoinPoint = j; bestWhy = "direct to the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m), total " + (cost / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ", final min " + (finalMin / 1000).ToString("0.0") + " km)" + (detour ? " [chart join was a detour]" : ""); }
+                        best = new List<Wp> { j }; JoinPoint = j; bestWhy = "direct to the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m), total " + (cost / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ", final min " + (finalMin / 1000).ToString("0.0") + " km)" + (coneOff > ConeDeg && !double.IsNaN(coneD) && d <= coneD ? ", approach cone: " + Math.Round(coneOff) + " deg off the final course -> intercept at " + j.Name + " sized from r " + Math.Round(turnR) + " m, join <= " + Math.Round(ConeDeg) + " deg" : "") + (detour ? " [chart join was a detour]" : ""); }
                 }
             }
-            why = (best != null ? bestWhy : "no safe join point") + (PlanLearned.Length > 0 ? " {" + PlanLearned + "}" : "") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable" + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]";
+            why = (best != null ? bestWhy : "no safe join point") + (PlanLearned.Length > 0 ? " {" + PlanLearned + "}" : "") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable" + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]" + (coneCap ? " [approach cone: " + Math.Round(coneOff) + " deg off the final course -> intercept capped at " + (coneD / 1000).ToString("0.0") + " km, join <= " + Math.Round(ConeDeg) + " deg]" : coneOff > ConeDeg && !double.IsNaN(coneD) ? " [approach cone: " + Math.Round(coneOff) + " deg off the final course -> cap " + (coneD / 1000).ToString("0.0") + " km is inside the shortest final, sweep unchanged]" : "");
             return best;
         }
 
