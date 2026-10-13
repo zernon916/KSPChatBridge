@@ -79,7 +79,7 @@ namespace KSPChatBridge
                 {
                     double crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
                     var c = ApproachChart.Build(rw.Lat, rw.Lon, crs, rw.Elevation, v, 0, body.Radius, (la, lo) => MapTerrain(body, la, lo));
-                    ChartStore.Write(rw.Key, "generated", EntryPolicy.ChartJson(c, "generated for " + vessel.vesselName + ": join r " + Math.Round(c.TurnRadius) + " m at " + Math.Round(v) + " m/s")); n++;
+                    ChartStore.Write(rw.Key, "generated", EntryPolicy.ChartJson(c, "generated for " + vessel.vesselName + (ChartDesign.Known ? " (learned profile " + ChartDesign.Key + ", FAF " + (c.FafD / 1000).ToString("0.0") + " km)" : " (no learned profile: fixed chart)") + ": join r " + Math.Round(c.TurnRadius) + " m at " + Math.Round(v) + " m/s")); n++;
                 }
                 ChatLog.Write("approach", "generated HEAD-ON/SIDE/REAR charts for " + n + " runway ends on " + body.bodyName + " (KEY_generated.json; your own chart files untouched)");
             }

@@ -32,7 +32,7 @@ namespace KSPChatBridge
         static int rwIdx; static bool centerRunway, follow = true; static double fixLat, fixLon;
         Texture2D tex, texGrey; Color[] px = new Color[N * N], pxGrey = new Color[N * N]; int buildRow = -1; double bLat, bLon, bSpan; float nextRebuild;
         List<NativeFlightController.MapRunway> runways = new List<NativeFlightController.MapRunway>();
-        List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int sel = -1; bool dragging; string note = "";
+        List<ApproachFile.EditFix> fixes = new List<ApproachFile.EditFix>(); string fixesFor = ""; int fixesVer = -1; int sel = -1; bool dragging; string note = "";
         double cLat, cLon, span; CelestialBody body;
 
         internal static void ToggleMap() { AicsMenu.ShowMfdItem("map"); }
@@ -89,7 +89,7 @@ namespace KSPChatBridge
             if (act != null && !string.IsNullOrEmpty(act.Key)) { int i = runways.FindIndex(r => r.Key == act.Key); if (i >= 0) rwIdx = i; }
             if (rwIdx >= runways.Count) rwIdx = 0;
             var rw = runways.Count > 0 ? runways[rwIdx] : null;
-            if (rw != null && fixesFor != rw.Key) LoadFixes(rw);
+            if (rw != null && (fixesFor != rw.Key || (fixesVer != ChartDesign.Version && added.Count == 0))) LoadFixes(rw);   // Oct 12: per-plane chart -> redraw on profile/vessel change (keeps unsaved added WPs)
             span = ViewSpan;
             if (!follow) { cLat = fixLat; cLon = fixLon; } else if (centerRunway && rw != null) { cLat = rw.Lat; cLon = rw.Lon; } else { cLat = v.latitude; cLon = v.longitude; }
             double moved = NavigationMath.Distance(cLat, cLon, bLat, bLon, body.Radius);
@@ -147,7 +147,7 @@ namespace KSPChatBridge
 
         void LoadFixes(NativeFlightController.MapRunway rw)
         {
-            fixesFor = rw.Key; sel = -1; fixes.Clear(); note = "";
+            fixesFor = rw.Key; fixesVer = ChartDesign.Version; sel = -1; fixes.Clear(); note = "";
             double crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);
             var ch = ApproachChart.Build(rw.Lat, rw.Lon, crs, rw.Elevation, 150, 20, body.Radius, (la, lo) => NativeFlightController.MapTerrain(body, la, lo));
             string why; var ov = NativeFlightController.LoadOverride(rw.Key, rw, body, out why);

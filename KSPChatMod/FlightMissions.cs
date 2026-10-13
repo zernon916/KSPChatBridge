@@ -584,11 +584,39 @@ namespace KSPChatBridge
         }
     }
 
-    internal sealed class ApproachChart
+    /// <summary>Luke Oct 12 21:22: per-plane approach chart DESIGN values from the learned profile - a middle ground of what the plane can do
+    /// (55% of the learned max safe bank, 55% of the learned max sink, 0.8x learned decel) so the chart never makes it struggle.
+    /// Key changes when the profile or the active vessel changes -> charts / screens rebuild. No profile = the old fixed charts.</summary>
+    internal static class ChartDesign
     {
+        internal const double BankUse = .55, SinkUse = .55, DecelUse = .8, MinFaf = 6000, MaxFaf = 20000, MinBank = 15, MaxBank = 35;
+        internal static string Key = ""; internal static int Version; static Func<double, double> sinkAt; static double decel = double.NaN; static string lastLog = "";
+        internal static void Set(string key, Func<double, double> sink, double learnedDecel)
+        { if (key == Key && Version > 0) return; Key = key ?? ""; sinkAt = sink; decel = learnedDecel; Version++; }
+        internal static bool Known { get { return Key.Length > 0; } }
+        /// <summary>Design bank at a speed: 55% of the learned max safe bank (15..35 deg); NaN = no envelope.</summary>
+        internal static double Bank(double speed)
+        {
+            if (!Known || ApproachProfile.SafeBank == null) return double.NaN; double sb = ApproachProfile.SafeBank(speed);
+            return double.IsNaN(sb) || sb <= 0 ? double.NaN : FlightPolicy.Clamp(BankUse * sb, MinBank, MaxBank);
+        }
+        internal static double Sink(double speed) { if (!Known || sinkAt == null) return double.NaN; double s = sinkAt(speed); return double.IsNaN(s) || s <= 1 ? double.NaN : Math.Max(3, SinkUse * s); }
+        internal static double Decel { get { return !Known || double.IsNaN(decel) || decel <= 0 ? double.NaN : DecelUse * decel; } }
+        /// <summary>Final approach fix distance: room to slow from the long-final speed to approach speed at the design decel,
+        /// and to descend the glide height at the design sink; 6..20 km. NaN = no learned data (use the fixed 12 km).</summary>
+        internal static double FafDistance(double hiSpeed, double appSpeed)
+        {
+            double a = Decel, sk = Sink(hiSpeed); if (double.IsNaN(a) && double.IsNaN(sk)) return double.NaN;
+            double d = double.IsNaN(a) ? 0 : ApproachProfile.DecelStartM(hiSpeed, appSpeed, a) + ApproachProfile.DecelEnd;
+            return FlightPolicy.Clamp(Math.Max(d, MinFaf), MinFaf, MaxFaf);
+        }
+        internal static void Log(string what) { if (what == lastLog) return; lastLog = what; ChatLog.Write("approach", "chart design " + what); }
+    }
+
+    internal sealed class ApproachChart    {
         internal sealed class Wp { internal string Name; internal double Lat, Lon, Alt; }
         internal const double RearPast = 3000; internal const double LongFix = 12000, ShortFix = 4000, Clearance = 250, Gs = 9.81;
-        internal double ThrLat, ThrLon, Course, Elevation, TurnRadius, LongAlt, ShortAlt, MinAlt, RouteFixAlt = double.NaN;
+        internal double FafD = LongFix, ThrLat, ThrLon, Course, Elevation, TurnRadius, LongAlt, ShortAlt, MinAlt, RouteFixAlt = double.NaN;
         internal Wp Long, Short, DownLeftA, DownLeftB, ApexLeft, DownRightA, DownRightB, ApexRight, RearLeftA, RearLeftB, RearRightA, RearRightB;
         Func<double, double, double> terrain; double radius;
         internal static double Radius(double speed, double bankDeg) { double v = Math.Max(60, Math.Min(speed, 200)); return Margin * v * v / (Gs * Math.Tan(FlightPolicy.Clamp(bankDeg, 10, 60) * Math.PI / 180)); }
@@ -604,9 +632,13 @@ namespace KSPChatBridge
             Func<double, double, double> terrain, double longAgl = -1, double shortAgl = -1)
         {
             var c = new ApproachChart { ThrLat = thrLat, ThrLon = thrLon, Course = course, Elevation = elevation, terrain = terrain, radius = radius };
-            if (bankDeg <= 20 && ApproachProfile.SafeBank != null) bankDeg = ApproachProfile.PhaseBank("entry", speed, speed / 1.5);   // sized from the learned turn envelope
-            double r = c.TurnRadius = Radius(speed, bankDeg);
-            c.Long = c.At("long final 12 km", LongFix, 0); c.Short = c.At("short final 4 km", ShortFix, 0);
+            double db = ChartDesign.Bank(speed), dv = speed;
+            if (bankDeg <= 20 && !double.IsNaN(db)) bankDeg = db;   // Oct 12 21:22: middle-ground design bank (55% of learned max)
+            else if (bankDeg <= 20 && ApproachProfile.SafeBank != null) bankDeg = ApproachProfile.PhaseBank("entry", speed, speed / 1.5);   // sized from the learned turn envelope
+            double r = c.TurnRadius = Radius(speed, bankDeg) / (!double.IsNaN(db) && bankDeg == db ? Margin : 1);   // design bank already IS the margin (no extra 30%)
+            double fd = ChartDesign.FafDistance(Math.Max(speed, 60), Math.Max(50, .7 * speed)); double LongFix = double.IsNaN(fd) ? ApproachChart.LongFix : Math.Round(fd / 500) * 500; c.FafD = LongFix;
+            if (ChartDesign.Known) ChartDesign.Log("[" + ChartDesign.Key + "]: bank " + Math.Round(bankDeg) + " deg (" + (double.IsNaN(db) ? "no envelope" : "55% learned") + ") @ " + Math.Round(dv) + " m/s -> r " + Math.Round(r) + " m; sink " + (double.IsNaN(ChartDesign.Sink(dv)) ? "-" : ChartDesign.Sink(dv).ToString("0.0")) + ", decel " + (double.IsNaN(ChartDesign.Decel) ? "-" : ChartDesign.Decel.ToString("0.00")) + " -> FAF " + (LongFix / 1000).ToString("0.0") + " km (fixed 12), downwind offset " + (2 * r / 1000).ToString("0.0") + " km, base " + ((LongFix + r) / 1000).ToString("0.0") + " km out, teardrop end " + ((LongFix + 2 * r) / 1000).ToString("0.0") + " km");
+            c.Long = c.At("long final " + (LongFix / 1000).ToString("0.#") + " km", LongFix, 0); c.Short = c.At("short final 4 km", ShortFix, 0);
             c.DownLeftA = c.At("left downwind", 0, -2 * r); c.DownLeftB = c.At("left downwind end", LongFix, -2 * r); c.ApexLeft = c.At("left base", LongFix + r, -r);
             c.DownRightA = c.At("right downwind", 0, 2 * r); c.DownRightB = c.At("right downwind end", LongFix, 2 * r); c.ApexRight = c.At("right base", LongFix + r, r);
             // rear / teardrop entry (Luke): overfly offset past the far end, outbound parallel to final, 180 back onto the long fix
@@ -631,7 +663,7 @@ namespace KSPChatBridge
         /// <summary>Glide-path altitude at distance d (m) before the threshold, through the long fix.</summary>
         internal double GlideAlt(double d)
         {
-            double fixAlt = double.IsNaN(RouteFixAlt) ? LongAlt : RouteFixAlt, fixD = RouteFixD > 0 ? RouteFixD : LongFix;
+            double fixAlt = double.IsNaN(RouteFixAlt) ? LongAlt : RouteFixAlt, fixD = RouteFixD > 0 ? RouteFixD : FafD;
             return Elevation + Math.Max(Tch, (fixAlt - Elevation) * Math.Max(0, d) / fixD);
         }
         internal double RouteFixD, Tch = 3;
@@ -664,7 +696,7 @@ namespace KSPChatBridge
             }
             LongAlt = Long.Alt; ShortAlt = Short.Alt; Tch = o.TchM;
         }
-        internal double Slope { get { double fixAlt = double.IsNaN(RouteFixAlt) ? LongAlt : RouteFixAlt, fixD = RouteFixD > 0 ? RouteFixD : LongFix; return Math.Max(0, (fixAlt - Elevation) / fixD); } }
+        internal double Slope { get { double fixAlt = double.IsNaN(RouteFixAlt) ? LongAlt : RouteFixAlt, fixD = RouteFixD > 0 ? RouteFixD : FafD; return Math.Max(0, (fixAlt - Elevation) / fixD); } }
         /// <summary>Raise a leg's altitude over sampled terrain between two points.</summary>
         double LegClear(double la0, double lo0, Wp b)
         {
@@ -798,6 +830,23 @@ namespace KSPChatBridge
         internal const double FarJoinRadii = 3, FarMaxIntercept = 120, AmpleJoinM = 35000, SkipCostM = 8000;
         internal static bool JoinAngleOk(double icpt, bool onLeg, double toJ, double turnR) { return onLeg || toJ <= turnR || icpt <= MaxIntercept || (toJ >= FarJoinRadii * turnR && icpt <= FarMaxIntercept); }
         internal static double SkipCost(double direct, double skipped) { return direct > AmpleJoinM ? Math.Max(0, skipped) * SkipCostM : 0; }
+        string flyOutWhy = "";
+        internal static double FlyOutDistance(double turnR) { return FlightPolicy.Clamp(1.75 * turnR, 5000, 10000); }
+        /// <summary>Fly-out-and-turn: a point FlyOutDistance upstream of the start fix on its inbound track; path = Dubins to it (arriving on the inbound track) + back to the fix + rest of the chart.</summary>
+        KeyValuePair<double, List<Wp>> FlyOut(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, List<Wp> seq, double legTrack, double direct, double[] me, Func<double, double, double[]> xy, bool right)
+        {
+            var f = seq[0]; double k = FlyOutDistance(turnR), la, lo; NavigationMath.Offset(f.Lat, f.Lon, legTrack + 180, k, radius, out la, out lo);
+            var jp = xy(la, lo); double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
+            if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) return new KeyValuePair<double, List<Wp>>(double.MaxValue, null);
+            var o = new Wp { Name = "fly-out " + (k / 1000).ToString("0.0") + " km past " + f.Name.Split('(')[0].Trim(), Lat = la, Lon = lo, Alt = Math.Max(f.Alt, altitude > f.Alt ? Math.Min(altitude, f.Alt + 1000) : f.Alt) };
+            for (int s = 1; s <= 8; s++) { double g = T(lat + (la - lat) * s / 8, lon + (lo - lon) * s / 8); if (!double.IsNaN(g) && g + 150 > o.Alt) return new KeyValuePair<double, List<Wp>>(double.MaxValue, null); }
+            var route = new List<Wp> { o }; double rest = k; Wp prev = f; route.Add(f);
+            for (int q = 1; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
+            rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
+            double total = reach + rest;
+            flyOutWhy = "start path " + f.Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), FLY-OUT-AND-TURN: bad angle at the start fix, out " + (k / 1000).ToString("0.0") + " km past it, turn, inbound " + Math.Round((legTrack + 360) % 360) + " deg; reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m), total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")";
+            return new KeyValuePair<double, List<Wp>>(total + Math.Max(0, total - (1.3 * direct + 8000)) * 4, route);
+        }
         internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why, string entry = null)
         {
             why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
@@ -825,7 +874,11 @@ namespace KSPChatBridge
                         double toJ = NavigationMath.Distance(lat, lon, j.Lat, j.Lon, radius), brg = NavigationMath.Bearing(lat, lon, j.Lat, j.Lon);
                         double icpt = Math.Abs(FlightPolicy.Wrap(legTrack - brg)), hdgErr = Math.Abs(FlightPolicy.Wrap(heading - legTrack));
                         bool onLeg = hdgErr < 30 && toJ < 6000 && icpt < 60;   // already flying this leg: the point ahead on it
-                        if (!JoinAngleOk(icpt, onLeg, toJ, turnR)) { nReach++; continue; }   // never a point behind / against the line direction (near it: 45 deg)
+                        if (!JoinAngleOk(icpt, onLeg, toJ, turnR))
+                        {   // Luke Oct 12 21:22: bad angle onto the START path -> fly out 1.5-2 turn radii past the start fix (upstream), turn around, line up inbound
+                            if (i == 0 && a == null) { var fo = FlyOut(lat, lon, heading, altitude, speed, turnR, radius, seq, legTrack, direct, me, xy, right); if (fo.Value != null && fo.Key < bestCost) { bestCost = fo.Key; bestTotal = fo.Key; best = fo.Value; JoinPoint = fo.Value[0]; bestWhy = flyOutWhy; } }
+                            nReach++; continue;
+                        }   // never a point behind / against the line direction (near it: 45 deg)
                         var jp = xy(j.Lat, j.Lon);
                         double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
                         if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) { nReach++; continue; }
@@ -843,7 +896,7 @@ namespace KSPChatBridge
                         double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.3 * direct + 8000)) * 4 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
                         cost += SkipCost(direct, i - 1 + fr);   // Oct 12: ample distance -> fly the chart from its first fix, no FAF short-cut
                         if (onLeg) cost *= .6;   // prefer the leg we are already heading along
-                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
+                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "start path " + seq[0].Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), no fly-out: joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
                 }
             }
@@ -1083,15 +1136,16 @@ namespace KSPChatBridge
                 {
                     stepsSinceRebuild = 0; holdLast = false; Rebuilds++;
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
-                    Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : ApproachChart.LongFix;
+                    Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : Chart.FafD;
                     if (Kind != "short")
                     {   // join at the nearest safely-alignable fix/leg point for THIS plane; fall back to the computed long-final entry
                         double jv = Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), jr = BankDeg > 20 ? ApproachProfile.Radius(jv, BankDeg) : ApproachProfile.RadiusForG(jv, ApproachProfile.LoadFactor(ApproachProfile.JoinG, jv, stall)); string jw;
                         // Luke Oct 12 19:57: plan with the LEARNED numbers - turn radius at the bank the autopilot actually flies (learned envelope), learned sink, decel, app speed
-                        double lb = ApproachProfile.SafeBank != null && BankDeg <= 20 ? ApproachProfile.PhaseBank("entry", jv, stall) : double.NaN;
+                        double lb = BankDeg <= 20 ? ChartDesign.Bank(jv) : double.NaN;   // Oct 12 21:22: same middle-ground design bank as the chart (was 85% of max)
+                        if (double.IsNaN(lb) && ApproachProfile.SafeBank != null && BankDeg <= 20) lb = ApproachProfile.PhaseBank("entry", jv, stall);
                         if (!double.IsNaN(lb) && lb > 5) jr = ApproachProfile.Radius(jv, Math.Min(lb, 60));
                         ApproachChart.PlanSink = LearnedSink; ApproachChart.PlanDecelA = EffDecel; ApproachChart.PlanApp = ApproachProfile.AppSpeed(stall);
-                        ApproachChart.PlanLearned = "learned: r " + Math.Round(jr) + " m @ " + Math.Round(jv) + " m/s" + (double.IsNaN(lb) ? " (G rating)" : " (bank " + Math.Round(lb) + ")") + ", sink " + ApproachProfile.SinkLimit(LearnedSink, ApproachChart.MaxSink).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : "") + ", decel " + EffDecel.ToString("0.00") + ", app " + Math.Round(ApproachChart.PlanApp);
+                        ApproachChart.PlanLearned = "learned: r " + Math.Round(jr) + " m @ " + Math.Round(jv) + " m/s" + (double.IsNaN(lb) ? " (G rating)" : " (design bank " + Math.Round(lb) + ")") + ", sink " + ApproachProfile.SinkLimit(LearnedSink, ApproachChart.MaxSink).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : "") + ", decel " + EffDecel.ToString("0.00") + ", app " + Math.Round(ApproachChart.PlanApp);
                         double inb = NavigationMath.Bearing(lat, lon, Lat, Lon), cth = FlightPolicy.Wrap(NavigationMath.Bearing(Lat, Lon, lat, lon) - course) * Math.PI / 180;
                         double crs = NavigationMath.Distance(Lat, Lon, lat, lon, radius) * Math.Sin(cth);
                         EntryChart = EntryPolicy.Pick(inb, course, crs);

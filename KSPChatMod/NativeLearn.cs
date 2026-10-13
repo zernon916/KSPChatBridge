@@ -261,12 +261,17 @@ namespace KSPChatBridge
         }
 
         /// <summary>TrustedStall + envelope only when the craft still matches the LEARN fingerprint.</summary>
+        int chartDesignSeen = -1;
         void ApplyProfileTrust()
         {
             bool trust = profile != null && profileTrusted;
             ApproachProfile.TrustedStall = trust && !double.IsNaN(profile.Stall) && profile.Stall > 0;
             if (trust && profile.Envelope.Count > 0) { var pr = profile; ApproachProfile.SafeBank = v => pr.SafeBankAt(v); ApproachProfile.RollIn = pr.RollIn; }
             else { ApproachProfile.SafeBank = null; ApproachProfile.RollIn = 0; }
+            // Luke Oct 12 21:22: per-plane charts from the learned profile (middle-ground design values); cleared when untrusted / no profile
+            if (trust) { var pr2 = profile; ChartDesign.Set(vessel.vesselName + "|" + pr2.Date, pr2.Dives != null && pr2.Dives.Count > 0 ? (Func<double, double>)(v => PilotPolicy.DescentSink(pr2.Dives, v, PilotPolicy.CapSpeed)) : null, double.IsNaN(pr2.Decel) ? double.NaN : pr2.DecelAt(vessel.totalMass)); }
+            else ChartDesign.Set("", null, double.NaN);
+            if (ChartDesign.Version != chartDesignSeen && vessel != null && vessel.mainBody != null) { chartDesignSeen = ChartDesign.Version; GenerateCharts(vessel.mainBody); }   // per-plane charts regenerated on profile / vessel change
         }
 
         /// <summary>Copy a fingerprint-matched profile onto this vessel name (rename carry-over).</summary>
