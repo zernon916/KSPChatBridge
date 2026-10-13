@@ -8,7 +8,7 @@ namespace KSPChatBridge
     {
         private DvTracker dvTracker;
         private double lastMassForDv;
-        private int lastLegForDv = -1;
+        internal int lastLegForDv = -1;   // advanced by the mission sequencer when a leg completes (wired in RK8e)
 
         void DvTrackStep(Vessel v)
         {
@@ -60,6 +60,8 @@ namespace KSPChatBridge
             int currentLeg = lastLegForDv;
             if (currentLeg < 0 || currentLeg >= dvTracker.LegCount) return;
 
+            // staging/decoupling drops mass in one frame - that is not fuel burned, so skip the sample and rebase
+            if (lastMassForDv - currentMass > lastMassForDv * 0.02) { lastMassForDv = currentMass; return; }
             double dvIncrement = DvTracker.DvFromMassChange(lastMassForDv, currentMass, currentIsp);
             if (double.IsNaN(dvIncrement) || dvIncrement <= 0)
             {
