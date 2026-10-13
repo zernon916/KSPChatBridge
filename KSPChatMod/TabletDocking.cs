@@ -10,22 +10,29 @@ namespace KSPChatBridge
         {
             float row = Mathf.Max(44, tabletFont * 2.6f), gap = 8;
             float width = area.width - 26, pad = 16 + tabletFont * 1.6f;
+            int rows = 3;
             GUILayout.BeginArea(area);
             tabletDockingScroll = GUILayout.BeginScrollView(tabletDockingScroll);
-
-            Rect c = TabletUi.CardPanel(new Rect(0, 0, width, pad + row), "DOCKING");
+            Rect c = TabletUi.CardPanel(new Rect(0, 0, width, pad + row * rows + gap), "DOCKING");
+            float y = c.y, w = c.width - 24;
 
             var active = FlightGlobals.ActiveVessel;
-            if (active == null) { TabletUi.Label(new Rect(c.x, c.y + pad + 4, c.width - 24, row), "No active vessel", true); return; }
+            ITargetable tgt = FlightGlobals.fetch != null ? FlightGlobals.fetch.VesselTarget : null;
+            Vessel target = tgt != null ? tgt.GetVessel() : null;
+            if (active == null) TabletUi.Label(new Rect(c.x, y, w, row), "No active vessel", true);
+            else if (target == null) TabletUi.Label(new Rect(c.x, y, w, row), "No target selected", true);
+            else
+            {
+                double dist = Vector3d.Distance(active.GetWorldPos3D(), target.GetWorldPos3D());
+                TabletUi.Tile(new Rect(c.x, y, w, row), "TARGET", target.vesselName, dist.ToString("0") + " m", TabletUi.Series[1]);
+            }
+            y += row;
 
-            var target = (Vessel)FlightGlobals.fetch.VesselTarget;
-            string tName = target != null ? target.vesselName : "None";
-            double dist = Vector3d.Distance(active.transform.position, target.transform.position);
+            if (!TabletLink) { TabletUi.Label(new Rect(c.x, y, w, row), "INFO ONLY - enable LIVE LINK", true); y += row; }
+            if (TabletUi.Button(new Rect(c.x, y, w, row), "Dock with target", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("dock_with", "{\"name\":\"target\"}");
 
-            TabletUi.Tile(new Rect(c.x, c.y + pad + 4, c.width - 24, row), "TARGET", tName, dist.ToString("0") + " m", TabletUi.Series[1]);
-
-            float y = pad + row + gap;
-            GUILayout.Space(y + gap);
+            GUILayout.Space(pad + row * rows + gap * 2);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
