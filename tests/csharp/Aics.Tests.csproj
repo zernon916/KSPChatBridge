@@ -48,6 +48,13 @@
     <Compile Include="../../KSPChatMod/PersonalityPrompts.cs"/>
     <Compile Include="../../KSPChatMod/NativeToolSchemas.cs"/>
     <Compile Include="../../KSPChatMod/OrbitMath.cs"/>
+    <Compile Include="RocketTests.cs"/>
+    <Compile Include="../../KSPChatMod/RocketMath.cs"/>
+    <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
+    <Compile Include="../../KSPChatMod/StagingPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/FairingPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/AbortPolicy.cs"/>
+    <Compile Include="../../KSPChatMod/AscentProfile.cs"/>
     <Compile Include="../../KSPChatMod/LlamaRuntime.cs"/>
     <Compile Include="../../KSPChatMod/LlamaNative.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>

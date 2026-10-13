@@ -2411,6 +2411,7 @@ class Program
         ProfileJsonParsingTests.Run();
         LearnAbortStallTests.Run();
         ThrottleLearnTests.Run();
+        RocketTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {
