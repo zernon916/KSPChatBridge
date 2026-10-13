@@ -1,6 +1,6 @@
-# AICS - KSP Chat Bridge
+# AICS - AI Control System
 
-![AICS - KSP Chat Bridge](docs/images/aics-header.jpg)
+![AICS - AI Control System](docs/images/aics-header.jpg)
 
 *Repository, CKAN identifier and DLL name: KSPChatBridge.*
 
@@ -42,14 +42,14 @@ menus and autopilots still work locally.
   embedded Qwen model (AICS > Settings > In-mod AI downloads the runtime and model on request).
 
 ## Install
-1. **Via CKAN** (once listed): search for *KSP Chat Bridge* (`KSPChatBridge`).
+1. **Via CKAN** (once listed): search for *AICS* (`KSPChatBridge`).
    **Manual**: unzip `KSPChatBridge-<version>.zip` from the GitHub releases into the KSP folder so you get
    `GameData/KSPChatBridge/Plugins/KSPChatBridge.dll`.
 2. Start KSP and load a save. Open the chat with Alt+K (or the toolbar button) and the **AICS MFD** with Alt+J (or right-click the toolbar button).
 
 Your data (`.env` with API keys, `native_settings.json`, `aics.cfg`, charts, `kerbal_personalities.json`,
 `playstyle_notes.md`, `logs/`) lives in `GameData/KSPChatBridge/PluginData/`, which updates and CKAN leave alone.
-Upgrading from a bridge build (0.1.x): the old `Bridge/` folder and `bridge.cfg` are no longer used and can be deleted;
+Upgrading from 0.1.x: the old `Bridge/` folder and `bridge.cfg` are no longer used and can be deleted;
 `ai_enabled` and the science setting carry over.
 
 ### AICS MFD

@@ -212,7 +212,7 @@ namespace KSPChatBridge
                 }
                 else { resizing = false; resizeDocked = false; SaveSettings(); }
             }
-            string title = "KSP Chat Bridge - " + ModelLabels[modelIdx] +
+            string title = "AICS Chat - " + ModelLabels[modelIdx] +
                 (lastModel.Length > 0 ? " / " + lastModel : "") + "   (Alt+K; switch AI: AICS > Settings or /ai)";
             // GUI.Window (not GUILayout.Window): the rect only changes by dragging/resizing, never by content.
             winRect = GUI.Window(WindowId, winRect, DrawWindow, title);
