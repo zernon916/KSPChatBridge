@@ -1032,13 +1032,13 @@ namespace KSPChatBridge
         /// <summary>Luke: centerline within ~1 m, no swinging. Desired TRACK from a cross-track PID (P on cross, D via the track
         /// angle Tau s ahead, I per metre flown inside +-3 m), then crab-compensated: heading = track - (measured track - heading),
         /// low-passed over CrabTau s, so wind/sideslip/trim offsets are cancelled instead of integrated (no PI limit cycle).</summary>
-        internal static double CenterlineHeading(double cross, double track, double course, double speed, ref double crossI, double ds, double heading, ref double crab, bool tight = false)
+        internal static double CenterlineHeading(double cross, double track, double course, double speed, ref double crossI, double ds, double heading, ref double crab, bool tight = false, double lookAhead = 0)
         {
             if (!double.IsNaN(track) && !double.IsNaN(heading)) crab += FlightPolicy.Clamp(ds / (Math.Max(1, speed) * CrabTau), 0, 1) * (FlightPolicy.Wrap(track - heading) - crab);
             crab = FlightPolicy.Clamp(crab, -20, 20);
             if (Math.Abs(cross) < IntBand) crossI = FlightPolicy.Clamp(crossI + cross * ds, -5000, 5000);
             double u = Kp * PredictCross(cross, speed, track, course, Tau) + (tight ? 1.5 : 1) * Ki * crossI;   // short final: harder integral toward +-1 m
-            return course - FlightPolicy.Clamp(Math.Atan2(u, Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, tight ? -8 : -15, tight ? 8 : 15) - crab;
+            return course - FlightPolicy.Clamp(Math.Atan2(u, lookAhead > 0 ? lookAhead : Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, tight ? -8 : -15, tight ? 8 : 15) - crab;
         }
         internal static double PredictCross(double cross, double speed, double track, double course, double tau)
         { return double.IsNaN(track) ? cross : cross + tau * speed * Math.Sin(FlightPolicy.Wrap(track - course) * Math.PI / 180); }
@@ -1058,7 +1058,8 @@ namespace KSPChatBridge
             double b = Math.Floor(Distance / 2000); string key = Phase + "/" + leg;
             if (key == energyKey && b == energyBucket) return; energyKey = key; energyBucket = b;
             EnergyLog = "energy " + Phase + " leg " + leg + ": " + (Distance / 1000).ToString("0.0") + " km to thr, alt plan " + plannedAlt.ToString("0") + " act " + altitude.ToString("0") + " (" + (altitude - plannedAlt).ToString("+0;-0") + " m), spd plan " + DesiredSpeed.ToString("0") + " act " + speed.ToString("0")
-                + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + (EnergyHigh ? " -> HIGH/FAST: idle + speedbrakes, steeper" : "");
+                + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + (EnergyHigh ? " -> HIGH/FAST: idle + speedbrakes, steeper" : "")
+                + (Phase == "final" ? "; steering to moving centerline point 1500 m ahead on 3 deg glide path" + (OffLine ? "; off line: descent held" : "") : "");
         }
         /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
         internal static double PredictedNow = double.NaN, AppNow = double.NaN;
@@ -1257,13 +1258,12 @@ namespace KSPChatBridge
                 if (!LocCoupled && Math.Abs(Ils.LocDeg) < KSPChatBridge.Ils.LocFullScale && Ils.Front && -along < LocRange) LocCoupled = true;
                 if (LocCoupled && !GsCoupled && Math.Abs(Ils.GsDeg) < KSPChatBridge.Ils.GsFullScale) GsCoupled = true;
                 double latDev = LocCoupled ? Ils.CrossM : cross;
-                DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix);
+                DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix, FinalApproachPolicy.LookAheadM);
                 DesiredAltitude = GsCoupled ? altitude - Ils.AboveGsM : Chart != null ? Math.Max(Chart.GlideAlt(-along + TouchdownM), altitude - Ils.AboveGsM) : Elevation + Math.Max(3, (TouchdownM - along) * Math.Tan(3 * Math.PI / 180));   // before GS capture: never below the ILS path
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);
                 OffLine = hat > 60 && ApproachProfile.BadlyOff(latDev, trackErr, true);
                 if (OffLine) DesiredAltitude = Math.Max(DesiredAltitude, altitude);   // Oct 12: hold altitude until re-established on the line (A300 nearly hit the water off the line)   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
                 DesiredSpeed = hat < 30 ? 1.15 * ApproachProfile.SaneStall(stall) : ApproachProfile.FinalSchedule(Distance, stall, EffDecel);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
-                double ff = Chart != null && hat > 30 ? -speed * Chart.Slope : 0;   // path feed-forward (steep AGL fixes)
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
                 if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
@@ -1271,7 +1271,9 @@ namespace KSPChatBridge
                 if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.SinkLimit(LearnedSink, 15));   // Luke Oct 12: ALTITUDE over speed - high = full learned sink even if fast (idle+brakes/flaps bleed speed; overspeed protection unchanged)   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
                 EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -2);
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
-                DesiredVs = FlightPolicy.Clamp(ff + (DesiredAltitude - altitude) * .1, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);   // 2500 m AGL long fix = ~12 deg path: steep descent allowed far out only
+                double targetAlt = FinalApproachPolicy.TargetAltitude(Elevation, along, TouchdownM);
+                double pointVs = FinalApproachPolicy.VerticalSpeed(targetAlt, altitude, speed, latDev);
+                DesiredVs = FlightPolicy.Clamp(OffLine ? Math.Max(0, pointVs) : pointVs, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final
                 double fs = Override != null ? Override.FlareStartM : 15;
                 double fv = Override != null ? Override.FlareSinkMs : (!double.IsNaN(FlareSinkHint) ? FlareSinkHint : 1);

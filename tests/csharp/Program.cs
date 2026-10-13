@@ -2093,6 +2093,24 @@ class Program
             var mk = ToolRouter.Direct("Make a plan, Takeoff, Climb to 2000, land ksc 09", "plane"); Check(mk != null && mk.Value.Key == "make_flight_plan", "make a plan still replaces");
             Console.WriteLine("Follow flight plan: 14 behavior checks passed.");
         }
+        {   // T8: a moving centerline target supplies both lateral and vertical guidance.
+            double slope = Math.Tan(3 * Math.PI / 180), el = 70, td = 350;
+            double target = FinalApproachPolicy.TargetAltitude(el, -6000, td);
+            Check(Math.Abs(target - (el + 4850 * slope)) < 1e-9, "final target is 1500 m ahead on the 3 deg path");
+            Check(Math.Abs(FinalApproachPolicy.TargetAltitude(el, -5900, td) - target + 100 * slope) < 1e-9, "final target moves continuously with the aircraft");
+            foreach (double v in new[] { 60.0, 150.0 })
+                Check(Math.Abs(FinalApproachPolicy.VerticalSpeed(target, el + 6350 * slope, v, 0) + v * slope) < 1e-9, "on-path sink follows 3 degrees at speed " + v);
+            Check(FinalApproachPolicy.VerticalSpeed(target, target - 10, 80, 0) > 0, "below target commands climb");
+            double ci = 0, crab = 0;
+            double h = RunwayMission.CenterlineHeading(100, 90, 90, 80, ref ci, 0, 90, ref crab, false, FinalApproachPolicy.LookAheadM);
+            Check(Math.Abs(h - (90 - Math.Atan2(100, 1500) * 180 / Math.PI)) < 1e-9, "final lateral aim uses 1500 m lookahead");
+            var m = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .3, Elevation = el, Phase = "final" };
+            double la, lo; NavigationMath.Offset(0, 0, 270, 6000, 600000, out la, out lo);
+            m.Step(la, lo, el + 6350 * slope, 6350 * slope, 80, false, 600000, 45, 90, 90);
+            Check(m.Phase == "final" && Math.Abs(m.DesiredVs + 80 * slope) < .001, "mission flies the moving point without adding a second sink feed-forward");
+            Check(m.EnergyLog.Contains("1500 m ahead"), "moving-point decision is logged");
+            Console.WriteLine("Moving final target: 8 behavior checks passed.");
+        }
         {   // coupled ILS: the AP flies the same LOC/GS deviations the ILS tab shows
             double tLa = -.0485997, tLo = -74.724375; var rmI = new RunwayMission { Lat = tLa, Lon = tLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
             double crsI = NavigationMath.Bearing(tLa, tLo, rmI.EndLat, rmI.EndLon), pLa, pLo, qLa, qLo;
