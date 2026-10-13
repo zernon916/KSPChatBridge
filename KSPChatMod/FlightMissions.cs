@@ -851,7 +851,8 @@ namespace KSPChatBridge
             var jp = xy(la, lo); double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], legTrack, turnR);
             if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) return new KeyValuePair<double, List<Wp>>(double.MaxValue, null);
             var o = new Wp { Name = "fly-out " + (k / 1000).ToString("0.0") + " km past " + f.Name.Split('(')[0].Trim(), Lat = la, Lon = lo, Alt = Math.Max(f.Alt, altitude > f.Alt ? Math.Min(altitude, f.Alt + 1000) : f.Alt) };
-            for (int s = 1; s <= 8; s++) { double g = T(lat + (la - lat) * s / 8, lon + (lo - lon) * s / 8); if (!double.IsNaN(g) && g + 150 > o.Alt) return new KeyValuePair<double, List<Wp>>(double.MaxValue, null); }
+            if (o.Alt - altitude > reach * 15 / Math.Max(30, speed)) { ChatLog.Write("approach", "fly-out rejected: climb to " + f.Name + " exceeds 15 m/s"); return new KeyValuePair<double, List<Wp>>(double.MaxValue, null); }
+            for (int s = 1; s <= 8; s++) { double g = T(lat + (la - lat) * s / 8, lon + (lo - lon) * s / 8); if (!double.IsNaN(g) && g + 150 > altitude + (o.Alt - altitude) * s / 8) { ChatLog.Write("approach", "fly-out rejected: terrain intersects climb path to " + f.Name); return new KeyValuePair<double, List<Wp>>(double.MaxValue, null); } }
             var route = new List<Wp> { o }; double rest = k; Wp prev = f; route.Add(f);
             for (int q = 1; q < seq.Count; q++) { rest += NavigationMath.Distance(prev.Lat, prev.Lon, seq[q].Lat, seq[q].Lon, radius); route.Add(seq[q]); prev = seq[q]; }
             rest += NavigationMath.Distance(prev.Lat, prev.Lon, ThrLat, ThrLon, radius);
@@ -908,7 +909,7 @@ namespace KSPChatBridge
                         double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.3 * direct + 8000)) * 4 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
                         cost += SkipCost(direct, i - 1 + fr);   // Oct 12: ample distance -> fly the chart from its first fix, no FAF short-cut
                         if (onLeg) cost *= .6;   // prefer the leg we are already heading along
-                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "start path " + seq[0].Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), no fly-out: joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
+                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "joined start path " + seq[0].Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), no fly-out: joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
                 }
             }
@@ -920,8 +921,9 @@ namespace KSPChatBridge
             // Luke Oct 12 19:54: close in (A300 r~6 km, 8-16 km direct) the chart join came out as 69-96 km of loops, so it circled the field.
             // When the best chart join is a big detour, fly to a positioning fix out on the extended centerline (straight out, one turn in).
             bool detour = best != null && direct < AmpleJoinM && bestTotal > 2 * direct + 20000;
-            // Luke Oct 12 19:57 "shorten those routes": the direct-to-centerline join ALWAYS competes on true length (not only on a detour)
-            if (best != null) bestCost = bestTotal;
+            // Preserve the selected chart and its on-leg/skip costs; use direct final only when no chart fits or an unrestricted join is a detour.
+            bool useFallback = best == null || (string.IsNullOrEmpty(entry) && detour);
+            bestWhy += useFallback ? " [evaluating direct-final fallback]" : " [retaining chart route and join preferences]";
             double fSink = ApproachProfile.SinkLimit(PlanSink, MaxSink), fApp = double.IsNaN(PlanApp) || PlanApp <= 0 ? .75 * speed : PlanApp;
             double finalMin = Math.Max(RunwayMission.FafDistance, Math.Min(15000, ApproachProfile.DecelStartM(speed, fApp, PlanDecelA)));   // shortest final the learned decel allows
             // T7 approach cone: more than ConeDeg (30) off the final course -> the long-final INTERCEPT point is capped below
@@ -935,12 +937,12 @@ namespace KSPChatBridge
             
             {   // Luke 5:56 PM (heavy craft, 330/330 unreachable): fall back to the nearest reachable point on the extended
                 // centerline (long final line), far enough out to roll out aligned with this plane's turn radius; no intercept limit.
-                double minD = finalMin + turnR;   // was FAF + 2r + 2 km: one turn radius to roll out is enough
+                double minD = finalMin + turnR;   // leave one turn radius before the shortest final
                 // T7: >30 deg off course -> cap the intercept at the cone-sized point so the join is <= 30 deg; the cap is inside
                 // the shortest final (no room for a <=30 deg capture) -> keep the full sweep, the cone cannot fit before the FAF.
                 coneCap = !double.IsNaN(coneD) && coneD >= minD;
                 double dMax = coneCap ? Math.Max(minD, Math.Min(coneD, ConeMaxD)) : Math.Max(minD, ConeMaxD);
-                for (double d = minD; d <= dMax; d += 1000)
+                for (double d = minD; useFallback && d <= dMax; d += 1000)
                 {
                     double la, lo; NavigationMath.Offset(ThrLat, ThrLon, Course + 180, d, radius, out la, out lo); var jp = xy(la, lo);
                     double reach = Dubins(me[0], me[1], heading, jp[0], jp[1], Course, turnR); if (double.IsInfinity(reach) || reach >= double.MaxValue / 2) continue;
@@ -1175,7 +1177,7 @@ namespace KSPChatBridge
                         EntryChart = EntryPolicy.Pick(inb, course, crs);
                         EntryLog = "chart " + Key + " " + EntryPolicy.Label(EntryChart) + " (inbound " + Math.Round((inb + 360) % 360) + " deg, " + Math.Round(EntryPolicy.Rel(inb, course)) + " deg off the runway heading; r " + Math.Round(Chart.TurnRadius) + " m)";
                         var join = Chart.BestJoin(lat, lon, track, altitude, jv, jr, radius, out jw, EntryChart);
-                        jw = jw + " [" + EntryLog + "]";
+                        jw = jw + " [" + EntryLog + "; localizer prediction uses roll-in lag only]";
                         if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
                         JoinLog = join != null ? jw : jw + "; long final entry";
                         var uw = UserWaypoints.Get(Key); seenUserWp = UserWaypoints.Version;
