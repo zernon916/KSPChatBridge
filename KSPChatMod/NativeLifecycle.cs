@@ -109,7 +109,7 @@ namespace KSPChatBridge
                         }
                         string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable);
                         if (skip != null) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, skip)); continue; }
-                        e.DeployExperiment();
+                        DeploySilent(e);   // Luke Oct 12 22:41: no stock results dialog mid-flight; transmit/store handled by TransmitAll
                         ranThisType = true; ran.Add(e.part.partInfo.title);
                         if (subjectId.Length > 0) stored.Add(subjectId);
                         Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, true, value, null));
@@ -120,19 +120,65 @@ namespace KSPChatBridge
             return ran;
         }
 
+        /// <summary>Run an experiment WITHOUT the stock ExperimentsResultDialog: ModuleScienceExperiment.gatherData(silent: true)
+        /// via reflection; fallback = DeployExperiment and close the dialog a moment later.</summary>
+        void DeploySilent(ModuleScienceExperiment e)
+        {
+            try
+            {
+                var m = typeof(ModuleScienceExperiment).GetMethod("gatherData", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
+                var it = m != null ? m.Invoke(e, new object[] { true }) as System.Collections.IEnumerator : null;
+                if (it != null) { e.StartCoroutine(it); return; }
+            }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] silent science failed, using stock deploy: " + ex.Message); }
+            e.DeployExperiment(); StartCoroutine(CloseResultsDialog());
+        }
+        System.Collections.IEnumerator CloseResultsDialog()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                yield return new WaitForSeconds(.25f);
+                var d = UnityEngine.Object.FindObjectOfType<KSP.UI.Screens.Flight.Dialogs.ExperimentsResultDialog>();
+                if (d != null) { UnityEngine.Object.Destroy(d.gameObject); yield break; }
+            }
+        }
+        /// <summary>EC on the vessel (amount, max).</summary>
+        void Ec(out double amt, out double max)
+        {
+            amt = 0; max = 0; var ec = PartResourceLibrary.Instance.GetDefinition("ElectricCharge");
+            if (ec != null) vessel.GetConnectedResourceTotals(ec.id, out amt, out max);
+        }
+        internal const double EcReserveFrac = .10, EcReserveMin = 5;
+        bool sciStored;   // data held back for lack of EC/antenna -> retry later
+
+        /// <summary>Luke Oct 12 22:41: transmit only when the vessel's EC covers the WHOLE transmission (antenna EC/Mit x data Mits)
+        /// plus a reserve (>= 10% battery); else keep the data onboard and retry when EC recovers. Returns experiments sent.</summary>
         int TransmitAll(bool onlyRerunnable)
         {
-            IScienceDataTransmitter tx = null;
-            foreach (var t in vessel.FindPartModulesImplementing<IScienceDataTransmitter>()) if (t != null && t.CanTransmit()) { tx = t; break; }
-            if (tx == null) return 0;
+            sciStored = false;
+            IScienceDataTransmitter tx = null; string txName = "";
+            foreach (var t in vessel.FindPartModulesImplementing<IScienceDataTransmitter>())
+                if (t != null && t.CanTransmit() && !t.IsBusy() && (tx == null || t.DataResourceCost < tx.DataResourceCost)) { tx = t; var pm = t as PartModule; txName = pm != null ? pm.part.partInfo.title : "antenna"; }
+            double amt, max; Ec(out amt, out max); double reserve = Math.Max(EcReserveMin, EcReserveFrac * max);
             int sent = 0;
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
                 if (onlyRerunnable && !e.rerunnable) continue;
                 var data = e.GetData(); if (data == null || data.Length == 0) continue;
+                double mits = 0, sci = 0;
+                foreach (var d in data)
+                {
+                    mits += d.dataAmount;
+                    try { var sub = ResearchAndDevelopment.GetSubjectByID(d.subjectID); if (sub != null) sci += ResearchAndDevelopment.GetScienceValue(d.dataAmount, sub); } catch (Exception) { }
+                }
+                string id = e.experimentID ?? "?";
+                if (tx == null) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (no usable antenna)"); continue; }
+                double need = mits * tx.DataResourceCost;
+                if (amt - need < reserve) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (low EC: need " + need.ToString("0") + " + reserve " + reserve.ToString("0") + ", have " + amt.ToString("0") + ")"); continue; }
                 tx.TransmitData(new List<ScienceData>(data));
                 foreach (var d in data) e.DumpData(d);
-                sent++;
+                amt -= need; sent++;
+                ChatLog.Write("science", "[science] " + id + ": TRANSMIT " + sci.ToString("0.0") + " sci via " + txName + " (EC need " + need.ToString("0") + "/have " + (amt + need).ToString("0") + ")");
             }
             return sent;
         }
@@ -143,7 +189,7 @@ namespace KSPChatBridge
             if (sciTransmitAt > 0 && now >= sciTransmitAt)
             {
                 sciTransmitAt = -1;
-                try { int n = TransmitAll(ScienceMode != "auto"); if (n > 0) ChatWindow.Notice("Science: transmitted " + n + " experiment(s)."); }
+                try { int n = TransmitAll(ScienceMode != "auto"); if (n > 0) ChatWindow.Notice("Science: transmitted " + n + " experiment(s)."); if (sciStored && ScienceMode == "auto") sciTransmitAt = now + 30; }   // stored for EC/antenna: retry in 30 s
                 catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science transmit: " + ex.Message); }
             }
             if (now < sciNextPoll) return;
@@ -160,7 +206,7 @@ namespace KSPChatBridge
             int left = 0;
             if (mode != "auto") foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
                 if (!e.rerunnable && SciencePolicy.Eligible(e.Inoperable, e.GetScienceCount() > 0, Available(e), SubjectDone(e), false, false)) left++;
-            if (SciencePolicy.ShouldTransmit(true, ran.Count, EcPct())) sciTransmitAt = now + 2;
+            if (mode == "auto" ? ran.Count > 0 : SciencePolicy.ShouldTransmit(true, ran.Count, EcPct())) sciTransmitAt = now + 3;   // AUTO: TransmitAll checks the full EC cost itself (stores + retries when short)
             if (!SciencePolicy.ShouldPost(mode, ran.Count, blocker, left, now - sciLastPost)) return;
             sciLastPost = now;
             string where = sit + " over " + vessel.mainBody.bodyName + (biome != "" ? " (" + biome + ")" : "");
