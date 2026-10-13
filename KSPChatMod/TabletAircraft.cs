@@ -10,7 +10,7 @@ namespace KSPChatBridge
     public partial class AicsMenu
     {
         /// <summary>Flight tab pages (the suggested layout puts aircraft / approach / taxi / trim / abort / about here).</summary>
-        internal static readonly string[] TabletFlightPages = { "FLIGHT", "AIRCRAFT" };
+        internal static readonly string[] TabletFlightPages = { "FLIGHT", "AIRCRAFT", "APPROACH", "TAXI", "ABOUT", "TRIM", "ABORT" };
         static int tabletFlightPage; static Vector2 apScroll;
 
         /// <summary>Flight tab = a Segments sub-tab row + the page. Page switching is navigation, not a craft control
@@ -22,7 +22,12 @@ namespace KSPChatBridge
             int p = TabletUi.Segments(new Rect(area.x, area.y, area.width, sh), TabletFlightPages, tabletFlightPage);
             if (p != tabletFlightPage) { tabletFlightPage = p; Save(); }
             Rect body = new Rect(area.x, area.y + sh + 8, area.width, Mathf.Max(60, area.height - sh - 8));
-            if (tabletFlightPage == 1) TabletAircraft(body); else TabletFlight(body);
+            if (tabletFlightPage == 6) TabletAbort(body);
+            else if (tabletFlightPage == 5) TabletTrim(body);
+            else if (tabletFlightPage == 4) TabletAbout(body);
+            else if (tabletFlightPage == 3) TabletTaxi(body);
+            else if (tabletFlightPage == 2) TabletApproach(body);
+            else if (tabletFlightPage == 1) TabletAircraft(body); else TabletFlight(body);
         }
 
         void TabletAircraft(Rect area)

@@ -285,19 +285,7 @@ namespace KSPChatBridge
             GUI.enabled = was && rwySel >= 0 && rwySel < rw.Count;
             if (GUILayout.Button("Land"))
             {
-                string name = rw[rwySel][0];
-                int.TryParse(tgT, out tgCount);
-                string ah = apprHdgT.Trim().Length > 0 ? Num(apprHdgT, "-1") : "-1";   // heading to land on -> runway end
-                string opts = ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + ah;
-                if (!vertical && name.StartsWith("Runway"))   // KSC: land_plane (touch-and-go, final length, heading)
-                    ChatWindow.ToolFromMenu("land_plane", "{\"runway\":" + ChatWindow.Json(ah != "-1" ? "" : name.Substring(7)) +
-                                                          ",\"touch_and_go\":" + tgCount + opts + "}");
-                else
-                {
-                    ChatWindow.ToolFromMenu("land_at_spot", "{\"name\":" + ChatWindow.Json(name) + ",\"mode\":\"" + (vertical ? "V" : "H") + "\"" + opts +
-                                                            ",\"chute_check\":" + (vertical && chuteCheck ? "true" : "false") + "}");
-                    if (tgCount != 0) ChatWindow.Notice("AICS: touch-and-goes work on the KSC runways only; this is a full-stop landing.");
-                }
+                LandSelectedApproach();
             }
             GUI.enabled = was && vertical;
             if (GUILayout.Button("Chute / dV check", GUILayout.Width(110))) ChatWindow.ToolFromMenu("landing_check", "{}");
@@ -308,6 +296,27 @@ namespace KSPChatBridge
             GUILayout.Label("Landing guidance", small);   // Oct 12: the Land Guide lives in the Approach panel of the AICS box / MFD
             GuidanceBody();
             LandingLine();
+        }
+
+        // Shared by panel 1 and the APPROACH key handler.
+        static bool LandSelectedApproach()
+        {
+            var rw = ChatWindow.SpotsSnapshot().Where(s => s[1] == "H").ToList();
+            if (rwySel < 0 || rwySel >= rw.Count) return false;
+            string name = rw[rwySel][0];
+            int.TryParse(tgT, out tgCount);
+            string ah = apprHdgT.Trim().Length > 0 ? Num(apprHdgT, "-1") : "-1";   // heading to land on -> runway end
+            string opts = ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + ah;
+            if (!vertical && name.StartsWith("Runway"))   // KSC: land_plane (touch-and-go, final length, heading)
+                ChatWindow.ToolFromMenu("land_plane", "{\"runway\":" + ChatWindow.Json(ah != "-1" ? "" : name.Substring(7)) +
+                                                      ",\"touch_and_go\":" + tgCount + opts + "}");
+            else
+            {
+                ChatWindow.ToolFromMenu("land_at_spot", "{\"name\":" + ChatWindow.Json(name) + ",\"mode\":\"" + (vertical ? "V" : "H") + "\"" + opts +
+                                                        ",\"chute_check\":" + (vertical && chuteCheck ? "true" : "false") + "}");
+                if (tgCount != 0) ChatWindow.Notice("AICS: touch-and-goes work on the KSC runways only; this is a full-stop landing.");
+            }
+            return true;
         }
 
         void Guidance() { GuidanceBody(); LandingLine(); }

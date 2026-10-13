@@ -109,7 +109,7 @@ namespace KSPChatBridge
         }
         /// <summary>Line graph: each series auto-scaled to its own range (left axis = series 0, right = series 1), grid, legend.
         /// data[s] is a ring buffer of n valid samples ending at head (exclusive).</summary>
-        internal static void Graph(Rect r, string[] names, float[][] data, int n, int head, string[] units)
+        internal static void Graph(Rect r, string[] names, float[][] data, int n, int head, string[] units, float[] xs = null)
         {
             Fill(r, Bg); Rect p = new Rect(r.x + 8, r.y + Font * 1.5f, r.width - 16, r.height - Font * 1.5f - 8);
             for (int i = 1; i < 4; i++) { Rect(new Rect(p.x, p.y + p.height * i / 4, p.width, 1), Grid); Rect(new Rect(p.x + p.width * i / 4, p.y, 1, p.height), Grid); }
@@ -121,16 +121,19 @@ namespace KSPChatBridge
                 for (int i = 0; i < n; i++) { float v = buf[(head - n + i + cap * 2) % cap]; if (v < lo) lo = v; if (v > hi) hi = v; }
                 string leg = names[s] + (n > 0 ? "  " + lo.ToString("0") + "-" + hi.ToString("0") + " " + units[s] : "");
                 Rect(new Rect(lx, r.y + Font * .6f, 14, 4), c); GUI.Label(new Rect(lx + 18, r.y + 2, 400, Font * 1.4f), leg, small); lx += small.CalcSize(new GUIContent(leg)).x + 36;
-                if (n < 2) continue; if (hi - lo < 1e-3f) { hi += 1; lo -= 1; }
+                if (n < 1 || (n < 2 && xs == null)) continue; if (hi - lo < 1e-3f) { hi += 1; lo -= 1; }
                 Vector2 last = Vector2.zero;
                 for (int i = 0; i < n; i++)
                 {
                     float v = buf[(head - n + i + cap * 2) % cap];
-                    var pt = new Vector2(p.x + p.width * i / (cap - 1f) + p.width * (cap - n) / (cap - 1f), p.yMax - p.height * (v - lo) / (hi - lo));
+                    float x = xs == null ? (i + cap - n) / (cap - 1f)
+                        : n == 1 || xs[n - 1] == xs[0] ? .5f : (xs[i] - xs[0]) / (xs[n - 1] - xs[0]);
+                    var pt = new Vector2(p.x + p.width * x, p.yMax - p.height * (v - lo) / (hi - lo));
+                    if (xs != null) Rect(new Rect(pt.x - 2, pt.y - 2, 4, 4), c);
                     if (i > 0) Line(last, pt, 2, c); last = pt;
                 }
             }
-            if (n < 2) GUI.Label(new Rect(p.x, p.center.y - Font, p.width, Font * 2), "collecting data...", new GUIStyle(label) { alignment = TextAnchor.MiddleCenter });
+            if (n == 0 || (n < 2 && xs == null)) GUI.Label(new Rect(p.x, p.center.y - Font, p.width, Font * 2), "collecting data...", new GUIStyle(label) { alignment = TextAnchor.MiddleCenter });
         }
         /// <summary>Segmented control; returns the (possibly new) selected index.</summary>
         internal static int Segments(Rect r, string[] items, int sel)

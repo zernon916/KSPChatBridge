@@ -405,6 +405,7 @@ namespace KSPChatBridge
             if ((item == "about" || item == "learn") && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
             if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }
             if (item == "about" && key == ">") { MfdNav.AboutTurn(1, NativeFlightController.AboutTitles.Length); return; }
+            if (item == "approach" && key == "LAND" && LandSelectedApproach()) return;   // panel 1 runway picked; else the old plain "land" tool below
             if (item == "tablet" && key == "OPEN TABLET") { ToggleTablet(); return; }
             var la = MfdNav.LearnKeyAction(item, key);
             if (la == "open") { if (!AicsIvaMfd.Pressing) ShowMfdItem("learn"); return; }   // navigation only (IVA opens its own page)
