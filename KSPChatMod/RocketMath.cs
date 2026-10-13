@@ -40,5 +40,13 @@ namespace KSPChatBridge
             while (angle < -180.0) angle += 360.0;
             return angle;
         }
+
+        /// <summary>Capture delta-v calculation.</summary>
+        internal static double CaptureDv(double mu, double rPe, double vInf, double rApTarget)
+        {
+            double vPe = Math.Sqrt(vInf * vInf + 2.0 * mu / rPe);
+            double vOrbit = Math.Sqrt(mu * (2.0 / rPe - 2.0 / (rPe + rApTarget)));
+            return vPe - vOrbit;
+        }
     }
 }
