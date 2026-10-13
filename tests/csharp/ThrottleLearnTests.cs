@@ -85,6 +85,18 @@ internal static class ThrottleLearnTests
     // T5: smooth takeover - for 1 s after a hold engages, every axis the hold owns blends from the pilot's stick at the handover to the
     // hold's ask, so no surface snaps. (Throttle is not blended: BeginHold seeds the ThrottleGate with the pilot's throttle and the gate's
     // own rate limit stays the ONE smooth throttle path.)
+    static void AuthorityGains()
+    {
+        foreach (double a in new[] { 0.0, -1, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+            Check(PilotPolicy.AuthorityGain(a) == 1, "invalid authority preserves old PID gains: " + a);
+        Check(PilotPolicy.AuthorityGain(1) == 1, "nominal authority preserves gains");
+        Check(PilotPolicy.AuthorityGain(2) == .5 && PilotPolicy.AuthorityGain(.5) == 2, "stronger authority reduces gains, weaker increases them");
+        Check(PilotPolicy.AuthorityGain(double.Epsilon) == 2 && PilotPolicy.AuthorityGain(double.MaxValue) == .5, "extreme finite authority stays bounded");
+        double pid = .022 * 3 - .016 * 2 + .1;
+        Check(Math.Abs(2 * PilotPolicy.AuthorityGain(2) * pid - .5 * PilotPolicy.AuthorityGain(.5) * pid) < 1e-12,
+            "gain scheduling gives equal acceleration for equal PID error at different authorities");
+    }
+
     static void TakeoverRamp()
     {
         Check(Near(PilotPolicy.TakeoverSeconds, 1), "the takeover ramp takes 1 s");
@@ -134,7 +146,7 @@ internal static class ThrottleLearnTests
 
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle(); TakeoverRamp(); RudderHeading();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle(); TakeoverRamp(); RudderHeading(); AuthorityGains();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }
@@ -813,7 +825,7 @@ internal static class ThrottleLearnTests
             Check(lf.Phase == "turnprep" && lf.P.Turns.Count == 0 && lf.P.Envelope.Count == 0, "#3: StartTest(7) clears Turns / Envelope (" + lf.Phase + ")");
             var la = new LearnFlight(); la.Step(T7(0, 0, 1)); la.P.Turns.Add(new double[] { 10, 1, 1, 0, .1, 20, .5, 100, 1000, 2, 1, 100 }); la.P.Envelope.Add(new double[] { 100, 10, 1, 1, 1000, 2, 20 });
             la.Phase = "rates"; la.Step(T7(11, 0, 1)); la.Step(T7(11.1, 0, 1));
-            // high→low: already at entry speed → turnprep can complete in one tick
+            // highâ†’low: already at entry speed â†’ turnprep can complete in one tick
             Check((la.Phase == "turnprep" || la.Phase == "turn") && la.P.Turns.Count == 0 && la.P.Envelope.Count == 0, "#3: rates -> turnprep entry clears Turns / Envelope (" + la.Phase + ")");
         }
         {   // #2: nose error at the FIRST bank (no earlier success) does not invalidate the step; bank completes on altitude/time

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -189,6 +189,14 @@ namespace KSPChatBridge
     }
     internal static class PilotPolicy
     {
+        // Nominal authority is 1 rad/s2 at full input. Bound the approximate model's
+        // influence; missing authority must preserve the original controller exactly.
+        internal static double AuthorityGain(double authority)
+        {
+            return authority <= 0 || double.IsNaN(authority) || double.IsInfinity(authority)
+                ? 1 : FlightPolicy.Clamp(1 / authority, .5, 2);
+        }
+
         /// <summary>Never fly slower than this airborne (Luke 6:29 PM: A300 held 77 m/s at idle into the sea).</summary>
         internal static double MinSafeSpeed(double stall) { return 1.3 * stall; }
         /// <summary>Slow, or sinking hard close to the surface: hard minimum power, airbrakes in, climb.</summary>

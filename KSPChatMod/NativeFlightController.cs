@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -69,6 +69,7 @@ namespace KSPChatBridge
         HelicopterYaw helicopterYaw = new HelicopterYaw();
         RotorEmergency rotorEmergency = new RotorEmergency();
         TouchdownGate helicopterTouchdown = new TouchdownGate();
+        double landingAoa = double.NaN;
         RotorPark rotorPark;
         float nextRotorPark;
         float nextRotorTrim;
@@ -619,7 +620,23 @@ namespace KSPChatBridge
                         runway.DecelA = dA / Math.Sqrt(shold.K); DecisionLog.Use("decel", dSrc, runway.DecelA); runway.LearnedDecel = dSrc == "default mass estimate" ? double.NaN : dA;
                         runway.LearnedSink = profile != null && profile.Dives != null && profile.Dives.Count > 0 ? PilotPolicy.DescentSink(profile.Dives, vessel.srfSpeed, PilotPolicy.CapSpeed) : double.NaN;   // Oct 12: approach descent limit from the learned idle dives   // Oct 12: predictive speed gate needs learned data
                     }
+                    string landingPhaseBefore = runway.Phase;
+                    if (!vessel.LandedOrSplashed)
+                        landingAoa = pitch - FlarePolicy.PathAngle(vessel.srfSpeed, vessel.verticalSpeed);
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
+                    if (runway.Phase == "flare" && landingPhaseBefore != "flare")
+                        ChatLog.Write("approach", profileTrusted && profile != null && FlarePolicy.ValidAoa(profile.TouchdownAoa) ? "flare: learned touchdown AoA " + profile.TouchdownAoa.ToString("0.0") + " deg" : "flare: no trusted touchdown AoA; using sink-rate fallback");
+                    if (runway.Phase == "rollout" && landingPhaseBefore != "rollout")
+                    {
+                        if (vessel.LandedOrSplashed && FlarePolicy.ValidAoa(landingAoa) && (profile == null || profileTrusted))
+                        {
+                            var landedProfile = profile ?? new PlaneProfile(); landedProfile.TouchdownAoa = landingAoa;
+                            SaveProfile(landedProfile, false);
+                            ChatLog.Write("learn", "touchdown AoA saved: " + landingAoa.ToString("0.0") + " deg (last airborne sample)");
+                        }
+                        else ChatLog.Write("learn", "touchdown AoA not saved: invalid sample or untrusted profile");
+                        ChatLog.Write("approach", "rollout: lower nose as speed drops, limited to 2.5 deg/s");
+                    }
                     if (runway.Phase == "go around" && goArounds < 3) { goArounds++; CrewEmergency("landing", runway.Why.Length > 0 ? runway.Why : "missed touchdown"); runway.GoAroundReset(); ChatWindow.Notice("Local autoland: going around - " + (runway.Why.Length > 0 ? runway.Why : "missed touchdown") + "; re-entering the approach (" + goArounds + "/3)."); ChatLog.Write("approach", "go around " + goArounds + ": " + runway.Why); runway.Why = ""; directPitch = null; directVs = null; }   // round 3: keep landing
                 if (runway.Phase == "go around") { goAroundFlaps = flapSet > 0; altitude = vessel.altitude + 500; speed = 1.5 * stall; mode = "hold"; directPitch = null; directVs = null; SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; string gw = runway.Why.Length > 0 ? runway.Why : "missed touchdown"; CrewEmergency("landing", "3 go-arounds used: " + gw); ChatWindow.Notice("Local autoland: 3 go-arounds used (last: " + gw + "). Holding " + Math.Round(altitude) + " m, heading " + Math.Round(heading) + ". Say \"land\" to try again or take control."); ChatLog.Write("approach", "go-around limit reached, holding: " + gw); }
                     else if (runway.Phase == "stopped") { c.mainThrottle = 0; gate.Seed(0, "stopped on the runway"); Stop(false); return; }
@@ -642,7 +659,7 @@ namespace KSPChatBridge
                             c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
                             c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, "ground", "rollout idle/reversers");
-                            derot.Step(pitch, dt, NoseGearDown()); c.pitch = (float)derot.Elevator(pitch, q);   // derotation: hold attitude, lower nose at 2.5 deg/s, no forward spike
+                            derot.Step(pitch, dt, NoseGearDown(), vessel.srfSpeed); c.pitch = (float)derot.Elevator(pitch, q);   // speed-based derotation, limited to 2.5 deg/s
                             c.roll = (float)FlightPolicy.Clamp(-.02 * roll - .006 * p, -1, 1);
                             c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
                             SetGroup(vessel, KSPActionGroup.Brakes, derot.BrakesAllowed && (vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0)));   // wheel brakes only once the nose wheel is down
@@ -774,6 +791,11 @@ namespace KSPChatBridge
                 }
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
                 double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + PilotPolicy.VsPitchDeg(targetVs - vessel.verticalSpeed, vessel.srfSpeed, kinH) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
+                if (mode == "landing" && runway != null && runway.Phase == "flare" && !vessel.LandedOrSplashed && profileTrusted && profile != null)
+                {
+                    double flarePitch = FlarePolicy.Pitch(profile.TouchdownAoa, vessel.srfSpeed, vessel.verticalSpeed);
+                    if (!double.IsNaN(flarePitch)) desiredPitch = FlightPolicy.Clamp(flarePitch, descentPitchMin, CpMax);
+                }
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 if (targetVs > 3 && !directPitch.HasValue)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
@@ -790,14 +812,14 @@ namespace KSPChatBridge
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
                 pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
-                double pitchOut = FlightPolicy.Clamp(.022 * pitchGain * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral + PitchShaper.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping; LEARN pitch-rate scale (#7)
+                double pitchOut = FlightPolicy.Clamp(AuthorityScale(true) * (.022 * pitchGain * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral) + PitchShaper.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping; LEARN pitch-rate scale (#7)
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
                 bool pitchOwned = PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls)); if (pitchOwned) c.pitch = elevator;   // T5: the owned flags mark the axes the hold drives this tick - only those get the takeover blend
                 if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
-                bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(.014 * rollGain * (bank - roll) - .01 * p, -1, 1);
+                bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(AuthorityScale(false) * (.014 * rollGain * (bank - roll) - .01 * p), -1, 1);
                 if (rudderOn) c.yaw = (float)PilotPolicy.RudderYaw(hdgErr, hdgRate);   // T6: the rudder flies the last few degrees of heading error; above them c.yaw stays the pilot's live input
                 if (takeoverT < PilotPolicy.TakeoverSeconds)
                 {   // T5: smooth takeover - for 1 s after engage the axes the hold owns blend from the pilot's stick at engage to the hold's ask (no snapped surfaces at the handover); axes the hold does not own pass the pilot's live input
@@ -1263,7 +1285,7 @@ namespace KSPChatBridge
                         catch (Exception ex) { ChatLog.Write("approach", "chart unreadable (" + ex.Message + "); computed chart"); }
                     }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
-                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); derot.Reset(); holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); derot.Reset(); landingAoa = double.NaN; holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
                     if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);

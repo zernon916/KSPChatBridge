@@ -80,6 +80,7 @@ namespace KSPChatBridge
     /// at another mass speeds scale by sqrt(m/M0) and accelerations by M0/m (thrust/drag-limited).</summary>
     internal sealed class PlaneProfile
     {
+        internal double TouchdownAoa = double.NaN;
         internal double M0 = double.NaN, Liftoff = double.NaN, Stall = double.NaN, StallAltLoss = double.NaN, ClimbAccel = double.NaN, ClimbVs = double.NaN,
             Decel = double.NaN, Accel = double.NaN, Lag = double.NaN, EconSpeed = double.NaN, EconThrottle = double.NaN, FuelUsed = double.NaN;
         internal bool Complete; internal string Abort = "", Date = "";
@@ -169,6 +170,7 @@ namespace KSPChatBridge
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
                 { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "ceiling", N(Ceiling) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
+            dict["touchdown_aoa"] = N(TouchdownAoa);
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
             if (DrillTest != 0) dict["engine_drill"] = new List<object> { DrillTest, Math.Round(DrillS, 2), Math.Round(DrillAltLoss, 1), Math.Round(DrillSpdLoss, 1), DrillOk ? 1 : 0, DrillPassed ? 1 : 0 };
             if (StallT.Present) dict["stall_timing"] = StallT.ToDict(); if (FlapStallT.Present) dict["flap_stall_timing"] = FlapStallT.ToDict();
@@ -178,6 +180,8 @@ namespace KSPChatBridge
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
             if (d == null) return null; var p = new PlaneProfile();
+            double touchdownAoa = D(d, "touchdown_aoa");
+            p.TouchdownAoa = FlarePolicy.ValidAoa(touchdownAoa) ? touchdownAoa : double.NaN;
             p.M0 = D(d, "m0"); p.Liftoff = D(d, "liftoff"); p.Stall = D(d, "stall"); p.StallAltLoss = D(d, "stall_alt_loss"); p.ClimbAccel = D(d, "climb_accel"); p.ClimbVs = D(d, "climb_vs");
             p.Decel = D(d, "decel"); p.Accel = D(d, "accel"); p.Lag = D(d, "lag"); p.EconSpeed = D(d, "econ_speed"); p.EconThrottle = D(d, "econ_throttle"); p.FuelUsed = D(d, "fuel_used");
             object o; p.Complete = d.TryGetValue("complete", out o) && o is bool && (bool)o; p.Abort = d.TryGetValue("abort", out o) && o != null ? o.ToString() : "";             p.Date = d.TryGetValue("date", out o) && o != null ? o.ToString() : "";

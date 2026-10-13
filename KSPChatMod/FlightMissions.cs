@@ -531,16 +531,18 @@ namespace KSPChatBridge
     internal sealed class Derotation
     {
         internal const double Rate = 2.5, HoldS = .8, MinElevator = -.1;
-        double cmd = double.NaN, held; internal bool NoseDown;
+        double cmd = double.NaN, held, contactSpeed, contactPitch; internal bool NoseDown;
         internal double Command { get { return cmd; } }
         internal void Reset() { cmd = double.NaN; held = 0; NoseDown = false; }
         /// <summary>Pitch command (deg) for this frame; noseGrounded from the nose wheel.</summary>
-        internal double Step(double pitch, double dt, bool noseGrounded)
+        internal double Step(double pitch, double dt, bool noseGrounded, double speed = double.NaN)
         {
-            if (double.IsNaN(cmd)) cmd = pitch;
+            if (double.IsNaN(cmd)) { cmd = pitch; contactPitch = pitch; contactSpeed = speed; }
             if (noseGrounded && held > HoldS) NoseDown = true;
             held += dt;
-            if (held > HoldS) cmd = Math.Max(-1, cmd - Rate * dt);
+            double target = contactSpeed > 10 && speed >= 0 ? -1 + (contactPitch + 1) * FlightPolicy.Clamp(speed / contactSpeed, 0, 1) : -1;
+            if (noseGrounded) target = -1;
+            if (held > HoldS) cmd = Math.Min(cmd, Math.Max(target, cmd - Rate * dt));
             return cmd;
         }
         /// <summary>Elevator: track the command, damp pitch rate, never push hard forward (no nose slam / bounce).</summary>

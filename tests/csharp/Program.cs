@@ -2247,6 +2247,26 @@ class Program
             Check(d1 != null && d1.Value.Key == "taxi_route" && d1.Value.Value.Contains("hangar") && d2 != null && d2.Value.Value.Contains("runway 09"), "chat: taxi to hangar / taxi to runway 09");
             Console.WriteLine("Taxi ground charts: 7 behavior checks passed.");
         }
+        {   // T9: learned AoA survives storage and commands attitude relative to the flight path.
+            var profile = new PlaneProfile { TouchdownAoa = 8.25 };
+            var restored = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(profile.ToDict())));
+            Check(Math.Abs(restored.TouchdownAoa - 8.25) < .001, "touchdown AoA JSON round trip");
+            Check(double.IsNaN(PlaneProfile.FromDict(new Dictionary<string, object>()).TouchdownAoa), "legacy profile has no touchdown AoA");
+            Check(double.IsNaN(PlaneProfile.FromDict(new Dictionary<string, object> { { "touchdown_aoa", 90 } }).TouchdownAoa), "invalid touchdown AoA rejected");
+            foreach (double v in new[] { 40.0, 100.0, 250.0 })
+                Check(Math.Abs(FlarePolicy.Pitch(8, v, -2) - Math.Asin(-2 / v) * 180 / Math.PI - 8) < 1e-9, "flare holds AoA at speed " + v);
+            Check(double.IsNaN(FlarePolicy.Pitch(double.NaN, 80, -1)) && double.IsNaN(FlarePolicy.Pitch(8, 0, 0)), "unmeasured AoA or unusable speed falls back");
+            var dr = new Derotation();
+            for (int i = 0; i < 40; i++) dr.Step(8, .05, false, 80);
+            Check(Math.Abs(dr.Command - 8) < 1e-9, "nose holds while touchdown speed is unchanged");
+            double before = dr.Command; dr.Step(8, .05, false, 40);
+            Check(dr.Command < before && before - dr.Command <= Derotation.Rate * .05 + 1e-9, "speed drop lowers nose at limited rate");
+            for (int i = 0; i < 100; i++) dr.Step(8, .05, false, 40);
+            Check(Math.Abs(dr.Command - 3.5) < 1e-9, "half touchdown speed progressively lowers nose");
+            dr.Step(3.5, .05, false, 70);
+            Check(Math.Abs(dr.Command - 3.5) < 1e-9, "speed increase never raises nose during rollout");
+            Console.WriteLine("Touchdown AoA: 11 behavior checks passed.");
+        }
         {   // derotation: nose lowered at <= 2.5 deg/s, no forward-stick spike, brakes only after nose-wheel contact (Luke 4:26 PM)
             var dr = new Derotation(); double pitch = 7, q = 0, maxRate = 0, minElev = 1; bool brakesEarly = false;
             for (int i = 0; i < 200; i++)

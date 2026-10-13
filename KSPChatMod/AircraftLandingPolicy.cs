@@ -2,6 +2,15 @@ using System;
 
 namespace KSPChatBridge
 {
+    internal static class FlarePolicy
+    {
+        internal static bool ValidAoa(double aoa) { return aoa >= 0 && aoa <= 13; }
+        internal static double PathAngle(double speed, double vs)
+        { return speed > 10 && !double.IsInfinity(speed) && !double.IsNaN(vs) && !double.IsInfinity(vs) ? Math.Asin(FlightPolicy.Clamp(vs / speed, -1, 1)) * 180 / Math.PI : double.NaN; }
+        internal static double Pitch(double aoa, double speed, double vs)
+        { return ValidAoa(aoa) ? aoa + PathAngle(speed, vs) : double.NaN; }
+    }
+
     internal static class FinalApproachPolicy
     {
         internal const double LookAheadM = 1500;
