@@ -48,7 +48,52 @@ namespace KSPChatBridge
                 TabletUi.Label(new Rect(12, y, width - 24, row), "INFO ONLY - enable LIVE LINK", true);
                 y += row;
             }
-            GUILayout.Space(y + gap);
+
+            // Inputs
+            float inputW = width - 36;
+            TabletUi.Field(new Rect(12, y, inputW, row), orbApT, TabletLink);
+            y += row + gap;
+            TabletUi.Field(new Rect(12, y, inputW, row), orbPeT, TabletLink);
+            y += row + gap;
+            TabletUi.Field(new Rect(12, y, inputW, row), orbIncT, TabletLink);
+            y += row + gap;
+            TabletUi.Field(new Rect(12, y, inputW, row), xferBodyT, TabletLink);
+            y += row + gap;
+
+            // Buttons
+            float btnW = width - 36;
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Ascent to Ap", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("mechjeb_ascent", "{\"target_altitude_km\":" + Km(orbApT, 80) + ",\"inclination_deg\":" + Num(orbIncT, "0") + "}");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Launch to target plane", false, TabletLink) && TabletLink)
+                ChatWindow.ChatFromMenu("Plan a transfer from my current orbit to " + xferBodyT.Trim() + ": dV needed vs what I have, and the steps. Don't burn without my OK.");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Circularize", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("circularize", "{}");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Set Ap", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("change_apoapsis", "{\"altitude_km\":" + Km(orbApT, 80) + "}");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Set Pe", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("change_periapsis", "{\"altitude_km\":" + Km(orbPeT, 80) + "}");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Set Inc", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("change_inclination", "{\"inclination_deg\":" + Num(orbIncT, "0") + "}");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Match target plane", false, TabletLink) && TabletLink)
+                ChatWindow.ChatFromMenu("Plan a transfer from my current orbit to " + xferBodyT.Trim() + ": dV needed vs what I have, and the steps. Don't burn without my OK.");
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(12, y, btnW, row), "Transfer (MJ Hohmann)", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("transfer_to", "{\"body\":" + ChatWindow.Json(xferBodyT.Trim()) + "}");
+            y += row + gap;
+
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
