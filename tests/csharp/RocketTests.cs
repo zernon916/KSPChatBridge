@@ -58,7 +58,42 @@ internal static class RocketTests
         MissionStoreChecks();
         AscentGuidanceChecks();
         AtmoLandMathChecks();
+        TargetLandMathChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void TargetLandMathChecks()
+    {
+        const double radius = 600000, mu = 3.5316e12;
+        var baseline = TargetLandMath.Predict(radius, mu, 0, 0, 0, 10000, 100, 20, -100, 0, 0);
+        Check(baseline != null && baseline.Time > 0, "ballistic descent intersects sphere");
+        double targetLat = baseline.Latitude + .1, targetLon = baseline.Longitude + .2;
+        var solution = TargetLandMath.Solve(radius, mu, 0, 0, 0, 10000, 100, 20, -100, targetLat, targetLon);
+        var corrected = TargetLandMath.Predict(radius, mu, 0, 0, 0, 10000,
+            100 + solution.DvEast, 20 + solution.DvNorth, -100 + solution.DvUp, targetLat, targetLon);
+        Check(corrected != null && corrected.Error < solution.Impact.Error * .1, "suggested dv shrinks target impact error");
+        var onTarget = TargetLandMath.Solve(radius, mu, 0, 0, 0, 10000, 100, 20, -100, baseline.Latitude, baseline.Longitude);
+        Check(onTarget.Impact.Error < 1e-6 && onTarget.DvEast == 0 && onTarget.DvNorth == 0 && onTarget.DvUp == 0,
+            "already on target needs zero correction");
+        var rotating = TargetLandMath.Predict(radius, mu, .0002, 0, 0, 10000, 100, 20, -100, 0, 0);
+        Check(rotating.Longitude < baseline.Longitude && Near(TargetLandMath.Wrap(rotating.Longitude - baseline.Longitude),
+            -.0002 * baseline.Time * 180 / Math.PI, 1e-8), "eastward body rotation moves impact longitude west");
+        var surface = TargetLandMath.Predict(radius, mu, 0, 20, 179.9, 0, 0, 0, 0, 20, 179.9);
+        Check(surface.Time == 0 && surface.Error < 1e-8, "surface target has zero error");
+        var seam = TargetLandMath.Predict(radius, mu, 0, 0, 179.9, 0, 0, 0, 0, 0, -179.9);
+        Check(seam.Error < 2200 && seam.EastError > 0, "dateline error follows short eastward path");
+        double circular = Math.Sqrt(mu / 680000);
+        Check(TargetLandMath.Predict(radius, mu, 0, 0, 0, 80000, circular, 0, 0, 0, 0) == null, "circular orbit has no ballistic impact");
+        var deorbit = TargetLandMath.Solve(radius, mu, 0, 0, 0, 80000, circular, 0, 0, 0, 40);
+        Check(deorbit.CorrectedImpact != null && deorbit.DvEast < 0 &&
+            Math.Sqrt(deorbit.DvEast * deorbit.DvEast + deorbit.DvNorth * deorbit.DvNorth + deorbit.DvUp * deorbit.DvUp) <= 500.000001,
+            "bounded deorbit suggestion reaches surface");
+        var drag = TargetLandMath.Predict(radius, mu, 0, 0, 0, 10000, 100, 20, -100, 0, 0, .001);
+        Check(drag != null && TargetLandMath.Finite(drag.Time), "optional drag propagation remains finite");
+        bool rejected = false;
+        try { TargetLandMath.Predict(radius, mu, 0, 91, 0, 10000, 100, 0, -100, 0, 0); }
+        catch (ArgumentException) { rejected = true; }
+        Check(rejected, "invalid landing latitude rejected");
     }
 
     static void AtmoLandMathChecks()
