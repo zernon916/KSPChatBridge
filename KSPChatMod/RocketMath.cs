@@ -21,5 +21,12 @@ namespace KSPChatBridge
             dv2 = Math.Sqrt(mu / r2) * (1.0 - Math.Sqrt(2.0 * r1 / (r1 + r2)));
             time = Math.PI * Math.Sqrt(Math.Pow(a, 3.0) / mu);
         }
+
+        /// <summary>Prograde dv at apoapsis rAp to circularize an orbit with periapsis rPe.</summary>
+        internal static double CircularizeAtAp(double mu, double rAp, double rPe)
+        {
+            if (mu <= 0 || rAp <= 0 || rPe <= 0) return double.NaN;
+            return Math.Sqrt(mu / rAp) - Math.Sqrt(mu * (2.0 / rAp - 2.0 / (rAp + rPe)));
+        }
     }
 }
