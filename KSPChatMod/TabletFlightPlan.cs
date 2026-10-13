@@ -42,6 +42,11 @@ namespace KSPChatBridge
                 TabletUi.Label(new Rect(12, y, width - 24, row), "INFO ONLY - enable LIVE LINK", true);
                 y += row;
             }
+            foreach (string key in new[] { "CHECK", "FLY", "STOP" })
+            {
+                if (TabletUi.Button(new Rect(12, y, width - 24, row), key, false, TabletLink) && TabletLink) OnKey("flightplan", key);
+                y += row + gap;
+            }
             GUILayout.Space(y + gap);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
