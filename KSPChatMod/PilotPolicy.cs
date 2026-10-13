@@ -209,6 +209,18 @@ namespace KSPChatBridge
             if (Math.Abs(vs) < 1e-9 && Math.Abs(horizontal) < 1e-9) return 0;
             return Math.Atan2(vs, Math.Max(0, horizontal)) * 180 / Math.PI;
         }
+        /// <summary>T4: the pitch CHANGE (deg) that fixes a vertical-speed error: atan(vsError / true airspeed) in degrees. The vertical
+        /// speed comes from the angle flown (vs = horizontal * tan(pitch)), so one angle fits every speed - the old 0.8 deg per m/s asked
+        /// 4 deg for a 5 m/s error, which flies ~17 m/s at 250 m/s but only ~3.5 m/s at 50 m/s. `gain` (mass / craft class) scales the
+        /// angle; with no usable airspeed (ground roll, NaN) it falls back to the old linear gain, inside the pitch envelope.</summary>
+        internal const double VsPitchLinGain = .8, VsPitchMinTas = 10;
+        internal static double VsPitchDeg(double vsError, double tas, double gain = 1)
+        {
+            if (double.IsNaN(vsError)) return 0;
+            if (double.IsNaN(gain)) gain = 1;
+            if (double.IsNaN(tas) || !(tas > VsPitchMinTas)) return FlightPolicy.Clamp(VsPitchLinGain * gain * vsError, -PitchEnvelope(false), PitchEnvelope(false));
+            return gain * Math.Atan(vsError / tas) * 180 / Math.PI;
+        }
         /// <summary>Learn climb-back: about 30 deg nose up at full power, lowered as the speed falls toward 1.3x stall (level at/below it).</summary>
         internal const double ClimbBackMax = 30;
         internal static double ClimbBackPitch(double speed, double stall)

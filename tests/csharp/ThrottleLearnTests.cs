@@ -66,9 +66,25 @@ internal static class ThrottleLearnTests
         Check(Math.Abs(v - 110) < 3, "speed still settles on the target (" + v.ToString("0.0") + " m/s)");
     }
 
+    // T4 (MECHJEB_IDEAS): the vertical-speed / altitude hold asks for a pitch ANGLE - atan(vs error / true airspeed) in degrees - so the
+    // same vertical error gets the right nose change at 40 m/s and at 250 m/s instead of a fixed 0.8 deg per m/s.
+    static void VsPitchAngle()
+    {
+        Check(Near(PilotPolicy.VsPitchDeg(10, 250), Math.Atan(10 / 250d) * 180 / Math.PI), "pitch ask = atan(vs error / true airspeed) in degrees");
+        foreach (double tas in new[] { 40, 100, 250 })
+        {   // the angle flies the wanted vertical speed at every speed (vs = horizontal * tan(pitch)); the old linear gain did not
+            double p = PilotPolicy.VsPitchDeg(8, tas);
+            Check(Math.Abs(tas * Math.Tan(p * Math.PI / 180) - 8) < 1e-6, "the ask flies 8 m/s at " + tas.ToString("0") + " m/s (pitch " + p.ToString("0.00") + " deg; the old 0.8 deg/m/s asked 6.4 deg = " + (tas * Math.Tan(.8 * 8 * Math.PI / 180)).ToString("0") + " m/s)");
+        }
+        Check(PilotPolicy.VsPitchDeg(5, 40) > 4 * PilotPolicy.VsPitchDeg(5, 250), "slow needs a far bigger nose change than fast for the same vs error (" + PilotPolicy.VsPitchDeg(5, 40).ToString("0.0") + " deg at 40 m/s vs " + PilotPolicy.VsPitchDeg(5, 250).ToString("0.0") + " deg at 250 m/s)");
+        Check(Near(PilotPolicy.VsPitchDeg(5, 100, .7), .7 * PilotPolicy.VsPitchDeg(5, 100)), "the mass / craft-class gain still scales the angle");
+        Check(Near(PilotPolicy.VsPitchDeg(5, 0), 4) && Near(PilotPolicy.VsPitchDeg(5, double.NaN), 4) && PilotPolicy.VsPitchDeg(double.NaN, 100) == 0, "no usable airspeed (ground roll / NaN) -> the old 0.8 deg per m/s; NaN error -> 0");
+        Check(Near(PilotPolicy.VsPitchDeg(-8, 100), -PilotPolicy.VsPitchDeg(8, 100)) && PilotPolicy.VsPitchDeg(-8, 100) < 0, "a negative error asks nose-down, symmetric (the controller clamps it to the descent pitch floor)");
+    }
+
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }

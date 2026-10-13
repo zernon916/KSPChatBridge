@@ -737,10 +737,11 @@ namespace KSPChatBridge
                     && !learnSinkLe;   // sink map flies 1.25x stall by pitch and owns the throttle; its own 1.15x stop is the guard
                 if (lowEnergy && !wasLowEnergy) ChatLog.Write("throttle", "low-energy override ACTIVATED (" + mode + "): " + PilotPolicy.LowEnergyReason(vessel.srfSpeed, stall, vessel.verticalSpeed, vessel.radarAltitude) + " -> power 90%+ at the emergency rate, wings within 15 deg, climb");
                 else if (!lowEnergy && wasLowEnergy) ChatLog.Write("throttle", "low-energy override cleared: spd=" + vessel.srfSpeed.ToString("0") + " (1.3 Vs " + PilotPolicy.MinSafeSpeed(stall).ToString("0") + ") vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0"));
+                double kinH = kin * CraftClass.GainScale(CraftCls);   // T4: mass / craft-class gain on the vs-error pitch angle (above the attitude trace so the log shows what the hold asked)
                 if (!vessel.LandedOrSplashed && Time.realtimeSinceStartup >= attTraceNext)
                 {   // attitude vs path: nose pitch is where the nose points, flight-path angle is where the plane goes
                     attTraceNext = Time.realtimeSinceStartup + 5;
-                    ChatLog.Write("att", mode + " nose pitch " + pitch.ToString("0.0") + " fpa " + PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed).ToString("0.0") + " roll " + Roll().ToString("0.0") + " hdg " + FlightGlobals.ship_heading.ToString("0.0") + " spd " + vessel.srfSpeed.ToString("0.0") + " vs " + vessel.verticalSpeed.ToString("0.0"));
+                    ChatLog.Write("att", mode + " nose pitch " + pitch.ToString("0.0") + " fpa " + PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed).ToString("0.0") + " roll " + Roll().ToString("0.0") + " hdg " + FlightGlobals.ship_heading.ToString("0.0") + " spd " + vessel.srfSpeed.ToString("0.0") + " vs " + vessel.verticalSpeed.ToString("0.0") + " vs-pitch ask " + PilotPolicy.VsPitchDeg(targetVs - vessel.verticalSpeed, vessel.srfSpeed, kinH).ToString("0.0") + " deg for vs err " + (targetVs - vessel.verticalSpeed).ToString("0.0") + " m/s (atan(err/tas), was 0.8 deg per m/s)");
                 }
                 if (!vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout")) && !learnSinkLe) speed = Math.Max(speed, PilotPolicy.MinSafeSpeed(PilotPolicy.TasStall(stall, vessel.atmDensity)));   // speed hold is surface speed: floor 1.3 Vs as TAS at this density
                 if (lowEnergy)
@@ -751,8 +752,7 @@ namespace KSPChatBridge
                     if (Time.realtimeSinceStartup >= lowTraceNext) { lowTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "low energy: spd=" + vessel.srfSpeed.ToString("0") + " min=" + PilotPolicy.MinSafeSpeed(stall).ToString("0") + " stall=" + stall.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0") + " -> power 90%+, climb"); }
                 }
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
-                double kinH = kin * CraftClass.GainScale(CraftCls);
-                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + .8 * kinH * (targetVs - vessel.verticalSpeed) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);
+                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + PilotPolicy.VsPitchDeg(targetVs - vessel.verticalSpeed, vessel.srfSpeed, kinH) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 if (targetVs > 3 && !directPitch.HasValue)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
