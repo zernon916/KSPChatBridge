@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace KSPChatBridge
@@ -31,7 +32,13 @@ namespace KSPChatBridge
             // A fixed prefix also makes Windows device names (CON, AUX, etc.) safe.
             var name = new StringBuilder("mission_");
             foreach (char c in craftKey.Trim())
+            {
+                if (name.Length >= 80) break;
                 name.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
+            }
+            // Preserve identity when sanitizing punctuation or shortening long names.
+            using (var hash = SHA256.Create())
+                name.Append('_').Append(BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(craftKey))).Replace("-", ""));
             string dir = PathOverride ?? Path.Combine(AicsCore.PluginDataDirectory, "missions");
             return Path.Combine(dir, name + ".json");
         }

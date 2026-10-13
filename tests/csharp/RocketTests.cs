@@ -96,6 +96,10 @@ internal static class RocketTests
             MissionStore.Delete("123456789");
             Check(MissionStore.Load("123456789") == null && File.Exists(file), "delete affects only chosen craft and tolerates missing file");
             Check(MissionStore.Load(null) == null, "invalid load key never throws");
+            MissionStore.Save("Mun/rocket", mission);
+            MissionStore.Save("Mun:rocket", new MissionData { TargetBodyName = "Duna" });
+            Check(MissionStore.Load("Mun/rocket").TargetBodyName == "Mun" && MissionStore.Load("Mun:rocket").TargetBodyName == "Duna",
+                "sanitized craft names do not overwrite one another");
         }
         finally
         {
