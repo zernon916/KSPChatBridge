@@ -82,9 +82,29 @@ internal static class ThrottleLearnTests
         Check(Near(PilotPolicy.VsPitchDeg(-8, 100), -PilotPolicy.VsPitchDeg(8, 100)) && PilotPolicy.VsPitchDeg(-8, 100) < 0, "a negative error asks nose-down, symmetric (the controller clamps it to the descent pitch floor)");
     }
 
+    // T5: smooth takeover - for 1 s after a hold engages, every axis the hold owns blends from the pilot's stick at the handover to the
+    // hold's ask, so no surface snaps. (Throttle is not blended: BeginHold seeds the ThrottleGate with the pilot's throttle and the gate's
+    // own rate limit stays the ONE smooth throttle path.)
+    static void TakeoverRamp()
+    {
+        Check(Near(PilotPolicy.TakeoverSeconds, 1), "the takeover ramp takes 1 s");
+        Check(PilotPolicy.TakeoverWeight(0) == 0 && Near(PilotPolicy.TakeoverWeight(.5), .5) && PilotPolicy.TakeoverWeight(1) == 1 && PilotPolicy.TakeoverWeight(9) == 1, "blend weight = elapsed / 1 s, clamped to 0..1");
+        Check(PilotPolicy.TakeoverWeight(-1) == 0 && PilotPolicy.TakeoverWeight(double.NaN) == 0, "before engage / unknown elapsed -> weight 0 (the pilot's stick passes)");
+        Check(Near(PilotPolicy.TakeoverBlend(.4, -.8, 0), .4) && Near(PilotPolicy.TakeoverBlend(.4, -.8, .5), -.2) && Near(PilotPolicy.TakeoverBlend(.4, -.8, 1), -.8) && Near(PilotPolicy.TakeoverBlend(.4, -.8, 7), -.8), "stick .4 -> ask -.8: starts at the stick, halfway at .5 s, at the ask from 1 s on");
+        Check(Near(PilotPolicy.TakeoverBlend(double.NaN, .3, 0), .3), "no pilot seed (NaN) -> the hold takes the axis immediately");
+        Check(Near(PilotPolicy.TakeoverBlend(.4, -.8, 0, 0), -.8) && Near(PilotPolicy.TakeoverBlend(.4, -.8, 0, double.NaN), -.8), "zero / NaN ramp seconds -> no ramp (instant takeover)");
+        {   // 50 Hz sim: the pilot's stick was +.5, the hold asks -.9 - the output arrives after exactly 1 s with no tick bigger than the ramp rate
+            double outv = 0, t = 0, maxStep = 0, prev = .5; bool reached = false; int tickAt = -1;
+            for (int s = 0; s < 100; s++) { outv = PilotPolicy.TakeoverBlend(.5, -.9, t); if (!reached && Near(outv, -.9)) { reached = true; tickAt = s; } maxStep = Math.Max(maxStep, Math.Abs(outv - prev)); prev = outv; t += .02; }
+            Check(reached && tickAt == 50, "at 50 Hz the ask is reached after exactly 1 s (tick " + tickAt + ")");
+            Check(Near(maxStep, 1.4 * .02), "no snap: the biggest output step per tick = the full travel spread over 1 s (" + maxStep.ToString("0.0000") + " per 0.02 s)");
+        }
+        Check(Near(PilotPolicy.TakeoverBlend(-.5, -.5, 0), -.5) && Near(PilotPolicy.TakeoverBlend(-.5, -.5, .5), -.5), "seed == ask -> the output never moves");
+    }
+
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle(); TakeoverRamp();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }

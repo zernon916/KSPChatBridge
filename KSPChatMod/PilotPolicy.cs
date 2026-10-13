@@ -221,6 +221,21 @@ namespace KSPChatBridge
             if (double.IsNaN(tas) || !(tas > VsPitchMinTas)) return FlightPolicy.Clamp(VsPitchLinGain * gain * vsError, -PitchEnvelope(false), PitchEnvelope(false));
             return gain * Math.Atan(vsError / tas) * 180 / Math.PI;
         }
+        /// <summary>T5: smooth takeover - for TakeoverSeconds after a hold engages (or the pilot lets go of the controls during a LEARN
+        /// wait), every axis the hold owns blends from the pilot's stick at the handover to the hold's ask, so no surface snaps.
+        /// weight = elapsed / ramp clamped to [0,1]; NaN seed -> the hold takes the axis at once; ramp <= 0 / NaN -> instant.</summary>
+        internal const double TakeoverSeconds = 1;
+        internal static double TakeoverWeight(double elapsed, double rampSeconds = TakeoverSeconds)
+        {
+            if (double.IsNaN(rampSeconds) || !(rampSeconds > 0)) return 1;
+            if (double.IsNaN(elapsed) || elapsed <= 0) return 0;
+            return FlightPolicy.Clamp(elapsed / rampSeconds, 0, 1);
+        }
+        internal static double TakeoverBlend(double pilotInput, double commanded, double elapsed, double rampSeconds = TakeoverSeconds)
+        {
+            if (double.IsNaN(pilotInput)) return commanded;
+            return pilotInput + (commanded - pilotInput) * TakeoverWeight(elapsed, rampSeconds);
+        }
         /// <summary>Learn climb-back: about 30 deg nose up at full power, lowered as the speed falls toward 1.3x stall (level at/below it).</summary>
         internal const double ClimbBackMax = 30;
         internal static double ClimbBackPitch(double speed, double stall)

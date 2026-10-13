@@ -28,6 +28,7 @@ namespace KSPChatBridge
         Vessel vessel;
         string mode = "idle";
         double altitude, heading, speed = 150, band = 150, throttle, lastThrottle = -10, prevPitch, prevRoll, pitchIntegral, vsIntegral;
+        double takeoverT = 99, takePitch, takeRoll, takeYaw;   // T5: smooth takeover - seconds since the hold engaged + the pilot's stick at that moment (99 = ramp done)
         double? capture;
         double terrainFloor = double.NaN, terrainAheadM = double.NaN, terrainMargin = 300;
         float nextTerrain;
@@ -116,7 +117,7 @@ namespace KSPChatBridge
         void FailSoft(FlightCtrlState c, Exception ex)
         {
             string where = mode; ChatLog.Write("error", where + ": " + ex); Debug.LogError("[KSPChatBridge] controller error in " + where + ": " + ex);
-            c.pitch = c.yaw = c.roll = c.wheelSteer = 0; elevator = 0; pitchIntegral = vsIntegral = 0;
+            c.pitch = c.yaw = c.roll = c.wheelSteer = 0; elevator = 0; pitchIntegral = vsIntegral = 0; takeoverT = 99;   // T5: an error release ends the takeover ramp - the pilot's stick seed is stale
             bool air = vessel != null && !vessel.LandedOrSplashed;
             if (air && where != "hold" && errorHolds < 3)
             {
@@ -488,6 +489,8 @@ namespace KSPChatBridge
             mode = "hold"; throttle = vessel.ctrlState.mainThrottle; prevPitch = Pitch(); prevRoll = Roll();
             elevator = vessel.ctrlState.pitch; lastThrottle = Planetarium.GetUniversalTime() - 3;
             pitchIntegral = vsIntegral = 0; lastDesiredPitch = Pitch(); capLifted = false; prevSpd = -1; capture = null; trimSuspended = false;
+            takeoverT = 0; takePitch = vessel.ctrlState.pitch; takeRoll = vessel.ctrlState.roll; takeYaw = vessel.ctrlState.yaw; gate.Seed(vessel.ctrlState.mainThrottle);   // T5: smooth takeover - start from the pilot's real stick + throttle, never a stale controller state
+            ChatLog.Write("ap", "smooth takeover: pitch/roll/yaw ramp from the pilot's stick (" + takePitch.ToString("0.00") + "/" + takeRoll.ToString("0.00") + "/" + takeYaw.ToString("0.00") + ") to the hold over " + PilotPolicy.TakeoverSeconds.ToString("0.#") + " s; throttle gate seeded at " + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%");
             SetGroup(vessel, KSPActionGroup.SAS, false);
             ApplyCraftNotes();
             if (!props.HasLift(vessel)) engines.Request(vessel, Time.realtimeSinceStartup);
@@ -678,6 +681,13 @@ namespace KSPChatBridge
                         c.pitch = (float)FlightPolicy.Clamp(.022 * (pitchTarget - pitch) - .012 * q, -1, 1);
                         c.roll = (float)FlightPolicy.Clamp(.014 * (rollTarget - roll) - .01 * p, -1, 1);
                         c.yaw = (float)yawDemand;
+                        if (takeoverT < PilotPolicy.TakeoverSeconds)
+                        {   // T5: smooth takeover - heli too: cyclic/yaw blend from the pilot's stick at engage to the hover-hold asks over 1 s
+                            c.pitch = (float)PilotPolicy.TakeoverBlend(takePitch, c.pitch, takeoverT);
+                            c.roll = (float)PilotPolicy.TakeoverBlend(takeRoll, c.roll, takeoverT);
+                            c.yaw = (float)PilotPolicy.TakeoverBlend(takeYaw, c.yaw, takeoverT);
+                            takeoverT += dt;
+                        }
                     }
                     double collectiveOutput = collective.Step(vs, vessel.verticalSpeed, dt, vessel.LandedOrSplashed);
                     if (emergency == "autorotation" && liftKnown) collectiveOutput = HelicopterPolicy.Autorotation(vessel.radarAltitude, vessel.verticalSpeed, liftRpm, liftLimit);
@@ -773,10 +783,16 @@ namespace KSPChatBridge
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
-                if (PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls))) c.pitch = elevator;
-                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; }   // below rotate: elevator slightly nose-down, no integrator wind-up
+                bool pitchOwned = PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls)); if (pitchOwned) c.pitch = elevator;   // T5: the owned flags mark the axes the hold drives this tick - only those get the takeover blend
+                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
-                if (holdHeading || directBank.HasValue) c.roll = (float)FlightPolicy.Clamp(.014 * rollGain * (bank - roll) - .01 * p, -1, 1);
+                bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(.014 * rollGain * (bank - roll) - .01 * p, -1, 1);
+                if (takeoverT < PilotPolicy.TakeoverSeconds)
+                {   // T5: smooth takeover - for 1 s after engage the axes the hold owns blend from the pilot's stick at engage to the hold's ask (no snapped surfaces at the handover); axes the hold does not own pass the pilot's live input
+                    if (pitchOwned) c.pitch = elevator = (float)PilotPolicy.TakeoverBlend(takePitch, c.pitch, takeoverT);
+                    if (rollOwned) c.roll = (float)PilotPolicy.TakeoverBlend(takeRoll, c.roll, takeoverT);
+                    takeoverT += dt;
+                }
                 double targetThrottle = throttle;
                 if (mode == "hold" && holdAltitude && vessel.altitude > altitude + 30 && vessel.verticalSpeed > 3) targetThrottle -= .05;   // above the target and still climbing: power off
                 else if (targetVs > 3) targetThrottle += .05 * Math.Sign(targetVs - vessel.verticalSpeed);

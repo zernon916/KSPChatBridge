@@ -102,6 +102,7 @@ namespace KSPChatBridge
             {   // pilot let go: hold where they left it
                 learnPilotHad = false; altitude = vessel.altitude; heading = FlightGlobals.ship_heading; learn.HoldAlt = altitude; learn.HoldHdg = heading; capture = null;
                 pitchIntegral = vsIntegral = 0; elevator = vessel.ctrlState.pitch; gate.Seed(vessel.ctrlState.mainThrottle); shold.Reset();
+                takeoverT = 0; takePitch = vessel.ctrlState.pitch; takeRoll = vessel.ctrlState.roll; takeYaw = vessel.ctrlState.yaw;   // T5: the hold resumes when the pilot lets go - ramp back in from their stick over 1 s
                 ChatLog.Write("learn", "pilot released: hold " + altitude.ToString("0") + " m hdg " + heading.ToString("000"));
             }
             return false;
