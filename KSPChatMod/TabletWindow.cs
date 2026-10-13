@@ -12,7 +12,10 @@ namespace KSPChatBridge
     {
         const int TabletId = 0x4B434D54;
         const float TabletMinW = 520, TabletMinH = 420, TabletBezel = 16, TabletHead = 40, TabletTabH = 46;
-        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests" };
+        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests", "Encyclopedia" };
+        /// <summary>LIVE LINK (default OFF): OFF = information only - the tablet shows live craft data but every control is
+        /// disabled and does nothing (the autopilot itself keeps running). ON = the tablet keys work like the MFD keys.</summary>
+        internal static bool TabletLink;
         internal static bool TabletVisible;
         static Rect tabletRect = new Rect(-1, 120, 900, 680);
         static int tabletTab = 4, tabletFont = 18, tabletMapPage; static bool tabletResizing;
@@ -73,8 +76,12 @@ namespace KSPChatBridge
             float W = tabletRect.width, H = tabletRect.height, b = TabletBezel;
             GUI.Box(new Rect(0, 0, W, H), "", tabletFrame);
             // header in the bezel: title, font size, close
-            GUI.Label(new Rect(b + 6, 6, W - 260, TabletHead - 6), "AICS TABLET  " + TabletTabs[tabletTab].ToUpperInvariant(), tabletHead);
+            float lw = Mathf.Max(150, tabletFont * 8.5f);
+            GUI.Label(new Rect(b + 6, 6, W - 290 - lw, TabletHead - 6), "AICS TABLET  " + TabletTabs[tabletTab].ToUpperInvariant(), tabletHead);
             float kw = Mathf.Max(40, tabletFont * 2.4f), kh = TabletHead - 12;
+            var oc = GUI.backgroundColor; GUI.backgroundColor = TabletLink ? new Color(.5f, 1f, .5f) : new Color(1f, .75f, .35f);
+            if (GUI.Button(new Rect(W - b - kh - 2 * kw - lw - 26, 6, lw, kh), TabletLink ? "LIVE LINK: ON" : "LIVE LINK: OFF", TabletLink ? tabletTabOn : tabletKey)) { TabletLink = !TabletLink; Save(); }
+            GUI.backgroundColor = oc;
             if (GUI.Button(new Rect(W - b - kh - 2 * kw - 16, 6, kw, kh), "A-", tabletKey)) { tabletFont = Mathf.Max(12, tabletFont - 2); Save(); }
             if (GUI.Button(new Rect(W - b - kh - kw - 10, 6, kw, kh), "A+", tabletKey)) { tabletFont = Mathf.Min(32, tabletFont + 2); Save(); }
             if (GUI.Button(new Rect(W - b - kh, 6, kh, kh), "\u2715", tabletKey)) { TabletVisible = false; Save(); }
@@ -89,6 +96,7 @@ namespace KSPChatBridge
                 {
                     case 2: TabletMap(area); break;
                     case 4: TabletTests(area); break;
+                    case 5: TabletEncyclopedia(area); break;
                     default:
                         GUI.Label(new Rect(area.x, area.y + area.height * .4f, area.width, tabletFont * 4), TabletTabs[tabletTab].ToUpperInvariant() + "\n\ncoming soon", new GUIStyle(tabletHead) { alignment = TextAnchor.MiddleCenter, wordWrap = true });
                         break;
@@ -120,38 +128,136 @@ namespace KSPChatBridge
         {
             if (MapWindow.Inst == null) { GUI.Label(area, "Map, charts and ILS are available in flight.", tabletText); return; }
             float kh = tabletFont * 1.9f, x = area.x;
-            for (int i = 0; i < TabletMapPages.Length; i++)
+            if (!TabletLink && tabletMapPage == 2) tabletMapPage = 0;   // info-only: the ILS page is hidden and never drawn from the tablet
+            int pages = TabletLink ? TabletMapPages.Length : 2;
+            for (int i = 0; i < pages; i++)
             {
                 float w = tabletFont * 4.5f; if (GUI.Button(new Rect(x, area.y, w, kh), TabletMapPages[i], i == tabletMapPage ? tabletTabOn : tabletTabOff)) { tabletMapPage = i; Save(); }
                 x += w + 4;
             }
             x += 12; var keys = tabletMapPage == 1 ? new[] { "RWY <", "RWY >", "VARIANT" } : tabletMapPage == 2 ? new[] { "RWY <", "RWY >" } : new[] { "ZOOM+", "ZOOM-", "CENTER", "CTR RWY" };
-            foreach (var k in keys) { float w = tabletFont * (k.Length * .65f + 1.2f); if (x + w > area.xMax) break; if (GUI.Button(new Rect(x, area.y, w, kh), k, tabletKey)) OnKey(TabletMapPages[tabletMapPage].ToLowerInvariant(), k); x += w + 4; }
+            foreach (var k in keys) { float w = tabletFont * (k.Length * .65f + 1.2f); if (x + w > area.xMax) break; GUI.enabled = TabletLink; bool hit = GUI.Button(new Rect(x, area.y, w, kh), k, tabletKey); GUI.enabled = true; if (hit && TabletLink) OnKey(TabletMapPages[tabletMapPage].ToLowerInvariant(), k); x += w + 4; }
+            var et = Event.current.type;   // info-only: no map mouse (pan / waypoint drag / wheel) reaches MapWindow
+            if (!TabletLink && (et == EventType.MouseDown || et == EventType.MouseDrag || et == EventType.MouseUp || et == EventType.ScrollWheel)) return;
+            if (!TabletLink) GUI.Label(new Rect(area.x, area.yMax - tabletFont * 1.6f, area.width, tabletFont * 1.6f), "INFO ONLY - LIVE LINK off", tabletText);
             MapWindow.Inst.DrawEmbedded(new Rect(area.x, area.y + kh + 6, area.width, area.height - kh - 6), tabletMapPage);   // the cockpit MFD map pass
         }
 
+        /// <summary>Learn checklist row -> index into LearnFlight.Codes (rows "&gt;[x] 3 ..." / "   [ ] 9b ..."), -1 for text rows.</summary>
+        internal static List<int> LearnRowCodes(List<string> ll)
+        {
+            var r = new List<int>(); int j = 0;
+            foreach (var l in ll) r.Add(System.Text.RegularExpressions.Regex.IsMatch(l, @"^[> ] {0,2}\[[ x*>]\] \d") ? j++ : -1);
+            return r;
+        }
         void TabletTests(Rect area)
-        {   // S5: the LEARN page; keys go through OnKey("learn", ...) exactly like the MFD LEARN page's right column
-            var keys = MfdNav.Right("learn"); float kh = tabletFont * 1.9f, x = area.x;
+        {   // S5: the LEARN page; keys go through OnKey("learn", ...) exactly like the MFD LEARN page's right column.
+            // Touch: tap a test row to put the TOGGLE cursor there, tap the selected row again to toggle it (LIVE LINK on only).
+            var keys = MfdNav.Right("learn"); float kh = Mathf.Max(48, tabletFont * 2.6f), x = area.x, y = area.y;
+            GUI.enabled = TabletLink;
             foreach (var k in keys)
             {
-                if (string.IsNullOrEmpty(k)) continue; float w = tabletFont * (k.Length * .65f + 1.4f);
-                if (GUI.Button(new Rect(x, area.y, w, kh), k, tabletKey)) OnKey("learn", k);
-                x += w + 6;
+                if (string.IsNullOrEmpty(k)) continue; float w = Mathf.Max(110, tabletFont * (k.Length * .7f + 2f));
+                if (x + w > area.xMax) { x = area.x; y += kh + 6; }
+                if (GUI.Button(new Rect(x, y, w, kh), k, tabletKey) && TabletLink) OnKey("learn", k);
+                x += w + 8;
             }
-            var ll = NativeFlightController.LearnLines(); float lh = Mathf.Max(12, tabletFont * 1.45f);
-            float top = area.y + kh + 8; int vis = Mathf.Max(3, (int)((area.yMax - top) / lh));
+            GUI.enabled = true;
+            if (!TabletLink) GUI.Label(new Rect(x + 4, y, area.xMax - x - 4, kh), "INFO ONLY - turn LIVE LINK on to use the controls", tabletText);
+            var ll = NativeFlightController.LearnLines(); var codes = LearnRowCodes(ll); bool toggle = NativeFlightController.LearnToggleMode;
+            float lh = Mathf.Max(30, tabletFont * 1.9f);   // touch-sized rows
+            float top = y + kh + 8; int vis = Mathf.Max(3, (int)((area.yMax - top) / lh));
             if (Event.current.type == EventType.ScrollWheel && area.Contains(Event.current.mousePosition)) { MfdNav.AboutScroll(Event.current.delta.y > 0 ? 3 : -3); Event.current.Use(); }
             int off = MfdNav.AboutWindow(ll, vis);
-            GUILayout.BeginArea(new Rect(area.x, top, area.width, area.yMax - top));
-            for (int i = off; i < ll.Count && i < off + vis; i++) GUILayout.Label(ll[i], tabletText);
-            GUILayout.EndArea();
+            var rowStyle = new GUIStyle(tabletText) { wordWrap = false, alignment = TextAnchor.MiddleLeft }; var selFill = new Color(.2f, .5f, .25f, .35f);
+            for (int i = off; i < ll.Count && i < off + vis; i++)
+            {
+                Rect row = new Rect(area.x, top + (i - off) * lh, area.width, lh - 2); int j = codes[i];
+                bool sel = toggle && j >= 0 && j == MfdNav.LearnCursor;
+                if (sel) { var o = GUI.color; GUI.color = selFill; GUI.DrawTexture(row, Texture2D.whiteTexture); GUI.color = o; }
+                if (j >= 0 && toggle && TabletLink && j < LearnFlight.Codes.Length)
+                {
+                    if (GUI.Button(row, ll[i], rowStyle)) { if (j == MfdNav.LearnCursor) OnKey("learn", "TOGGLE"); else MfdNav.LearnCursor = j; }
+                }
+                else GUI.Label(row, ll[i], rowStyle);
+            }
         }
 
+        // ---- Encyclopedia: our own short facts read live from CelestialBody (info only; works with LIVE LINK off) ----
+        static Vector2 encListScroll, encInfoScroll; static string encSel;
+        internal static string BodyClass(bool hasParent, bool parentIsStar, double radius)
+        {
+            if (!hasParent) return "Stars";
+            if (parentIsStar) return radius < 100000 ? "Asteroids" : "Planets";
+            return "Moons";
+        }
+        static bool IsStar(CelestialBody b) { return b.referenceBody == null || b.referenceBody == b; }
+        void TabletEncyclopedia(Rect area)
+        {
+            var groups = new Dictionary<string, List<string>> { { "Stars", new List<string>() }, { "Planets", new List<string>() }, { "Moons", new List<string>() }, { "Asteroids", new List<string>() } };
+            var bodies = FlightGlobals.Bodies ?? new List<CelestialBody>();
+            foreach (var b in bodies) { if (b == null) continue; groups[BodyClass(!IsStar(b), !IsStar(b) && IsStar(b.referenceBody), b.Radius)].Add(b.bodyName); }
+            var objs = new List<Vessel>(); if (FlightGlobals.Vessels != null) foreach (var v in FlightGlobals.Vessels) if (v != null && v.vesselType == VesselType.SpaceObject) objs.Add(v);
+            float lw = Mathf.Min(area.width * .35f, Mathf.Max(200, tabletFont * 12)), rh = Mathf.Max(28, tabletFont * 1.7f);
+            var head = new GUIStyle(tabletHead) { fontSize = tabletFont }; var item = new GUIStyle(tabletText) { wordWrap = false, alignment = TextAnchor.MiddleLeft };
+            GUILayout.BeginArea(new Rect(area.x, area.y, lw, area.height)); encListScroll = GUILayout.BeginScrollView(encListScroll);
+            foreach (var g in new[] { "Stars", "Planets", "Moons", "Asteroids" })
+            {
+                GUILayout.Label(g.ToUpperInvariant(), head);
+                foreach (var n in groups[g]) if (GUILayout.Button((encSel == n ? "\u25B8 " : "  ") + n, item, GUILayout.Height(rh))) { encSel = n; encInfoScroll = Vector2.zero; }
+                if (g == "Asteroids") foreach (var v in objs) { string k = "#" + v.id; if (GUILayout.Button((encSel == k ? "\u25B8 " : "  ") + v.vesselName, item, GUILayout.Height(rh))) { encSel = k; encInfoScroll = Vector2.zero; } }
+                if (g == "Asteroids" && groups[g].Count == 0 && objs.Count == 0) GUILayout.Label("  (none tracked)", tabletText);
+            }
+            GUILayout.EndScrollView(); GUILayout.EndArea();
+            var o = GUI.color; GUI.color = new Color(.35f, 1f, .45f, .4f); GUI.DrawTexture(new Rect(area.x + lw + 6, area.y, 1, area.height), Texture2D.whiteTexture); GUI.color = o;
+            var lines = new List<string>();
+            if (encSel == null) lines.Add("Select a body on the left.");
+            else if (encSel.StartsWith("#")) { var v = objs.Find(x => "#" + x.id == encSel); if (v == null) lines.Add("Object no longer tracked."); else { lines.Add(v.vesselName); lines.Add("Tracked space object (asteroid / comet)"); OrbitLines(lines, v.orbit); } }
+            else { var b = bodies.Find(x => x != null && x.bodyName == encSel); if (b == null) lines.Add("Body not found."); else BodyLines(lines, b); }
+            GUILayout.BeginArea(new Rect(area.x + lw + 16, area.y, area.width - lw - 16, area.height)); encInfoScroll = GUILayout.BeginScrollView(encInfoScroll);
+            for (int i = 0; i < lines.Count; i++) GUILayout.Label(lines[i], i == 0 ? tabletHead : tabletText);
+            GUILayout.EndScrollView(); GUILayout.EndArea();
+        }
+        internal static string EncDist(double m) { if (double.IsInfinity(m) || double.IsNaN(m)) return "-"; return Math.Abs(m) >= 1e9 ? (m / 1e9).ToString("0.###", CultureInfo.InvariantCulture) + " Gm" : Math.Abs(m) >= 1e4 ? (m / 1000).ToString("#,0.#", CultureInfo.InvariantCulture) + " km" : m.ToString("0", CultureInfo.InvariantCulture) + " m"; }
+        internal static string EncDur(double s)
+        {
+            if (double.IsInfinity(s) || double.IsNaN(s) || s <= 0) return "-";
+            double d = Math.Floor(s / 21600), h = Math.Floor((s - d * 21600) / 3600), mi = Math.Floor((s % 3600) / 60);   // Kerbin days (6 h)
+            return (d > 0 ? d + "d " : "") + (h > 0 || d > 0 ? h + "h " : "") + mi + "m " + Math.Floor(s % 60) + "s";
+        }
+        static void BodyLines(List<string> o, CelestialBody b)
+        {
+            var ci = CultureInfo.InvariantCulture; bool star = IsStar(b);
+            o.Add(b.bodyName); o.Add(BodyClass(!star, !star && IsStar(b.referenceBody), b.Radius).TrimEnd('s').Replace("Asteroid", "Small body"));
+            o.Add("Radius: " + EncDist(b.Radius));
+            o.Add("Mass: " + b.Mass.ToString("0.###e+0", ci) + " kg");
+            o.Add("Surface gravity: " + b.GeeASL.ToString("0.###", ci) + " g");
+            o.Add("SOI: " + (star || double.IsInfinity(b.sphereOfInfluence) ? "infinite" : EncDist(b.sphereOfInfluence)));
+            o.Add("Day (sidereal): " + EncDur(b.rotationPeriod) + (b.tidallyLocked ? "  - tidally locked" : ""));
+            if (b.atmosphere)
+            {
+                o.Add("Atmosphere: yes, up to " + EncDist(b.atmosphereDepth));
+                o.Add("Sea-level pressure: " + b.atmospherePressureSeaLevel.ToString("0.###", ci) + " kPa (" + (b.atmospherePressureSeaLevel / 101.325).ToString("0.###", ci) + " atm)");
+                o.Add("Oxygen: " + (b.atmosphereContainsOxygen ? "yes (jets / air intakes work)" : "no"));
+            }
+            else o.Add("Atmosphere: none");
+            if (!star) OrbitLines(o, b.orbit);
+        }
+        static void OrbitLines(List<string> o, Orbit orb)
+        {
+            if (orb == null) { o.Add("Orbit: -"); return; }
+            var ci = CultureInfo.InvariantCulture;
+            o.Add("");
+            o.Add("Orbits: " + (orb.referenceBody != null ? orb.referenceBody.bodyName : "-"));
+            o.Add("Semi-major axis: " + EncDist(orb.semiMajorAxis));
+            o.Add("Period: " + EncDur(orb.period));
+            o.Add("Inclination: " + orb.inclination.ToString("0.##", ci) + " deg");
+            o.Add("Eccentricity: " + orb.eccentricity.ToString("0.####", ci));
+        }
         static string TabletSave()
         {
-            return string.Format(CultureInfo.InvariantCulture, "tx={0}\nty={1}\ntw={2}\nth={3}\ntvis={4}\nttab={5}\ntfont={6}\ntmap={7}\n",
-                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage);
+            return string.Format(CultureInfo.InvariantCulture, "tx={0}\nty={1}\ntw={2}\nth={3}\ntvis={4}\nttab={5}\ntfont={6}\ntmap={7}\ntlink={8}\n",
+                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage, TabletLink ? 1 : 0);
         }
         static bool TabletLoad(string key, string val)
         {
@@ -165,6 +271,7 @@ namespace KSPChatBridge
                 case "tvis": TabletVisible = val.Trim() == "1"; return true;
                 case "ttab": tabletTab = Mathf.Clamp((int)f, 0, TabletTabs.Length - 1); return true;
                 case "tfont": tabletFont = Mathf.Clamp((int)f, 12, 32); return true;
+                case "tlink": TabletLink = val.Trim() == "1"; return true;
                 case "tmap": tabletMapPage = Mathf.Clamp((int)f, 0, 2); return true;
             }
             return false;
