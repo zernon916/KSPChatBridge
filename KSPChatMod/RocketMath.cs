@@ -28,5 +28,17 @@ namespace KSPChatBridge
             if (mu <= 0 || rAp <= 0 || rPe <= 0) return double.NaN;
             return Math.Sqrt(mu / rAp) - Math.Sqrt(mu * (2.0 / rAp - 2.0 / (rAp + rPe)));
         }
+
+        /// <summary>Phase angle for Hohmann transfer.</summary>
+        internal static double PhaseAngleDeg(double mu, double r1, double r2)
+        {
+            double t;
+            Hohmann(mu, r1, r2, out _, out _, out t);
+            double n2 = Math.Sqrt(mu / Math.Pow(r2, 3));
+            double angle = 180.0 - n2 * t * 180.0 / Math.PI;
+            while (angle >= 180.0) angle -= 360.0;
+            while (angle < -180.0) angle += 360.0;
+            return angle;
+        }
     }
 }
