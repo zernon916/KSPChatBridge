@@ -14,6 +14,8 @@ namespace KSPChatBridge
         bool ascentCoasting, ascentNodePlaced;
         ManeuverNode ascentNode;
         AscentPhase ascentLastPhase;
+        double ascentPitchError, ascentYawError;
+        bool ascentSteeringSampled;
 
         // True = valid guidance applied (including coasting / node handoff).
         // This is deliberately not wired into Fly or Command yet.
@@ -23,7 +25,7 @@ namespace KSPChatBridge
             if (c == null) return false;
             c.mainThrottle = 0;
             c.pitch = c.yaw = c.roll = 0;
-            if (v == null || v.mainBody == null || v.orbit == null || v.ReferenceTransform == null || v.parts == null) return false;
+            if (v == null || v.mainBody == null || v.mainBody.transform == null || v.orbit == null || v.ReferenceTransform == null || v.parts == null) return false;
             try
             {
                 if (ascentCraft != v || ascentTarget != targetAlt || (v.LandedOrSplashed && ascentCoasting))
@@ -31,6 +33,7 @@ namespace KSPChatBridge
                     ascentCraft = v; ascentTarget = targetAlt;
                     ascentCoasting = ascentNodePlaced = false; ascentNode = null;
                     ascentLastPhase = AscentPhase.Climb;
+                    ascentSteeringSampled = false;
                 }
                 var body = v.mainBody;
                 var orbit = v.orbit;
@@ -55,11 +58,14 @@ namespace KSPChatBridge
                         if (AscentGuidance.Finite(capacity) && capacity > 0) thrust += capacity;
                     }
                 }
-                if (!AscentGuidance.Finite(orbit.eccentricity) || orbit.eccentricity >= 1)
+                // A stationary / radial launch can have eccentricity exactly one
+                // while still having negative orbital energy. Do not reject it.
+                if (!v.LandedOrSplashed && (!AscentGuidance.Finite(orbit.semiMajorAxis) || orbit.semiMajorAxis <= 0))
                 { status = "Ascent stopped: no bound apoapsis."; return false; }
                 var command = AscentGuidance.Evaluate(v.altitude, v.verticalSpeed, v.horizontalSrfSpeed,
                     thrust / (mass * gravity), v.dynamicPressurekPa, targetAlt, atmosphere,
-                    ascentCoasting ? Math.Max(targetAlt, orbit.ApA) : orbit.ApA, orbit.timeToAp);
+                    ascentCoasting ? Math.Max(targetAlt, orbit.ApA) : v.LandedOrSplashed ? v.altitude : orbit.ApA,
+                    v.LandedOrSplashed ? 0 : orbit.timeToAp);
                 if (command.Phase != AscentPhase.Climb) ascentCoasting = true;
 
                 // Follow horizontal surface velocity once established; initially
@@ -71,14 +77,15 @@ namespace KSPChatBridge
                 if (horizontal.sqrMagnitude < 1e-10) horizontal = Vector3d.Exclude(up, v.ReferenceTransform.right);
                 double angle = command.TargetPitch * Math.PI / 180;
                 Vector3d desired = up * Math.Sin(angle) + horizontal.normalized * Math.Cos(angle);
-                // Same pitch/yaw signs as NativeVerticalLanding, with body-rate damping.
-                Vector3d turn = Vector3d.Cross(v.ReferenceTransform.up, desired);
-                double pitchError = Vector3d.Dot(turn, -v.ReferenceTransform.right);
-                double yawError = Vector3d.Dot(turn, -v.ReferenceTransform.forward);
-                double pitchRate = Vector3d.Dot(v.angularVelocity, -v.ReferenceTransform.right);
-                double yawRate = Vector3d.Dot(v.angularVelocity, -v.ReferenceTransform.forward);
-                c.pitch = (float)Math.Max(-1, Math.Min(1, 2 * pitchError - .6 * pitchRate));
-                c.yaw = (float)Math.Max(-1, Math.Min(1, 2 * yawError - .6 * yawRate));
+                // Same control axes and error-rate damping as NativeVerticalLanding.
+                double pitchError = Vector3d.Dot(desired, -v.ReferenceTransform.forward);
+                double yawError = Vector3d.Dot(desired, v.ReferenceTransform.right);
+                double dt = Math.Max(.001, TimeWarp.fixedDeltaTime);
+                double pitchRate = ascentSteeringSampled ? (pitchError - ascentPitchError) / dt : 0;
+                double yawRate = ascentSteeringSampled ? (yawError - ascentYawError) / dt : 0;
+                ascentPitchError = pitchError; ascentYawError = yawError; ascentSteeringSampled = true;
+                c.pitch = (float)Math.Max(-1, Math.Min(1, 2 * pitchError + .6 * pitchRate));
+                c.yaw = (float)Math.Max(-1, Math.Min(1, 2 * yawError + .6 * yawRate));
                 c.mainThrottle = (float)command.Throttle;
                 status = command.Phase + ": pitch " + command.TargetPitch.ToString("F1", CultureInfo.InvariantCulture) +
                     ", throttle " + command.Throttle.ToString("F2", CultureInfo.InvariantCulture);
