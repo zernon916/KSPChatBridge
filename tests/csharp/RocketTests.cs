@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using KSPChatBridge;
 
@@ -60,6 +61,7 @@ internal static class RocketTests
         AtmoLandMathChecks();
         TargetLandMathChecks();
         SlopeChecks();
+        DvTrackerChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
     }
 
@@ -380,5 +382,54 @@ internal static class RocketTests
         for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++) corner[r, c] = (r < 2 && c < 2) ? 0 : (r + c) * 4.0 * ((r * 7 + c * 3) % 2 == 0 ? 1 : -1);
         bool moved = SlopeMath.Nudge(corner, 10, out s, out e, out n);
         Check(!moved || Math.Abs(e) + Math.Abs(n) > 0, "slope: nudge gives an offset when it moves");
+    }
+
+    static void DvTrackerChecks()
+    {
+        var planned = new List<double> { 842.0, 362.0, 310.0 };
+        var tracker = new DvTracker(planned, 10.0);
+        Check(tracker.LegCount == 3, "tracker has three legs");
+        Check(Near(tracker.Planned(0), 842.0, 1e-9), "planned dv leg 0");
+        Check(Near(tracker.Planned(1), 362.0, 1e-9), "planned dv leg 1");
+        Check(Near(tracker.Planned(2), 310.0, 1e-9), "planned dv leg 2");
+        Check(double.IsNaN(tracker.Planned(3)), "out-of-range leg returns NaN");
+        Check(Near(tracker.Used(0), 0.0, 1e-9), "initial used dv is zero");
+        Check(Near(tracker.Remaining(0), 842.0, 1e-9), "initial remaining equals planned");
+        Check(Near(tracker.PercentOverUnder(0), -100.0, 1e-9), "initial percent is -100% (nothing used)");
+        Check(!tracker.IsBigDifference(0), "no big difference initially");
+        Check(!tracker.AlreadyFlagged(0), "not flagged initially");
+
+        tracker.AddSample(0, 100.0);
+        Check(Near(tracker.Used(0), 100.0, 1e-9), "used dv after first sample");
+        Check(Near(tracker.Remaining(0), 742.0, 1e-9), "remaining = planned - used");
+        Check(Near(tracker.PercentOverUnder(0), -100.0 * (842.0 - 100.0) / 842.0, 1e-6), "percent calculation");
+        Check(!tracker.IsBigDifference(0), "no big difference at 11.9% under");
+
+        tracker.AddSample(0, 742.0);
+        Check(Near(tracker.Used(0), 842.0, 1e-9), "used dv after second sample");
+        Check(Near(tracker.Remaining(0), 0.0, 1e-9), "remaining at zero");
+        Check(Near(tracker.PercentOverUnder(0), 0.0, 1e-9), "percent at exact match (842 used of 842 planned)");
+        Check(!tracker.IsBigDifference(0), "no big difference at exact match");
+
+        tracker.AddSample(0, 84.3);
+        Check(Near(tracker.Used(0), 926.3, 1e-9), "used dv after exceeding planned");
+        Check(Near(tracker.Remaining(0), -84.3, 1e-9), "remaining negative when over");
+        Check(Near(tracker.PercentOverUnder(0), 10.01, 1e-2), "percent at just over 10% over");
+        Check(tracker.IsBigDifference(0), "big difference at >10% over");
+        Check(!tracker.AlreadyFlagged(0), "not flagged yet");
+        tracker.FlagBigDifference(0);
+        Check(tracker.AlreadyFlagged(0), "flagged after calling FlagBigDifference");
+
+        var tracker5 = new DvTracker(planned, 10.0);
+        tracker5.AddSample(1, 362.0 * 1.05);
+        Check(Near(tracker5.Used(1), 362.0 * 1.05, 1e-9), "used dv at 5% over");
+        Check(!tracker5.IsBigDifference(1), "no big difference at 5% over");
+
+        double dv = DvTracker.DvFromMassChange(1000.0, 900.0, 300.0);
+        Check(Near(dv, 300.0 * 9.80665 * Math.Log(1000.0 / 900.0), 1e-6), "rocket equation matches known example");
+        Check(double.IsNaN(DvTracker.DvFromMassChange(0, 900, 300)), "invalid mass0 returns NaN");
+        Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 0, 300)), "invalid mass1 returns NaN");
+        Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 1100, 300)), "mass1 > mass0 returns NaN");
+        Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 900, 0)), "zero Isp returns NaN");
     }
 }
