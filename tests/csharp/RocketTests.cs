@@ -59,6 +59,7 @@ internal static class RocketTests
         AscentGuidanceChecks();
         AtmoLandMathChecks();
         TargetLandMathChecks();
+        SlopeChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
     }
 
@@ -363,5 +364,21 @@ internal static class RocketTests
         Check(rejected, "invalid grid counts rejected");
         Console.WriteLine("Duna porkchop: total {0:F3} m/s, ejection {1:F3} m/s, departure day {2:F1}, travel {3:F1} Kerbin days (6 h); t0 phases Kerbin=0, Duna={4:F6} rad.",
             best, ejection, dep/day, tof/day, phase);
+    
+}
+
+    static void SlopeChecks()
+    {
+        var flat = new double[5, 5];
+        double s, e, n;
+        Check(Math.Abs(SlopeMath.PlaneSlopeDeg(flat, 10)) < 1e-6, "slope: flat grid is 0 deg");
+        Check(!SlopeMath.Nudge(flat, 10, out s, out e, out n), "slope: flat grid needs no nudge");
+        var tilt = new double[5, 5];
+        for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++) tilt[r, c] = c * 10 * Math.Tan(20 * Math.PI / 180);
+        Check(Math.Abs(SlopeMath.PlaneSlopeDeg(tilt, 10) - 20) < 0.5, "slope: tilted plane reads 20 deg");
+        var corner = new double[5, 5];
+        for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++) corner[r, c] = (r < 2 && c < 2) ? 0 : (r + c) * 4.0 * ((r * 7 + c * 3) % 2 == 0 ? 1 : -1);
+        bool moved = SlopeMath.Nudge(corner, 10, out s, out e, out n);
+        Check(!moved || Math.Abs(e) + Math.Abs(n) > 0, "slope: nudge gives an offset when it moves");
     }
 }

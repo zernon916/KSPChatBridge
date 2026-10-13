@@ -53,13 +53,17 @@ namespace KSPChatBridge
             if (!Finite(slopeDeg) || !(spacingM > 0) || slopeDeg <= maxSlopeDeg) return false;   // flat enough, or unreadable
             int rows = heights.GetLength(0), cols = heights.GetLength(1);
             int centreRow = rows / 2, centreCol = cols / 2;
-            double best = double.PositiveInfinity; int bestRow = centreRow, bestCol = centreCol;
+            double best = CellSlopeDeg(heights, spacingM, centreRow, centreCol);   // start from staying put
+            int bestRow = centreRow, bestCol = centreCol; double bestDist = 0;
+            if (!Finite(best)) best = double.PositiveInfinity;   // unreadable centre: any readable cell may win
             for (int r = 0; r < rows; r++)
             for (int c = 0; c < cols; c++)
             {
                 double local = CellSlopeDeg(heights, spacingM, r, c);
-                if (!Finite(local) || !(local < best)) continue;   // strictly better, so ties stay on the centre
-                best = local; bestRow = r; bestCol = c;
+                if (!Finite(local)) continue;
+                double dist = Math.Abs(r - centreRow) + Math.Abs(c - centreCol);   // cells, for ties only
+                // A clearly flatter cell wins; equally flat cells, the nearer one (less manoeuvring, centre keeps ties).
+                if (local < best - 1e-9 || (local <= best + 1e-9 && dist < bestDist)) { best = local; bestRow = r; bestCol = c; bestDist = dist; }
             }
             if (bestRow == centreRow && bestCol == centreCol) return false;   // nowhere flatter than here
             if (!(best <= slopeDeg - NudgeGainDeg)) return false;             // not worth moving for

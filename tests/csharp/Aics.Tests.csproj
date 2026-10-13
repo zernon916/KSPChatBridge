@@ -56,6 +56,7 @@
     <Compile Include="../../KSPChatMod/RocketMath.cs"/>
     <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
     <Compile Include="../../KSPChatMod/TargetLandMath.cs" Link="TargetLandMath.cs"/>
+    <Compile Include="../../KSPChatMod/SlopeMath.cs" Link="SlopeMath.cs"/>
     <Compile Include="../../KSPChatMod/AtmoLandMath.cs" Link="AtmoLandMath.cs"/>
     <Compile Include="../../KSPChatMod/StagingPolicy.cs"/>
     <Compile Include="../../KSPChatMod/FairingPolicy.cs"/>
