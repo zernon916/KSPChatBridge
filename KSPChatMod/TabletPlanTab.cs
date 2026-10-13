@@ -4,7 +4,7 @@ namespace KSPChatBridge
 {
     public partial class AicsMenu
     {
-        static readonly string[] TabletPlanPages = { "FLIGHT PLAN" };
+        static readonly string[] TabletPlanPages = { "FLIGHT PLAN", "ORBIT PLAN" };
         static int tabletPlanPage;
 
         void TabletPlanTab(Rect area)
@@ -16,6 +16,7 @@ namespace KSPChatBridge
             switch (tabletPlanPage)
             {
                 case 0: TabletFlightPlan(body); break;
+                case 1: TabletOrbitPlan(body); break;
             }
         }
     }
