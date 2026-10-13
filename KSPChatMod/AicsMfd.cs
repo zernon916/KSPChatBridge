@@ -39,7 +39,7 @@ namespace KSPChatBridge
         {
             var it = Expanded ? CurItem : null;
             for (int i = 0; i < Open.Length; i++) Open[i] = it != null && it.Panel == i;
-            MapWindow.MapVisible = Expanded && mfdGroup == "map" && HighLogic.LoadedSceneIsFlight;
+            MapWindow.MapVisible = (Expanded && mfdGroup == "map" && HighLogic.LoadedSceneIsFlight) || TabletMapOn;
         }
 
         static Texture2D Noise(int n, Color a, Color b, int seed)
@@ -109,7 +109,7 @@ namespace KSPChatBridge
                 s.R = GUI.Window(MfdId + i, s.R, DrawScreen, "", GUIStyle.none);
             }
             bool anyMap = mfdGroup == "map"; for (int i = 1; i < ScreenCount; i++) anyMap |= extra[i].G == "map";
-            MapWindow.MapVisible = Expanded && anyMap && HighLogic.LoadedSceneIsFlight;
+            MapWindow.MapVisible = (Expanded && anyMap && HighLogic.LoadedSceneIsFlight) || TabletMapOn;
         }
 
         // ---- External MFD screens 1/2/3 (Luke 5:53 PM): screen 0 lives in the mfd* statics; screens 1-2 swap their own
@@ -140,6 +140,7 @@ namespace KSPChatBridge
         }
         static void ExtraLoad(string key, string val)
         {
+            if (TabletLoad(key, val)) return;
             if (key == "screens") { int n; if (int.TryParse(val.Trim(), out n)) ScreenCount = Mathf.Clamp(n, 1, 3); return; }
             if (key.Length != 2 || key[0] != 's') return; int k = key[1] - '0'; if (k < 1 || k >= extra.Length) return;
             var a = val.Split(','); if (a.Length < 7) return; var ci = System.Globalization.CultureInfo.InvariantCulture; float x, y, w, h; int pg;
@@ -310,6 +311,7 @@ namespace KSPChatBridge
         {
             switch (id)
             {
+                case "tablet": GUILayout.Label("OPEN TABLET toggles the AICS tablet window (Mission / Burns / Map / Graphs / Tests).", scrText); GUILayout.Label("Tablet " + (TabletVisible ? "OPEN" : "closed")); break;
                 case "trim": GUILayout.Label("TRIM WIN opens the trim window (pitch / roll / yaw trim). AUTO TRIM trims now.", scrText); GUILayout.Label("Trim window " + (TrimWindow.TrimVisible ? "OPEN" : "closed")); break;
                 case "alarm": foreach (var l in StatusWindow.AlarmLines()) GUILayout.Label(l, scrText); break;
                 case "about":
@@ -403,6 +405,7 @@ namespace KSPChatBridge
             if ((item == "about" || item == "learn") && key == "SCROLL DN") { MfdNav.AboutScroll(3); return; }
             if (item == "about" && key == "<") { MfdNav.AboutTurn(-1, NativeFlightController.AboutTitles.Length); return; }
             if (item == "about" && key == ">") { MfdNav.AboutTurn(1, NativeFlightController.AboutTitles.Length); return; }
+            if (item == "tablet" && key == "OPEN TABLET") { ToggleTablet(); return; }
             var la = MfdNav.LearnKeyAction(item, key);
             if (la == "open") { if (!AicsIvaMfd.Pressing) ShowMfdItem("learn"); return; }   // navigation only (IVA opens its own page)
             if (la == "start") { Tool("learn_plane", "{}"); return; }

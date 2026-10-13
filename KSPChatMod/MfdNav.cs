@@ -40,7 +40,7 @@ namespace KSPChatBridge
             g.Add(G("comms", "COMMS", false, new[] { new Item("intercom", "INTERCOM"), new Item("system", "SYSTEM"), new Item("pilot", "PILOT"), new Item("all", "ALL") }));
             g.Add(G("crew", "CREW", false, new[] { new Item("crew", "CREW / EVA", 11), new Item("science", "SCIENCE", 10) }));
             if (mj) g.Add(G("mj", "MECHJEB", true, new[] { new Item("mjatt", "SMARTASS"), new Item("mjguide", "GUIDANCE") }));
-            g.Add(G("sys", "SYS", false, new[] { new Item("alarm", "MSTR ALARM"), new Item("systems", "SYSTEMS"), new Item("status", "STATUS"), new Item("power", "POWER", 9) }));
+            g.Add(G("sys", "SYS", false, new[] { new Item("alarm", "MSTR ALARM"), new Item("systems", "SYSTEMS"), new Item("status", "STATUS"), new Item("power", "POWER", 9), new Item("tablet", "TABLET") }));
             g.Add(G("settings", "SETTINGS", false, new[] { new Item("settings", "SETTINGS", 14) }));
             return g;
         }
@@ -95,6 +95,7 @@ namespace KSPChatBridge
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
+                case "tablet": return new[] { "OPEN TABLET", null, null, null, null, null };
                 case "trim": return new[] { "TRIM WIN", "AUTO TRIM", null, null, null, null };
                 case "abort": return new[] { "ABORT", "STOP", "STATUS", null, null, null };
                 case "mjatt": return new[] { "PROGRADE", "RETRO", "NORMAL+", "NORMAL-", "RAD+", "RAD-" };

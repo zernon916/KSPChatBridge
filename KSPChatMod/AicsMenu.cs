@@ -166,12 +166,13 @@ namespace KSPChatBridge
 
         void OnGUIInner()
         {
-            if (!Expanded && !picking) return;
+            if (!Expanded && !picking && !TabletVisible) return;
             if (skin == null || Mathf.Abs(skinOpacity - opacity) > 0.01f) { BuildSkin(); mfdSkin = null; }
             GUI.skin = skin;
             GUI.depth = -1000;  // draw above other mods' windows
             Event e = Event.current;
             if (Expanded) DrawMfdWindow();
+            if (TabletVisible) { DrawTabletWindow(); if (TabletMapOn) MapWindow.MapVisible = true; }
             if (picking) MapPick(e);
             if (e.type == EventType.Repaint) SetTypeLock((GUI.GetNameOfFocusedControl() ?? "").StartsWith("aics_"));
             GUI.skin = null;
@@ -1148,7 +1149,7 @@ namespace KSPChatBridge
                 Directory.CreateDirectory(Path.GetDirectoryName(cfgFile));
                 File.WriteAllText(cfgFile, string.Format(CultureInfo.InvariantCulture,
                     "mx={0}\nmy={1}\nmw={2}\nmh={3}\nvisible={4}\npreferMj={5}\nopacity={6}\ngroup={7}\nitem={8}\npage={9}\n", mfdRect.x, mfdRect.y,
-                    mfdRect.width, mfdRect.height, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, mfdGroup ?? "", mfdItem ?? "", mfdPage) + ExtraSave());
+                    mfdRect.width, mfdRect.height, Expanded ? 1 : 0, preferMj ? 1 : 0, opacity, mfdGroup ?? "", mfdItem ?? "", mfdPage) + ExtraSave() + TabletSave());
             }
             catch (Exception ex) { Debug.Log("[KSPChatBridge] aics save: " + ex.Message); }
         }
