@@ -52,16 +52,26 @@ namespace KSPChatBridge
         /// <summary>Ejection delta-v calculation.</summary>
         internal static double EjectionDv(double mu, double rPark, double vInf)
         {
-            if (mu <= 0 || rPark <= 0 || vInf <= 0) return double.NaN;
+            if (mu <= 0 || rPark <= 0 || vInf < 0) return double.NaN;
             return Math.Sqrt(vInf * vInf + 2.0 * mu / rPark) - Math.Sqrt(mu / rPark);
         }
 
         /// <summary>Ejection angle in degrees.</summary>
         internal static double EjectionAngleDeg(double mu, double rPark, double vInf)
         {
-            if (mu <= 0 || rPark <= 0 || vInf <= 0) return double.NaN;
+            if (mu <= 0 || rPark <= 0 || vInf < 0) return double.NaN;
             double e = 1.0 + rPark * vInf * vInf / mu;
             return 180.0 - Math.Acos(1.0 / e) * 180.0 / Math.PI;
+        }
+
+        /// <summary>Burn time (s) for dv with start mass, thrust (same units as mass*g0) and Isp (s).</summary>
+        internal static double BurnTime(double dv, double mass, double thrust, double isp)
+        {
+            if (thrust <= 0 || isp <= 0) return double.NaN;
+            const double g0 = 9.80665;
+            double flow = thrust / (isp * g0);
+            double m1 = mass / Math.Exp(dv / (isp * g0));
+            return (mass - m1) / flow;
         }
     }
 }
