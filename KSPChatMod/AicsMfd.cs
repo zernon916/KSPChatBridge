@@ -24,13 +24,19 @@ namespace KSPChatBridge
         static readonly Color Phos = new Color(.35f, 1f, .45f), PhosDim = new Color(.12f, .35f, .16f);
 
         static bool HasMj { get { if (mj == null) mj = AssemblyLoader.loadedAssemblies.Any(a => a.name.StartsWith("MechJeb2")); return mj.Value; } }
-        static MfdNav.Group CurGroup { get { return mfdGroup == null ? null : MfdNav.Groups(HasMj).FirstOrDefault(g => g.Id == mfdGroup); } }
+        static List<MfdNav.Group> MfdGroups()
+        {
+            var groups = MfdNav.Groups(HasMj);
+            if (!HasMj) groups.First(g => g.Id == "ap").Items.Add(new MfdNav.Item("mjatt", "POINT AT"));
+            return groups;
+        }
+        static MfdNav.Group CurGroup { get { return mfdGroup == null ? null : MfdGroups().FirstOrDefault(g => g.Id == mfdGroup); } }
         static MfdNav.Item CurItem { get { var g = CurGroup; return g == null ? null : g.Items.FirstOrDefault(i => i.Id == mfdItem) ?? g.Items[0]; } }
 
         /// <summary>Open the MFD on an item (e.g. MapWindow.ToggleMap -> "map", ToggleSystems -> "systems").</summary>
         internal static void ShowMfdItem(string item)
         {
-            foreach (var g in MfdNav.Groups(HasMj)) { int i = g.Items.FindIndex(x => x.Id == item); if (i < 0) continue; mfdGroup = g.Id; mfdItem = item; mfdPage = i / MfdNav.Side; Expanded = true; Save(); return; }
+            foreach (var g in MfdGroups()) { int i = g.Items.FindIndex(x => x.Id == item); if (i < 0) continue; mfdGroup = g.Id; mfdItem = item; mfdPage = i / MfdNav.Side; Expanded = true; Save(); return; }
         }
         /// <summary>Localizer capture on autoland: if the MAP group is showing, switch to the ILS page (once per approach).</summary>
         internal static void AutoIls() { if (Expanded && mfdGroup == "map") mfdItem = "ils"; }
@@ -183,6 +189,11 @@ namespace KSPChatBridge
             if (home) { var hk = MfdNav.HomeKeys(HasMj); Array.Copy(hk, left, MfdNav.Side); right = hk.Skip(MfdNav.Side).ToArray(); }
             else { for (int i = 0; i < items.Count; i++) left[i] = (items[i].Id == it.Id ? "\u25B8" : "") + items[i].Label + Indicator(items[i]); right = MfdNav.Right(it.Id); }
             var bottom = MfdNav.Bottom(home, it == null ? null : it.Id, mfdPage, home ? 1 : MfdNav.Pages(g));
+            if (!HasMj && it != null && it.Id == "mjatt")
+            {
+                right = new[] { "PROGRADE", "RETRO", "NORMAL", "ANTI-NORM", "RAD-IN", "RAD-OUT", "TARGET", "MANEUVER" };
+                for (int i = 1; i <= MfdNav.Ctx; i++) bottom[i] = i == 1 ? "OFF" : null;
+            }
             int kf = Mathf.RoundToInt(13 * k);
             foreach (var b in IvaLayout.KeysOf(W, H))
             {
@@ -244,10 +255,10 @@ namespace KSPChatBridge
         }
         static void OpenGroup(int i)
         {
-            var gs = MfdNav.Groups(HasMj); if (i >= gs.Count) return;
+            var gs = MfdGroups(); if (i >= gs.Count) return;
             mfdGroup = gs[i].Id; mfdPage = 0; mfdItem = gs[i].Items[0].Id; mfdScroll = Vector2.zero; Save();
         }
-        static void OpenGroupId(string id) { var gs = MfdNav.Groups(HasMj); int i = gs.FindIndex(x => x.Id == id); if (i >= 0) OpenGroup(i); Expanded = true; }
+        static void OpenGroupId(string id) { var gs = MfdGroups(); int i = gs.FindIndex(x => x.Id == id); if (i >= 0) OpenGroup(i); Expanded = true; }
         static void Note(string s) { mfdNote = s ?? ""; mfdNoteAt = Time.realtimeSinceStartup + 8; }
         static void Tool(string name, string args) { ChatWindow.ToolFromMenu(name, args ?? "{}"); Note(name.Replace('_', ' ') + " sent (result in COMMS)."); }
 
@@ -346,6 +357,7 @@ namespace KSPChatBridge
                     foreach (var r in StatusWindow.StatusRows()) { GUILayout.BeginHorizontal(); GUILayout.Label(r[0], GUILayout.Width(Mathf.Max(80, 130 * mfdScale))); GUILayout.Label(r[1], scrText); GUILayout.EndHorizontal(); }
                     break;
                 case "mjatt":
+                    if (!HasMj) { GUILayout.Label("NATIVE POINT AT", scrHead); GUILayout.Label("Stock SAS: choose a direction on the right; OFF below. Modes require the appropriate pilot/probe capability and target or node.", scrText); break; }
                     GUILayout.Label("MECHJEB SMARTASS", scrHead); GUILayout.Label(NativeFlightController.MjStatusNow, scrText);
                     GUILayout.Label("Right keys: prograde / retrograde / normal / radial.  Bottom: KILLROT, NODE, TARGET+, OFF.", scrText); break;
                 case "mjguide":
@@ -431,7 +443,7 @@ namespace KSPChatBridge
                     return;
                 case "alarm": if (key == "ACK") StatusWindow.Ack(); else if (key == "MAYDAY LT") StatusWindow.MaydayLights = !StatusWindow.MaydayLights; return;
                 case "systems": if (key == "MAYDAY LT") StatusWindow.MaydayLights = !StatusWindow.MaydayLights; else StatusWindow.RotorsTab = key == "ROTORS"; return;
-                case "mjatt": { string m = MfdNav.SmartMode(key); if (m != null) Tool("mj_smartass", "{\"mode\":\"" + m + "\"}"); return; }
+                case "mjatt": { if (!HasMj) { ChatWindow.Notice(NativeFlightController.PointAt(key)); return; } string m = MfdNav.SmartMode(key); if (m != null) Tool("mj_smartass", "{\"mode\":\"" + m + "\"}"); return; }
                 case "mjguide":
                     switch (key)
                     {
