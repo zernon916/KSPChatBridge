@@ -148,7 +148,41 @@ namespace KSPChatBridge
             amt = 0; max = 0; var ec = PartResourceLibrary.Instance.GetDefinition("ElectricCharge");
             if (ec != null) vessel.GetConnectedResourceTotals(ec.id, out amt, out max);
         }
-        internal const double EcReserveFrac = .10, EcReserveMin = 5;
+        internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0;   // kPa: stock deployables break in the airstream
+        ModuleDeployableAntenna sciExtended;   // antenna AUTO science opened (retract after the transmission)
+        bool HasData(bool onlyRerunnable) { foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>()) if ((!onlyRerunnable || e.rerunnable) && e.GetScienceCount() > 0) return true; return false; }
+        /// <summary>Extend a retracted deployable antenna if safe; null = extending, else why not.</summary>
+        string ExtendAntennaIfSafe()
+        {
+            double q = vessel.dynamicPressurekPa; bool inAtmo = vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth;
+            ModuleDeployableAntenna pick = null; string unsafeWhy = null;
+            foreach (var a in vessel.FindPartModulesImplementing<ModuleDeployableAntenna>())
+            {
+                if (a.deployState != ModuleDeployablePart.DeployState.RETRACTED || a.part.FindModuleImplementing<IScienceDataTransmitter>() == null) continue;
+                string w = null;
+                if (a.part.ShieldedFromAirstream) w = "shielded/in a closed bay";
+                else if (a.part.temperature > .5 * a.part.maxTemp || a.part.skinTemperature > .5 * a.part.skinMaxTemp) w = "hot (reentry heating)";
+                else if (inAtmo && a.isBreakable && q > AntennaMaxQ) w = "airstream";
+                if (w != null) { unsafeWhy = a.part.partInfo.title + " unsafe: " + w; continue; }
+                pick = a; break;
+            }
+            if (pick == null) return unsafeWhy != null ? "antenna " + unsafeWhy + " (q " + q.ToString("0.00") + " kPa)" : "no usable antenna";
+            pick.Extend(); sciExtended = pick;
+            ChatLog.Write("science", "[science] EXTEND " + pick.part.partInfo.title + " (q " + q.ToString("0.00") + " kPa)");
+            return null;
+        }
+        /// <summary>Retract the antenna we opened once nothing is transmitting; also if the airstream turns unsafe.</summary>
+        void RetractIfDone()
+        {
+            var a = sciExtended; if (a == null) return;
+            if (a.part == null || a.vessel != vessel) { sciExtended = null; return; }
+            if (a.deployState != ModuleDeployablePart.DeployState.EXTENDED) return;
+            bool danger = vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth && a.isBreakable && vessel.dynamicPressurekPa > AntennaMaxQ;
+            var t = a.part.FindModuleImplementing<IScienceDataTransmitter>();
+            if (!danger && (sciTransmitAt > 0 || (t != null && t.IsBusy()))) return;
+            a.Retract(); sciExtended = null;
+            ChatLog.Write("science", "[science] RETRACT " + a.part.partInfo.title + (danger ? " (airstream q " + vessel.dynamicPressurekPa.ToString("0.00") + " kPa)" : ""));
+        }
         bool sciStored;   // data held back for lack of EC/antenna -> retry later
 
         /// <summary>Luke Oct 12 22:41: transmit only when the vessel's EC covers the WHOLE transmission (antenna EC/Mit x data Mits)
@@ -160,6 +194,13 @@ namespace KSPChatBridge
             foreach (var t in vessel.FindPartModulesImplementing<IScienceDataTransmitter>())
                 if (t != null && t.CanTransmit() && !t.IsBusy() && (tx == null || t.DataResourceCost < tx.DataResourceCost)) { tx = t; var pm = t as PartModule; txName = pm != null ? pm.part.partInfo.title : "antenna"; }
             double amt, max; Ec(out amt, out max); double reserve = Math.Max(EcReserveMin, EcReserveFrac * max);
+            if (tx == null && HasData(onlyRerunnable))
+            {   // Luke Oct 12 22:45: no usable (fixed/already open) antenna -> extend a retracted deployable one, only if SAFE
+                string why = ExtendAntennaIfSafe();
+                if (why != null) { sciStored = true; ChatLog.Write("science", "[science] " + why + " - STORED"); }
+                else sciStored = true;   // extending: transmit on the retry once it is open
+                return 0;
+            }
             int sent = 0;
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
@@ -186,10 +227,11 @@ namespace KSPChatBridge
         void ScienceTick()
         {
             float now = Time.realtimeSinceStartup;
+            try { RetractIfDone(); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] antenna retract: " + ex.Message); }
             if (sciTransmitAt > 0 && now >= sciTransmitAt)
             {
                 sciTransmitAt = -1;
-                try { int n = TransmitAll(ScienceMode != "auto"); if (n > 0) ChatWindow.Notice("Science: transmitted " + n + " experiment(s)."); if (sciStored && ScienceMode == "auto") sciTransmitAt = now + 30; }   // stored for EC/antenna: retry in 30 s
+                try { int n = TransmitAll(ScienceMode != "auto"); if (n > 0) ChatWindow.Notice("Science: transmitted " + n + " experiment(s)."); if (sciStored && ScienceMode == "auto") sciTransmitAt = now + (sciExtended != null && sciExtended.deployState != ModuleDeployablePart.DeployState.EXTENDED ? 5 : 30); }   // stored for EC/antenna: retry in 30 s
                 catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science transmit: " + ex.Message); }
             }
             if (now < sciNextPoll) return;
