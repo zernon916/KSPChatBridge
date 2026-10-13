@@ -43,22 +43,79 @@ namespace KSPChatBridge
             catch (Exception) { return false; }
         }
 
+        /// <summary>Subject IDs already held in experiment modules or science containers on this vessel.</summary>
+        HashSet<string> StoredSubjectIds()
+        {
+            var o = new HashSet<string>();
+            foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
+            {
+                var data = e.GetData(); if (data == null) continue;
+                foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) o.Add(d.subjectID);
+            }
+            foreach (var c in vessel.FindPartModulesImplementing<ModuleScienceContainer>())
+            {
+                var data = c.GetData(); if (data == null) continue;
+                foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) o.Add(d.subjectID);
+            }
+            return o;
+        }
+
         List<string> RunExperiments(bool onlyRerunnable, out string blocker)
         {
             var ran = new List<string>();
             blocker = SciencePolicy.RunBlocker(EcPct());
             if (blocker != null) return ran;
+            var sit = ScienceUtil.GetExperimentSituation(vessel);
+            var body = vessel.mainBody;
+            string sitName = sit.ToString(), bodyName = body != null ? body.bodyName : "?";
+            var groups = new Dictionary<string, List<ModuleScienceExperiment>>();
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
-                try
+                string id = e.experimentID ?? "";
+                List<ModuleScienceExperiment> g; if (!groups.TryGetValue(id, out g)) groups[id] = g = new List<ModuleScienceExperiment>();
+                g.Add(e);
+            }
+            var stored = StoredSubjectIds();
+            bool scientist = false; foreach (var cm in vessel.GetVesselCrew()) scientist |= cm.trait == "Scientist";
+            int crew = vessel.GetCrewCount(); bool controllable = vessel.IsControllable;
+            bool inAtmo = body != null && body.atmosphere && vessel.altitude < body.atmosphereDepth;
+            foreach (var kv in groups)
+            {
+                string expId = kv.Key;
+                var exp = ResearchAndDevelopment.GetExperiment(expId);
+                string biome = "";
+                double value = 0; string subjectId = "";
+                if (exp != null && body != null)
                 {
-                    var ex0 = ResearchAndDevelopment.GetExperiment(e.experimentID); bool sci = false; foreach (var cm in vessel.GetVesselCrew()) sci |= cm.trait == "Scientist";
-                    if (!SciencePolicy.CanRun(e.usageReqMaskInternal, vessel.GetCrewCount(), e.part.protoModuleCrew.Count, sci, vessel.IsControllable, ex0 != null && ex0.requireAtmosphere, vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth))
-                    { Debug.Log("[KSPChatBridge] science skip (requirements): " + e.experimentID + " on " + e.part.partInfo.title); continue; }
-                    if (!SciencePolicy.Eligible(e.Inoperable, e.GetScienceCount() > 0, Available(e), SubjectDone(e), e.rerunnable, onlyRerunnable)) continue;
-                    e.DeployExperiment(); ran.Add(e.part.partInfo.title);
+                    try
+                    {
+                        biome = exp.BiomeIsRelevantWhile(sit) ? ScienceUtil.GetExperimentBiome(body, vessel.latitude, vessel.longitude) : "";
+                        var subj = ResearchAndDevelopment.GetExperimentSubject(exp, sit, body, biome, biome);
+                        if (subj != null) { subjectId = subj.id; value = ResearchAndDevelopment.GetScienceValue(exp.baseValue * exp.dataScale, subj); }
+                    }
+                    catch (Exception) { }
                 }
-                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science run: " + ex.Message); }
+                bool storedOnboard = subjectId.Length > 0 && stored.Contains(subjectId);
+                bool available = exp != null && body != null && exp.IsAvailableWhile(sit, body);
+                bool ranThisType = false;
+                foreach (var e in kv.Value)
+                {
+                    try
+                    {
+                        if (!SciencePolicy.CanRun(e.usageReqMaskInternal, crew, e.part.protoModuleCrew.Count, scientist, controllable, exp != null && exp.requireAtmosphere, inAtmo))
+                        {
+                            Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, "requirements"));
+                            continue;
+                        }
+                        string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable);
+                        if (skip != null) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, skip)); continue; }
+                        e.DeployExperiment();
+                        ranThisType = true; ran.Add(e.part.partInfo.title);
+                        if (subjectId.Length > 0) stored.Add(subjectId);
+                        Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, true, value, null));
+                    }
+                    catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science run: " + ex.Message); }
+                }
             }
             return ran;
         }

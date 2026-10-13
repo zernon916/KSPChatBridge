@@ -40,6 +40,31 @@ namespace KSPChatBridge
             return !onlyRerunnable || rerunnable;
         }
 
+        /// <summary>Min recoverable science to bother running (AUTO must not waste one-shot copies for ~0 sci).</summary>
+        internal const double MinSubjectValue = 0.5;
+
+        /// <summary>Why this module must not run, or null to RUN. One module per experimentID per situation;
+        /// spare copies stay sealed for the next biome/situation.</summary>
+        internal static string AutoSkipReason(bool inoperable, bool hasData, bool available, bool storedOnboard, double subjectValue, bool ranThisType, bool onlyRerunnable, bool rerunnable)
+        {
+            if (ranThisType) return "spare copy";
+            if (inoperable) return "inoperable";
+            if (hasData || storedOnboard) return "already have";
+            if (!available) return "not available";
+            if (subjectValue <= MinSubjectValue) return "0 sci";
+            if (onlyRerunnable && !rerunnable) return "one-shot";
+            return null;
+        }
+
+        /// <summary>One log line: [science] goo @ Kerbin/Shores/flyingLow: RUN (12.5 sci) | SKIP (…).</summary>
+        internal static string FormatDecision(string expId, string body, string biome, string situation, bool run, double value, string skipWhy)
+        {
+            string id = string.IsNullOrEmpty(expId) ? "?" : expId;
+            string where = (body ?? "?") + (string.IsNullOrEmpty(biome) ? "" : "/" + biome) + "/" + (situation ?? "?");
+            if (run) return "[science] " + id + " @ " + where + ": RUN (" + value.ToString("0.0") + " sci)";
+            return "[science] " + id + " @ " + where + ": SKIP (" + (skipWhy ?? "?") + ")";
+        }
+
         /// <summary>Why experiments must not run now, or null.</summary>
         internal static string RunBlocker(double ecPct)
         {

@@ -1949,6 +1949,11 @@ class Program
         Check(!SciencePolicy.ShouldTransmit(true, 2, 24.9) && SciencePolicy.ShouldTransmit(true, 2, 25) && !SciencePolicy.ShouldTransmit(true, 0, 90) && !SciencePolicy.ShouldTransmit(false, 2, 90), "EC transmit threshold 25%");
         Check(SciencePolicy.Eligible(false, false, true, false, false, false) && !SciencePolicy.Eligible(true, false, true, false, true, false) && !SciencePolicy.Eligible(false, true, true, false, true, false)
             && !SciencePolicy.Eligible(false, false, false, false, true, false) && !SciencePolicy.Eligible(false, false, true, true, true, false) && !SciencePolicy.Eligible(false, false, true, false, false, true), "experiment eligibility safeguards");
+        Check(SciencePolicy.AutoSkipReason(false, false, true, false, 12.5, false, false, false) == null && SciencePolicy.AutoSkipReason(false, false, true, false, 12.5, true, false, false) == "spare copy"
+            && SciencePolicy.AutoSkipReason(false, false, true, true, 12.5, false, false, false) == "already have" && SciencePolicy.AutoSkipReason(false, false, true, false, 0.4, false, false, false) == "0 sci"
+            && SciencePolicy.AutoSkipReason(true, false, true, false, 12.5, false, false, false) == "inoperable" && SciencePolicy.AutoSkipReason(false, false, false, false, 12.5, false, false, false) == "not available", "AUTO science: one per type, value>0.5, spare copies kept");
+        Check(SciencePolicy.FormatDecision("goo", "Kerbin", "Shores", "flyingLow", true, 12.5, null).Contains("RUN (12.5 sci)")
+            && SciencePolicy.FormatDecision("goo", "Kerbin", "Shores", "flyingLow", false, 0, "spare copy").Contains("SKIP (spare copy)"), "science decision log format");
         Check(SciencePolicy.SituationChange("auto", null, null, "k", "v") == "first" && SciencePolicy.SituationChange("auto", "k1", "v", "k2", "v2") == "first"
             && SciencePolicy.SituationChange("auto", "k1", "v", "k2", "v") == "act" && SciencePolicy.SituationChange("auto", "k", "v", "k", "v") == "ignore" && SciencePolicy.SituationChange("off", "k1", "v", "k2", "v") == "ignore", "situation change gate (first load quiet)");
         Check(!SciencePolicy.ShouldPost("auto", 0, null, 3, 999) && SciencePolicy.ShouldPost("auto", 1, null, 0, 0) && !SciencePolicy.ShouldPost("remind", 0, null, 0, 999)
@@ -1957,7 +1962,7 @@ class Program
         Check(SciencePolicy.LaunchSite("SPH", "") == "Runway" && SciencePolicy.LaunchSite("vab", null) == "LaunchPad" && SciencePolicy.LaunchSite("VAB", "Desert_Launch_Site") == "Desert_Launch_Site" && SciencePolicy.EditorFolder("sph") == "SPH", "launch site defaults");
         Check(SciencePolicy.SafeCraftName("Kerbal X") && !SciencePolicy.SafeCraftName("../x") && !SciencePolicy.SafeCraftName("a/b") && !SciencePolicy.SafeCraftName(" "), "craft name has no path");
         Check(NativeCommands.IsPorted("stage") && NativeCommands.IsPorted("run_science") && NativeCommands.IsPorted("set_science_watcher") && NativeCommands.IsPorted("launch_craft"), "P5-3 tools ported");
-        Console.WriteLine("P5-3 lifecycle + science: 10 behavior checks passed.");
+        Console.WriteLine("P5-3 lifecycle + science: 12 behavior checks passed.");
         // ---- P5-4: orbital math (Kerbin mu 3.5316e12, R 600 km) ----
         double kmu = 3.5316e12, kr = 600000;
         Check(Math.Abs(OrbitMath.VisViva(kmu, 700000, 700000) - Math.Sqrt(kmu / 700000)) < 1e-6 && double.IsNaN(OrbitMath.VisViva(kmu, 0, 1)), "vis-viva");
