@@ -148,25 +148,54 @@ namespace KSPChatBridge
             amt = 0; max = 0; var ec = PartResourceLibrary.Instance.GetDefinition("ElectricCharge");
             if (ec != null) vessel.GetConnectedResourceTotals(ec.id, out amt, out max);
         }
-        internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0;   // kPa: stock deployables break in the airstream
+        internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0, AntennaUnsafeGapS = 60;   // kPa: stock deployables break in the airstream; s: SYSTEM comms gap for the unsafe warning
         ModuleDeployableAntenna sciExtended;   // antenna AUTO science opened (retract after the transmission)
+        float sciAntennaUnsafeAt = -999;   // Luke Oct 13 00:09: last SYSTEM post of the antenna-unsafe warning (max once per AntennaUnsafeGapS)
         bool HasData(bool onlyRerunnable) { foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>()) if ((!onlyRerunnable || e.rerunnable) && e.GetScienceCount() > 0) return true; return false; }
+        /// <summary>Luke Oct 13 00:09: the speed that keeps q at or below AntennaMaxQ (KSP: q kPa = 0.0005*rho*v^2), i.e.
+        /// sqrt(2*1000/rho) m/s. No air (or bad reading) -> infinity: any speed is safe out of the atmosphere.</summary>
+        static double AntennaSafeSpeed(double atmDensity) { return atmDensity > 1e-6 && !double.IsNaN(atmDensity) ? Math.Sqrt(2 * AntennaMaxQ * 1000 / atmDensity) : double.PositiveInfinity; }
+        /// <summary>Luke Oct 13 00:09: the airstream refusal the pilot can act on - "Antenna unsafe: slow below N m/s (now M m/s) or climb".</summary>
+        string AntennaUnsafeText()
+        {
+            double safe = AntennaSafeSpeed(vessel.atmDensity), now = vessel.srfSpeed;
+            if (double.IsInfinity(safe)) return "Antenna unsafe: climb out of the atmosphere";
+            return "Antenna unsafe: slow below " + safe.ToString("0") + " m/s (now " + now.ToString("0") + " m/s) or climb";
+        }
+        /// <summary>Luke Oct 13 00:09: the same warning on SYSTEM comms, at most once per AntennaUnsafeGapS (the transmit retry runs every 5-30 s).</summary>
+        void PostAntennaUnsafe(string text)
+        {
+            float t = Time.realtimeSinceStartup;
+            if (t - sciAntennaUnsafeAt < (float)AntennaUnsafeGapS && t >= sciAntennaUnsafeAt) return;   // throttled: one comms line per minute
+            sciAntennaUnsafeAt = t;
+            ChatWindow.Notice("[SYSTEM] " + text);
+            ChatLog.Write("science", "[science] SYSTEM " + text + " (q " + vessel.dynamicPressurekPa.ToString("0.00") + " kPa, rho " + vessel.atmDensity.ToString("0.000") + ", alt " + vessel.altitude.ToString("0") + " m)");
+        }
         /// <summary>Extend a retracted deployable antenna if safe; null = extending, else why not.</summary>
         string ExtendAntennaIfSafe()
         {
             double q = vessel.dynamicPressurekPa; bool inAtmo = vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth;
-            ModuleDeployableAntenna pick = null; string unsafeWhy = null;
+            ModuleDeployableAntenna pick = null; string unsafeWhy = null, streamTitle = null;
             foreach (var a in vessel.FindPartModulesImplementing<ModuleDeployableAntenna>())
             {
                 if (a.deployState != ModuleDeployablePart.DeployState.RETRACTED || a.part.FindModuleImplementing<IScienceDataTransmitter>() == null) continue;
                 string w = null;
                 if (a.part.ShieldedFromAirstream) w = "shielded/in a closed bay";
                 else if (a.part.temperature > .5 * a.part.maxTemp || a.part.skinTemperature > .5 * a.part.skinMaxTemp) w = "hot (reentry heating)";
-                else if (inAtmo && a.isBreakable && q > AntennaMaxQ) w = "airstream";
+                else if (inAtmo && a.isBreakable && q > AntennaMaxQ) { w = "airstream"; if (streamTitle == null) streamTitle = a.part.partInfo.title; }
                 if (w != null) { unsafeWhy = a.part.partInfo.title + " unsafe: " + w; continue; }
                 pick = a; break;
             }
-            if (pick == null) return unsafeWhy != null ? "antenna " + unsafeWhy + " (q " + q.ToString("0.00") + " kPa)" : "no usable antenna";
+            if (pick == null)
+            {
+                if (unsafeWhy == null) return "no usable antenna";
+                if (streamTitle != null)
+                {   // Luke Oct 13 00:09: "airstream (q 4.20 kPa)" told the pilot nothing to do - report the speed that IS safe, and say it on SYSTEM comms (max once per 60 s)
+                    string text = AntennaUnsafeText(); PostAntennaUnsafe(text);
+                    return text + " (" + streamTitle + ", q " + q.ToString("0.00") + " kPa)";
+                }
+                return "antenna " + unsafeWhy + " (q " + q.ToString("0.00") + " kPa)";
+            }
             pick.Extend(); sciExtended = pick;
             ChatLog.Write("science", "[science] EXTEND " + pick.part.partInfo.title + " (q " + q.ToString("0.00") + " kPa)");
             return null;
