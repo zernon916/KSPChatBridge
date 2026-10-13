@@ -12,7 +12,8 @@ namespace KSPChatBridge
             Text = new Color(.90f, .93f, .96f), Dim = new Color(.55f, .60f, .66f), Accent = new Color(.25f, .75f, 1f), Good = new Color(.30f, .85f, .45f),
             Warn = new Color(1f, .70f, .20f), Bad = new Color(1f, .33f, .30f), Grid = new Color(1, 1, 1, .07f);
         internal static readonly Color[] Series = { new Color(.25f, .75f, 1f), new Color(1f, .70f, .20f), new Color(.30f, .85f, .45f), new Color(.85f, .45f, 1f) };
-        static Texture2D round, ring; static GUIStyle cardS, title, label, value, unit, small, btn, btnOn, chip; static int builtFor = -1;
+        static Texture2D round, ring; static GUIStyle cardS, title, label, value, unit, small, btn, btnOn, chip, rightLabel, field, toggleCap; static int builtFor = -1;
+        internal const float BtnH = 54, RowH = 46, ToggleW = 132, MinToggleW = 92, FieldH = 46, SwitchW = 74;
         internal static int Font = 18;
 
         static Texture2D Round(int n, float r)
@@ -51,6 +52,11 @@ namespace KSPChatBridge
             btn.normal.background = btn.hover.background = btn.active.background = round; btn.normal.textColor = btn.hover.textColor = Text; btn.active.textColor = Accent;
             btnOn = new GUIStyle(btn); btnOn.normal.textColor = btnOn.hover.textColor = Color.black;
             chip = new GUIStyle(btn) { fontSize = Mathf.Max(10, font - 5) }; chip.normal.textColor = Color.black;
+            rightLabel = new GUIStyle(label) { alignment = TextAnchor.MiddleRight };
+            // holds/settings pages: touch text field + switch row. The field paints its own rounded bed, so GUI.color only tints the text.
+            field = new GUIStyle { fontSize = font, alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip, padding = new RectOffset(10, 8, 4, 4) };
+            field.normal.textColor = field.hover.textColor = field.focused.textColor = Text;   // this Unity's GUIStyle has no caret/selection colour, so the caret stays the engine default
+            toggleCap = new GUIStyle(label) { alignment = TextAnchor.MiddleLeft };
         }
         internal static GUIStyle TextStyle { get { return label; } }
         internal static void Fill(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, round == null ? Texture2D.whiteTexture : (Texture)round); GUI.color = o; }
@@ -77,7 +83,7 @@ namespace KSPChatBridge
         internal static void Bar(Rect r, string caption, float frac, string text, Color c)
         {
             float lh = Font * 1.3f; GUI.Label(new Rect(r.x, r.y, r.width * .6f, lh), caption, label);
-            var rs = new GUIStyle(label) { alignment = TextAnchor.UpperRight }; GUI.Label(new Rect(r.x + r.width * .4f, r.y, r.width * .6f, lh), text, rs);
+            GUI.Label(new Rect(r.x + r.width * .4f, r.y, r.width * .6f, lh), text, rightLabel);
             Rect tr = new Rect(r.x, r.y + lh + 2, r.width, Mathf.Max(8, r.height - lh - 4)); Fill(tr, CardHi);
             float f = Mathf.Clamp01(frac); if (f > .005f) Fill(new Rect(tr.x, tr.y, Mathf.Max(tr.height, tr.width * f), tr.height), c);
         }
@@ -144,5 +150,34 @@ namespace KSPChatBridge
         /// <summary>Small coloured status chip ("DONE", "QUEUED", ...).</summary>
         internal static void Chip(Rect r, string text, Color c) { var o = GUI.color; GUI.color = c; GUI.Box(r, GUIContent.none, cardS); GUI.color = o; GUI.Label(r, text, chip); }
         internal static void Label(Rect r, string text, bool dim = false) { var o = label.normal.textColor; label.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, label); label.normal.textColor = o; }
+        /// <summary>Same, right-aligned (unit / trailing column).</summary>
+        internal static void LabelRight(Rect r, string text, bool dim = false) { var o = rightLabel.normal.textColor; rightLabel.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, rightLabel); rightLabel.normal.textColor = o; }
+        /// <summary>Centre-zero deviation bar: frac -1..1 fills away from the middle marker (hold errors, trim, docking offsets).</summary>
+        internal static void DevBar(Rect r, string caption, float frac, string text, Color c, bool dim = false)
+        {
+            float lh = Font * 1.3f; Label(new Rect(r.x, r.y, r.width * .55f, lh), caption, dim);
+            var ocR = rightLabel.normal.textColor; rightLabel.normal.textColor = dim ? Dim : Text; GUI.Label(new Rect(r.x + r.width * .4f, r.y, r.width * .6f, lh), text, rightLabel); rightLabel.normal.textColor = ocR;
+            Rect tr = new Rect(r.x, r.y + lh + 2, r.width, Mathf.Max(8, r.height - lh - 4)); Fill(tr, CardHi);
+            float f = Mathf.Clamp(frac, -1f, 1f), cx = tr.x + tr.width * .5f, w = tr.width * .5f * f;
+            if (!dim && Mathf.Abs(w) > 1) Rect(new Rect(Mathf.Min(cx, cx + w), tr.y, Mathf.Abs(w), tr.height), c);
+            Rect(new Rect(cx - 1, tr.y - 2, 2, tr.height + 4), Text);   // zero marker
+        }
+        /// <summary>Touch text field on a rounded dark bed; disabled = dimmed bed and grey text. Returns the (possibly edited) text.</summary>
+        internal static string Field(Rect r, string text, bool enabled = true)
+        {
+            Fill(r, enabled ? CardHi : Card);
+            var o = GUI.color; GUI.color = enabled ? Text : Dim; string res = GUI.TextField(r, text ?? "", field); GUI.color = o; return res;
+        }
+        /// <summary>Touch switch row: caption left, rounded track + knob right; disabled greys out and never changes. Returns the new value.</summary>
+        internal static bool Toggle(Rect r, string caption, bool on, bool enabled = true)
+        {
+            var ocT = toggleCap.normal.textColor; toggleCap.normal.textColor = !enabled || !on ? Dim : Text; GUI.Label(new Rect(r.x, r.y, r.width - MinToggleW - 8, r.height), caption, toggleCap); toggleCap.normal.textColor = ocT;
+            float th = Mathf.Min(r.height, Font * 1.9f), tw = Mathf.Min(MinToggleW * .55f, r.width * .4f);
+            Rect tr = new Rect(r.xMax - tw, r.y + (r.height - th) / 2, tw, th);
+            var o = GUI.color; GUI.color = !enabled ? new Color(.35f, .37f, .40f) : on ? Accent : CardHi; GUI.Box(tr, GUIContent.none, cardS);
+            float k = th - 6, kx = on ? tr.xMax - k - 3 : tr.x + 3; GUI.color = !enabled ? Dim : Card; GUI.DrawTexture(new Rect(kx, tr.y + 3, k, k), round); GUI.color = o;
+            bool hit = GUI.Button(r, GUIContent.none, GUIStyle.none);
+            return enabled && hit ? !on : on;
+        }
     }
 }

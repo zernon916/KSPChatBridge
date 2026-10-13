@@ -98,7 +98,7 @@ namespace KSPChatBridge
                     case 2: TabletMap(area); break;
                     case 4: TabletTests(area); break;
                     case 5: TabletEncyclopedia(area); break;
-                    case 6: TabletFlight(area); break;
+                    case 6: TabletFlightTab(area); break;
                     default:
                         GUI.Label(new Rect(area.x, area.y + area.height * .4f, area.width, tabletFont * 4), TabletTabs[tabletTab].ToUpperInvariant() + "\n\ncoming soon", new GUIStyle(tabletHead) { alignment = TextAnchor.MiddleCenter, wordWrap = true });
                         break;
@@ -314,8 +314,8 @@ namespace KSPChatBridge
         }
         static string TabletSave()
         {
-            return string.Format(CultureInfo.InvariantCulture, "tx={0}\nty={1}\ntw={2}\nth={3}\ntvis={4}\nttab={5}\ntfont={6}\ntmap={7}\ntlink={8}\n",
-                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage, TabletLink ? 1 : 0);
+            return string.Format(CultureInfo.InvariantCulture, "tx={0}\nty={1}\ntw={2}\nth={3}\ntvis={4}\nttab={5}\ntfont={6}\ntmap={7}\ntlink={8}\ntfl={9}\n",
+                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage, TabletLink ? 1 : 0, tabletFlightPage);
         }
         static bool TabletLoad(string key, string val)
         {
@@ -331,6 +331,7 @@ namespace KSPChatBridge
                 case "tfont": tabletFont = Mathf.Clamp((int)f, 12, 32); return true;
                 case "tlink": TabletLink = val.Trim() == "1"; return true;
                 case "tmap": tabletMapPage = Mathf.Clamp((int)f, 0, 2); return true;
+                case "tfl": tabletFlightPage = Mathf.Clamp((int)f, 0, TabletFlightPages.Length - 1); return true;
             }
             return false;
         }
