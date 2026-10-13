@@ -51,10 +51,48 @@ internal static class RocketTests
             "tumble requires both angular rate and attitude error above thresholds");
         Check(AbortPolicy.Check(0, 0, .51) == "thrust loss", "thrust-loss abort without tumble");
         Check(AbortPolicy.Check(0, 0, .5) == null, "50 percent thrust loss is the non-abort boundary");
+        EjectionChecks();
         PorkchopChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
     }
 
+    static void EjectionChecks()
+    {
+        double excess, arrival, seconds, dv, angle;
+        double[] point, impulse;
+        RocketMath.Hohmann(1.1723328e18, 13599840256, 20726155264,
+            out excess, out arrival, out seconds);
+        Check(EjectionMath.Solve(3.5316e12, 600000, 680000, excess, 0, 0,
+            out dv, out angle, out point, out impulse), "80 km LKO ejection solves");
+        Check(dv > 1000 && dv < 1100, "80 km LKO -> Duna dv range");
+        Check(angle > -160 && angle < -130, "outbound burn behind parent velocity");
+        Check(Near(Math.Sqrt(point[0]*point[0]+point[1]*point[1]),680000,1e-6), "burn lies on parking circle");
+        Check(Math.Abs(point[0]*impulse[0]+point[1]*impulse[1]) < .01, "coplanar impulse tangent");
+        Console.WriteLine("N6 80 km LKO -> Duna: dv {0:F6} m/s, signed ejection angle {1:F6} deg.",dv,angle);
+        // Reconstruct the eccentricity vector from r,v to verify the outgoing asymptote,
+        // including a plane-changing burn. This detects the wrong side/sign of the burn point.
+        foreach (double z in new[] { 0.0, 200.0 })
+        {
+            Check(EjectionMath.Solve(3.5316e12,600000,680000,excess,150,z,
+                out dv,out angle,out point,out impulse), "inclined excess solves");
+            double circular = Math.Sqrt(3.5316e12/680000);
+            double[] v = { impulse[0]-circular*point[1]/680000, impulse[1]+circular*point[0]/680000, impulse[2] };
+            double v2 = v[0]*v[0]+v[1]*v[1]+v[2]*v[2];
+            double vinf = Math.Sqrt(excess*excess+150*150+z*z);
+            Check(Near(v2-2*3.5316e12/680000,vinf*vinf,1e-7), "hyperbolic energy matches required excess");
+            double e = 680000*v2/3.5316e12-1, c = -1/e, sn = Math.Sqrt(1-c*c);
+            double speed = Math.Sqrt(v2);
+            double[] desired = { excess/vinf,150/vinf,z/vinf };
+            for (int k=0;k<3;k++)
+                Check(Near(c*point[k]/680000+sn*v[k]/speed,desired[k],1e-12), "outgoing asymptote matches vector");
+        }
+        Check(!EjectionMath.Solve(3.5316e12,600000,600000,excess,0,0,out dv,out angle,out point,out impulse), "surface parking rejected");
+        Check(!EjectionMath.Solve(double.NaN,600000,680000,excess,0,0,out dv,out angle,out point,out impulse), "NaN rejected");
+        Check(!EjectionMath.Solve(3.5316e12,600000,680000,0,0,0,out dv,out angle,out point,out impulse), "zero asymptote rejected");
+        Check(!EjectionMath.Solve(3.5316e12,600000,680000,0,0,excess,out dv,out angle,out point,out impulse), "infeasible polar asymptote rejected");
+        Check(EjectionMath.Solve(3.5316e12,600000,680000,-excess,0,0,out dv,out angle,out point,out impulse)
+            && angle > 20 && angle < 50, "inward transfer rotates burn to opposite side");
+    }
     // Independent RK4 integration of Newton's equation, not Lambert's f/g formulas.
     static double[] Derivative(double[] state, double mu)
     {
