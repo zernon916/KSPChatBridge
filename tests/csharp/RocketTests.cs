@@ -57,7 +57,43 @@ internal static class RocketTests
         PorkchopChecks();
         MissionStoreChecks();
         AscentGuidanceChecks();
+        AtmoLandMathChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void AtmoLandMathChecks()
+    {
+        var fast = AtmoLandMath.Evaluate(1000, -300, 1, 20, 10, 300, true, true);
+        Check(!fast.ArmDrogue && !fast.DeployDrogue && !fast.ArmMain && !fast.DeployMain, "landing chutes stay stowed when too fast");
+        var safe = AtmoLandMath.Evaluate(1000, -100, 1, 20, 10, 100, true, true);
+        Check(safe.DeployDrogue && safe.DeployMain, "landing chutes deploy at safe speed and altitude");
+        var lateral = AtmoLandMath.Evaluate(1000, -10, 1, 20, 10, 300, true, true);
+        Check(!lateral.DeployDrogue && !lateral.DeployMain, "chute safety includes horizontal speed");
+        var arm = AtmoLandMath.Evaluate(6000, -100, 1, 20, 10, 100, true, true);
+        Check(arm.ArmDrogue && arm.ArmMain && !arm.DeployDrogue && !arm.DeployMain, "arming and deployment altitude gates differ");
+        var none = AtmoLandMath.Evaluate(1000, -100, 1, 20, 10, 100, false, false);
+        Check(!none.DeployDrogue && !none.DeployMain, "unavailable chutes cannot deploy");
+        var custom = AtmoLandMath.Evaluate(1000, -100, 1, 20, 10, 100, true, true, mainSafeSpeed: 80);
+        Check(custom.DeployDrogue && !custom.DeployMain, "configured chute speed limit honored");
+        var above = AtmoLandMath.Evaluate(603, -100, 0, 20, 10, 100, false, false);
+        var below = AtmoLandMath.Evaluate(601, -100, 0, 20, 10, 100, false, false);
+        // (100² - 2²)/(2*(20-10))*1.2 + 2 = 601.76 m.
+        Check(Near(above.BurnAltitude, 601.76, 1e-9) && !above.StartBurn && above.Throttle == 0 && below.StartBurn,
+            "final burn starts at expected stopping height");
+        var touchdown = AtmoLandMath.Evaluate(1, -2, 0, 20, 10, 2, false, false, burnActive: true);
+        Check(below.Throttle > touchdown.Throttle && Near(touchdown.Throttle, .5, 1e-9), "throttle falls toward two metre per second touchdown");
+        var drag = AtmoLandMath.Evaluate(1, -2, 4, 20, 10, 2, false, false, burnActive: true);
+        Check(drag.Throttle < touchdown.Throttle, "live drag reduces needed landing thrust");
+        var weak = AtmoLandMath.Evaluate(100, -50, 0, 5, 10, 50, false, false);
+        Check(double.IsPositiveInfinity(weak.BurnAltitude) && weak.StartBurn && weak.Throttle == 1, "insufficient braking thrust requests immediate maximum burn");
+        var noEngine = AtmoLandMath.Evaluate(100, -50, 0, 0, 10, 50, true, true);
+        Check(!noEngine.StartBurn && noEngine.Throttle == 0 && noEngine.DeployMain, "chute-only descent remains finite");
+        var ground = AtmoLandMath.Evaluate(0, -2, 0, 20, 10, 2, true, true, burnActive: true);
+        Check(ground.Throttle == 0 && !ground.DeployMain, "touchdown shuts off thrust and chute commands");
+        bool rejected = false;
+        try { AtmoLandMath.Evaluate(100, -10, double.NaN, 20, 10, 10, true, true); }
+        catch (ArgumentException) { rejected = true; }
+        Check(rejected, "landing rejects nonfinite measurements");
     }
 
     static void AscentGuidanceChecks()

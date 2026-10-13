@@ -55,6 +55,7 @@
     <Compile Include="../../KSPChatMod/Porkchop.cs" Link="Porkchop.cs"/>
     <Compile Include="../../KSPChatMod/RocketMath.cs"/>
     <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
+    <Compile Include="../../KSPChatMod/AtmoLandMath.cs" Link="AtmoLandMath.cs"/>
     <Compile Include="../../KSPChatMod/StagingPolicy.cs"/>
     <Compile Include="../../KSPChatMod/FairingPolicy.cs"/>
     <Compile Include="../../KSPChatMod/AbortPolicy.cs"/>
