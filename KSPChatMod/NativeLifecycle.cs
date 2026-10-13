@@ -148,7 +148,7 @@ namespace KSPChatBridge
             amt = 0; max = 0; var ec = PartResourceLibrary.Instance.GetDefinition("ElectricCharge");
             if (ec != null) vessel.GetConnectedResourceTotals(ec.id, out amt, out max);
         }
-        internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0, AntennaUnsafeGapS = 60;   // kPa: stock deployables break in the airstream; s: SYSTEM comms gap for the unsafe warning
+        internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0, AntennaUnsafeGapS = 60;   // kPa: stock deployables (antennas AND solar panels, QWEN T2) break in the airstream; s: SYSTEM comms gap for the unsafe warning
         ModuleDeployableAntenna sciExtended;   // antenna AUTO science opened (retract after the transmission)
         float sciAntennaUnsafeAt = -999;   // Luke Oct 13 00:09: last SYSTEM post of the antenna-unsafe warning (max once per AntennaUnsafeGapS)
         bool HasData(bool onlyRerunnable) { foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>()) if ((!onlyRerunnable || e.rerunnable) && e.GetScienceCount() > 0) return true; return false; }
@@ -171,6 +171,18 @@ namespace KSPChatBridge
             ChatWindow.Notice("[SYSTEM] " + text);
             ChatLog.Write("science", "[science] SYSTEM " + text + " (q " + vessel.dynamicPressurekPa.ToString("0.00") + " kPa, rho " + vessel.atmDensity.ToString("0.000") + ", alt " + vessel.altitude.ToString("0") + " m)");
         }
+        /// <summary>QWEN T2: the one deployable rule, shared by the science antenna and the solar panels: null = the
+        /// part may go out (or stay out), else why not. A closed cargo bay shields the part from the airstream and
+        /// reentry heat is its own reason to stay stowed; "airstream" is the only reason with a speed the pilot can
+        /// fly (see AntennaSafeSpeed).</summary>
+        internal static string DeployableUnsafe(Part part, bool isBreakable, double qKPa, bool inAtmo)
+        {
+            if (part == null) return "missing part";
+            if (part.ShieldedFromAirstream) return "shielded/in a closed bay";
+            if (part.temperature > .5 * part.maxTemp || part.skinTemperature > .5 * part.skinMaxTemp) return "hot (reentry heating)";
+            if (inAtmo && isBreakable && qKPa > AntennaMaxQ) return "airstream";
+            return null;
+        }
         /// <summary>Extend a retracted deployable antenna if safe; null = extending, else why not.</summary>
         string ExtendAntennaIfSafe()
         {
@@ -179,10 +191,8 @@ namespace KSPChatBridge
             foreach (var a in vessel.FindPartModulesImplementing<ModuleDeployableAntenna>())
             {
                 if (a.deployState != ModuleDeployablePart.DeployState.RETRACTED || a.part.FindModuleImplementing<IScienceDataTransmitter>() == null) continue;
-                string w = null;
-                if (a.part.ShieldedFromAirstream) w = "shielded/in a closed bay";
-                else if (a.part.temperature > .5 * a.part.maxTemp || a.part.skinTemperature > .5 * a.part.skinMaxTemp) w = "hot (reentry heating)";
-                else if (inAtmo && a.isBreakable && q > AntennaMaxQ) { w = "airstream"; if (streamTitle == null) streamTitle = a.part.partInfo.title; }
+                string w = DeployableUnsafe(a.part, a.isBreakable, q, inAtmo);   // QWEN T2: the same rule solar panels use
+                if (w == "airstream" && streamTitle == null) streamTitle = a.part.partInfo.title;
                 if (w != null) { unsafeWhy = a.part.partInfo.title + " unsafe: " + w; continue; }
                 pick = a; break;
             }
