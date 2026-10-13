@@ -12,7 +12,7 @@ namespace KSPChatBridge
     {
         const int TabletId = 0x4B434D54;
         const float TabletMinW = 520, TabletMinH = 420, TabletBezel = 16, TabletHead = 40, TabletTabH = 46;
-        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests", "Encyclopedia" };
+        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests", "Encyclopedia", "Flight" };
         /// <summary>LIVE LINK (default OFF): OFF = information only - the tablet shows live craft data but every control is
         /// disabled and does nothing (the autopilot itself keeps running). ON = the tablet keys work like the MFD keys.</summary>
         internal static bool TabletLink;
@@ -68,6 +68,7 @@ namespace KSPChatBridge
             tabletRect.height = Mathf.Clamp(tabletRect.height, TabletMinH, Mathf.Max(TabletMinH, Screen.height));
             tabletRect.x = Mathf.Clamp(tabletRect.x, -tabletRect.width + 80, Screen.width - 80); tabletRect.y = Mathf.Clamp(tabletRect.y, 0, Screen.height - 40);
             if (savePendingTablet) { savePendingTablet = false; Save(); }   // bezel drag ended last event
+            FlightSample();
             tabletRect = GUI.Window(TabletId, tabletRect, DrawTablet, "", GUIStyle.none);
         }
 
@@ -97,6 +98,7 @@ namespace KSPChatBridge
                     case 2: TabletMap(area); break;
                     case 4: TabletTests(area); break;
                     case 5: TabletEncyclopedia(area); break;
+                    case 6: TabletFlight(area); break;
                     default:
                         GUI.Label(new Rect(area.x, area.y + area.height * .4f, area.width, tabletFont * 4), TabletTabs[tabletTab].ToUpperInvariant() + "\n\ncoming soon", new GUIStyle(tabletHead) { alignment = TextAnchor.MiddleCenter, wordWrap = true });
                         break;
@@ -169,20 +171,76 @@ namespace KSPChatBridge
             float top = y + kh + 8; int vis = Mathf.Max(3, (int)((area.yMax - top) / lh));
             if (Event.current.type == EventType.ScrollWheel && area.Contains(Event.current.mousePosition)) { MfdNav.AboutScroll(Event.current.delta.y > 0 ? 3 : -3); Event.current.Use(); }
             int off = MfdNav.AboutWindow(ll, vis);
-            var rowStyle = new GUIStyle(tabletText) { wordWrap = false, alignment = TextAnchor.MiddleLeft }; var selFill = new Color(.2f, .5f, .25f, .35f);
+            TabletUi.Ensure(tabletFont); lh = Mathf.Max(44, tabletFont * 2.5f); vis = Mathf.Max(3, (int)((area.yMax - top) / lh)); off = MfdNav.AboutWindow(ll, vis);
             for (int i = off; i < ll.Count && i < off + vis; i++)
-            {
-                Rect row = new Rect(area.x, top + (i - off) * lh, area.width, lh - 2); int j = codes[i];
-                bool sel = toggle && j >= 0 && j == MfdNav.LearnCursor;
-                if (sel) { var o = GUI.color; GUI.color = selFill; GUI.DrawTexture(row, Texture2D.whiteTexture); GUI.color = o; }
-                if (j >= 0 && toggle && TabletLink && j < LearnFlight.Codes.Length)
-                {
-                    if (GUI.Button(row, ll[i], rowStyle)) { if (j == MfdNav.LearnCursor) OnKey("learn", "TOGGLE"); else MfdNav.LearnCursor = j; }
-                }
-                else GUI.Label(row, ll[i], rowStyle);
+            {   // modern rows: a card per test with a status chip; text rows (titles / drill notes / hints) stay plain
+                Rect row = new Rect(area.x, top + (i - off) * lh, area.width, lh - 4); int j = codes[i]; string l = ll[i];
+                if (j < 0) { TabletUi.Label(new Rect(row.x + 6, row.y, row.width - 12, row.height), l.Trim(), i > 0); continue; }
+                bool sel = toggle && j == MfdNav.LearnCursor; string chip; Color cc; string name = LearnRowParse(l, out chip, out cc);
+                TabletUi.Fill(row, sel ? TabletUi.CardHi : TabletUi.Card); if (sel) TabletUi.Rect(new Rect(row.x, row.y + 6, 4, row.height - 12), TabletUi.Accent);
+                float cw = Mathf.Max(90, tabletFont * 5.5f);
+                TabletUi.Label(new Rect(row.x + 14, row.y, row.width - cw - 28, row.height), name);
+                TabletUi.Chip(new Rect(row.xMax - cw - 8, row.y + row.height * .2f, cw, row.height * .6f), chip, cc);
+                if (toggle && TabletLink && j < LearnFlight.Codes.Length && GUI.Button(row, GUIContent.none, GUIStyle.none)) { if (j == MfdNav.LearnCursor) OnKey("learn", "TOGGLE"); else MfdNav.LearnCursor = j; }
             }
         }
+        /// <summary>"&gt;  [x] 9b Flaps-full sink map (done)" -> name "9b Flaps-full sink map", chip DONE / QUEUED / RUNNING / SETUP / OFF.</summary>
+        internal static string LearnRowParse(string l, out string chip, out Color c)
+        {
+            int b = l.IndexOf('['); char m = b >= 0 && b + 1 < l.Length ? l[b + 1] : ' '; string name = b >= 0 && b + 4 <= l.Length ? l.Substring(b + 4).Trim() : l.Trim();
+            bool done = name.EndsWith("(done)"), queued = name.EndsWith("(queued)"); if (done) name = name.Substring(0, name.Length - 6).Trim(); if (queued) name = name.Substring(0, name.Length - 8).Trim();
+            if (m == '>') { chip = "RUNNING"; c = TabletUi.Accent; } else if (m == '*') { chip = "SETUP"; c = TabletUi.Dim; }
+            else if (m == 'x') { chip = done ? "DONE" : queued ? "QUEUED" : "ON"; c = done ? TabletUi.Good : TabletUi.Warn; } else { chip = "OFF"; c = new Color(.4f, .43f, .47f); }
+            return name;
+        }
 
+        // ---- Flight: reference template for the modern tablet pages (TabletUi). Info only; fine with LIVE LINK off. ----
+        const int FlightHist = 120; static readonly float[] histAlt = new float[FlightHist], histSpd = new float[FlightHist]; static int histHead, histN; static float histNext;
+        static readonly string[] FlightNames = { "Altitude", "Speed" }, FlightUnits = { "m", "m/s" }; static float[][] flightData;
+        static void FlightSample()
+        {
+            if (Time.realtimeSinceStartup < histNext) return; histNext = Time.realtimeSinceStartup + 1f;   // 1 Hz, last ~2 min
+            var v = FlightGlobals.ActiveVessel; if (v == null) return;
+            histAlt[histHead] = (float)v.altitude; histSpd[histHead] = (float)v.srfSpeed; histHead = (histHead + 1) % FlightHist; histN = Math.Min(FlightHist, histN + 1);
+        }
+        static void Attitude(Vessel v, out double hdg, out double pitch, out double roll, out double aoa)
+        {
+            hdg = pitch = roll = aoa = 0; var t = v.ReferenceTransform; if (t == null) return;
+            Vector3d up = v.upAxis, nose = t.up, north = Vector3d.Exclude(up, v.mainBody.transform.up).normalized, east = Vector3d.Cross(up, north);
+            pitch = Math.Asin(Math.Max(-1, Math.Min(1, Vector3d.Dot(nose, up)))) * 180 / Math.PI;
+            hdg = (Math.Atan2(Vector3d.Dot(nose, east), Vector3d.Dot(nose, north)) * 180 / Math.PI + 360) % 360;
+            roll = -Math.Atan2(Vector3d.Dot(t.right, up), Vector3d.Dot(-t.forward, up)) * 180 / Math.PI;
+            Vector3d vel = v.srf_velocity; if (vel.magnitude > 1) aoa = Math.Atan2(Vector3d.Dot(vel, t.forward), Vector3d.Dot(vel, nose)) * 180 / Math.PI;
+        }
+        void TabletFlight(Rect area)
+        {
+            TabletUi.Ensure(tabletFont); var v = FlightGlobals.ActiveVessel;
+            if (v == null) { TabletUi.Label(area, "No active vessel."); return; }
+            double hdg, pitch, roll, aoa; Attitude(v, out hdg, out pitch, out roll, out aoa);
+            float gap = 10, th = Mathf.Max(80, tabletFont * 4.4f), tw = (area.width - 3 * gap) / 4;
+            // row 1: big tiles
+            TabletUi.Tile(new Rect(area.x, area.y, tw, th), "SPEED (SRF)", v.srfSpeed.ToString("0"), "m/s", TabletUi.Series[1]);
+            TabletUi.Tile(new Rect(area.x + (tw + gap), area.y, tw, th), "ALTITUDE", v.altitude.ToString("#,0"), "m", TabletUi.Series[0]);
+            TabletUi.Tile(new Rect(area.x + 2 * (tw + gap), area.y, tw, th), "VERT SPEED", v.verticalSpeed.ToString("+0.0;-0.0;0"), "m/s", v.verticalSpeed < -15 ? TabletUi.Warn : TabletUi.Good);
+            TabletUi.Tile(new Rect(area.x + 3 * (tw + gap), area.y, tw, th), "HEADING", hdg.ToString("000"), "deg", TabletUi.Accent);
+            // row 2: attitude dials + throttle / AP card
+            float y2 = area.y + th + gap, dh = Mathf.Max(130, tabletFont * 7.5f), dw = (area.width - 3 * gap) / 4;
+            var ap = NativeFlightController.ApLine; bool apOn = !ap.StartsWith("AP OFF");
+            Rect c1 = TabletUi.CardPanel(new Rect(area.x, y2, dw * 2 + gap, dh), "Attitude"); float sub = (c1.width - 2 * gap) / 3;
+            TabletUi.Dial(new Rect(c1.x, c1.y, sub, c1.height), "PITCH " + pitch.ToString("0.0"), (float)((pitch + 90) / 180), pitch.ToString("0") + "\u00B0", TabletUi.Accent);
+            TabletUi.Dial(new Rect(c1.x + sub + gap, c1.y, sub, c1.height), "BANK " + roll.ToString("0"), (float)((roll + 180) / 360), roll.ToString("0") + "\u00B0", Math.Abs(roll) > 45 ? TabletUi.Warn : TabletUi.Good);
+            TabletUi.Dial(new Rect(c1.x + 2 * (sub + gap), c1.y, sub, c1.height), "AoA " + aoa.ToString("0.0"), (float)((aoa + 10) / 40), aoa.ToString("0.0") + "\u00B0", aoa > 15 ? TabletUi.Bad : TabletUi.Series[3]);
+            Rect c2 = TabletUi.CardPanel(new Rect(area.x + 2 * (dw + gap), y2, dw * 2 + gap, dh), "Engines / Autopilot");
+            float thr = v.ctrlState != null ? v.ctrlState.mainThrottle : 0, bh = Mathf.Max(30, tabletFont * 2.4f);
+            TabletUi.Bar(new Rect(c2.x, c2.y, c2.width, bh), "Throttle", thr, (thr * 100).ToString("0") + " %", TabletUi.Series[1]);
+            TabletUi.Bar(new Rect(c2.x, c2.y + bh + 6, c2.width, bh), "Mach", (float)(v.mach / 3), v.mach.ToString("0.00"), TabletUi.Series[2]);
+            TabletUi.Chip(new Rect(c2.x, c2.yMax - Mathf.Max(28, tabletFont * 1.8f), c2.width, Mathf.Max(28, tabletFont * 1.8f)), ap, apOn ? TabletUi.Good : TabletUi.Warn);
+            // row 3: live graph
+            float y3 = y2 + dh + gap; if (area.yMax - y3 < 80) return;
+            Rect c3 = TabletUi.CardPanel(new Rect(area.x, y3, area.width, area.yMax - y3), "Last 2 minutes");
+            if (flightData == null) flightData = new[] { histAlt, histSpd };
+            TabletUi.Graph(c3, FlightNames, flightData, histN, histHead, FlightUnits);
+        }
         // ---- Encyclopedia: our own short facts read live from CelestialBody (info only; works with LIVE LINK off) ----
         static Vector2 encListScroll, encInfoScroll; static string encSel;
         internal static string BodyClass(bool hasParent, bool parentIsStar, double radius)
