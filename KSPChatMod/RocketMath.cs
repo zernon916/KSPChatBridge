@@ -73,5 +73,23 @@ namespace KSPChatBridge
             double m1 = mass / Math.Exp(dv / (isp * g0));
             return (mass - m1) / flow;
         }
+
+        /// <summary>Burn time across stages.</summary>
+        internal static double BurnTimeStages(double dv, double[] stageDv, double[] mass, double[] thrust, double[] isp)
+        {
+            if (dv <= 0 || stageDv == null || mass.Length != stageDv.Length || thrust.Length != stageDv.Length || isp.Length != stageDv.Length)
+                return double.NaN;
+
+            double totalBurnTime = 0.0;
+            for (int i = 0; i < stageDv.Length; i++)
+            {
+                if (dv <= 0) break;
+                double partDv = Math.Min(dv, stageDv[i]);
+                totalBurnTime += BurnTime(partDv, mass[i], thrust[i], isp[i]);
+                dv -= partDv;
+            }
+
+            return dv > 0 ? double.NaN : totalBurnTime;
+        }
     }
 }
