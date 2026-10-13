@@ -84,6 +84,8 @@ internal static class RocketTests
         Check(below.Throttle > touchdown.Throttle && Near(touchdown.Throttle, .5, 1e-9), "throttle falls toward two metre per second touchdown");
         var drag = AtmoLandMath.Evaluate(1, -2, 4, 20, 10, 2, false, false, burnActive: true);
         Check(drag.Throttle < touchdown.Throttle, "live drag reduces needed landing thrust");
+        var rebound = AtmoLandMath.Evaluate(1, 20, 0, 20, 10, 20, false, false, burnActive: true);
+        Check(rebound.Throttle == 0 && !rebound.StartBurn, "landing rebound cuts thrust instead of sustaining ascent");
         var weak = AtmoLandMath.Evaluate(100, -50, 0, 5, 10, 50, false, false);
         Check(double.IsPositiveInfinity(weak.BurnAltitude) && weak.StartBurn && weak.Throttle == 1, "insufficient braking thrust requests immediate maximum burn");
         var noEngine = AtmoLandMath.Evaluate(100, -50, 0, 0, 10, 50, true, true);

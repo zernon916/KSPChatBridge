@@ -133,6 +133,7 @@ namespace KSPChatBridge
             // Stock exposes no drogue type flag. Recognize the stock part IDs
             // (including radialDrogue); unknown chutes use conservative main limits.
             return chute.part != null && chute.part.partInfo != null &&
+                !string.IsNullOrEmpty(chute.part.partInfo.name) &&
                 chute.part.partInfo.name.IndexOf("drogue", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }

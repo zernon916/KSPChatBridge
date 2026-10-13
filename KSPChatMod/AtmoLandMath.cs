@@ -51,7 +51,9 @@ namespace KSPChatBridge
             // The remaining thrust margin permits error correction as drag changes.
             double targetDown = Math.Sqrt(touchdownSpeed * touchdownSpeed +
                 2 * Math.Max(0, braking) * .65 * Math.Max(0, agl - 2));
-            double request = (gravity - dragDecel + (down - targetDown)) / thrustAccel;
+            // Keep signed velocity for feedback: a rebound must reduce thrust
+            // further than a stationary craft, rather than sustaining the climb.
+            double request = (gravity - dragDecel + (-verticalSpeed - targetDown)) / thrustAccel;
             result.Throttle = Math.Max(0, Math.Min(1, request));
             return result;
         }
