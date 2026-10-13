@@ -4,6 +4,27 @@
 
 *Repository, CKAN identifier and DLL name: KSPChatBridge.*
 
+> ⚠️ **Work in progress:** expect bugs, and features change often. **Single player only.**
+
+## What's in
+- **AI chat that flies:** talk to your ship by chat (cloud AI, LM Studio / Ollama, or the embedded Qwen model); clear commands like "take off" or "land runway 27" work with no AI at all.
+- **Aircraft autopilot:** altitude / vertical speed / heading / speed holds, takeoff, go-around, abort, rudder for small heading fixes, smooth takeover from your stick.
+- **Approach, ILS and autoland:** published-style approach charts for KSC 09/27 and the Island runway, coupled localizer + glideslope, flare, rollout and taxi.
+- **LEARN:** a test flight that measures your plane (stall, climb, decel, turns, touchdown angle) and tunes the autopilot to it; pick tests from a checklist.
+- **AICS MFD control box:** one movable, resizable cockpit-style panel with all pages (autopilot, map / chart / ILS, plans, comms, crew, science, power, systems, settings); also inside stock cockpits (IVA) and RasterPropMonitor.
+- **Crew chatter:** your kerbals talk on the intercom with their own personalities; talk back with `@Name`.
+- **Tablet (new):** a second, bigger window with a modern look (cards, gauges, live graphs). Tabs: Flight (live data + Aircraft page), Map, Tests (touch Learn checklist), Encyclopedia (live facts for every planet and moon). **LIVE LINK** switch: off = information only, on = the tablet's buttons work.
+- **Also:** taxi routes, flight plans, science watcher, landing spots, systems dashboard with master alarm, map reveal (SCANsat aware), optional MechJeb2 orbital tools.
+
+## Coming next
+No dates; order may change.
+- Remaining control box pages moved onto the tablet in the modern style (approach, taxi, plans, comms, crew, science, power, systems, settings, orbit tools); the control box and cockpit screens stay simple and fast.
+- Tablet Mission, Burns and Graphs tabs (now placeholders).
+- LEARN measuring pitch / roll response; more autopilot tuning.
+- Rockets: mission planner (delta-v per stage vs what the trip needs, transfer windows), burns and maneuver nodes, ascent guidance, auto-staging, fairings, abort monitor, landing (suicide burn, slope check, land at a map click).
+- Multi-launch campaigns and more tablet info screens (ship, science tracker, resources, crew, contracts, delta-v map, live planet view).
+- Rover autopilot and LEARN (speed / heading hold, waypoints, KSC science tour).
+- Helicopter autopilot and LEARN (hover, forward flight, auto land).
 **New here? Start with the [wiki](https://github.com/zernon916/KSPChatBridge/wiki)**: installation, a five-minute quick start,
 every command, the autopilots, the crew, and troubleshooting.
 
