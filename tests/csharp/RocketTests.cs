@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using KSPChatBridge;
 
 internal static class RocketTests
@@ -54,7 +55,53 @@ internal static class RocketTests
         CorrectionChecks();
         EjectionChecks();
         PorkchopChecks();
+        MissionStoreChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void MissionStoreChecks()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "AicsMissionTests_" + Guid.NewGuid().ToString("N"));
+        string previous = MissionStore.PathOverride;
+        MissionStore.PathOverride = dir;
+        try
+        {
+            Check(MissionStore.Load("missing") == null, "missing mission returns null");
+            var mission = new MissionData { TargetBodyName = "Mun", DepartureUT = 123456.75 };
+            mission.Legs.Add(new MissionLeg { From = "Kerbin", To = "Mun", PlannedDv = 842.25 });
+            mission.Legs.Add(new MissionLeg { From = "Mun", To = "Kerbin", PlannedDv = 310 });
+            const string key = "../Mun: rocket/CON";
+            MissionStore.Save(key, mission);
+            var loaded = MissionStore.Load(key);
+            Check(loaded != null && loaded.SchemaVersion == 1 && loaded.TargetBodyName == "Mun" && loaded.DepartureUT == 123456.75,
+                "mission header round-trip");
+            Check(loaded.Legs.Count == 2 && loaded.Legs[0].From == "Kerbin" && loaded.Legs[0].To == "Mun" && loaded.Legs[0].PlannedDv == 842.25 &&
+                loaded.Legs[1].From == "Mun" && loaded.Legs[1].To == "Kerbin" && loaded.Legs[1].PlannedDv == 310, "mission legs round-trip in order");
+            string file = Directory.GetFiles(dir, "*.json")[0];
+            Check(Directory.GetDirectories(dir).Length == 0, "craft key remains a safe filename");
+            mission.DepartureUT = null;
+            MissionStore.Save(key, mission);
+            Check(MissionStore.Load(key).DepartureUT == null, "atomic replacement clears optional departure");
+            string valid = File.ReadAllText(file);
+            foreach (string corrupt in new[] { "{broken", "\0\0", "{}", valid + "garbage",
+                valid.Replace("\"schemaVersion\":1", "\"schemaVersion\":2"),
+                valid.Replace("842.25", "\"wrong type\"") })
+            {
+                File.WriteAllText(file, corrupt);
+                Check(MissionStore.Load(key) == null, "corrupt mission returns null");
+            }
+            MissionStore.Save("123456789", mission);
+            Check(MissionStore.Load("123456789") != null, "persistent ID key round-trip");
+            MissionStore.Delete("123456789");
+            MissionStore.Delete("123456789");
+            Check(MissionStore.Load("123456789") == null && File.Exists(file), "delete affects only chosen craft and tolerates missing file");
+            Check(MissionStore.Load(null) == null, "invalid load key never throws");
+        }
+        finally
+        {
+            MissionStore.PathOverride = previous;
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
     }
 
     static void CorrectionChecks()

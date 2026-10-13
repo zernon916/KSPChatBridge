@@ -49,6 +49,7 @@
     <Compile Include="../../KSPChatMod/NativeToolSchemas.cs"/>
     <Compile Include="../../KSPChatMod/OrbitMath.cs"/>
     <Compile Include="RocketTests.cs"/>
+    <Compile Include="../../KSPChatMod/MissionStore.cs" Link="MissionStore.cs"/>
     <Compile Include="../../KSPChatMod/CorrectionMath.cs" Link="CorrectionMath.cs"/>
     <Compile Include="../../KSPChatMod/EjectionMath.cs" Link="EjectionMath.cs"/>
     <Compile Include="../../KSPChatMod/Porkchop.cs" Link="Porkchop.cs"/>

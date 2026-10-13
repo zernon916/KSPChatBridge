@@ -16,6 +16,7 @@ namespace KSPChatBridge
             switch (tabletOrbitPage)
             {
                 case 0: TabletOrbitAp(body); break;
+                case 1: TabletCapture(body); break;
             }
         }
     }
