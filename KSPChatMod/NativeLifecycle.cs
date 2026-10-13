@@ -127,17 +127,17 @@ namespace KSPChatBridge
             try
             {
                 var m = typeof(ModuleScienceExperiment).GetMethod("gatherData", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
-                var it = m != null ? m.Invoke(e, new object[] { true }) as System.Collections.IEnumerator : null;
-                if (it != null) { e.StartCoroutine(it); return; }
+                var it = m != null ? m.Invoke(e, new object[] { false }) as System.Collections.IEnumerator : null;   // Oct 12 23:53: the bool is showDialog (ILSpy, KSP 1.12), NOT silent - true popped the dialog
+                if (it != null) { e.StartCoroutine(it); ChatLog.Write("science", "[science] " + e.experimentID + ": silent gather (gatherData showDialog=false)"); return; }
             }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] silent science failed, using stock deploy: " + ex.Message); }
-            e.DeployExperiment(); StartCoroutine(CloseResultsDialog());
+            ChatLog.Write("science", "[science] " + e.experimentID + ": stock deploy + dialog dismiss (silent gather unavailable)"); e.DeployExperiment(); StartCoroutine(CloseResultsDialog());
         }
         System.Collections.IEnumerator CloseResultsDialog()
         {
-            for (int i = 0; i < 20; i++)
+            for (int i = 0; i < 300; i++)
             {
-                yield return new WaitForSeconds(.25f);
+                yield return null;   // every frame: close it the moment it appears
                 var d = UnityEngine.Object.FindObjectOfType<KSP.UI.Screens.Flight.Dialogs.ExperimentsResultDialog>();
                 if (d != null) { UnityEngine.Object.Destroy(d.gameObject); yield break; }
             }
