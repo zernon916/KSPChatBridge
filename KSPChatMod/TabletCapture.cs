@@ -29,12 +29,25 @@ namespace KSPChatBridge
 
             y += tileH + gap;
             TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, tabletFont * 1.4f), "Cap Pe: " + peA.ToString("0"), true);
+            
+            float tileH2 = Mathf.Max(30, tabletFont * 1.8f);
+            TabletUi.Field(new Rect(c.x + 6, y + tabletFont * 1.4f + 4, c.width - 12, tileH2), capPeT, TabletLink);
+            y += tileH2 + gap;
 
-            float yEnd = y + tabletFont * 1.4f;
-            if (yEnd < c.yMax)
-            {
-                GUILayout.Space(c.yMax - yEnd);
+            float btnW = Mathf.Max(80, tabletFont * (15 * .7f + 2f));
+            if (TabletUi.Button(new Rect(c.x + 6, y, btnW, tileH), "Capture numbers", false, TabletLink) && TabletLink) ChatWindow.ToolFromMenu("capture_plan", "{}");
+            y += tileH;
+            if (TabletUi.Button(new Rect(c.x + 6, y, btnW, tileH), "Capture (circularize)", false, TabletLink) && TabletLink) ChatWindow.ToolFromMenu("circularize", "{}");
+            y += tileH;
+            float btnW2 = Mathf.Max(80, tabletFont * ("Set Pe (MJ burn)".Length * .7f + 2f));
+            if (TabletUi.Button(new Rect(c.x + 6, y, btnW2, tileH), "Set Pe (MJ burn)", false, TabletLink) && TabletLink) ChatWindow.ToolFromMenu("change_periapsis", "{\"altitude_km\":" + Num(capPeT, "30") + "}");
+            y += tileH;
+
+            if (!TabletLink) {
+                float infoH = Mathf.Max(28, tabletFont * 1.6f);
+                TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, infoH), "INFO ONLY - enable LIVE LINK", true);
             }
+
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }

@@ -56,7 +56,36 @@ internal static class RocketTests
         EjectionChecks();
         PorkchopChecks();
         MissionStoreChecks();
+        AscentGuidanceChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void AscentGuidanceChecks()
+    {
+        var launch = AscentGuidance.Evaluate(0, 0, 0, 2, 0, 80000, 70000, 0, 0);
+        Check(Near(launch.TargetPitch, 90, .01) && launch.Phase == AscentPhase.Climb, "ascent launch is vertical");
+        var low = AscentGuidance.Evaluate(10000, 300, 200, 2, 10, 80000, 70000, 20000, 100);
+        var high = AscentGuidance.Evaluate(50000, 500, 1000, 2, 1, 80000, 70000, 60000, 100);
+        var edge = AscentGuidance.Evaluate(70000, 100, 2000, 2, 0, 80000, 70000, 79000, 100);
+        Check(launch.TargetPitch > low.TargetPitch && low.TargetPitch > high.TargetPitch && Near(edge.TargetPitch, 0, .01), "ascent pitch falls toward horizontal");
+        var pressure = AscentGuidance.Evaluate(10000, 300, 200, 2, 50, 80000, 70000, 20000, 100);
+        Check(pressure.Throttle < low.Throttle && Near(pressure.Throttle, low.Throttle / 2, 1e-12), "high q reduces ascent throttle");
+        var staged = AscentGuidance.Evaluate(10000, 300, 200, 4, 10, 80000, 70000, 20000, 100);
+        Check(Near(staged.Throttle * 4, 1.9, 1e-12) && staged.TargetPitch != low.TargetPitch, "live stage TWR reshapes pitch and limits acceleration");
+        var coast = AscentGuidance.Evaluate(50000, 500, 1000, 2, 1, 80000, 70000, 80000, 100);
+        Check(coast.Phase == AscentPhase.CoastToAp && coast.Throttle == 0, "target apoapsis cuts throttle and starts coast");
+        var circularize = AscentGuidance.Evaluate(79000, 10, 2000, 2, 0, 80000, 70000, 81000, 20);
+        Check(circularize.Phase == AscentPhase.Circularize && circularize.Throttle == 0, "near apoapsis hands off to circularization without burning");
+        var early = AscentGuidance.Evaluate(500, 150, 0, 2, 1, 80000, 70000, 2000, 100);
+        Check(early.TargetPitch < 90, "speed starts turn before one kilometre");
+        var vacuum = AscentGuidance.Evaluate(5000, 100, 200, 3, 0, 20000, 0, 10000, 100);
+        Check(vacuum.Throttle == 1 && vacuum.TargetPitch < 90, "airless ascent has no atmospheric TWR cap");
+        var noThrust = AscentGuidance.Evaluate(0, 0, 0, 0, 0, 80000, 70000, 0, 0);
+        Check(noThrust.Throttle == 0, "zero available thrust is bounded");
+        bool rejected = false;
+        try { AscentGuidance.Evaluate(0, 0, 0, double.NaN, 0, 80000, 70000, 0, 0); }
+        catch (ArgumentException) { rejected = true; }
+        Check(rejected, "invalid ascent telemetry rejected");
     }
 
     static void MissionStoreChecks()

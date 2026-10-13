@@ -59,6 +59,7 @@
     <Compile Include="../../KSPChatMod/FairingPolicy.cs"/>
     <Compile Include="../../KSPChatMod/AbortPolicy.cs"/>
     <Compile Include="../../KSPChatMod/AscentProfile.cs"/>
+    <Compile Include="../../KSPChatMod/AscentGuidance.cs" Link="AscentGuidance.cs"/>
     <Compile Include="../../KSPChatMod/LlamaRuntime.cs"/>
     <Compile Include="../../KSPChatMod/LlamaNative.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>
