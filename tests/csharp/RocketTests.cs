@@ -51,9 +51,46 @@ internal static class RocketTests
             "tumble requires both angular rate and attitude error above thresholds");
         Check(AbortPolicy.Check(0, 0, .51) == "thrust loss", "thrust-loss abort without tumble");
         Check(AbortPolicy.Check(0, 0, .5) == null, "50 percent thrust loss is the non-abort boundary");
+        CorrectionChecks();
         EjectionChecks();
         PorkchopChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void CorrectionChecks()
+    {
+        double r, n, p, pea;
+        int calls = 0;
+        CorrectionMath.Prediction quadratic = delegate(double radial, double normal, double prograde,
+            out double altitude, out double miss)
+        {
+            calls++;
+            altitude = 30000+1000*((radial-3.25)*(radial-3.25)+
+                (normal+7.75)*(normal+7.75)+(prograde-12.5)*(prograde-12.5));
+            miss = double.NaN;
+        };
+        Check(CorrectionMath.Search(quadratic, 30000, out r, out n, out p, out pea),
+            "correction quadratic converges on all three dv axes");
+        Check(Math.Abs(pea-30000) <= 2000, "correction meets 2 km tolerance floor");
+        Check(calls <= 361, "correction bounded to 60 six-direction iterations");
+        CorrectionMath.Prediction acquire = delegate(double radial, double normal, double prograde,
+            out double altitude, out double miss)
+        {
+            double q = (radial-25)*(radial-25)+(normal+15)*(normal+15)+(prograde-5)*(prograde-5);
+            altitude = q < 200 ? 100000+1000*q : double.NaN;
+            miss = 1000000+q;
+        };
+        Check(CorrectionMath.Search(acquire, 100000, out r, out n, out p, out pea),
+            "correction acquires encounter before tuning periapsis");
+        Check(Math.Abs(pea-100000) <= 5000, "correction meets 5 percent tolerance");
+        Check(CorrectionMath.Score(1e9, 0, 30000) < CorrectionMath.Score(double.NaN, 0, 30000),
+            "any encounter outranks a miss");
+        CorrectionMath.Prediction invalid = delegate(double a, double b, double c, out double alt, out double miss)
+        { alt = double.NaN; miss = double.PositiveInfinity; };
+        Check(!CorrectionMath.Search(invalid, 30000, out r, out n, out p, out pea),
+            "unavailable predictions cannot report success");
+        Check(!CorrectionMath.Search(quadratic, double.NaN, out r, out n, out p, out pea),
+            "invalid correction target rejected");
     }
 
     static void EjectionChecks()
