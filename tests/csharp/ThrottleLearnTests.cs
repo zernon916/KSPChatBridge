@@ -102,9 +102,39 @@ internal static class ThrottleLearnTests
         Check(Near(PilotPolicy.TakeoverBlend(-.5, -.5, 0), -.5) && Near(PilotPolicy.TakeoverBlend(-.5, -.5, .5), -.5), "seed == ask -> the output never moves");
     }
 
+    // T6 (MECHJEB_IDEAS 6): a heading error under 3 deg is flown with the RUDDER - the wings stay level for the last few degrees instead of
+    // rocking. Above 3.5 deg (hysteresis) the bank takes the error again, and a craft whose rudder does nothing gives the bank the error back.
+    static void RudderHeading()
+    {
+        Check(Near(PilotPolicy.RudderErrDeg, 3) && Near(PilotPolicy.RudderOffDeg, 3.5) && Near(PilotPolicy.RudderMax, .3) && Near(PilotPolicy.HeadingBankGain, .5), "the rudder owns the heading under 3 deg, hands back above 3.5, travel capped at 0.3");
+        Check(PilotPolicy.RudderSteer(2, false, 100) && PilotPolicy.RudderSteer(-2.9, false, 100) && !PilotPolicy.RudderSteer(3.2, false, 100) && !PilotPolicy.RudderSteer(10, false, 100), "under 3 deg either side -> rudder; 3.2 deg and up -> bank");
+        Check(PilotPolicy.RudderSteer(3.2, true, 100) && !PilotPolicy.RudderSteer(3.6, true, 100), "hysteresis: already on the rudder it holds to 3.5 deg, so the two axes do not chatter at the crossover");
+        Check(!PilotPolicy.RudderSteer(1, false, 15) && !PilotPolicy.RudderSteer(1, false, double.NaN) && !PilotPolicy.RudderSteer(double.NaN, false, 100), "too slow for rudder authority (the wheel / ground-roll steer owns yaw) or an unknown error -> bank");
+        Check(Near(PilotPolicy.HeadingBank(10, false), 5) && Near(PilotPolicy.HeadingBank(-4, false), -2), "big errors keep the old ask: 0.5 deg of bank per deg of heading error");
+        Check(PilotPolicy.HeadingBank(2, true) == 0 && PilotPolicy.HeadingBank(-2.9, true) == 0 && PilotPolicy.HeadingBank(double.NaN, false) == 0, "while the rudder owns the correction the bank ask is 0 - wings level");
+        Check(Near(PilotPolicy.RudderYaw(2, 0), .16) && PilotPolicy.RudderYaw(-2, 0) < 0 && Near(PilotPolicy.RudderYaw(60, 0), .3) && Near(PilotPolicy.RudderYaw(-60, 0), -.3), "rudder = 0.08 per deg of error, sign follows the error, capped at +-0.3");
+        Check(PilotPolicy.RudderYaw(2, 10) < PilotPolicy.RudderYaw(2, 0) && Near(PilotPolicy.RudderYaw(2, double.NaN), .16) && PilotPolicy.RudderYaw(double.NaN, 5) == 0, "the measured turn rate damps the swing (Dutch roll); an unknown rate is ignored, an unknown error -> 0");
+        Check(PilotPolicy.RudderSteer(FlightPolicy.Wrap(359 - 1), false, 100) && Near(PilotPolicy.HeadingBank(FlightPolicy.Wrap(359 - 1), false), -1), "the error is the wrapped one: target 359 flying 001 = 2 deg left -> rudder, not a 358 deg bank ask");
+        Check(PilotPolicy.RudderStuck(6, 2.4, 2.5) && !PilotPolicy.RudderStuck(5.9, 2.5, 2.5) && !PilotPolicy.RudderStuck(6, .5, 2.5) && !PilotPolicy.RudderStuck(double.NaN, 2.5, 2.5) && Near(PilotPolicy.RudderCoolOffS, 30), "give-up guard: 6 s on the rudder with less than 0.5 deg of progress -> the bank takes the error back for 30 s");
+        {   // 50 Hz closed loop at 100 m/s, 2.5 deg off: rudder authority 3 deg/s per unit deflection, a bank turns g*tan(bank)/V
+            double hdg = 0, target = 2.5, dt = .02, rate = 0, minErr = 99, maxYaw = 0; bool on = false; int bankTicks = 0;
+            for (int k = 0; k < 1500; k++)
+            {
+                double err = FlightPolicy.Wrap(target - hdg); minErr = Math.Min(minErr, err);
+                on = PilotPolicy.RudderSteer(err, on, 100);
+                double yaw = on ? PilotPolicy.RudderYaw(err, rate) : 0, bank = PilotPolicy.HeadingBank(err, on);
+                maxYaw = Math.Max(maxYaw, Math.Abs(yaw)); if (bank != 0) bankTicks++;
+                rate = 3 * yaw + 9.81 * Math.Tan(bank * Math.PI / 180) / 100 * 180 / Math.PI;
+                hdg = FlightPolicy.Wrap(hdg + rate * dt);
+            }
+            Check(Math.Abs(FlightPolicy.Wrap(target - hdg)) < .05 && bankTicks == 0, "2.5 deg off at 100 m/s: the rudder alone flies the heading back and never asks for bank (" + bankTicks + " bank ticks, final err " + FlightPolicy.Wrap(target - hdg).ToString("0.000") + " deg)");
+            Check(minErr > -.4 && maxYaw <= .3 + 1e-9, "and it does not rock the wings: overshoot past the target " + minErr.ToString("0.00") + " deg, biggest rudder ask " + maxYaw.ToString("0.00"));
+        }
+    }
+
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle(); TakeoverRamp();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade(); VsPitchAngle(); TakeoverRamp(); RudderHeading();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }

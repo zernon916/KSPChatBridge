@@ -236,6 +236,33 @@ namespace KSPChatBridge
             if (double.IsNaN(pilotInput)) return commanded;
             return pilotInput + (commanded - pilotInput) * TakeoverWeight(elapsed, rampSeconds);
         }
+        /// <summary>T6 (MECHJEB_IDEAS 6): a heading error under RudderErrDeg is flown with the RUDDER, not by banking - the wings stay level
+        /// for the last few degrees instead of rocking (on final and in cruise). Above RudderOffDeg the bank takes the error again; the gap is
+        /// hysteresis so the two axes do not chatter at the crossover. RudderSteer picks the axis (wasOn = last tick's answer), RudderYaw is the
+        /// rudder ask, HeadingBank the bank ask (0 while the rudder owns the correction) and RudderStuck the give-up guard.</summary>
+        internal const double RudderErrDeg = 3, RudderOffDeg = 3.5, RudderMinSpeed = 20;
+        internal const double RudderGain = .08, RudderRateGain = .04, RudderMax = .3, HeadingBankGain = .5;
+        internal const double RudderGiveUpS = 6, RudderProgressDeg = .5, RudderCoolOffS = 30;
+        internal static bool RudderSteer(double headingError, bool wasOn, double speed)
+        {
+            if (double.IsNaN(headingError) || double.IsNaN(speed) || !(speed > RudderMinSpeed)) return false;   // too slow for rudder authority: the wheel / ground-roll steer owns yaw there
+            return Math.Abs(headingError) < (wasOn ? RudderOffDeg : RudderErrDeg);
+        }
+        internal static double RudderYaw(double headingError, double yawRateDegS)
+        {
+            if (double.IsNaN(headingError)) return 0;
+            double rate = double.IsNaN(yawRateDegS) || double.IsInfinity(yawRateDegS) ? 0 : yawRateDegS;   // the rate term is Dutch-roll damping: stop the swing, do not just drive the error
+            return FlightPolicy.Clamp(RudderGain * headingError - RudderRateGain * rate, -RudderMax, RudderMax);
+        }
+        internal static double HeadingBank(double headingError, bool rudderOn)
+        { return rudderOn || double.IsNaN(headingError) ? 0 : HeadingBankGain * headingError; }
+        /// <summary>No rudder authority (or a target that keeps moving) would leave the heading hold stuck: wings level and no correction at
+        /// all. So after RudderGiveUpS on the rudder with less than RudderProgressDeg of progress the bank takes the error back for RudderCoolOffS.</summary>
+        internal static bool RudderStuck(double secondsOnRudder, double errorNow, double errorAtHandover)
+        {
+            if (double.IsNaN(secondsOnRudder) || double.IsNaN(errorNow) || double.IsNaN(errorAtHandover)) return false;
+            return secondsOnRudder >= RudderGiveUpS && Math.Abs(errorNow) >= Math.Abs(errorAtHandover) - RudderProgressDeg;
+        }
         /// <summary>Learn climb-back: about 30 deg nose up at full power, lowered as the speed falls toward 1.3x stall (level at/below it).</summary>
         internal const double ClimbBackMax = 30;
         internal static double ClimbBackPitch(double speed, double stall)

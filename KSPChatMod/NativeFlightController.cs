@@ -42,6 +42,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
+        bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
         double planBank, prevSpd = -1; bool capLifted;
@@ -719,7 +720,17 @@ namespace KSPChatBridge
                 }
                 else blim = CraftClass.MaxBank(CraftCls, landBank ? runway.TurnBank : FlightPolicy.BankLimit(vessel.srfSpeed));
                 double arcFf = mode == "landing" && runway != null && runway.Phase == "entry" ? runway.ArcBank : 0;   // curvature feed-forward; heading error is the trim
-                double bank = directBank ?? FlightPolicy.Clamp(arcFf + .5 * FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), -blim, blim);
+                double hdgErr = FlightPolicy.Wrap(heading - FlightGlobals.ship_heading);   // T6: one signed heading error feeds both the bank and the rudder asks
+                double hdgRate = dt > 0 && !double.IsNaN(lastRudderHdg) ? FlightPolicy.Wrap(FlightGlobals.ship_heading - lastRudderHdg) / dt : 0; lastRudderHdg = FlightGlobals.ship_heading;
+                bool wantRudder = !directBank.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !(Time.realtimeSinceStartup < rudderOffUntil) && PilotPolicy.RudderSteer(hdgErr, rudderOn, vessel.srfSpeed);   // T6: an explicit bank ask (roll hold / plan circle) and the ground roll keep their own yaw
+                if (wantRudder && rudderOn && PilotPolicy.RudderStuck(Time.realtimeSinceStartup - rudderSince, hdgErr, rudderHdg0)) { wantRudder = false; rudderOffUntil = Time.realtimeSinceStartup + PilotPolicy.RudderCoolOffS; }   // no progress on the rudder (no authority / a moving target): the bank takes the error back
+                if (wantRudder != rudderOn)
+                {   // T6 decision log: which axis is flying the heading, and why it handed back
+                    rudderOn = wantRudder;
+                    if (rudderOn) { rudderSince = Time.realtimeSinceStartup; rudderHdg0 = hdgErr; ChatLog.Write("att", "heading hold: rudder takes the last " + PilotPolicy.RudderErrDeg.ToString("0.#") + " deg (err " + hdgErr.ToString("0.0") + " deg at " + vessel.srfSpeed.ToString("0") + " m/s) - wings level, no bank ask"); }
+                    else ChatLog.Write("att", "heading hold: bank flies the heading again (err " + hdgErr.ToString("0.0") + " deg) - rudder released" + (Time.realtimeSinceStartup < rudderOffUntil ? "; no progress on the rudder, off for " + (rudderOffUntil - Time.realtimeSinceStartup).ToString("0") + " s" : ""));
+                }
+                double bank = directBank ?? FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn), -blim, blim);
                 bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight
@@ -787,10 +798,12 @@ namespace KSPChatBridge
                 if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
                 bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(.014 * rollGain * (bank - roll) - .01 * p, -1, 1);
+                if (rudderOn) c.yaw = (float)PilotPolicy.RudderYaw(hdgErr, hdgRate);   // T6: the rudder flies the last few degrees of heading error; above them c.yaw stays the pilot's live input
                 if (takeoverT < PilotPolicy.TakeoverSeconds)
                 {   // T5: smooth takeover - for 1 s after engage the axes the hold owns blend from the pilot's stick at engage to the hold's ask (no snapped surfaces at the handover); axes the hold does not own pass the pilot's live input
                     if (pitchOwned) c.pitch = elevator = (float)PilotPolicy.TakeoverBlend(takePitch, c.pitch, takeoverT);
                     if (rollOwned) c.roll = (float)PilotPolicy.TakeoverBlend(takeRoll, c.roll, takeoverT);
+                    if (rudderOn) c.yaw = (float)PilotPolicy.TakeoverBlend(takeYaw, c.yaw, takeoverT);   // T6: the rudder is an owned axis while it has the heading
                     takeoverT += dt;
                 }
                 double targetThrottle = throttle;
