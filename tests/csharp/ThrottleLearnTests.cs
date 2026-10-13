@@ -46,9 +46,29 @@ internal static class ThrottleLearnTests
     static void Check(bool ok, string what) { if (ok) passes++; else { fails++; Console.WriteLine("FAIL throttle/learn: " + what); } }
     static bool Near(double a, double b, double tol = 1e-6) { return Math.Abs(a - b) <= tol; }
 
+    // T3 (MECHJEB_IDEAS 4): the speed hold asks for an ACCELERATION - (target - speed) / 4 s clamped to the learned accel/decel -
+    // and the throttle PI drives that acceleration error, so a heavy never demands (or gets) more than it can do.
+    static void AccelCascade()
+    {
+        Check(Near(SpeedHold.AccelTau, 4), "speed error becomes a target acceleration over 4 s");
+        var s0 = new SpeedHold(); for (int k = 0; k < 4000; k++) s0.Step(120, 116, .02, .5);
+        Check(Near(s0.TargetAccel, (120 - 116 - SpeedHold.Deadband) / 4, .02), "nothing learned: target accel = deadbanded speed error / 4 s (" + s0.TargetAccel.ToString("0.00") + " m/s2)");
+        // 40 m/s fast in a craft that can dive off at -4 m/s2 but only learned -0.5: the demand is clamped, so the slowdown stays gentle
+        var sh = new SpeedHold(); sh.SetAccelLimits(4, .5);
+        double v = 150, thr = .6, lo = 99, hi = -99, minThr = 1, minA = 99;
+        for (int k = 0; k < 12000; k++)
+        {
+            thr = sh.Step(110, v, .02, thr); lo = Math.Min(lo, sh.TargetAccel); hi = Math.Max(hi, sh.TargetAccel);
+            double a = 8 * thr - 4; minThr = Math.Min(minThr, thr); minA = Math.Min(minA, a); v += a * .02;
+        }
+        Check(lo >= -.5 - 1e-9 && hi <= 4 + 1e-9, "demanded acceleration stays inside the learned limits (" + lo.ToString("0.00") + " .. " + hi.ToString("0.00") + " m/s2)");
+        Check(minA > -1.5 && minThr > .2, "and the craft is not slammed to idle / -4 m/s2: slowest " + minA.ToString("0.00") + " m/s2 at " + minThr.ToString("0.00") + " throttle");
+        Check(Math.Abs(v - 110) < 3, "speed still settles on the target (" + v.ToString("0.0") + " m/s)");
+    }
+
     internal static void Run()
     {
-        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps();
+        Throttle(); Rates(); PathAngle(); Manual(); Live(); Audit(); Audit2(); Oct11Live(); ApReview(); Fingerprint(); LearnThrottleStuck(); LevelOffCapture(); PrepPorpoise(); HighLowTurns(); GraphSeries(); StallZoom(); LearnMenu(); A300Run(); Surfaces(); FlyHome(); Batch1(); RatesAtCurrentSpeed(); TurnHoldDamp(); StallPrepDescend(); DescentToTestAlt(); Oct12Hold(); Oct12Approach(); Oct12StallTiming(); Oct12Batch(); Oct12Gate(); Oct12LearnTakeoffFlaps(); AccelCascade();
         Console.WriteLine(fails == 0 ? "Throttle/learn (Oct 11): " + passes + " behavior checks passed." : "Throttle/learn (Oct 11): " + fails + " FAILED, " + passes + " passed.");
         if (fails > 0) throw new Exception("throttle/learn tests failed: " + fails);
     }

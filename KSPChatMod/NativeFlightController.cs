@@ -85,9 +85,16 @@ namespace KSPChatBridge
                 if (!double.IsNaN(profile.Lag)) shold.SetLag(profile.Lag);
                 if (!double.IsNaN(profile.Accel)) shold.SetTargetSlew(profile.AccelAt(vessel.totalMass));   // AUTOPILOT_REVIEW #14
             }
+            // T3: the speed hold asks for an ACCELERATION (speed error / 4 s) and clamps it to what this craft measured - LEARN accel,
+            // LEARN idle decel, else the live idle/airbrake decel learner. Unmeasured sides stay unclamped (accel falls back to Sens).
+            double accA = profile != null && !double.IsNaN(profile.Accel) ? profile.AccelAt(vessel.totalMass) : double.NaN;
+            double decA = profile != null && !double.IsNaN(profile.Decel) ? profile.DecelAt(vessel.totalMass) : Decel.Estimate(vessel.vesselName, 150, 100, true);
+            shold.SetAccelLimits(accA, decA);
             lagMeter = new SpeedHold.LagMeter();
-            ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "inertia modifier {0:0.00} (m={1:0.0} t, TWR={2:0.00}, spool={3:0.0} s): throttle gains /{0:0.00}, lag {6:0.0} s {7}, decel {4:0.00} m/s2 {5}",
-                shold.K, vessel.totalMass, twr, spool, double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? ApproachProfile.MassDecel(vessel.totalMass) : Decel.Estimate(vessel.vesselName, 150, 100, true), double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? "(mass estimate)" : "(measured)", shold.Lag, lagMeasured ? "(measured)" : "(estimate)"));
+            string accTxt = double.IsNaN(shold.AccelLimit) ? "n/a (Sens " + shold.Sens.ToString("0.0") + " from TWR)" : shold.AccelLimit.ToString("0.00") + " learned";
+            string decTxt = double.IsNaN(shold.DecelLimit) ? "n/a (slowdown unclamped)" : shold.DecelLimit.ToString("0.00") + " learned";
+            ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "inertia modifier {0:0.00} (m={1:0.0} t, TWR={2:0.00}, spool={3:0.0} s): throttle gains /{0:0.00}, lag {6:0.0} s {7}, decel {4:0.00} m/s2 {5}, speed hold asks accel = speed error / {10:0} s clamped +{8} / -{9} m/s2",
+                shold.K, vessel.totalMass, twr, spool, double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? ApproachProfile.MassDecel(vessel.totalMass) : Decel.Estimate(vessel.vesselName, 150, 100, true), double.IsNaN(Decel.Estimate(vessel.vesselName, 150, 100, true)) ? "(mass estimate)" : "(measured)", shold.Lag, lagMeasured ? "(measured)" : "(estimate)", accTxt, decTxt, SpeedHold.AccelTau));
         }
         SpeedHold.LagMeter lagMeter; bool lagMeasured; float lagAccPrevT; double lagPrevV = double.NaN, lagAcc;
         void MeasureLag(double dt)

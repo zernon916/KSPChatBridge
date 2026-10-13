@@ -41,9 +41,18 @@ namespace KSPChatBridge
         internal const double FineStep = .005, NearBand = 6, MinStep = .0015, SpoolBand = .02;
         /// <summary>Oct 12: well below the target and not accelerating -> push the throttle (live: 57-72% with speed 40 m/s under).</summary>
         internal const double FarBand = 10, MinSlew = .6, PushAcc = .15;
+        /// <summary>T3 (MECHJEB_IDEAS 4): the speed error is turned into a TARGET ACCELERATION - close the gap in AccelTau s - clamped to
+        /// the accel / decel this craft can really do, and the throttle PI then drives the ACCELERATION error to zero (not the speed error).</summary>
+        internal const double AccelTau = 4, AccelLimLo = .2, AccelLimHi = 30;
         double Kp = Kp0, Ki = Ki0, Kd = Kd0, Rate = Rate0, TargetSlew = Slew0, Lead;
         double i = double.NaN, cmd = double.NaN, outv, prevV = double.NaN, accF;
         double clk, stepGoal = double.NaN, waitT = double.NaN, waitV, lastStep, vF = double.NaN;
+        /// <summary>T3: measured accel / idle(+airbrake) decel (m/s2) = the clamp on the demanded acceleration. NaN = nothing measured:
+        /// the demand is then capped at Sens (full-throttle accel from TWR) and the slowdown is not clamped at all.</summary>
+        double accelLim = double.NaN, decelLim = double.NaN;
+        internal double AccelLimit { get { return accelLim; } } internal double DecelLimit { get { return decelLim; } }
+        /// <summary>The acceleration (m/s2) the throttle PI is driving toward this frame, after the clamp.</summary>
+        internal double TargetAccel { get; private set; }
         /// <summary>Last frame: output was rate-limited / holding for the speed to respond / still spooling to the commanded throttle
         /// (the integrator does not accumulate in any of these).</summary>
         internal bool RateLimited, Waiting, SpoolPending;
@@ -89,6 +98,13 @@ namespace KSPChatBridge
         {
             if (!double.IsNaN(accelMs2) && accelMs2 > 0) TargetSlew = FlightPolicy.Clamp(accelMs2, .5, 3);
         }
+        /// <summary>T3: LEARN accel / decel (m/s2) = what this craft can really do; the speed->accel cascade never demands more.
+        /// NaN (nothing measured) leaves that side unclamped: the accel side falls back to Sens, the decel side to no clamp.</summary>
+        internal void SetAccelLimits(double accelMs2, double decelMs2)
+        {
+            accelLim = double.IsNaN(accelMs2) || accelMs2 <= 0 ? double.NaN : FlightPolicy.Clamp(accelMs2, AccelLimLo, AccelLimHi);
+            decelLim = double.IsNaN(decelMs2) || decelMs2 <= 0 ? double.NaN : FlightPolicy.Clamp(decelMs2, AccelLimLo, AccelLimHi);
+        }
         /// <summary>No measurement yet: 0.8 s x inertia + spool.</summary>
         internal static double EstimateLag(double k, double spoolS) { return FlightPolicy.Clamp(.8 * k + (double.IsNaN(spoolS) ? 0 : spoolS), .3, 15); }
         /// <summary>Heavier / weaker / slower-spooling: softer gains, slower throttle and target slew, more derivative lead
@@ -100,7 +116,7 @@ namespace KSPChatBridge
             Sens = double.IsNaN(twr) || twr <= 0 ? 3 : FlightPolicy.Clamp(9.81 * twr * .8, .5, 15); Lag = EstimateLag(K, spoolS);
         }
         internal double Target { get { return cmd; } }
-        internal void Reset() { i = cmd = prevV = vF = double.NaN; stepGoal = waitT = double.NaN; RateLimited = Waiting = SpoolPending = false; }
+        internal void Reset() { i = cmd = prevV = vF = double.NaN; stepGoal = waitT = double.NaN; TargetAccel = double.NaN; RateLimited = Waiting = SpoolPending = false; }
         internal double Step(double target, double v, double dt, double thrNow)
         {
             if (double.IsNaN(i)) { i = FlightPolicy.Clamp(thrNow, .05, 1); outv = i; cmd = v; prevV = v; model = outv; }
@@ -110,7 +126,11 @@ namespace KSPChatBridge
             model += (outv - model) * Math.Min(1, dt / Lag);   // throttle already commanded but not felt yet (lag model)
             double pending = Sens * (outv - model) * Lag;        // Smith-style: speed change still on its way from earlier throttle moves
             double err = cmd - (v + accF * Lead + pending), e = Math.Abs(err) < Deadband ? 0 : err - Math.Sign(err) * Deadband;   // anticipate: act on the speed we'll have
-            double raw = i + Kp * e - Kd * accF;   // damping on the FILTERED acceleration (raw dv/dt is frame noise)
+            // T3: speed error -> target acceleration (close the gap in AccelTau s), clamped to what this craft can do, then PI on the ACCELERATION error.
+            double aHi = double.IsNaN(accelLim) ? Sens : accelLim, aLo = double.IsNaN(decelLim) ? -1e3 : -decelLim;   // no measured idle decel: never clamp the slowdown demand
+            TargetAccel = FlightPolicy.Clamp(e / AccelTau, aLo, aHi);
+            double ae = TargetAccel - accF, ka = Math.Max(Kd, Kp * AccelTau);   // ka keeps the old proportional-on-speed when unclamped and never less accel damping than the tuned Kd
+            double raw = i + ka * ae;   // damping on the FILTERED acceleration (raw dv/dt is frame noise) is now the inner loop's feedback
             double want = FlightPolicy.Clamp(raw, .05, 1), lim = Rate * dt, goal;
             bool push = target - v > FarBand && accF < PushAcc;
             if (push) want = 1;   // far under the target: full power until it accelerates (the Smith lead / slewed target hid the error)
@@ -131,7 +151,7 @@ namespace KSPChatBridge
             if (!double.IsNaN(stepGoal) && Math.Abs(stepGoal - outv) < 1e-9) { stepGoal = double.NaN; waitT = clk; waitV = vF; }
             SpoolPending = Math.Abs(outv - model) > SpoolBand;
             bool sat = (raw >= 1 && e > 0) || (raw <= .05 && e < 0);
-            if (!sat && !RateLimited && !Waiting && !SpoolPending) i = FlightPolicy.Clamp(i + Ki * e * dt, .05, 1);   // anti-windup
+            if (!sat && !RateLimited && !Waiting && !SpoolPending) i = FlightPolicy.Clamp(i + Ki * AccelTau * ae * dt, .05, 1);   // anti-windup; T3: the integrator is on the acceleration error too (Ki x AccelTau = the old Ki on the speed error)
             return outv;
         }
         /// <summary>Airbrakes only when well fast: out above +15 m/s, in below +5.</summary>

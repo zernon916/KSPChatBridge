@@ -256,6 +256,7 @@ namespace KSPChatBridge
             if (!double.IsNaN(s)) stallGuess = s;
             if (!double.IsNaN(profile.Lag)) shold.SetLag(profile.Lag);
             if (!double.IsNaN(profile.Accel)) shold.SetTargetSlew(profile.AccelAt(m));
+            shold.SetAccelLimits(double.IsNaN(profile.Accel) ? double.NaN : profile.AccelAt(m), double.IsNaN(profile.Decel) ? double.NaN : profile.DecelAt(m));   // T3: clamp the speed-hold acceleration demand to the LEARNed accel/decel
             ApplyProfileTrust();
             ChatLog.Write("vessel", "plane profile (" + profile.Date + ", test " + profile.M0.ToString("0.0") + " t, now " + m.ToString("0.0") + " t, match " + CraftFingerprint.Label(profileMatch) + "): stall " + (double.IsNaN(s) ? "-" : s.ToString("0")) + " m/s scaled; " + profile.Summary());
         }
