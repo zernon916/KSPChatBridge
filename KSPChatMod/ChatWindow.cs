@@ -69,6 +69,15 @@ namespace KSPChatBridge
         bool scrollToEnd;
         bool locked;
         bool resizing;
+        bool resizeDocked;        // bottom grip drag started while docked: grow upward
+        /// <summary>Docked = the chat bottom sits on the AICS control box top edge (overlapping it horizontally) or on the screen bottom.</summary>
+        bool Docked()
+        {
+            const float tol = 12;
+            if (winRect.yMax >= Screen.height - tol) return true;
+            var b = AicsMenu.BoxRect; if (b == null) return false; var r = b.Value;
+            return Mathf.Abs(winRect.yMax - r.y) <= tol && winRect.xMax > r.x && winRect.x < r.xMax;
+        }
         bool resizingTR;          // upper-right grip: grows up / right
         Vector2 inputScroll;
         int inputLen;
@@ -184,7 +193,10 @@ namespace KSPChatBridge
                 float extra = InputHeight(InputW()) - InputH;
                 if (Mathf.Abs(extra - inputExtra) > 0.5f)
                 {
+                    bool dk = Docked();   // Luke Oct 12 21:25: docked into the control box / screen bottom -> grow UPWARD (bottom edge stays)
+                    float keepBottom = winRect.yMax;
                     winRect.height = Mathf.Max(MinH, winRect.height + extra - inputExtra);
+                    if (dk) { winRect.height = Mathf.Min(winRect.height, keepBottom); winRect.y = keepBottom - winRect.height; }
                     inputExtra = extra;
                     if (winRect.yMax > Screen.height) winRect.y = Mathf.Max(0, Screen.height - winRect.height);
                 }
@@ -195,9 +207,10 @@ namespace KSPChatBridge
                 {
                     Vector2 m = Event.current.mousePosition;
                     winRect.width = Mathf.Clamp(m.x - winRect.x + 6, MinW, Screen.width);
-                    winRect.height = Mathf.Clamp(m.y - winRect.y + 6, MinH, Screen.height);
+                    if (resizeDocked) { float bottom = winRect.yMax; winRect.y = Mathf.Clamp(m.y - 6, 0, bottom - MinH - inputExtra); winRect.height = bottom - winRect.y; }   // docked: bottom anchored, grows up, clamped at the screen top
+                    else winRect.height = Mathf.Clamp(m.y - winRect.y + 6, MinH, Screen.height);
                 }
-                else { resizing = false; SaveSettings(); }
+                else { resizing = false; resizeDocked = false; SaveSettings(); }
             }
             string title = "KSP Chat Bridge - " + ModelLabels[modelIdx] +
                 (lastModel.Length > 0 ? " / " + lastModel : "") + "   (Alt+K; switch AI: AICS > Settings or /ai)";
@@ -269,7 +282,7 @@ namespace KSPChatBridge
             // Resize handle (bottom-right corner).
             Rect grip = new Rect(winRect.width - 18, winRect.height - 18, 16, 16);
             GUI.Label(grip, "//");
-            if (e.type == EventType.MouseDown && e.button == 0 && grip.Contains(e.mousePosition)) { resizing = true; e.Use(); }
+            if (e.type == EventType.MouseDown && e.button == 0 && grip.Contains(e.mousePosition)) { resizing = true; resizeDocked = Docked(); e.Use(); }
 
             // Resize grip (upper-right corner): drag up / right to grow the window (min MinW x MinH).
             Rect gripTR = new Rect(winRect.width - 18, 2, 16, 16);

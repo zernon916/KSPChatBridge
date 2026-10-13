@@ -13,6 +13,8 @@ namespace KSPChatBridge
     {
         const int MfdId = 0x4B434D46;
         static Rect mfdRect = new Rect(-1, 60, 800, 700);
+        /// <summary>Screen rect of the AICS control box while it is shown (chat docking checks); null when hidden.</summary>
+        internal static Rect? BoxRect { get { return Expanded ? (Rect?)mfdRect : null; } }
         const float MfdMinW = 560, MfdMinH = 490;
         static string mfdGroup, mfdItem; static int mfdPage; static bool mfdResizing;
         static Vector2 mfdScroll; static string mfdNote = ""; static float mfdNoteAt;
