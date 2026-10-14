@@ -390,11 +390,11 @@ internal static class ThrottleLearnTests
         var cl = new LearnFlight(); var c = In(0, 5000); c.StallGuess = 84; c.Speed = 150; cl.Step(c); cl.Phase = "stallprep"; c.T = 1; cl.Step(c);
         Check(cl.Throttle == 1 && cl.Pitch > 0, "stallprep below 10 km: full power climb (thr " + cl.Throttle + ")");
         Check(cl.Pitch <= LearnFlight.PrepClimbPitchMax + .01, "stallprep climb pitch capped (" + cl.Pitch.ToString("0.0") + ")");
-        Check(LearnFlight.StallTargetFor(double.NaN) == 10000 && LearnFlight.StallTargetFor(7670) == 7420 && LearnFlight.StallTargetFor(12000) == 10000, "stall alt = min(10 km, learned ceiling - 250 m)");
+        Check(LearnFlight.StallTargetFor(double.NaN) == 10000 && LearnFlight.StallTargetFor(7670) == 6670 && LearnFlight.StallTargetFor(12000) == 11000, "stall alt = learned ceiling - 1000 m (10 km when unknown)");
         {   // A300 live 02:43: full power, vs ~0 at 7670 m for 60 s -> ceiling saved, stall target 7420, profile round-trips it
             var ce = new LearnFlight(); var k = In(0, 7670); k.StallGuess = 84; k.Speed = 219; k.Vs = .3; ce.Step(k); ce.Phase = "stallprep";
             for (int s = 1; s <= 650; s++) { k.T = s * .1; ce.Step(k); }
-            Check(Math.Abs(ce.P.Ceiling - 7670) < 1 && ce.StallTarget == 7420 && ce.Status.Contains("Ceiling reached"), "climb < 1 m/s for 60 s: ceiling saved, stall at ceiling - 250 (" + ce.P.Ceiling + ", " + ce.Status + ")");
+            Check(Math.Abs(ce.P.Ceiling - 7670) < 1 && ce.StallTarget == 6670 && ce.Status.Contains("Ceiling reached"), "climb < 1 m/s for 60 s: ceiling saved, stall at ceiling - 1000 (" + ce.P.Ceiling + ", " + ce.Status + ")");
             var ceRt = PlaneProfile.FromDict(MiniJson.Deserialize(MiniJson.Serialize(ce.P.ToDict())) as Dictionary<string, object>);
             Check(Math.Abs(ceRt.Ceiling - 7670) < 1, "ceiling persists in the profile");
         }

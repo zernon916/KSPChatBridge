@@ -20,6 +20,9 @@ static class LandingRepairTests
         Check(qp.LearningSession == warped.P.LearningSession && qp.RejectedSamples == 1, "learning provenance survives persistence");
         Check(FinalApproachPolicy.BankCommand(80, true) == 30 && FinalApproachPolicy.BankCommand(-80, true) == -30, "landing command has a hard signed 30 degree cap");
         Check(FinalApproachPolicy.BankCommand(80, false) == 80 && FinalApproachPolicy.BankCommand(12, true) == 12, "cap preserves nonlanding and modest landing commands");
+        Check(LearnFlight.StallTargetFor(12000) == 11000 && LearnFlight.StallTargetFor(7670) == 6670, "stall test is 1000 metres below the learned ceiling");
+        var ceilingProfile = new PlaneProfile { Ceiling = 12000 };
+        Check(LearnFlight.ProfileChecklist(ceilingProfile, 0).Exists(line => line.Contains("Stall") && line.Contains("11000")), "stall checklist title exposes actual target altitude");
         double ci = 0, crab = 0;
         RunwayMission.CenterlineHeading(50, 270, 270, 80, ref ci, 8, 270, ref crab, false, 1500);
         Check(ci > 0, "persistent 50 metre offset participates in integral correction");

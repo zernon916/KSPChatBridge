@@ -292,7 +292,7 @@ namespace KSPChatBridge
             else if (k == 8) Go("sinkprep", last, "Dives skipped.");
             else if (next == "finish") { if (ManualMode) Go("wait", last, "Step " + k + " skipped."); else Finish(false, ""); }
             else Go(next, last, "Step " + k + " skipped.");
-            return "Skipped step " + k + " (" + StepNames[k - 1] + "); partial data kept.";
+            return "Skipped step " + k + " (" + StepTitle(k, P) + "); partial data kept.";
         }
         internal readonly HashSet<int> Only; readonly PlaneProfile prior;
         internal LearnFlight() { }
@@ -353,7 +353,9 @@ namespace KSPChatBridge
         internal static bool AtStallAlt(int k) { return k == 10 || k == 11 || k == 101; }
         static bool Pickable(int k) { return (k >= 3 && k <= 11) || k == 91 || k == 101; }
         static int[] ActiveSteps(int code) { return code == 10 || code == 11 || code == 101 ? new[] { 10, 11 } : code == 91 ? new[] { 9 } : new[] { code }; }
-        internal static string CodeName(int code) { return code == 91 ? "9b Flaps-full sink map" : code == 101 ? "10b Flaps-full stall" : code >= 1 && code <= StepCount ? code + " " + StepNames[code - 1] : code.ToString(); }
+        internal static string StepTitle(int code, PlaneProfile profile)
+        { return code == 10 ? "Stall at " + StallTargetFor(profile == null ? double.NaN : profile.Ceiling).ToString("0") + " m" : StepNames[code - 1]; }
+        internal static string CodeName(int code, PlaneProfile profile = null) { return code == 91 ? "9b Flaps-full sink map" : code == 101 ? "10b Flaps-full stall" : code >= 1 && code <= StepCount ? code + " " + StepTitle(code, profile) : code.ToString(); }
         /// <summary>Box checked (or unchecked) on the LEARN page while the manual test flight runs.</summary>
         internal string Request(int code)
         {
@@ -365,23 +367,23 @@ namespace KSPChatBridge
                     if (code == 2) { waitHere = true; string r = Skip(); waitHere = false; return r; }
                     return Skip();
                 }
-                if (!setupUnchecked.Remove(code)) { setupUnchecked.Add(code); return CodeName(code) + " unchecked (" + (setupDone || StepNo > code ? "already flown; data kept" : "runs as setup") + ")."; }
-                return CodeName(code) + " checked.";
+                if (!setupUnchecked.Remove(code)) { setupUnchecked.Add(code); return CodeName(code, P) + " unchecked (" + (setupDone || StepNo > code ? "already flown; data kept" : "runs as setup") + ")."; }
+                return CodeName(code, P) + " checked.";
             }
             if (code == 12 && !setupDone) { landRequested = !landRequested; return landRequested ? "Landing checked: flies home and lands once the climb is done." : "Landing unchecked: LEARN waits after the climb."; }
             if (code == 12) { landRequested = true; Queue.Clear(); if (activeTest != 0) { Ran.Add(activeTest); activeTest = 0; } if (!last.HomeKnown || last.HomeDist < HomeHandoff) { Finish(false, ""); return "Ending the test flight: landing at KSC 27."; } Go("flyhome", last, null); return "Ending the test flight: flying home to KSC 27, then landing."; }
             if (!Pickable(code)) return "Unknown test.";
             if (activeTest == code)
                 return "Unchecked the running test: " + Skip();
-            if (Queue.Remove(code)) return "Test " + CodeName(code) + " unchecked (removed from the queue).";
-            if (Ran.Remove(code)) return "Test " + CodeName(code) + " unchecked (data kept; check again to re-run).";
+            if (Queue.Remove(code)) return "Test " + CodeName(code, P) + " unchecked (removed from the queue).";
+            if (Ran.Remove(code)) return "Test " + CodeName(code, P) + " unchecked (data kept; check again to re-run).";
             Enqueue(code);
-            return Phase == "wait" ? "Starting test " + CodeName(code) + "." : !setupDone ? "Test " + CodeName(code) + " queued: runs once the climb is done." : "Test " + CodeName(code) + " queued: runs when the current test is done.";
+            return Phase == "wait" ? "Starting test " + CodeName(code, P) + "." : !setupDone ? "Test " + CodeName(code, P) + " queued: runs once the climb is done." : "Test " + CodeName(code, P) + " queued: runs when the current test is done.";
         }
         void StartTest(int code, LearnIn i)
         {
-            if ((code == 91 || code == 101) && !i.HasFlaps) { Status = "Test " + CodeName(code) + " skipped: no flaps on this craft (tag surfaces \"flap\" in the SPH)."; return; }
-            activeTest = code; flapPass = code == 91; stallFlapPass = code == 101; string n = "Test " + CodeName(code) + ": ";
+            if ((code == 91 || code == 101) && !i.HasFlaps) { Status = "Test " + CodeName(code, P) + " skipped: no flaps on this craft (tag surfaces \"flap\" in the SPH)."; return; }
+            activeTest = code; flapPass = code == 91; stallFlapPass = code == 101; string n = "Test " + CodeName(code, P) + ": ";
             switch (code)
             {
                 case 3: Go("decel", i, n + "throttle idle, recording deceleration for 20 s."); break;
@@ -415,7 +417,7 @@ namespace KSPChatBridge
             }
             if (ph == "climbback" && Queue.Count > 0 && AtStallAlt(Queue[0])) ph = "wait";   // next test is at 10 km: go straight there (live 21:16: climbed to 5 km, then "level at 4 km first")
             string pre = status ?? "";
-            if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest) + " done. " + (status ?? ""); activeTest = 0; }
+            if (activeTest != 0) { if (!Ran.Contains(activeTest)) Ran.Add(activeTest); TestsDone++; pre = "Test " + CodeName(activeTest, P) + " done. " + (status ?? ""); activeTest = 0; }
             setupDone = true; flapPass = stallFlapPass = false;
             status = (pre.Length > 0 ? pre.Trim() + " " : "") + (ph == "climbback" ? "Climbing back to 5 km: full power, up to 30 deg." : "Waiting: holding altitude and heading. Check a test box to run it; you can fly manually any time.");
             return ph;
@@ -432,15 +434,15 @@ namespace KSPChatBridge
             for (int j = 0; j < Codes.Length; j++)
             {
                 int k = Codes[j]; string cur = j == cursor ? ">" : " ", ind = k == 91 || k == 101 ? "  " : "";
-                if (k == 1 || k == 2) { o.Add(cur + (setupUnchecked.Contains(k) ? "[ ] " : setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k) + " (auto)"); continue; }
+                if (k == 1 || k == 2) { o.Add(cur + (setupUnchecked.Contains(k) ? "[ ] " : setupDone || StepNo > k ? "[*] " : StepNo == k ? "[>] " : "[ ] ") + CodeName(k, P) + " (auto)"); continue; }
                 if (k == 12) { o.Add(cur + (Phase == "flyhome" ? "[>] 12 Fly home + land KSC 27" : landRequested ? "[x] 12 Land KSC 27 + rollout (after the queue)" : "[ ] 12 Land KSC 27 + rollout (check to end)")); continue; }
                 string mark = activeTest == k ? "[>] " : Queue.Contains(k) || Ran.Contains(k) ? "[x] " : "[ ] ";
                 string extra = activeTest == k ? "" : Queue.Contains(k) ? " (queued)" : Ran.Contains(k) ? " (done)" : "";
-                o.Add(cur + ind + mark + CodeName(k) + extra);
+                o.Add(cur + ind + mark + CodeName(k, P) + extra);
                 if (activeTest == k) { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
                 { string dr = P.DrillRow(k); if (dr != null) o.Add(" " + dr); }
             }
-            o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : Phase == "flyhome" ? "Running 12 / fly home: course " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + " at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest) + ".");
+            o.Add(Phase == "wait" ? "WAITING at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m hdg " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + ": TOGGLE a box to run that test." : Phase == "climbback" ? "Climbing back to 5 km." : Phase == "flyhome" ? "Running 12 / fly home: course " + (double.IsNaN(HoldHdg) ? "-" : HoldHdg.ToString("000")) + " at " + (double.IsNaN(HoldAlt) ? "-" : HoldAlt.ToString("0")) + " m." : !setupDone ? "Takeoff / climb, then waiting." : "Running " + CodeName(activeTest, P) + ".");
             return o;
         }
         static bool Setup(int k) { return k <= 2 || k >= 12; }
@@ -460,10 +462,10 @@ namespace KSPChatBridge
             }
             return ph;
         }
-        /// <summary>Stall test altitude: 10 km, or 250 m under the learned practical ceiling when lower (Stearwing A300 stuck at ~7.67 km).</summary>
-        internal static double StallTargetFor(double ceiling) { return double.IsNaN(ceiling) || ceiling <= 0 ? StallAlt : Math.Min(StallAlt, ceiling - CeilingMargin); }
+        /// <summary>Stall test altitude: 1000 m below the learned practical ceiling, 10 km until known (Stearwing A300 stuck at ~7.67 km).</summary>
+        internal static double StallTargetFor(double ceiling) { return double.IsNaN(ceiling) || double.IsInfinity(ceiling) || ceiling <= CeilingMargin ? StallAlt : ceiling - CeilingMargin; }
         internal double StallTarget { get { return StallTargetFor(P.Ceiling); } }
-        internal const double CeilingMargin = 250, CeilingVs = 1, CeilingWait = 60, PrepClimbPitchMax = 15; double ceilSince = double.NaN;
+        internal const double CeilingMargin = 1000, CeilingVs = 1, CeilingWait = 60, PrepClimbPitchMax = 15; double ceilSince = double.NaN;
         internal const double ClimbAlt = 5000, StallAlt = 10000, FuelAbort = .4, StressAbort = .9, GAbort = .9, TurnStop = .8, TurnSpikeG = 1.0, TurnSpikeStress = .97, LoadTau = .5, Seg = 20, DiveSeg = 10;
         internal static readonly int[] Banks = { 10, 20, 30, 40, 45, 50, 55, 60, 65, 70, 75, 80 }; /* stress test: short dwell, ladder runs to the real limit */ internal const double TurnSeg = 10; internal static readonly int[] DivePitch = { 5, 10, 15, 20 };   // max-safe-turn stress test (Luke 10:06 AM) internal static readonly int[] DivePitch = { 5, 10, 15, 20 };
         internal const double TurnPrepTimeout = 120; internal const double SinkAlt = 5000, RampWait = 5, SinkSpeedFactor = 1.25; internal static readonly double[] SinkTargets = { 0, 2, 4, 6, 8, 10 };
@@ -754,8 +756,8 @@ namespace KSPChatBridge
             for (int j = 0; j < raw.Count; j++)
             {
                 var l = raw[j]; if (l.Length < 6 || l[0] != '[') continue; int sp = l.IndexOf(' ', 4); int k; if (sp < 0 || !int.TryParse(l.Substring(4, sp - 4), out k)) continue;
-                if (Skipped.Contains(k)) raw[j] = "[-] " + k + " " + StepNames[k - 1] + " (skipped)";
-                else if (Only != null && !Setup(k) && !Only.Contains(k)) raw[j] = "[x] " + k + " " + StepNames[k - 1] + " (kept)";
+                if (Skipped.Contains(k)) raw[j] = "[-] " + k + " " + StepTitle(k, P) + " (skipped)";
+                else if (Only != null && !Setup(k) && !Only.Contains(k)) raw[j] = "[x] " + k + " " + StepTitle(k, P) + " (kept)";
             }
             return raw;
         }
@@ -770,7 +772,7 @@ namespace KSPChatBridge
                 if (k == 91) o.Add(cur + (p.Rerun.Contains(91) ? "  [x] " : "  [ ] ") + "9b Flaps-full sink map");
                 else if (k == 101) o.Add(cur + (p.Rerun.Contains(101) ? "  [x] " : "  [ ] ") + "10b Flaps-full stall (optional)");
                 else if (k == 12) o.Add(cur + (p.NoLand ? "[ ] " : "[x] ") + "12 " + StepNames[11]);   // checked by default (Oct 12)
-                else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[x] " : "[ ] ") + k + " " + StepNames[k - 1]);
+                else o.Add(cur + (Setup(k) ? "[*] " : p.Rerun.Contains(k) ? "[x] " : "[ ] ") + k + " " + StepTitle(k, p));
                 { string dr = p.DrillRow(k); if (dr != null) o.Add(" " + dr); }
             }
             o.Add(p.Rerun.Count == 0 ? "All unchecked. LEARN takes off, climbs and waits; TOGGLE a box to run that test." : "LEARN runs " + p.Rerun.Count + " checked test(s) after the climb, then waits.");
@@ -807,7 +809,7 @@ namespace KSPChatBridge
                 if (k == 7 && P.Turns.Count > 0 && mark != "[>]") extra = " (to " + P.Turns[P.Turns.Count - 1][0] + " deg)";
                 if (k == 1 && !double.IsNaN(P.Perf.GroundRoll) && mark == "[x]") extra = " (" + P.Perf.GroundRoll.ToString("0") + " m)";
                 if (k == 12 && LandingDone) extra = " (rollout " + P.Perf.Rollout.ToString("0") + " m)";
-                o.Add(mark + " " + k + " " + StepNames[k - 1] + extra);
+                o.Add(mark + " " + k + " " + StepTitle(k, P) + extra);
                 if (mark == "[>]") { string sub = SubProgress(); if (sub.Length > 0) o.Add("      " + sub); }
                 { string dr = P.DrillRow(k == 9 ? 91 : k == 10 ? 101 : k); if (dr != null) o.Add(dr); }
             }
@@ -1102,7 +1104,7 @@ namespace KSPChatBridge
                             if (i.Vs >= CeilingVs) ceilSince = double.NaN;
                             else if (double.IsNaN(ceilSince)) ceilSince = i.T;
                             else if (i.T - ceilSince >= CeilingWait)
-                            {   // practical ceiling: save it, stall 250 m under it (this run and the next)
+                            {   // practical ceiling: save it, stall 1000 m under it (this run and the next)
                                 P.Ceiling = i.Alt; P.Note("ceiling", i.Alt, i.Mass); ceilSince = double.NaN;
                                 Status = "Ceiling reached: climb under " + CeilingVs.ToString("0") + " m/s at full power for " + CeilingWait.ToString("0") + " s at " + i.Alt.ToString("0") + " m (saved). Stall test at " + StallTarget.ToString("0") + " m.";
                             }
