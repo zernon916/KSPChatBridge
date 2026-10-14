@@ -23,6 +23,7 @@ internal static class RocketTests
         passes = 0;
         PlanetViewMathChecks();
         SuicideBurnChecks();
+        TouchdownChecks();
         // Stock KSP: Kerbin mu in m^3/s^2, 600 km radius, 100 km LKO,
         // Mun orbit radius 12,000 km. These are radii, not altitudes.
         const double kerbinMu = 3.5316e12, lkoRadius = 700000;
@@ -73,6 +74,21 @@ internal static class RocketTests
             "suicide burn start altitude includes margin");
         Check(double.IsPositiveInfinity(SuicideBurn.StartAlt(20, 10, 10000, 1000, .15)),
             "suicide burn is unreachable without acceleration above local gravity");
+    }
+
+    static void TouchdownChecks()
+    {
+        Check(Near(TouchdownMath.Throttle(1.6, -8, 2, 20), .76, 1e-10),
+            "touchdown throttle targets -2 m/s vertical speed");
+        Check(Near(TouchdownMath.Throttle(1.6, -2, 2, 20), .16, 1e-10),
+            "touchdown throttle supports a steady -2 m/s descent");
+        Check(TouchdownMath.Throttle(1.6, 5, 2, 20) == 0,
+            "touchdown throttle clamps negative demand to zero");
+        Check(TouchdownMath.Throttle(10, -20, 2, 20) == 1,
+            "touchdown throttle clamps demand to full power");
+        Check(TouchdownMath.Throttle(1.6, -8, 2, 0) == 0 &&
+            TouchdownMath.Throttle(double.NaN, -8, 2, 20) == 0,
+            "touchdown throttle safely rejects invalid thrust or gravity");
     }
 
     static void PlanetViewMathChecks()

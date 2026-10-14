@@ -9,6 +9,7 @@ namespace KSPChatBridge
         string rocketMode = "off";
         double rocketEmptyT = -1;
         bool rocketFairingsDone;
+        bool rocketLandingGearDone;
         Vessel rocketFairingsVessel;
         Vessel rocketAbortVessel;
         int rocketAbortStage = int.MinValue;
@@ -71,6 +72,7 @@ namespace KSPChatBridge
                 mode = mode.Trim();
                 rocketMode = string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase) ? "node" :
                     string.Equals(mode, "land", StringComparison.OrdinalIgnoreCase) ? "land" : "point:" + mode;
+                if (rocketMode == "land") rocketLandingGearDone = false;
                 rocketNode = null;
                 rocketNodeLastThrottle = 0;
                 rocketNodeHasStarted = false;
@@ -107,6 +109,11 @@ namespace KSPChatBridge
             if (c == null) return true;
             c.mainThrottle = 0;
             if (vessel == null) return true;
+            if (vessel.Landed)
+            {
+                rocketMode = "off";
+                return true;
+            }
 
             LiveRocket s = LiveRocket.Read(vessel);
             if (s == null) return true;
@@ -115,6 +122,18 @@ namespace KSPChatBridge
                 ? -vessel.srf_velocity.normalized
                 : vessel.upAxis;
             RocketSteer(c, direction);
+
+            if (s.RadarAlt < 20)
+            {
+                if (!rocketLandingGearDone && vessel.ActionGroups != null)
+                {
+                    if (!vessel.ActionGroups[KSPActionGroup.Gear])
+                        SetGroup(vessel, KSPActionGroup.Gear, true);
+                    rocketLandingGearDone = true;
+                }
+                c.mainThrottle = (float)TouchdownMath.Throttle(s.LocalG, s.Vs, s.Mass, s.Thrust);
+                return true;
+            }
 
             double start = SuicideBurn.StartAlt(-s.Vs, s.LocalG, s.Thrust * 1000,
                 s.Mass * 1000, .15);
