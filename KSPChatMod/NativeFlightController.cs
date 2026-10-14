@@ -36,6 +36,7 @@ namespace KSPChatBridge
         double trimBaselineVs, trimBaselinePitch;
         bool trimSuspended, parkingSet, parkingReleased, wasAirborne, prevBrakes;
         int partCount;
+        Guid roverDetectedId;
         string settingsPath;
         Dictionary<string, object> settingsData = new Dictionary<string, object>();
         bool settingsWritable = true;
@@ -430,8 +431,14 @@ namespace KSPChatBridge
             }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local configuration recovery: " + ex.Message); }
             bool brakes = vessel.ActionGroups[KSPActionGroup.Brakes];
-            bool wheels = false;
-            if (!flying) foreach (Part p in vessel.parts) if (p.FindModuleImplementing<ModuleWheelBase>() != null) { wheels = true; break; }
+            int wheelCount = 0;
+            if (!flying) foreach (Part p in vessel.parts) wheelCount += p.FindModulesImplementing<ModuleWheelBase>().Count;
+            bool wheels = wheelCount > 0;
+            if (vessel.Landed && wheels && roverDetectedId != vessel.id)
+            {
+                roverDetectedId = vessel.id;
+                ChatLog.Write("rover", "rover detected: wheels " + wheelCount + ", mass " + vessel.GetTotalMass().ToString("0.00", CultureInfo.InvariantCulture) + " t");
+            }
             string park = NativeSafety.ParkingAction(!flying, wasAirborne, parkingReleased, parkingSet, NativeSafety.ParkingIdle(mode, plan != null && plan.Running), wheels, brakes, prevBrakes && !brakes);
             if (park == "rearm") { parkingSet = false; parkingReleased = false; }
             else if (park == "set") { SetGroup(vessel, KSPActionGroup.Brakes, true); parkingSet = true; brakes = true; }
