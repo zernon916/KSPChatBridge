@@ -450,5 +450,47 @@ internal static class RocketTests
         Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 0, 300)), "invalid mass1 returns NaN");
         Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 1100, 300)), "mass1 > mass0 returns NaN");
         Check(double.IsNaN(DvTracker.DvFromMassChange(1000, 900, 0)), "zero Isp returns NaN");
+        FuelTimelineChecks();
+    }
+
+    static void FuelTimelineChecks()
+    {
+        var stages = new List<StageInfo>
+        {
+            new StageInfo { Stage = 0, BurnTime = 60, FuelMass = 4000 },
+            new StageInfo { Stage = 1, BurnTime = 120, FuelMass = 2000 },
+            new StageInfo { Stage = 2, BurnTime = 180, FuelMass = 1000 }
+        };
+
+        var timeline = FuelTimeline.Build(stages);
+        Check(timeline != null, "timeline builds from stages");
+        Check(Near(timeline.TotalFuel, 7000, 1e-9), "total fuel sum correct");
+        Check(Near(timeline.TotalDuration, 360, 1e-9), "total duration sum correct");
+        Check(timeline.Events.Count == 9, "3 stages generate 9 events (start, mid, end each)");
+
+        Check(Near(timeline.Events[0].Time, 0, 1e-9) && timeline.Events[0].Type == "stage", "first event is stage start at t=0");
+        Check(Near(timeline.Events[1].Time, 30, 1e-9) && timeline.Events[1].Type == "burn", "second event is mid-burn at 30s");
+        Check(Near(timeline.Events[2].Time, 60, 1e-9) && timeline.Events[2].Type == "depletion", "third event is depletion at 60s");
+
+        Check(Near(FuelTimeline.FuelAtTime(timeline, 0), 7000, 1e-9), "fuel at start is total");
+        Check(Near(FuelTimeline.FuelAtTime(timeline, 30), 5000, 1e-9), "fuel at mid-stage 0 is half");
+        Check(Near(FuelTimeline.FuelAtTime(timeline, 60), 3000, 1e-9), "fuel after stage 0 is remaining");
+        Check(Near(FuelTimeline.FuelAtTime(timeline, 180), 1000, 1e-9), "fuel after stage 1 is remaining");
+        Check(Near(FuelTimeline.FuelAtTime(timeline, 360), 0, 1e-9), "fuel at end is zero");
+
+        Check(FuelTimeline.StageAtTime(timeline, 0) == 0, "stage at start is stage 0");
+        Check(FuelTimeline.StageAtTime(timeline, 30) == 0, "stage during stage 0 burn is stage 0");
+        Check(FuelTimeline.StageAtTime(timeline, 61) == 1, "stage after stage 0 depletion is stage 1");
+        Check(FuelTimeline.StageAtTime(timeline, 181) == 2, "stage after stage 1 depletion is stage 2");
+        Check(FuelTimeline.StageAtTime(timeline, 361) == -1, "stage after final depletion is -1");
+
+        var empty = FuelTimeline.Build(new List<StageInfo>());
+        Check(empty != null && empty.TotalDuration == 0 && empty.TotalFuel == 0 && empty.Events.Count == 0,
+            "empty stages produce empty timeline");
+
+        var single = new List<StageInfo> { new StageInfo { Stage = 0, BurnTime = 100, FuelMass = 5000 } };
+        var singleTimeline = FuelTimeline.Build(single);
+        Check(singleTimeline.Events.Count == 3, "single stage generates 3 events");
+        Check(Near(singleTimeline.TotalDuration, 100, 1e-9), "single stage duration");
     }
 }

@@ -65,6 +65,8 @@
     <Compile Include="../../KSPChatMod/AscentProfile.cs"/>
     <Compile Include="../../KSPChatMod/DvTracker.cs"/>
     <Compile Include="../../KSPChatMod/AscentGuidance.cs" Link="AscentGuidance.cs"/>
+    <Compile Include="../../KSPChatMod/StageInfo.cs"/>
+    <Compile Include="../../KSPChatMod/FuelTimeline.cs"/>
     <Compile Include="../../KSPChatMod/LlamaRuntime.cs"/>
     <Compile Include="../../KSPChatMod/LlamaNative.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>
