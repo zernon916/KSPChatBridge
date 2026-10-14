@@ -408,7 +408,7 @@ namespace KSPChatBridge
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
             var act = NativeFlightController.ActiveRunway; Ils.Reading r;
             if (act != null && act.Coupled && act.Ils != null) r = act.Ils;
-            else if (act != null) r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM);
+            else if (act != null) r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM, act.FinalSlope);
             else r = Ils.Compute(v.latitude, v.longitude, v.altitude, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, v.mainBody.Radius, 350);
             bool valid = r.Front && r.DmeM < 40000; Color nc = valid ? Color.magenta : Color.gray;
             float lx = c.x - (float)Ils.Needle(r.LocDeg, Ils.LocFullScale) * S * .4f, gy = c.y + (float)Ils.Needle(r.GsDeg, Ils.GsFullScale) * S * .4f;

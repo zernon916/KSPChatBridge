@@ -251,8 +251,9 @@ namespace KSPChatBridge
         internal const double RudderErrDeg = 3, RudderOffDeg = 3.5, RudderMinSpeed = 20;
         internal const double RudderGain = .08, RudderRateGain = .04, RudderMax = .3, HeadingBankGain = .5;
         internal const double RudderGiveUpS = 6, RudderProgressDeg = .5, RudderCoolOffS = 30;
-        internal static bool RudderSteer(double headingError, bool wasOn, double speed)
+        internal static bool RudderSteer(double headingError, bool wasOn, double speed, bool landing = false)
         {
+            if (landing) return false; // Airborne localizer corrections require bank to change ground track.
             if (double.IsNaN(headingError) || double.IsNaN(speed) || !(speed > RudderMinSpeed)) return false;   // too slow for rudder authority: the wheel / ground-roll steer owns yaw there
             return Math.Abs(headingError) < (wasOn ? RudderOffDeg : RudderErrDeg);
         }

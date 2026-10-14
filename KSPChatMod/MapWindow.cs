@@ -174,7 +174,7 @@ namespace KSPChatBridge
         {
             var act = NativeFlightController.ActiveRunway; var v = FlightGlobals.ActiveVessel;
             if (act == null || v == null || ReferenceEquals(autoIlsFor, act)) return;
-            var r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM);
+            var r = Ils.Compute(v.latitude, v.longitude, v.altitude, act.Lat, act.Lon, act.EndLat, act.EndLon, act.Elevation, v.mainBody.Radius, act.TouchdownM, act.FinalSlope);
             if (Ils.InLocCaptureZone(r, RunwayMission.LocRange)) { autoIlsFor = act; Tab = 2; AicsMenu.AutoIls(); }
         }
         static bool details, guidance;
@@ -351,7 +351,7 @@ namespace KSPChatBridge
             else if (rw != null) { tla = rw.Lat; tlo = rw.Lon; ela = rw.EndLat; elo = rw.EndLon; elev = rw.Elevation; label = rw.Key; }
             else { cv.Text(area, "No runway on this body.", IlsPx(area), Text, TextAnchor.MiddleCenter, false); return; }
             if (v == null) return;
-            var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350);
+            var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350, act != null ? act.FinalSlope : double.NaN);
             // the instrument fills the page; the data block overlays the right side on a dark box
             float dw = Mathf.Clamp(area.width * .44f, Mathf.Min(170, area.width * .6f), area.width * .6f);
             float Sx = Mathf.Max(60, area.width - dw), Sy = Mathf.Max(60, area.height); Rect box = new Rect(0, 0, Sx, Sy);

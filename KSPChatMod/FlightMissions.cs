@@ -1038,12 +1038,13 @@ namespace KSPChatBridge
         {
             if (!double.IsNaN(track) && !double.IsNaN(heading)) crab += FlightPolicy.Clamp(ds / (Math.Max(1, speed) * CrabTau), 0, 1) * (FlightPolicy.Wrap(track - heading) - crab);
             crab = FlightPolicy.Clamp(crab, -20, 20);
-            if (Math.Abs(cross) < IntBand) crossI = FlightPolicy.Clamp(crossI + cross * ds, -5000, 5000);
+            if (Math.Abs(cross) < IntBand || lookAhead > 0 && Math.Abs(cross) < 150 && !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(track - course)) < 1) crossI = FlightPolicy.Clamp(crossI + cross * ds, -5000, 5000);
             double u = Kp * PredictCross(cross, speed, track, course, Tau) + (tight ? 1.5 : 1) * Ki * crossI;   // short final: harder integral toward +-1 m
             return course - FlightPolicy.Clamp(Math.Atan2(u, lookAhead > 0 ? lookAhead : Math.Max(Lmin, Lv * speed)) * 180 / Math.PI, tight ? -8 : -15, tight ? 8 : 15) - crab;
         }
         internal static double PredictCross(double cross, double speed, double track, double course, double tau)
         { return double.IsNaN(track) ? cross : cross + tau * speed * Math.Sin(FlightPolicy.Wrap(track - course) * Math.PI / 180); }
+        internal double FinalSlope { get { double s = Chart == null ? double.NaN : Chart.Slope; return FinalApproachPolicy.Slope(s); } }
         internal double Lat, Lon, EndLat, EndLon, Elevation;
         internal string Phase = "entry";
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
@@ -1256,7 +1257,7 @@ namespace KSPChatBridge
                 // Proportional + integral (per metre flown) centerline tracking: removes steady offsets (sideslip/wind/trim) to < 5 m
                 double ds = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along;
                 // Luke: coupled ILS. The SAME localizer/glideslope deviations the ILS tab shows feed the controllers: capture LOC, then GS.
-                Ils = KSPChatBridge.Ils.Compute(lat, lon, altitude, Lat, Lon, EndLat, EndLon, Elevation, radius, TouchdownM);
+                Ils = KSPChatBridge.Ils.Compute(lat, lon, altitude, Lat, Lon, EndLat, EndLon, Elevation, radius, TouchdownM, FinalSlope);
                 if (!LocCoupled && Math.Abs(Ils.LocDeg) < KSPChatBridge.Ils.LocFullScale && Ils.Front && -along < LocRange) LocCoupled = true;
                 if (LocCoupled && !GsCoupled && Math.Abs(Ils.GsDeg) < KSPChatBridge.Ils.GsFullScale) GsCoupled = true;
                 double latDev = LocCoupled ? Ils.CrossM : cross;
@@ -1273,7 +1274,7 @@ namespace KSPChatBridge
                 if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.SinkLimit(LearnedSink, 15));   // Luke Oct 12: ALTITUDE over speed - high = full learned sink even if fast (idle+brakes/flaps bleed speed; overspeed protection unchanged)   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
                 EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -2);
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
-                double targetAlt = FinalApproachPolicy.TargetAltitude(Elevation, along, TouchdownM);
+                double targetAlt = FinalApproachPolicy.TargetAltitude(Elevation, along, TouchdownM, FinalSlope);
                 double pointVs = FinalApproachPolicy.VerticalSpeed(targetAlt, altitude, speed, latDev);
                 DesiredVs = FlightPolicy.Clamp(OffLine ? Math.Max(0, pointVs) : pointVs, belowGs ? 0 : -maxSink, belowGs ? 10 : 3);
                 Gear = (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // only on an aligned short final

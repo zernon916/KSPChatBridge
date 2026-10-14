@@ -15,8 +15,9 @@ namespace KSPChatBridge
     {
         internal const double LookAheadM = 1500;
         // A virtual point on the extended 3-degree path; flare takes over before touchdown.
-        internal static double TargetAltitude(double elevation, double along, double touchdown)
-        { return elevation + (touchdown - along - LookAheadM) * Math.Tan(3 * Math.PI / 180); }
+        internal static double Slope(double slope) { return double.IsNaN(slope) || double.IsInfinity(slope) || slope <= 0 ? Math.Tan(3 * Math.PI / 180) : slope; }
+        internal static double TargetAltitude(double elevation, double along, double touchdown, double slope = double.NaN)
+        { return elevation + (touchdown - along - LookAheadM) * Slope(slope); }
         internal static double VerticalSpeed(double targetAltitude, double altitude, double speed, double cross)
         { return (targetAltitude - altitude) * Math.Max(0, speed) / Math.Sqrt(LookAheadM * LookAheadM + cross * cross); }
     }

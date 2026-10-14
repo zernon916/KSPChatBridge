@@ -834,7 +834,7 @@ namespace KSPChatBridge
                 double arcFf = mode == "landing" && runway != null && runway.Phase == "entry" ? runway.ArcBank : 0;   // curvature feed-forward; heading error is the trim
                 double hdgErr = FlightPolicy.Wrap(heading - FlightGlobals.ship_heading);   // T6: one signed heading error feeds both the bank and the rudder asks
                 double hdgRate = dt > 0 && !double.IsNaN(lastRudderHdg) ? FlightPolicy.Wrap(FlightGlobals.ship_heading - lastRudderHdg) / dt : 0; lastRudderHdg = FlightGlobals.ship_heading;
-                bool wantRudder = !directBank.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !(Time.realtimeSinceStartup < rudderOffUntil) && PilotPolicy.RudderSteer(hdgErr, rudderOn, vessel.srfSpeed);   // T6: an explicit bank ask (roll hold / plan circle) and the ground roll keep their own yaw
+                bool wantRudder = !directBank.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !(Time.realtimeSinceStartup < rudderOffUntil) && PilotPolicy.RudderSteer(hdgErr, rudderOn, vessel.srfSpeed, mode == "landing");   // T6: an explicit bank ask (roll hold / plan circle) and the ground roll keep their own yaw
                 if (wantRudder && rudderOn && PilotPolicy.RudderStuck(Time.realtimeSinceStartup - rudderSince, hdgErr, rudderHdg0)) { wantRudder = false; rudderOffUntil = Time.realtimeSinceStartup + PilotPolicy.RudderCoolOffS; }   // no progress on the rudder (no authority / a moving target): the bank takes the error back
                 if (wantRudder != rudderOn)
                 {   // T6 decision log: which axis is flying the heading, and why it handed back

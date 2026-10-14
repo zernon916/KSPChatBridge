@@ -115,22 +115,24 @@ namespace KSPChatBridge
     {
 
         internal const double GlideDeg = 3, LocFullScale = 2.5, GsFullScale = .7;
-        internal sealed class Reading { internal double LocDeg, GsDeg, DmeM, CrossM, AboveGsM, Course; internal bool Front; }
-        internal static Reading Compute(double lat, double lon, double alt, double thrLat, double thrLon, double endLat, double endLon, double elevation, double radius, double touchdownM = 300)
+        internal sealed class Reading { internal double LocDeg, GsDeg, DmeM, CrossM, AboveGsM, Course, Slope; internal bool Front; }
+        internal static Reading Compute(double lat, double lon, double alt, double thrLat, double thrLon, double endLat, double endLon, double elevation, double radius, double touchdownM = 300, double slope = double.NaN)
         {
             double crs = NavigationMath.Bearing(thrLat, thrLon, endLat, endLon), len = NavigationMath.Distance(thrLat, thrLon, endLat, endLon, radius);
             double d = NavigationMath.Distance(thrLat, thrLon, lat, lon, radius), th = FlightPolicy.Wrap(NavigationMath.Bearing(thrLat, thrLon, lat, lon) - crs) * Math.PI / 180;
             double along = d * Math.Cos(th), cross = d * Math.Sin(th);   // along < 0 = before the threshold; cross > 0 = right of centerline
             var r = new Reading { Course = crs, DmeM = d, CrossM = cross, Front = along < len };
             r.LocDeg = Math.Atan2(cross, len - along) * 180 / Math.PI;                       // + = right of the localizer course (fly left)
-            double toGs = touchdownM - along, path = elevation + Math.Max(0, toGs) * Math.Tan(GlideDeg * Math.PI / 180);
+            r.Slope = FinalApproachPolicy.Slope(slope);
+            double glide = Math.Atan(r.Slope) * 180 / Math.PI;
+            double toGs = touchdownM - along, path = elevation + Math.Max(0, toGs) * r.Slope;
             r.AboveGsM = alt - path;
-            r.GsDeg = Math.Atan2(alt - elevation, Math.Max(1, toGs)) * 180 / Math.PI - GlideDeg; // + = above the glideslope (fly down)
+            r.GsDeg = Math.Atan2(alt - elevation, Math.Max(1, toGs)) * 180 / Math.PI - glide; // + = above the glideslope (fly down)
             return r;
         }
         /// <summary>Hand-flying flight director: heading to steer onto the localizer, VS to hold/capture the 3 deg path (pure; tested).</summary>
         internal static double FdHeading(Reading r, double speed) { return (r.Course - FlightPolicy.Clamp(Math.Atan2(r.CrossM, Math.Max(1500, 10 * speed)) * 180 / Math.PI, -30, 30) + 360) % 360; }
-        internal static double FdVs(Reading r, double speed) { return FlightPolicy.Clamp(-speed * Math.Tan(GlideDeg * Math.PI / 180) - .1 * r.AboveGsM, -15, 3); }
+        internal static double FdVs(Reading r, double speed) { return FlightPolicy.Clamp(-speed * FinalApproachPolicy.Slope(r.Slope) - .1 * r.AboveGsM, -15, 3); }
         /// <summary>IAS vs target approach speed: green within 5, amber within 10, else red.</summary>
         /// <summary>Oct 12: with a learned-decel prediction, "fast" is judged on the predicted touchdown speed vs landing speed (slow stays vs the target).</summary>
         internal static string SpeedBand(double ias, double target, double predicted, double app)
