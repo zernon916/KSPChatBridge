@@ -1,0 +1,144 @@
+# ROCKET_PLAN - AICS rockets: planner, tablet, flight, landing
+Draft - going over with Luke. Nothing here is approved yet.
+
+## RULES (read every pass)
+- FIRST every pass: read NOTES.md + CHEATSHEET.md. Search for names, read ~100 lines around them. Never read whole big files (AicsMfd.cs, AicsMenu.cs, FlightMissions.cs, LearnFlight.cs).
+- Do ONLY the first unchecked [ ] task that is not [BIG - Grok/Cursor]. Then STOP.
+- Pure math goes in new static classes with no KSP types, plus a harness group in tests\csharp (Program.cs runner). Build KSPChatMod Release + tests, 0 errors.
+- Log decisions with ChatLog.Write(kind, text). Chat lines with ChatWindow.Notice(...); crew lines with IntercomTalk.Fmt(name, trait, text) then Notice.
+- Tools: add a case in NativeFlightController.Execute + name in NativeCommands.Ported. UI calls ChatWindow.ToolFromMenu(name, json).
+- When done: mark [x], add one "done:" line (files, what, risks). Add one line to NOTES.md for new files.
+
+## 0. Principles
+- MechJeb is GPL: read it for ideas only. Never copy code, names of internals, or constants tables. Existing MechJebLink/NativeMechJebOps stay as an optional path.
+- No separate rocket Learn step. Read live data (thrust, mass, Isp, drag, density) every tick and adapt as it flies.
+- Plan at about the middle of what the craft can do (e.g. TWR, turn rate, throttle) to keep margin both ways.
+- Every decision gets one ChatLog line with the reason (staging, throttle, abort, burn start).
+- Chat/crew status is plain English, one line: "Stage 2 empty, staging." / "We are 300 m/s short for Mun landing."
+
+## 1. Screen split (Luke's rule) - decide with Luke
+Cockpit screen (AicsMenu.DrawMfdWindow / AicsIvaMfd / MfdNav groups) = only what matters for flying now: map, chart/ILS, live flight info.
+Tablet = planning + tests. Map/charts may show on both. Full screen overhaul stays flexible.
+- [ ] S1: List every MfdNav group/item in a table here (id, label, cockpit or tablet?). Read-only; no code. Luke decides each row.
+- [ ] S2: Decide with Luke: final cockpit page list. Write it under this task.
+- [ ] S3: Add a flag per MfdNav.Item "Tablet" (bool, default false). No behaviour change yet.
+- [ ] S4: Hide items with Tablet=true from the cockpit MFD and AicsIvaMfd page lists (after T1 exists).
+- [x] S5: Move "learn" page (NativeFlightController.LearnLines, MfdNav "learn" buttons) to the tablet Tests tab; keep START LEARN/TOGGLE/SKIP buttons working.
+- [ ] S6: Tests tab per-test card: name, what it measures, status, result numbers. Data from NativeLearn.LearnLines; add a small struct if needed.
+- [ ] S7: Tests tab: small graph per test (reuse T10 line graph) where the test has samples (decel, climb, stall).
+- [ ] S8 [BIG - Grok/Cursor]: Full cockpit vs tablet overhaul once Luke finalises S2.
+
+## 2. Foundation: data readers (no UI)
+- [ ] D1: New StageReader.cs: read stock VesselDeltaV (vessel.VesselDeltaV.OperatingStageInfo). Per stage: dv vac/asl/actual, TWR vac/asl, burn time, start/end mass, fuel mass, Isp vac/asl. Return plain StageInfo list (no KSP types out).
+- [ ] D2: StageReader: handle VesselDeltaV not ready (null / IsReady false) -> empty list + one log line, retry next second.
+- [ ] D3: StageReader in editor (EditorLogic ship) so the planner works in VAB/SPH.
+- [ ] D4: New LiveRocket.cs snapshot each tick: alt, radar alt, vertical/horizontal speed, q (kPa), static pressure, density, available thrust, mass, local g, max temp ratio, current stage, angular rate.
+- [ ] D5: LiveRocket: available thrust and fuel flow from active engines only (respect thrust limiter, flameout).
+- [ ] D6: BodyInfo helper: gravParameter, radius, atmosphere depth, SOI, rotation period, parent; for any CelestialBody by name.
+
+## 3. Foundation: pure math + tests
+- [ ] M1: RocketMath.Hohmann(mu, r1, r2) -> dv1, dv2, transfer time. Tests: LKO->Mun known numbers.
+- [ ] M2: RocketMath.Circularize(mu, r, apo, peri) dv. Tests.
+- [ ] M3: RocketMath.PhaseAngle(mu, r1, r2) target phase for same-SOI transfer. Tests.
+- [ ] M4: RocketMath.EjectionAngle + ejection dv for interplanetary (patched conics, hyperbolic excess). Tests Kerbin->Duna.
+- [ ] M5: RocketMath.CaptureDv(mu, rPeri, vInf, targetApo). Tests.
+- [ ] M6: RocketMath.BurnTime(dv, mass, thrust, isp) via rocket equation, across stages. Tests.
+- [ ] M7: LegBudget: needs per leg (launch, circularize, transfer, capture, land, return). Launch dv rough estimate from body (orbit speed + gravity/drag loss guess). Tests.
+- [ ] M8: StageAllocator: assign legs to stages from StageInfo list; returns spare/short per leg and which stage burns it. Tests incl. leg split across 2 stages.
+- [ ] M9: WindowFinder: next time phase angle matches (same SOI and around Sun). Tests.
+- [ ] M10 [BIG - Grok/Cursor]: Porkchop grid (Lambert solver, departure x travel time -> dv). Tests vs known Kerbin-Duna window.
+- [ ] M11: SuicideBurn.StartAlt(vs, g, thrust, mass, margin) -> altitude to start burn. Tests.
+- [ ] M12: AscentProfile.TurnStart(twr) and pitch-vs-alt curve chosen from live TWR (mid-capability). Tests.
+- [ ] M13: StagingPolicy.ShouldStage(flameout, tank empty, timeSince) with 0.5 s delay + reason string. Tests.
+- [ ] M14: FairingPolicy.CanDeploy(q, alt, heatRatio): q<1 kPa or alt>40 km, and low heat. Tests.
+- [ ] M15: AbortPolicy.Check(angRate, attErr, thrustDrop) -> reason or null. Tests for tumble + thrust loss.
+
+## 4. Tablet window
+Opens from a page in the AICS control box (AicsMenu MFD). Separate GUI.Window id.
+- [x] T1: New TabletWindow.cs (partial AicsMenu or own MonoBehaviour): empty window, rounded frame + bezel drawn with MfdInk/MfdCanvas style, close button.
+- [x] T2: Bottom tabs Mission / Burns / Map / Graphs / Tests; current tab saved.
+- [x] T3: Draggable (GUI.DragWindow on bezel) + resize corner, min size; save rect in the same settings file as mfdRect (AicsMenu.cs ~1124 keys "tx/ty/tw/th").
+- [x] T4: Stays visible in map view and flight; hidden in editor unless Mission tab used there.
+- [x] T5: Bigger fonts (own GUIStyle, size setting), readable at 1080p.
+- [x] T6: MFD page "tablet" in MfdNav groups with button OPEN TABLET.
+- [x] T7: Map tab reuses MapWindow drawing (same as cockpit map).
+
+## 5. Mission Planner (Mission tab)
+- [ ] P1: Destination picker: body list from FlightGlobals.Bodies, target orbit altitude or LAND, return yes/no.
+- [ ] P2: Stage table: per stage dv, TWR, burn time, mass, fuel, Isp vac/asl from StageReader (exact stock numbers).
+- [ ] P3: Legs table: needs per leg from LegBudget.
+- [ ] P4: Pass/fail bar: total have vs need, green spare / red short, and which stage is spare or short (StageAllocator).
+- [ ] P5: Crew comment on margin via IntercomTalk.Fmt ("Plenty of spare, 400 m/s." / "We won't make it home.").
+- [ ] P6: Live update in flight: actual dv used vs planned per leg; log big differences.
+- [ ] P7: Save/load chosen mission per craft (MiniJson, AtomicFile).
+
+## 6. Burns + KSP maneuver nodes (Burns tab)
+- [ ] N1: NodeReader: read user-placed nodes (vessel.patchedConicSolver.maneuverNodes): dv, UT, burn time (M6), which stage.
+- [ ] N2: Burn cards: dv, burn time, stage, fuel left after, start time (T- countdown).
+- [ ] N3: NodeWriter: create a real node at UT with prograde/normal/radial dv. Log it.
+- [ ] N4: Plan nodes: circularize at Ap/Pe.
+- [ ] N5: Plan nodes: same-SOI Hohmann transfer to target body (M1+M3+M9).
+- [ ] N6 [BIG - Grok/Cursor]: Interplanetary ejection node (M4) + refine on patched conics until encounter.
+- [ ] N7 [BIG - Grok/Cursor]: Mid-course correction node to fix periapsis at target.
+- [ ] N8: Capture node at target periapsis (M5).
+- [ ] N9: Warp to window / node minus burn half + margin (TimeWarp.fetch.WarpTo). Log.
+
+## 7. Graphs / pictures (Graphs tab)
+- [ ] G1: Simple line/bar graph helper on MfdCanvas (axes, labels). No data yet.
+- [ ] G2: Dv per stage bar chart (have vs need colour).
+- [ ] G3: Fuel/burn timeline: stages along time, burns marked.
+- [ ] G4: Transfer diagram: orbits as circles, transfer ellipse, planet positions at departure and arrival.
+- [ ] G5: Porkchop plot from M10 (colour grid, best point marked).
+
+## 8. Flight functions
+New partial NativeRocket.cs on NativeFlightController; writes FlightCtrlState only in Fly path. Tools: rocket_ascent, rocket_node, rocket_point, rocket_stop.
+- [ ] F1: Point-at modes: prograde, retro, normal, antinormal, radial in/out, target, node. Own attitude PD, mid-strength torque use. Log mode changes.
+- [ ] F2: MFD cockpit buttons for point-at (replace mjatt buttons when MechJeb absent; MfdNav.SmartMode stays for MJ).
+- [ ] F3: Auto-staging loop using M13; plain line "Stage 1 empty, staging." + log reason.
+- [ ] F4: Fairings via M14; log why now.
+- [ ] F5 [BIG - Grok/Cursor]: Ascent guidance: gravity turn from live TWR (M12), throttle down near max q, to target altitude/inclination, coast to Ap, circularize node.
+- [ ] F6: Abort monitor (M15): cut throttle, abort group, crew panic chatter (CrewChatter/IntercomTalk), log.
+- [ ] F7: Node executor: point at node, start at half burn time early, ease throttle in last ~1 s of dv, stop at <0.1 m/s. Log.
+- [ ] F8: Planner live-updates after each burn (P6 hook).
+
+## 9. Landing
+Airless first.
+- [ ] L1: Deorbit burn for "land below me" (lower Pe under surface near current ground track). Log.
+- [ ] L2: Suicide burn timing from local g + available thrust (M11), live recompute each tick.
+- [ ] L3: Radar altitude + slope check (raycast or terrain normal); crew warns if slope too steep, nudge sideways.
+- [ ] L4: Slow final touchdown (hold ~2 m/s below 20 m, kill horizontal speed, gear down). Reuse VerticalLandingPolicy where it fits.
+- [ ] L5 [BIG - Grok/Cursor]: Atmosphere landing: live density/pressure drag estimate (no per-planet tables), chute deploy safe speed, final burn timing.
+- [ ] L6 [BIG - Grok/Cursor]: Land at map-click target (MapWindow click -> lat/lon -> deorbit timing + correction).
+
+## 10. Later / BIG
+- [ ] R1 [BIG - Grok/Cursor]: Rendezvous (phasing, intercept, kill relative velocity).
+- [ ] R2 [BIG - Grok/Cursor]: Docking (port align, RCS translate, slow approach).
+
+## Open questions for Luke
+- Tablet: own MonoBehaviour or partial AicsMenu?
+- Which MFD pages stay in cockpit (S2)?
+- Keep MechJeb buttons when our own rocket functions exist?
+## 11. Campaigns - multi-launch missions (Luke, Oct 13)
+- [ ] C1: Campaign data model: name, ordered phases (goal: orbit alt/inc | dock with vessel | land at site), craft per phase, status; save per game in PluginData.
+- [ ] C2: Tablet Campaign tab: create/edit campaign, add/reorder phases, show done/next.
+- [ ] C3: Per-phase dv check + burn plan reusing the Mission Planner.
+- [ ] C4: Track vessels created by each phase (by vessel id) so later phases can target them.
+- [ ] C5: Launch timing for phases that target an earlier vessel (launch window to its orbit plane/phase).
+- [ ] C6: Crew chatter + chat status at phase start/complete.
+- [ ] C7: [BIG - Grok/Cursor] Run a phase end-to-end with the autopilot (needs ascent, rendezvous, docking).
+
+
+## 12. Tablet info screens (Luke, Oct 13)
+- [ ] I1: Body encyclopedia tab: every planet/moon read live from CelestialBody - gravity, radius, SOI, atmosphere (height, pressure, density, oxygen), rotation, day length, orbit, biomes list, highest peak, low-orbit altitude, landing dv estimate.
+- [ ] I2: Body picture: small orbit diagram + body color swatch; tap a body to open its page.
+- [ ] I3: Ship info page (extend existing): parts, mass wet/dry, dv per stage, TWR per body, crew, science on board, electric charge use/production, antenna range.
+- [ ] I4: Science tracker: per body/biome/situation what's done vs available, best next science, KSC mini-biome list.
+- [ ] I5: Comms page: antenna power, connection to KSC, signal strength, blackout times.
+- [ ] I6: Resources page: fuel, oxidizer, monoprop, electric, ore with time-remaining estimates.
+- [ ] I7: Crew page: kerbal names, traits, levels, experience, who is on what vessel.
+- [ ] I8: Contracts page: active contracts with progress + which campaign phase could finish them.
+- [ ] I9: Dv map: simplified stock dv chart drawn from live body data (Kerbin to each body + back).
+- [ ] I10: Flight log page: recent AICS events, warnings, glitches with timestamps (for Luke's time-note bug reports).
+- [ ] I11: Calculator page: quick Hohmann / orbit period / burn time calculator.
+
+- [ ] I1a BIG planet page live view: small extra camera on the real body, slow spin, drawn to a RenderTexture in the tablet; info beside it (gravity, atmo height, day length, SOI, dv to orbit) read live from CelestialBody; fallback snapshot if camera fails; button opens matching KSPedia page; write own blurbs, never copy KSPedia text/art.
