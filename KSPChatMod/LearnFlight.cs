@@ -85,6 +85,8 @@ namespace KSPChatBridge
             Decel = double.NaN, Accel = double.NaN, Lag = double.NaN, EconSpeed = double.NaN, EconThrottle = double.NaN, FuelUsed = double.NaN;
         internal bool Complete; internal string Abort = "", Date = "";
         /// <summary>Shape at last LEARN write; null on legacy profiles.</summary>
+        internal string LearningSession = "";
+        internal int AcceptedSamples, RejectedSamples;
         internal CraftFingerprint Fingerprint;
         internal readonly List<double[]> Turns = new List<double[]>();   // bank, g, turn rate deg/s, alt loss m, max stress/heat 0..1, mass t, throttle to hold speed
         internal readonly List<double[]> Dives = new List<double[]>();   // pitch, sink m/s, speed gain m/s
@@ -168,7 +170,7 @@ namespace KSPChatBridge
             var sk = new List<object>(); foreach (var x in Sink) sk.Add(new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN });
             var dict = new Dictionary<string, object> { { "m0", N(M0) }, { "liftoff", N(Liftoff) }, { "stall", N(Stall) }, { "stall_alt_loss", N(StallAltLoss) }, { "climb_accel", N(ClimbAccel) }, { "climb_vs", N(ClimbVs) },
                 { "decel", N(Decel) }, { "accel", N(Accel) }, { "lag", N(Lag) }, { "econ_speed", N(EconSpeed) }, { "econ_throttle", N(EconThrottle) }, { "fuel_used", N(FuelUsed) },
-                { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
+                { "learning_session", LearningSession }, { "accepted_samples", AcceptedSamples }, { "rejected_samples", RejectedSamples }, { "quality_version", 1 }, { "complete", Complete }, { "abort", Abort }, { "date", Date }, { "turns", t }, { "dives", dv }, { "sink_table", sk }, { "samples", sm }, { "perf", Perf.ToDict() }, { "rerun", Rerun.ConvertAll(x => (object)x) }, { "sink_flaps", SinkFlaps.ConvertAll(x => (object)new List<object> { Math.Round(x[0], 1), Math.Round(x[1], 3), Math.Round(x[2], 1), x.Length > 3 ? Math.Round(x[3], 2) : double.NaN, x.Length > 4 ? Math.Round(x[4], 1) : double.NaN }) },
                 { "turn_envelope", Envelope.ConvertAll(x => (object)new List<object>(Array.ConvertAll(x, v => double.IsNaN(v) ? null : (object)Math.Round(v, 2)))) }, { "flap_stall", N(FlapStall) }, { "flap_stall_alt_loss", N(FlapStallAltLoss) }, { "flap_limit", N(FlapLimit) }, { "ceiling", N(Ceiling) }, { "flap_sub", FlapSub }, { "flap_stall_sub", FlapStallSub }, { "curves", Curves.ToDict() } };
             dict["touchdown_aoa"] = N(TouchdownAoa);
             if (Fingerprint != null && Fingerprint.Present) dict["fingerprint"] = Fingerprint.ToDict();
@@ -180,6 +182,10 @@ namespace KSPChatBridge
         internal static PlaneProfile FromDict(Dictionary<string, object> d)
         {
             if (d == null) return null; var p = new PlaneProfile();
+            object quality;
+            if (d.TryGetValue("learning_session", out quality) && quality != null) p.LearningSession = Convert.ToString(quality);
+            double count = D(d, "accepted_samples"); if (!double.IsNaN(count) && count >= 0 && count <= int.MaxValue) p.AcceptedSamples = (int)count;
+            count = D(d, "rejected_samples"); if (!double.IsNaN(count) && count >= 0 && count <= int.MaxValue) p.RejectedSamples = (int)count;
             double touchdownAoa = D(d, "touchdown_aoa");
             p.TouchdownAoa = FlarePolicy.ValidAoa(touchdownAoa) ? touchdownAoa : double.NaN;
             p.M0 = D(d, "m0"); p.Liftoff = D(d, "liftoff"); p.Stall = D(d, "stall"); p.StallAltLoss = D(d, "stall_alt_loss"); p.ClimbAccel = D(d, "climb_accel"); p.ClimbVs = D(d, "climb_vs");
@@ -219,7 +225,7 @@ namespace KSPChatBridge
     {
         internal double Rho; /* air density kg/m3, 0 = unknown */ internal bool HomeKnown; internal double HomeDist, HomeBrg; /* to KSC 27, m / deg */ internal double T, Speed, Alt, Agl, Vs, Pitch, G, GLimit, FuelFrac, FuelRate, Stress, TurnRate, Throttle, Liftoff, StallGuess, Mass, GroundSpeed, RollRate, PitchRate, Trim, ThrustFrac, Bank;
         /// <summary>TurnRate = heading rate (wrapTo180(dHdg)/dt, smoothed); CourseRate = velocity-vector track rate; Heading deg.</summary>
-        internal double CourseRate, Heading;
+        internal double CourseRate, Heading, WarpRate;
         /// <summary>Flight-path angle (deg) from Vs and the horizontal surface speed; NaN without a horizontal speed (then nose pitch is used).</summary>
         internal double Fpa { get { return GroundSpeed > 1 ? PilotPolicy.FlightPathAngle(Vs, GroundSpeed) : double.NaN; } }
         internal bool HasFlaps;
@@ -231,6 +237,20 @@ namespace KSPChatBridge
     /// (NaN = leave that axis to the normal controller).</summary>
     internal sealed class LearnFlight
     {
+        readonly LearningSampleGate sampleGate = new LearningSampleGate();
+        readonly string session = Guid.NewGuid().ToString("N");
+        int accepted, rejected;
+        bool restartSample;
+        internal bool SamplingBlocked { get; private set; }
+        internal void RestoreMissingResults()
+        {
+            if (prior == null) return;
+            if (P.Dives.Count == 0) P.Dives.AddRange(prior.Dives);
+            if (P.Envelope.Count == 0) P.Envelope.AddRange(prior.Envelope);
+            if (P.Turns.Count == 0) P.Turns.AddRange(prior.Turns);
+            if (P.Sink.Count == 0) P.Sink.AddRange(prior.Sink);
+            if (P.SinkFlaps.Count == 0) P.SinkFlaps.AddRange(prior.SinkFlaps);
+        }
         internal string Phase = "start", Status = "", Reason = "";
         internal double Throttle = double.NaN, Pitch = double.NaN, Bank = double.NaN, Elevator = double.NaN, Aileron = double.NaN, SpeedTarget = double.NaN;
         /// <summary>Steps that explicitly test idle/full power (fast but finite throttle ramp); every other step goes through the speed PI.</summary>
@@ -694,6 +714,7 @@ namespace KSPChatBridge
         }
         void Finish(bool aborted, string why)
         {
+            RestoreMissingResults();
             if (prior != null && Only != null)
             {   // keep the old setup data unless that step was selected
                 if (!Only.Contains(1)) { P.Liftoff = prior.Liftoff; P.Perf.GroundRoll = prior.Perf.GroundRoll; }
@@ -826,6 +847,23 @@ namespace KSPChatBridge
         internal void Step(LearnIn i)
         {
             if (Done) return;
+            bool finite = LearningSampleGate.Finite(i.T) && LearningSampleGate.Finite(i.Speed) && LearningSampleGate.Finite(i.Alt) && LearningSampleGate.Finite(i.Vs) && LearningSampleGate.Finite(i.Pitch) && LearningSampleGate.Finite(i.Bank);
+            SamplingBlocked = !sampleGate.Accept(i.T, i.WarpRate, finite);
+            P.LearningSession = session;
+            if (SamplingBlocked)
+            {
+                P.RejectedSamples = ++rejected; restartSample = true;
+                Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN;
+                Status = "Sampling suspended: normal time and 3 seconds of settled telemetry required.";
+                return;
+            }
+            P.AcceptedSamples = ++accepted;
+            if (restartSample)
+            {
+                restartSample = false; prevStepT = tickPrevT = double.NaN;
+                Go(Phase, i, "Sampling resumed; restarting the interrupted segment.");
+                if (Done) return;
+            }
             last = i;
             if (double.IsNaN(P.M0)) P.M0 = i.Mass;
             if (double.IsNaN(fuel0)) fuel0 = i.FuelFrac; P.FuelUsed = fuel0 - i.FuelFrac;
@@ -982,7 +1020,10 @@ namespace KSPChatBridge
                         Pitch = FpaPitch(i, -p, tick);
                         if (!Reached(i, Math.Abs((double.IsNaN(gam) ? i.Pitch : gam) + p) < 2) && i.Alt >= 2000 && i.Speed <= 320) { v0 = i.Speed; return; }
                         if (n == 0) v0 = i.Speed; gSum += i.Vs; n++;
-                        if (i.T - reachAt >= DiveSeg || i.Alt < 2000 || i.Speed > 320) { P.Dives.Add(new double[] { p, -gSum / Math.Max(1, n), i.Speed - v0, i.Mass }); idx++; Go("recover", i, null); }
+                        if (i.T - reachAt >= DiveSeg || i.Alt < 2000 || i.Speed > 320) { if (n >= 5 && i.T - reachAt >= 1 && Math.Abs((double.IsNaN(gam) ? i.Pitch : gam) + p) < 2)
+                            P.Dives.Add(new double[] { p, -gSum / n, i.Speed - v0, i.Mass });
+                        else if (!Redo.Contains(8)) Redo.Add(8);
+                        idx++; Go("recover", i, null); }
                         return;
                     }
                 case "sinkprep":
@@ -1285,6 +1326,19 @@ namespace KSPChatBridge
             if (phase == "flare" || phase == "rollout" || phase == "stopped") return 3;
             if (phase != "final" && phase != "intercept") return 0;
             if (distM < .5 * shortFix) return 3; if (distM < shortFix) return 2; if (distM < 2 * shortFix) return 1; return 0;
+        }
+    }
+    internal sealed class LearningSampleGate
+    {
+        double settleUntil = double.NegativeInfinity; bool interrupted;
+        internal static bool Finite(double n) { return !double.IsNaN(n) && !double.IsInfinity(n); }
+        internal bool Accept(double now, double rate, bool valid)
+        {
+            if (!Finite(now)) { settleUntil = double.PositiveInfinity; return false; }
+            if (double.IsPositiveInfinity(settleUntil)) settleUntil = now + 3;
+            if (!valid || !Finite(rate) || rate > 1) { interrupted = true; settleUntil = now + 3; return false; }
+            if (interrupted) { interrupted = false; settleUntil = now + 3; }
+            return now >= settleUntil;
         }
     }
 }

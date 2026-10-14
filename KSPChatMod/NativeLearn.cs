@@ -73,7 +73,13 @@ namespace KSPChatBridge
             double stress = 0; foreach (Part p in vessel.parts) { if (p.maxTemp > 0) stress = Math.Max(stress, p.temperature / p.maxTemp); if (p.skinMaxTemp > 0) stress = Math.Max(stress, p.skinTemperature / p.skinMaxTemp); }
             var i = BuildIn(t, frac, rate, tr, stress, pitch);
             learn.Step(i);
-            if (learn.TestsDone != learnTestsSaved) { learnTestsSaved = learn.TestsDone; profile = learn.P; SaveProfile(learn.P); ChatLog.Write("learn", "test done, profile saved: " + learn.P.Summary()); }
+            if (learn.SamplingBlocked)
+            {
+                learnRates.Reset(); learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN;
+                directPitch = directBank = directVs = null; bankOverride = false;
+                return;
+            }
+            if (learn.TestsDone != learnTestsSaved) { learnTestsSaved = learn.TestsDone; learn.RestoreMissingResults(); profile = learn.P; SaveProfile(learn.P); ChatLog.Write("learn", "test done, profile saved: " + learn.P.Summary()); }
             EngineDrillTick(t, i.ThrustFrac);
             if (learn.Phase == "stallsink") StallCrew();   // Oct 12: the stall break (power idle, so the emergency branch may not fire)
             if (learn.Status != learnLast) { learnLast = learn.Status; ChatLog.Write("learn", learn.Phase + ": " + learn.Status); ChatWindow.Notice("[LEARN] " + learn.Status); }
@@ -139,7 +145,7 @@ namespace KSPChatBridge
             var used = new List<string>(); foreach (var kv in res) { double pv; if (resPrev.TryGetValue(kv.Key, out pv) && kv.Value < pv - 1e-6 && kv.Key != "ElectricCharge" && kv.Key != "IntakeAir") used.Add(kv.Key); } resPrev = res;
             return new LearnIn { T = t, Speed = vessel.srfSpeed, Alt = vessel.altitude, Agl = vessel.radarAltitude, Vs = vessel.verticalSpeed, Pitch = pitch, G = vessel.geeForce, GLimit = ApproachProfile.StructG,
                 FuelFrac = frac, FuelRate = rate, Stress = stress, TurnRate = tr, CourseRate = learnRates.CourseRate, Heading = FlightGlobals.ship_heading, Throttle = double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out, Liftoff = takeoff != null ? takeoff.LiftoffSpeed : double.NaN, StallGuess = PilotPolicy.TasStall(stall, vessel.atmDensity), Rho = vessel.atmDensity, HomeKnown = vessel.mainBody != null && vessel.mainBody.bodyName == "Kerbin", HomeDist = vessel.mainBody == null ? 0 : NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.Lat, KscRunway.Lon27, vessel.mainBody.Radius), HomeBrg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, KscRunway.Lat, KscRunway.Lon27), Mass = vessel.totalMass,
-                Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
+                WarpRate = TimeWarp.CurrentRate, Landed = vessel.LandedOrSplashed, PartLost = vessel.parts.Count < learnParts,
                 HasFlaps = flaps.Count > 0, Bank = Roll(), GroundSpeed = vessel.horizontalSrfSpeed, RollRate = learnRates.RollRate, PitchRate = learnRates.PitchRate, Trim = vessel.ctrlState.pitchTrim, ThrustFrac = thrMax > 0 ? thr / thrMax : 0, Res = string.Join(",", used.ToArray()) };
         }
         void DoneCheck()
@@ -178,7 +184,7 @@ namespace KSPChatBridge
                 if (lastLearn.TrackLanding(BuildIn(Planetarium.GetUniversalTime(), fr, 0, 0, 0, 0))) { SaveProfile(lastLearn.P); ChatLog.Write("learn", "rollout " + lastLearn.P.Perf.Rollout.ToString("0") + " m"); ChatWindow.Notice("[LEARN] Landing rollout " + lastLearn.P.Perf.Rollout.ToString("0") + " m. Profile complete."); }
                 return;
             }
-            if (learn == null || learn.Phase == "takeoff" || mode == "takeoff") return;
+            if (learn == null || learn.SamplingBlocked || learn.Phase == "takeoff" || mode == "takeoff") return;
             if (!double.IsNaN(learn.Throttle) && double.IsNaN(learn.SpeedTarget)) { c.mainThrottle = (float)learn.Throttle; throttleKind = learn.TestThrottle ? "test" : "pi"; throttleWhy = "learn " + learn.Phase; }
             if (!double.IsNaN(learn.Aileron)) c.roll = (float)learn.Aileron;
             if (!double.IsNaN(learn.Elevator)) c.pitch = (float)learn.Elevator;

@@ -7,6 +7,17 @@ static class LandingRepairTests
     internal static void Run()
     {
         Check(!PilotPolicy.RudderSteer(1.9, false, 80, true), "localizer bank correction is not suppressed by rudder-only steering");
+        var invalid = new LearnFlight();
+        invalid.Step(new LearnIn { T = 0, Speed = double.NaN, Alt = 5000, FuelFrac = 1 });
+        Check(invalid.Phase == "start", "nonfinite telemetry cannot advance learning");
+        var sg = new LearningSampleGate();
+        Check(sg.Accept(0, 1, true) && !sg.Accept(1, 2, true), "physics warp samples rejected");
+        Check(!sg.Accept(2, 1, true) && !sg.Accept(4.99, 1, true) && sg.Accept(5, 1, true), "three second settle after warp");
+        var warped = new LearnFlight(); warped.P.Decel = 2;
+        warped.Step(new LearnIn { T = 500, WarpRate = 100, Speed = 100, Alt = 5000, FuelFrac = 1 });
+        Check(warped.Phase == "start" && warped.P.Decel == 2 && warped.P.RejectedSamples == 1, "warp neither advances tests nor replaces known values");
+        var qp = PlaneProfile.FromDict(warped.P.ToDict());
+        Check(qp.LearningSession == warped.P.LearningSession && qp.RejectedSamples == 1, "learning provenance survives persistence");
         double ci = 0, crab = 0;
         RunwayMission.CenterlineHeading(50, 270, 270, 80, ref ci, 8, 270, ref crab, false, 1500);
         Check(ci > 0, "persistent 50 metre offset participates in integral correction");
