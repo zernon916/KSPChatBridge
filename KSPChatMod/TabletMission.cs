@@ -89,7 +89,60 @@ namespace KSPChatBridge
                         }
                     }
 
-                    GUILayout.Space(legsY + legsHeight + gap);
+                    double[] stageDv = new double[stages.Count];
+                    double have = 0;
+                    for (int i = 0; i < stages.Count; i++)
+                    {
+                        stageDv[i] = stages[i].DvActual;
+                        have += stageDv[i];
+                    }
+                    string[] legNames = new string[legs.Count];
+                    double[] legDv = new double[legs.Count];
+                    double need = 0;
+                    for (int i = 0; i < legs.Count; i++)
+                    {
+                        legNames[i] = legs[i].Name;
+                        legDv[i] = legs[i].Dv;
+                        need += legDv[i];
+                    }
+
+                    List<LegResult> allocation = StageAllocator.Allocate(stageDv, legNames, legDv);
+                    bool allSpare = legs.Count > 0 && allocation.Count > 0;
+                    HashSet<string> allocatedLegs = new HashSet<string>();
+                    for (int i = 0; i < allocation.Count; i++)
+                    {
+                        allocatedLegs.Add(allocation[i].Leg);
+                        if (allocation[i].Spare < 0) allSpare = false;
+                    }
+                    if (allocatedLegs.Count < legs.Count) allSpare = false;
+
+                    float allocationY = legsY + legsHeight + gap;
+                    float barHeight = Mathf.Max(44, row * 1.4f);
+                    float allocationHeight = pad + barHeight + gap + row * Math.Max(1, allocation.Count);
+                    Rect allocationCard = TabletUi.CardPanel(new Rect(0, allocationY, width, allocationHeight), "STAGE ALLOCATION");
+                    float fraction = need > 0 ? (float)Math.Max(0, Math.Min(1, have / need)) : 0;
+                    string totals = have.ToString("0", CultureInfo.InvariantCulture) + " / " +
+                        need.ToString("0", CultureInfo.InvariantCulture) + " m/s";
+                    TabletUi.Bar(new Rect(allocationCard.x, allocationCard.y, allocationCard.width, barHeight),
+                        "HAVE vs NEED", fraction, totals, allSpare ? TabletUi.Good : TabletUi.Bad);
+                    if (allocation.Count == 0)
+                    {
+                        TabletUi.Label(new Rect(allocationCard.x, allocationCard.y + barHeight + gap,
+                            allocationCard.width, row), "No stage allocation available.", true);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < allocation.Count; i++)
+                        {
+                            LegResult result = allocation[i];
+                            string line = string.Format(CultureInfo.InvariantCulture,
+                                "{0} on S{1}, spare {2:0}", result.Leg, result.Stage, result.Spare);
+                            TabletUi.Label(new Rect(allocationCard.x, allocationCard.y + barHeight + gap + i * row,
+                                allocationCard.width, row), line, true);
+                        }
+                    }
+
+                    GUILayout.Space(allocationY + allocationHeight + gap);
                 }
                 finally
                 {
