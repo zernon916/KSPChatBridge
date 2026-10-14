@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace KSPChatBridge
 {
@@ -65,6 +66,42 @@ namespace KSPChatBridge
                 try { SetGroup(v, KSPActionGroup.SAS, previousSas); } catch (Exception) { }
                 pointStatus = "Native point-at unavailable: " + ex.Message;
             }
+        }
+    }
+
+    internal static class PointAt
+    {
+        internal static Vector3d Dir(Vessel v, string mode)
+        {
+            if (v == null || string.IsNullOrWhiteSpace(mode)) return Vector3d.zero;
+
+            Vector3d position = Vector3d.zero;
+            Vector3d velocity = v.obt_velocity;
+            Vector3d auxiliary = Vector3d.zero;
+            if (v.mainBody != null)
+                position = v.GetWorldPos3D() - v.mainBody.position;
+
+            if (string.Equals(mode, "target", StringComparison.OrdinalIgnoreCase))
+            {
+                ITargetable target = FlightGlobals.fetch == null ? null : FlightGlobals.fetch.VesselTarget;
+                Transform targetTransform = target == null ? null : target.GetTransform();
+                if (targetTransform == null) return Vector3d.zero;
+                auxiliary = (Vector3d)targetTransform.position - v.GetWorldPos3D();
+            }
+            else if (string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase))
+            {
+                Orbit orbit = v.orbit;
+                if (orbit == null || v.patchedConicSolver == null ||
+                    v.patchedConicSolver.maneuverNodes == null || v.patchedConicSolver.maneuverNodes.Count == 0)
+                    return Vector3d.zero;
+                auxiliary = v.patchedConicSolver.maneuverNodes[0].GetBurnVector(orbit);
+            }
+
+            double x, y, z;
+            if (!PointAtMath.TryDirection(position.x, position.y, position.z, velocity.x, velocity.y, velocity.z,
+                auxiliary.x, auxiliary.y, auxiliary.z, mode, out x, out y, out z))
+                return Vector3d.zero;
+            return new Vector3d(x, y, z);
         }
     }
 }

@@ -50,6 +50,8 @@
     <Compile Include="../../KSPChatMod/PersonalityPrompts.cs"/>
     <Compile Include="../../KSPChatMod/NativeToolSchemas.cs"/>
     <Compile Include="../../KSPChatMod/OrbitMath.cs"/>
+    <Compile Include="../../KSPChatMod/PointAtMath.cs"/>
+    <Compile Include="PointAtMathTests.cs"/>
     <Compile Include="RocketTests.cs"/>
     <Compile Include="../../KSPChatMod/PlanetViewMath.cs" Link="PlanetViewMath.cs"/>
     <Compile Include="../../KSPChatMod/FlightLog.cs" Link="FlightLog.cs"/>
