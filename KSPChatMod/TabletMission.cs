@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace KSPChatBridge
@@ -25,6 +26,9 @@ namespace KSPChatBridge
                 tabletMissionScroll = GUILayout.BeginScrollView(tabletMissionScroll);
                 try
                 {
+                    List<StageInfo> stages = HighLogic.LoadedSceneIsEditor
+                        ? StageReader.ForEditor()
+                        : StageReader.ForFlight();
                     float cardHeight = pad + row * 3 + gap * 2;
                     Rect card = TabletUi.CardPanel(new Rect(0, 0, width, cardHeight), "MISSION");
                     string[] bodyNames = MissionBodyNames();
@@ -49,7 +53,26 @@ namespace KSPChatBridge
                         "RETURN: " + (missionReturn ? "ON" : "OFF"), missionReturn))
                         missionReturn = !missionReturn;
 
-                    GUILayout.Space(cardHeight + gap);
+                    float stagesY = cardHeight + gap;
+                    float stagesHeight = pad + row * Math.Max(1, stages.Count);
+                    Rect stagesCard = TabletUi.CardPanel(new Rect(0, stagesY, width, stagesHeight), "STAGES");
+                    if (stages.Count == 0)
+                    {
+                        TabletUi.Label(new Rect(stagesCard.x, stagesCard.y, stagesCard.width, row), "No stage data.", true);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < stages.Count; i++)
+                        {
+                            StageInfo stage = stages[i];
+                            string line = string.Format(CultureInfo.InvariantCulture,
+                                "S{0} dv {1:0} m/s  TWR {2:0.00}  burn {3:0} s  Isp {4:0}",
+                                stage.Stage, stage.DvActual, stage.TwrAsl, stage.BurnTime, stage.IspAsl);
+                            TabletUi.Label(new Rect(stagesCard.x, stagesCard.y + i * row, stagesCard.width, row), line, true);
+                        }
+                    }
+
+                    GUILayout.Space(stagesY + stagesHeight + gap);
                 }
                 finally
                 {
