@@ -78,7 +78,7 @@ namespace KSPChatBridge
             GUI.Box(new Rect(0, 0, W, H), "", tabletFrame);
             // header in the bezel: title, font size, close
             float lw = Mathf.Max(150, tabletFont * 8.5f);
-            GUI.Label(new Rect(b + 6, 6, W - 290 - lw, TabletHead - 6), "AICS TABLET  " + TabletTabs[tabletTab].ToUpperInvariant(), tabletHead);
+            GUI.Label(new Rect(b + 6, 6, W - 290 - lw, TabletHead - 6), "AICS TABLET  " + (homeVisible ? "HOME" : TabletTabs[tabletTab].ToUpperInvariant()), tabletHead);
             float kw = Mathf.Max(40, tabletFont * 2.4f), kh = TabletHead - 12;
             var oc = GUI.backgroundColor; GUI.backgroundColor = TabletLink ? new Color(.5f, 1f, .5f) : new Color(1f, .75f, .35f);
             if (GUI.Button(new Rect(W - b - kh - 2 * kw - lw - 26, 6, lw, kh), TabletLink ? "LIVE LINK: ON" : "LIVE LINK: OFF", TabletLink ? tabletTabOn : tabletKey)) { TabletLink = !TabletLink; Save(); }
@@ -93,7 +93,9 @@ namespace KSPChatBridge
             var saved = GUI.skin; GUI.skin = mfdSkin;
             try
             {
-                switch (tabletTab)
+                area = TabletHomeStatus(area);
+                if (homeVisible) DrawTabletHome(area);
+                else switch (tabletTab)
                 {
                     case 0: TabletMission(area); break;
                     case 1: TabletBurns(area); break;
@@ -120,11 +122,8 @@ namespace KSPChatBridge
                 }
             }
             catch (Exception ex) { GUI.Label(new Rect(area.x, area.yMax - 30, area.width, 30), "page error: " + ex.Message, tabletText); }
-            GUI.skin = saved;
-            // bottom tabs
-            float tw = (W - 2 * b) / TabletTabs.Length;
-            for (int i = 0; i < TabletTabs.Length; i++)
-                if (GUI.Button(new Rect(b + i * tw + 2, H - TabletTabH - b + 6, tw - 4, TabletTabH - 6), TabletTabs[i], i == tabletTab ? tabletTabOn : tabletTabOff) && tabletTab != i) { tabletTab = i; Save(); }
+            finally { GUI.skin = saved; }
+            DrawTabletHomeBar(new Rect(b, H - TabletTabH - b + 6, W - 2 * b, TabletTabH - 6));
             // resize corner (bottom-right bezel) + drag by the bezel
             Rect grip = new Rect(W - b - 4, H - b - 4, b + 4, b + 4); Event e = Event.current;
             var gs = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.LowerRight }; gs.normal.textColor = new Color(.6f, .62f, .65f); GUI.Label(grip, "\u25E2", gs);
@@ -178,12 +177,14 @@ namespace KSPChatBridge
             {
                 foreach (var k in keys)
                 {
-                    if (string.IsNullOrEmpty(k)) continue;
+                    if (string.IsNullOrEmpty(k) || k == "TOGGLE" || k == "SKIP") continue;
                     float w = Mathf.Max(110, tabletFont * (k.Length * .7f + 2f));
                     if (x + w > area.xMax) { x = area.x; y += kh + 6; }
-                    if (GUI.Button(new Rect(x, y, w, kh), k, tabletKey) && TabletLink)
+                    bool navigation = k == "SCROLL UP" || k == "SCROLL DN";
+                    GUI.enabled = savedEnabled && (navigation || TabletLink);
+                    if (GUI.Button(new Rect(x, y, w, kh), k, tabletKey) && (navigation || TabletLink))
                     {
-                        OnKey("learn", k);
+                        if (!navigation) OnKey("learn", k);
                         if (k == "SCROLL UP") tabletTestsScroll.y = Mathf.Max(0, tabletTestsScroll.y - kh * 2);
                         else if (k == "SCROLL DN") tabletTestsScroll.y += kh * 2;
                     }
@@ -250,21 +251,26 @@ namespace KSPChatBridge
                     float hCard = hasGraph ? 130 : 78;
                     Rect row = new Rect(0, cy, cardW, hCard);
                     Rect inner = TabletUi.CardPanel(row, null);
-                    float chipW = Mathf.Max(90, tabletFont * 5.5f);
-                    TabletUi.Label(new Rect(inner.x + 2, inner.y, inner.width - chipW - 12, tabletFont * 1.8f), name);
-                    TabletUi.Chip(new Rect(inner.xMax - chipW, inner.y + 2, chipW, tabletFont * 1.6f), chip, chipColor);
+                    float chipW = Mathf.Min(inner.width * .24f, Mathf.Max(90, tabletFont * 5.5f));
+                    float skipW = Mathf.Min(inner.width * .18f, 90);
+                    TabletUi.Label(new Rect(inner.x + 2, inner.y, inner.width - chipW - skipW - 20, tabletFont * 1.8f), name);
+                    Rect toggleRect = new Rect(inner.xMax - chipW - skipW - 8, inner.y + 2, chipW, tabletFont * 1.6f);
+                    bool rowEnabled = GUI.enabled;
+                    try
+                    {
+                        GUI.enabled = rowEnabled && TabletLink && toggle && chip != "SETUP";
+                        if (TabletUi.Button(toggleRect, chip, chip != "OFF", GUI.enabled))
+                            ChatWindow.Notice("[LEARN] " + NativeFlightController.ToggleLearnCode(code));
+                        GUI.enabled = rowEnabled && TabletLink && chip == "RUNNING";
+                        if (TabletUi.Button(new Rect(inner.xMax - skipW, inner.y + 2, skipW, tabletFont * 1.6f), "SKIP", false, GUI.enabled))
+                            OnKey("learn", "SKIP");
+                    }
+                    finally { GUI.enabled = rowEnabled; }
                     TabletUi.Label(new Rect(inner.x + 2, inner.y + tabletFont * 1.8f, inner.width - 4, tabletFont * 1.5f), LearnTestSummary(profile, code), true);
                     if (hasGraph)
                     {
                         TabletUi.Graph(new Rect(inner.x + 2, inner.y + tabletFont * 3.15f, inner.width - 4, 54),
                             new[] { graph.YLabel + " vs " + graph.XLabel }, new[] { graph.Y }, graph.Count, graph.Count, new[] { graph.Unit }, graph.X);
-                    }
-                    bool selected = toggle && j == MfdNav.LearnCursor;
-                    if (selected) TabletUi.Rect(new Rect(row.x, row.y + 6, 4, row.height - 12), TabletUi.Accent);
-                    if (toggle && TabletLink && GUI.Button(row, GUIContent.none, GUIStyle.none))
-                    {
-                        if (selected) OnKey("learn", "TOGGLE");
-                        else MfdNav.LearnCursor = j;
                     }
                     cy += hCard + 8;
                 }
