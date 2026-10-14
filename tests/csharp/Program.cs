@@ -2414,6 +2414,7 @@ class Program
         RocketTests.Run();
         DvMapMathTests.Run();
         RendezvousMathTests.Run();
+        DockingMathTests.Run();
         CampaignLaunchTimingTests.Run();
         FlightLogTests.Run();
         ShipInfoTests.Run();

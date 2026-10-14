@@ -67,6 +67,8 @@
     <Compile Include="DvMapMathTests.cs"/>
     <Compile Include="../../KSPChatMod/RendezvousMath.cs"/>
     <Compile Include="RendezvousMathTests.cs"/>
+    <Compile Include="../../KSPChatMod/DockingMath.cs"/>
+    <Compile Include="DockingMathTests.cs"/>
     <Compile Include="CampaignLaunchTimingTests.cs"/>
     <Compile Include="../../KSPChatMod/TransferDiagramMath.cs"/>
     <Compile Include="TransferDiagramMathTests.cs"/>
