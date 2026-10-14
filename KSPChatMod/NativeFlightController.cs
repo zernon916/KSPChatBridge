@@ -201,6 +201,8 @@ namespace KSPChatBridge
         void Awake()
         {
             instance = this;
+            MfdNav.LearnRunning = () => NativeFlightController.LearnIsRunning;
+            MfdNav.LearnRover = () => NativeFlightController.ActiveRover;
             GameEvents.onPartDie.Add(OnPartDie);
             NativeCommands.StatusPathProvider = () => Path.Combine(KSPUtil.ApplicationRootPath,
                 "GameData/KSPChatBridge/PluginData/native_control.json");
@@ -522,9 +524,11 @@ namespace KSPChatBridge
                     if (!vessel.Landed) { Stop(); ChatWindow.Notice("Rover speed hold stopped: rover is no longer landed."); return; }
                     double roverDt = Math.Max(.001, Math.Min(.1, Time.fixedDeltaTime));
                     double targetSpeed = roverTargetSpeed;
+                    double destinationDistance = double.NaN;
                     if (roverNavigating)
                     {
                         double distance = NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
+                        destinationDistance = distance;
                         if (KscRoverPolicy.ReachedDestination(distance))
                         {
                             string destination = roverDestination;
@@ -535,6 +539,18 @@ namespace KSPChatBridge
                         targetSpeed = KscRoverPolicy.ApproachSpeed(targetSpeed, distance);
                         roverHeading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon);
                         roverHeadingEnabled = true;
+                    }
+                    RoverProfile learnedRover = CurrentRoverProfile();
+                    if (learnedRover != null)
+                    {
+                        targetSpeed = KscRoverPolicy.LearnedTopSpeed(targetSpeed, learnedRover.TopSpeed);
+                        double headingError = roverHeadingEnabled ? FlightPolicy.Wrap(roverHeading - FlightGlobals.ship_heading) : 0;
+                        targetSpeed = KscRoverPolicy.LearnedTurnSpeed(targetSpeed, learnedRover.SafeTurnSpeed, headingError);
+                        if (roverNavigating)
+                        {
+                            targetSpeed = KscRoverPolicy.LearnedBrakingSpeed(targetSpeed, destinationDistance, learnedRover.BrakingDistance, 10);
+                            targetSpeed = Math.Min(targetSpeed, KscRoverPolicy.ApproachSpeed(roverTargetSpeed, destinationDistance));
+                        }
                     }
                     double roverPitch = Pitch(), roverRoll = Roll(), sideSpeed = Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.right);
                     if (RoverTopSpeedTick(vessel.srfSpeed, roverPitch, roverRoll)
@@ -1183,6 +1199,9 @@ namespace KSPChatBridge
                     if (double.IsNaN(roverSpeed) || double.IsInfinity(roverSpeed) || roverSpeed < 0 || roverSpeed > 25)
                         return "Rover speed must be between 0 and 25 m/s.";
                     if (!vessel.Landed) return "Rover speed hold requires a landed vessel.";
+                    double requestedRoverSpeed = roverSpeed;
+                    RoverProfile speedProfile = CurrentRoverProfile();
+                    if (speedProfile != null) roverSpeed = KscRoverPolicy.LearnedTopSpeed(roverSpeed, speedProfile.TopSpeed);
                     bool roverWheels = false, roverMotors = false;
                     foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
                     {
@@ -1196,7 +1215,8 @@ namespace KSPChatBridge
                     vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     ChatLog.Write("rover", "speed target " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
-                    return "Rover speed hold: " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s.";
+                    return "Rover speed hold: " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s."
+                        + (roverSpeed < requestedRoverSpeed ? " Capped to learned top speed." : "");
                 case "drive_heading":
                     double roverHeadingTarget = Num(a, "heading", double.NaN);
                     if (double.IsNaN(roverHeadingTarget) || double.IsInfinity(roverHeadingTarget))

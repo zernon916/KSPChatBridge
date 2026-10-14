@@ -23,6 +23,22 @@ namespace KSPChatBridge
         {
             return distance < 100 ? Math.Min(target, Math.Max(1, Math.Min(4, distance / 25))) : target;
         }
+        internal static double LearnedTopSpeed(double target, double topSpeed)
+        {
+            return topSpeed > 0 && !double.IsNaN(topSpeed) && !double.IsInfinity(topSpeed) ? Math.Min(target, topSpeed) : target;
+        }
+        internal static double LearnedTurnSpeed(double target, double safeTurnSpeed, double headingError)
+        {
+            return Math.Abs(headingError) > 5 && safeTurnSpeed > 0 && !double.IsNaN(safeTurnSpeed) && !double.IsInfinity(safeTurnSpeed)
+                ? Math.Min(target, safeTurnSpeed) : target;
+        }
+        internal static double LearnedBrakingSpeed(double target, double distance, double brakingDistance, double stopDistance)
+        {
+            if (brakingDistance <= 0 || double.IsNaN(brakingDistance) || double.IsInfinity(brakingDistance)
+                || distance <= stopDistance) return target;
+            double allowed = 10 * Math.Sqrt((distance - stopDistance) / brakingDistance);
+            return Math.Min(target, allowed);
+        }
         internal static bool ReachedDestination(double distance) { return distance <= 10; }
         internal static bool FlatSurface(double pitch, double roll, double maxAngle)
         {

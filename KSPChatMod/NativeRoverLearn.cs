@@ -9,6 +9,20 @@ namespace KSPChatBridge
         RoverTopSpeedTrial roverTopSpeedTrial;
         RoverBrakingTrial roverBrakingTrial;
         RoverTurnTrial roverTurnTrial;
+        RoverProfile roverProfile;
+        string roverProfileVessel;
+        internal static bool ActiveRover
+        {
+            get { var me = instance; return me != null && me.HasPoweredWheels(); }
+        }
+        internal static bool RoverLearnRunning
+        {
+            get
+            {
+                var me = instance;
+                return me != null && (me.roverTopSpeedTrial != null || me.roverBrakingTrial != null || me.roverTurnTrial != null);
+            }
+        }
         internal static string RoverLearnStatus
         {
             get
@@ -24,13 +38,9 @@ namespace KSPChatBridge
             }
         }
 
-        string LearnRoverCmd()
+        bool HasPoweredWheels()
         {
-            if (vessel == null) return "No active vessel.";
-            if (!vessel.Landed) return "ROVER LEARN requires a landed rover.";
-            if (roverTopSpeedTrial != null || roverBrakingTrial != null || roverTurnTrial != null) return "Rover LEARN test already running.";
-            if (vessel.srfSpeed > .5) return "Stop the rover before starting ROVER LEARN.";
-            if (!KscRoverPolicy.FlatSurface(Pitch(), Roll(), 5)) return "ROVER LEARN requires a level surface (pitch and roll within 5 degrees).";
+            if (vessel == null) return false;
             bool wheels = false, motors = false;
             foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
             {
@@ -38,8 +48,26 @@ namespace KSPChatBridge
                 var motor = module as ModuleWheels.ModuleWheelMotor;
                 motors |= motor != null && motor.motorEnabled;
             }
-            if (!wheels || !motors) return "ROVER LEARN requires powered wheels.";
-            RoverProfile profile = LoadRoverProfile(vessel.vesselName);
+            return wheels && motors;
+        }
+
+        internal List<string> RoverLearnLines()
+        {
+            var profile = CurrentRoverProfile() ?? new RoverProfile();
+            var lines = profile.Checklist(RoverLearnStatus);
+            lines.Add(RoverLearnRunning ? "Stop current cancels the running test." : "Say \"learn rover\" to run the next incomplete test.");
+            return lines;
+        }
+
+        string LearnRoverCmd()
+        {
+            if (vessel == null) return "No active vessel.";
+            if (!vessel.Landed) return "ROVER LEARN requires a landed rover.";
+            if (roverTopSpeedTrial != null || roverBrakingTrial != null || roverTurnTrial != null) return "Rover LEARN test already running.";
+            if (vessel.srfSpeed > .5) return "Stop the rover before starting ROVER LEARN.";
+            if (!KscRoverPolicy.FlatSurface(Pitch(), Roll(), 5)) return "ROVER LEARN requires a level surface (pitch and roll within 5 degrees).";
+            if (!HasPoweredWheels()) return "ROVER LEARN requires powered wheels.";
+            RoverProfile profile = CurrentRoverProfile();
             bool measureTopSpeed = profile == null || double.IsNaN(profile.TopSpeed);
             bool measureBraking = !measureTopSpeed && double.IsNaN(profile.BrakingDistance);
             bool measureTurn = !measureTopSpeed && !measureBraking && double.IsNaN(profile.SafeTurnSpeed);
@@ -138,6 +166,7 @@ namespace KSPChatBridge
         void SaveRoverProfile(RoverProfile profile, string metric, double value, string unit, string reason)
         {
             profile.Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            roverProfile = profile; roverProfileVessel = vessel.vesselName;
             Bucket("rover_profiles")[vessel.vesselName] = profile.ToDict();
             try
             {
@@ -159,6 +188,17 @@ namespace KSPChatBridge
             object data;
             return profiles != null && profiles.TryGetValue(name, out data)
                 ? RoverProfile.FromDict(data as Dictionary<string, object>) : null;
+        }
+
+        RoverProfile CurrentRoverProfile()
+        {
+            if (vessel == null) return null;
+            if (!string.Equals(roverProfileVessel, vessel.vesselName, StringComparison.Ordinal))
+            {
+                roverProfileVessel = vessel.vesselName;
+                roverProfile = LoadRoverProfile(roverProfileVessel);
+            }
+            return roverProfile;
         }
 
         void CancelRoverLearn()

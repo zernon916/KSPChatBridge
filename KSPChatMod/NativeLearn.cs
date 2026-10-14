@@ -13,13 +13,30 @@ namespace KSPChatBridge
         bool profileTrusted = true;
         CraftFingerprint.Match profileMatch = CraftFingerprint.Match.Missing;
         string pendingCarryFrom;
-        internal static string LearnStatus { get { return instance == null || instance.learn == null ? "" : "LEARN " + instance.learn.Phase.ToUpperInvariant() + ": " + instance.learn.Status; } }
+        internal static string LearnStatus
+        {
+            get
+            {
+                var me = instance;
+                if (me == null) return "";
+                if (me.learn != null) return "LEARN " + me.learn.Phase.ToUpperInvariant() + ": " + me.learn.Status;
+                return RoverLearnStatus;
+            }
+        }
+        internal static bool LearnIsRunning
+        {
+            get
+            {
+                var me = instance;
+                return me != null && ((me.learn != null && !me.learn.Done) || RoverLearnRunning);
+            }
+        }
 
         string LearnPlaneCmd(Dictionary<string, object> a)
         {
             if (vessel == null) return "No active vessel.";
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
-            MfdNav.LearnRunning = () => instance != null && instance.learn != null && !instance.learn.Done;
+            MfdNav.LearnRunning = () => LearnIsRunning;
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
             // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
             var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear(); if ((profile == null || !profile.NoLand) && !queue.Contains(12)) queue.Add(12);   // box 12 checked by default (Oct 12)
@@ -305,7 +322,7 @@ namespace KSPChatBridge
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
         double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
         /// <summary>LEARN page cursor/toggle (Luke 11:26 PM). True when the cursor keys are in toggle mode (no flight running).</summary>
-        internal static bool LearnToggleMode { get { var me = instance; return me != null && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
+        internal static bool LearnToggleMode { get { var me = instance; return me != null && !ActiveRover && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
         internal static string ToggleLearnStep(int step)
         {
             return ToggleLearnCode(step);
@@ -455,6 +472,7 @@ namespace KSPChatBridge
             string vname = me != null && me.vessel != null ? me.vessel.vesselName : "";
             o.Add("LEARN  " + vname);
             if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
+            if (ActiveRover) { o.Add("ROVER PROFILE"); o.AddRange(me.RoverLearnLines()); return o; }
             var p = me.profile; var lf = me.learn ?? me.lastLearn;
             if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); return o; }
             if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); return o; }

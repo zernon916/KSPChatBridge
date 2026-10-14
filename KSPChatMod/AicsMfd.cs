@@ -421,8 +421,9 @@ namespace KSPChatBridge
             if (item == "tablet" && key == "OPEN TABLET") { ToggleTablet(); return; }
             var la = MfdNav.LearnKeyAction(item, key);
             if (la == "open") { if (!AicsIvaMfd.Pressing) ShowMfdItem("learn"); return; }   // navigation only (IVA opens its own page)
-            if (la == "start") { Tool("learn_plane", "{}"); return; }
+            if (la == "start") { Tool(NativeFlightController.ActiveRover ? "learn_rover" : "learn_plane", "{}"); return; }
             if (la == "status") { ChatWindow.Notice("[LEARN] " + NativeFlightController.LearnStatus); return; }
+            if (la == "stop") { Tool("stop_current", "{}"); return; }
             if (key == null) return;
             switch (item)
             {

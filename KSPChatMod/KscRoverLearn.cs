@@ -11,6 +11,27 @@ namespace KSPChatBridge
         internal double SafeTurnSpeed = double.NaN;
         internal string Date = "";
 
+        internal List<string> Checklist(string status)
+        {
+            int active = string.IsNullOrEmpty(status) ? 0
+                : status.IndexOf("top speed", StringComparison.OrdinalIgnoreCase) >= 0 ? 1
+                : status.IndexOf("braking", StringComparison.OrdinalIgnoreCase) >= 0
+                    || status.IndexOf("accelerating to 10", StringComparison.OrdinalIgnoreCase) >= 0 ? 2
+                : status.IndexOf("turn", StringComparison.OrdinalIgnoreCase) >= 0 ? 3 : 0;
+            var lines = new List<string>();
+            if (active != 0) lines.Add("Running: " + status);
+            AddLine(lines, 1, "Top speed", TopSpeed, "m/s", active);
+            AddLine(lines, 2, "Braking distance from 10 m/s", BrakingDistance, "m", active);
+            AddLine(lines, 3, "Safe turn speed", SafeTurnSpeed, "m/s", active);
+            return lines;
+        }
+
+        static void AddLine(List<string> lines, int step, string name, double value, string unit, int active)
+        {
+            string state = active == step ? "[*]" : double.IsNaN(value) ? "[ ]" : "[x]";
+            lines.Add(state + " " + step + " " + name + ": " + (double.IsNaN(value) ? "not measured" : value.ToString("0.0", CultureInfo.InvariantCulture) + " " + unit));
+        }
+
         internal Dictionary<string, object> ToDict()
         {
             var result = new Dictionary<string, object>();

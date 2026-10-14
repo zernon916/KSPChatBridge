@@ -81,8 +81,9 @@ namespace KSPChatBridge
         internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
         /// <summary>Set by the flight controller: a Learn flight is running (LEARN page key shows RUNNING; there is no Learn abort).</summary>
         internal static Func<bool> LearnRunning;
+        internal static Func<bool> LearnRover;
         /// <summary>Oct 12: the LEARN key on ABOUT / AIRCRAFT only navigates to the LEARN page; START LEARN on that page starts it.</summary>
-        internal static string LearnKeyAction(string item, string key) { if (key == "LEARN" && (item == "about" || item == "aircraft" || item == "learn")) return "open"; if (key == "START LEARN" && item == "learn") return "start"; if (key == "RUNNING" && item == "learn") return "status"; return null; }
+        internal static string LearnKeyAction(string item, string key) { if (key == "LEARN" && (item == "about" || item == "aircraft" || item == "learn")) return "open"; if (key == "START LEARN" && item == "learn") return "start"; if (key == "RUNNING" && item == "learn") return "status"; if (key == "STOP" && item == "learn") return "stop"; return null; }
         static string[] RightKeys(string item)
         {
             switch (item)
@@ -91,7 +92,12 @@ namespace KSPChatBridge
                 case "chart": return new[] { "RWY <", "RWY >", "VARIANT", "WP <", "WP >", "ALT +50", "ALT -50", "AGL/MSL" };
                 case "ils": return new[] { "RWY <", "RWY >", "GUIDE", null, null, null };
                 case "about": return new[] { "LEARN", "<", ">", "SCROLL UP", "SCROLL DN" };
-                case "learn": return new[] { LearnRunning != null && LearnRunning() ? "RUNNING" : "START LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };   // Oct 12: only START LEARN starts a flight
+                case "learn":
+                    bool running = LearnRunning != null && LearnRunning();
+                    bool rover = LearnRover != null && LearnRover();
+                    return rover
+                        ? new[] { running ? "STOP" : "START LEARN", "SCROLL UP", "SCROLL DN", null, null }
+                        : new[] { running ? "RUNNING" : "START LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
