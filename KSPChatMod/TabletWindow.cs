@@ -96,6 +96,7 @@ namespace KSPChatBridge
                 switch (tabletTab)
                 {
                     case 0: TabletMission(area); break;
+                    case 1: TabletBurns(area); break;
                     case 2: TabletMap(area); break;
                     case 4: TabletTests(area); break;
                     case 5: TabletEncyclopedia(area); break;
