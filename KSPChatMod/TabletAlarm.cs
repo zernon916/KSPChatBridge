@@ -33,6 +33,10 @@ namespace KSPChatBridge
                 TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), line, true);
                 y += row + 8;
             }
+            float yb = c.yMax + 8;
+            if (!TabletLink) { TabletUi.Label(new Rect(c.x + 6, yb, c.width - 12, row), "INFO ONLY - enable LIVE LINK", true); yb += row + 8; }
+            foreach (string key in MfdNav.Right("alarm")) { if (string.IsNullOrEmpty(key) || key == "BACK") continue; if (TabletUi.Button(new Rect(c.x + 6, yb, c.width - 12, row), key, false, TabletLink) && TabletLink) { ChatLog.Write("g", "tablet alarm: " + key); OnKey("alarm", key); } yb += row + 8; }
+            GUILayout.Space(yb + 8);
         }
     }
 }
