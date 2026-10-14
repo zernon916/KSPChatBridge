@@ -118,7 +118,7 @@ namespace KSPChatBridge
 
                     float allocationY = legsY + legsHeight + gap;
                     float barHeight = Mathf.Max(44, row * 1.4f);
-                    float allocationHeight = pad + barHeight + gap + row * Math.Max(1, allocation.Count);
+                    float allocationHeight = pad + barHeight + gap + row * (Math.Max(1, allocation.Count) + 1) + gap;
                     Rect allocationCard = TabletUi.CardPanel(new Rect(0, allocationY, width, allocationHeight), "STAGE ALLOCATION");
                     float fraction = need > 0 ? (float)Math.Max(0, Math.Min(1, have / need)) : 0;
                     string totals = have.ToString("0", CultureInfo.InvariantCulture) + " / " +
@@ -140,6 +140,16 @@ namespace KSPChatBridge
                             TabletUi.Label(new Rect(allocationCard.x, allocationCard.y + barHeight + gap + i * row,
                                 allocationCard.width, row), line, true);
                         }
+                    }
+
+                    float crewY = allocationCard.y + barHeight + gap + row * Math.Max(1, allocation.Count) + gap;
+                    if (TabletUi.Button(new Rect(allocationCard.x, crewY, allocationCard.width, row), "CREW SAYS"))
+                    {
+                        double spare = have - need;
+                        string text = spare >= 0
+                            ? "Plenty of spare, " + spare.ToString("0", CultureInfo.InvariantCulture) + " m/s."
+                            : "We won't make it home.";
+                        ChatWindow.Notice(IntercomTalk.Fmt("Jebediah", "Pilot", text));
                     }
 
                     GUILayout.Space(allocationY + allocationHeight + gap);
