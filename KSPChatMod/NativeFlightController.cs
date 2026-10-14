@@ -501,6 +501,7 @@ namespace KSPChatBridge
         {
             if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
             if (LearnPilotFlying) return;   // learn wait: pilot has the controls
+            if (RocketFly(c)) return;
             try
             {
                 if (mode == "spool") return;
