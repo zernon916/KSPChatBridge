@@ -13,7 +13,7 @@ namespace KSPChatBridge
             float width = area.width - 26;
             float pad = 16 + tabletFont * 1.6f;
             List<string> lines = NodeReader.Lines(FlightGlobals.ActiveVessel);
-            float cardHeight = pad + row * Mathf.Max(1, lines.Count);
+            float cardHeight = pad + row * (Mathf.Max(1, lines.Count) + 1);
 
             GUILayout.BeginArea(area);
             try
@@ -31,6 +31,9 @@ namespace KSPChatBridge
                         for (int i = 0; i < lines.Count; i++)
                             TabletUi.Label(new Rect(card.x, card.y + i * row, card.width, row), lines[i], true);
                     }
+                    if (TabletUi.Button(new Rect(card.x, card.y + row * Mathf.Max(1, lines.Count), card.width, row),
+                        "CIRC AT AP", TabletLink))
+                        ChatWindow.Notice(NodeWriter.CircularizeAtAp(FlightGlobals.ActiveVessel));
                     GUILayout.Space(cardHeight);
                 }
                 finally
