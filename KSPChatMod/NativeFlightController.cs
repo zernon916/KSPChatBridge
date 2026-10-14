@@ -780,6 +780,7 @@ namespace KSPChatBridge
                         NavigationMath.Bearing(vessel.latitude, vessel.longitude, hoverLat, hoverLon), FlightGlobals.ship_heading, out forwardTarget, out rightTarget);
                     HeliWaypointVelocity(ref forwardTarget, ref rightTarget);
                     HeliLearnForward(ref forwardTarget, ref rightTarget);
+                    if (!HeliLearning) forwardTarget = FlightPolicy.Clamp(forwardTarget, -HeliLearned("forward", 50), HeliLearned("forward", 50));
                     if (emergency != "normal") { vs = -3; forwardTarget = vessel.radarAltitude < 12 ? 0 : 30; rightTarget = 0; }
                     double heliTilt = HeliTiltLimit();
                     double pitchTarget = props.Compound ? 0 : FlightPolicy.Clamp(-1.5 * (forwardTarget - fwd), -heliTilt, heliTilt);
@@ -1495,7 +1496,7 @@ namespace KSPChatBridge
                     if (heliWaypoint != null)
                     {
                         helicopterPositionHold = false;
-                        speed = FlightPolicy.Clamp(Num(a, "speed", 15), 1, 20);
+                        speed = Math.Min(FlightPolicy.Clamp(Num(a, "speed", 15), 1, 20), HeliLearned("forward", 20));
                         ChatLog.Write("heli", "waypoint " + heliWaypoint.Name + "; slow inside 200 m, then hover");
                     }
                     lastHeliHeading = FlightGlobals.ship_heading; sideIntegral = 0; rotorYawBias = FlightPolicy.Clamp(savedYawBias, -8, 8); nextRotorTrim = Time.realtimeSinceStartup + 8;

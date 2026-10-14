@@ -19,6 +19,7 @@ namespace KSPChatBridge
             {
                 var me = instance;
                 if (me == null) return "";
+                if (me.HeliLearning) return "HELI LEARN: " + me.heliLearnMessage;
                 if (me.learn != null) return "LEARN " + me.learn.Phase.ToUpperInvariant() + ": " + me.learn.Status;
                 return RoverLearnStatus;
             }
@@ -28,13 +29,19 @@ namespace KSPChatBridge
             get
             {
                 var me = instance;
-                return me != null && ((me.learn != null && !me.learn.Done) || RoverLearnRunning);
+                return me != null && ((me.learn != null && !me.learn.Done) || RoverLearnRunning || me.HeliLearning);
             }
         }
 
         string LearnPlaneCmd(Dictionary<string, object> a)
         {
             if (vessel == null) return "No active vessel.";
+            if (props != null && props.HasLift(vessel))
+            {
+                if (HeliLearning) return "Helicopter test flight already running: " + heliLearnMessage;
+                MfdNav.LearnRunning = () => LearnIsRunning;
+                return Command("heli_control", new Dictionary<string, object> { { "mode", "learn" }, { "altitude_m", Math.Max(30, vessel.radarAltitude) } });
+            }
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
             MfdNav.LearnRunning = () => LearnIsRunning;
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
@@ -322,7 +329,7 @@ namespace KSPChatBridge
         /// <summary>Approach/flare throttle from the learned sink map (NaN without one).</summary>
         double SinkThrottle(double targetVs) { return profile == null || vessel == null ? double.NaN : profile.ThrottleForSink(-targetVs, vessel.totalMass); }
         /// <summary>LEARN page cursor/toggle (Luke 11:26 PM). True when the cursor keys are in toggle mode (no flight running).</summary>
-        internal static bool LearnToggleMode { get { var me = instance; return me != null && !ActiveRover && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
+        internal static bool LearnToggleMode { get { var me = instance; return me != null && !ActiveRover && !(me.props != null && me.vessel != null && me.props.HasLift(me.vessel)) && ((me.learn != null && me.learn.ManualMode && !me.learn.Done) || (me.profile != null && (me.learn == null || me.learn.Done) && (me.lastLearn == null || me.lastLearn.LandingDone || me.learn == null))); } }
         internal static string ToggleLearnStep(int step)
         {
             return ToggleLearnCode(step);
@@ -351,7 +358,9 @@ namespace KSPChatBridge
         }
         internal static string LearnSkip()
         {
-            var me = instance; if (me == null || me.learn == null) return "No test flight running.";
+            var me = instance;
+            if (me != null && me.HeliLearning) { me.FinishHeliLearn("Helicopter LEARN skipped; holding position."); return me.heliLearnMessage; }
+            if (me == null || me.learn == null) return "No test flight running.";
             if (me.learn.Done) return "Can't skip the landing.";
             string r = me.learn.Skip(); ChatLog.Write("learn", r); return r;
         }
@@ -473,6 +482,7 @@ namespace KSPChatBridge
             o.Add("LEARN  " + vname);
             if (me == null || me.vessel == null) { o.Add("No active vessel."); return o; }
             if (ActiveRover) { o.Add("ROVER PROFILE"); o.AddRange(me.RoverLearnLines()); return o; }
+            if (me.props != null && me.props.HasLift(me.vessel)) { o.AddRange(me.HeliLearnLines()); return o; }
             var p = me.profile; var lf = me.learn ?? me.lastLearn;
             if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); return o; }
             if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); return o; }
@@ -487,6 +497,7 @@ namespace KSPChatBridge
             {
                 var me = instance;
                 if (me == null) return null;
+                if (me.props != null && me.vessel != null && me.props.HasLift(me.vessel)) return null;
                 if (me.learn != null && !me.learn.Done) return me.learn.P;
                 return me.profile ?? (me.learn != null ? me.learn.P : null);
             }
