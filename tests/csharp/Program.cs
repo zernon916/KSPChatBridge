@@ -2413,6 +2413,7 @@ class Program
         ThrottleLearnTests.Run();
         RocketTests.Run();
         DvMapMathTests.Run();
+        RendezvousMathTests.Run();
         FlightLogTests.Run();
         ShipInfoTests.Run();
         CommsStatusTests.Run();
