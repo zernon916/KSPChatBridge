@@ -8,7 +8,7 @@ namespace KSPChatBridge
     public partial class NativeFlightController
     {
         int heliLearnStage;
-        double heliLearnTime, heliStableTime, heliCollectiveSum, heliPhaseTime, heliMaxClimb, heliMaxDescent;
+        double heliLearnTime, heliStableTime, heliCollectiveSum, heliPhaseTime, heliMaxClimb, heliMaxDescent, heliMaxTilt, heliMaxForward;
         int heliCollectiveSamples;
         string heliLearnMessage = "No helicopter tests yet.";
         Dictionary<string, object> heliProfile = new Dictionary<string, object>();
@@ -48,7 +48,7 @@ namespace KSPChatBridge
         void BeginHeliLearn(bool enabled)
         {
             heliLearnStage = enabled ? 1 : 0;
-            heliLearnTime = heliStableTime = heliCollectiveSum = heliPhaseTime = heliMaxClimb = heliMaxDescent = 0;
+            heliLearnTime = heliStableTime = heliCollectiveSum = heliPhaseTime = heliMaxClimb = heliMaxDescent = heliMaxTilt = heliMaxForward = 0;
             heliCollectiveSamples = 0;
             LoadHeliProfile();
             if (!enabled) return;
@@ -65,8 +65,7 @@ namespace KSPChatBridge
             heliLearnTime += dt;
             if (emergency != "normal" || Math.Abs(Pitch()) > 30 || Math.Abs(Roll()) > 30 || heliLearnTime > 180)
             {
-                heliLearnStage = 0;
-                heliLearnMessage = "LEARN stopped: unstable, emergency or timeout.";
+                FinishHeliLearn("LEARN stopped: unstable, emergency or timeout.");
                 ChatLog.Write("heli", heliLearnMessage);
                 return;
             }
@@ -89,10 +88,28 @@ namespace KSPChatBridge
                 else
                 {
                     heliProfile["descent"] = Math.Max(0, heliMaxDescent);
-                    heliLearnStage = 5;
+                    heliLearnStage = 4; heliPhaseTime = 0;
                     altitude = vessel.altitude;
-                    heliLearnMessage = "Climb and safe descent measured.";
+                    helicopterPositionHold = false;
+                    heliLearnMessage = "Measure forward speed and safe tilt, capped at 20 degrees.";
                 }
+                SaveHeliProfile();
+                return;
+            }
+            if (heliLearnStage == 4)
+            {
+                heliPhaseTime += dt;
+                bool forwardStable = Math.Abs(vessel.verticalSpeed) < 1 && Math.Abs(Roll()) < 8 && vessel.radarAltitude >= 20;
+                if (forwardStable && heliPhaseTime > 3)
+                {
+                    heliMaxTilt = Math.Max(heliMaxTilt, Math.Min(20, Math.Abs(Pitch())));
+                    heliMaxForward = Math.Max(heliMaxForward, Math.Max(0,
+                        Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.up)));
+                }
+                if (heliPhaseTime < 50 && vessel.radarAltitude >= 20 && vessel.verticalSpeed > -2) return;
+                heliProfile["tilt"] = heliMaxTilt;
+                heliProfile["forward"] = heliMaxForward;
+                FinishHeliLearn("Forward speed and safe tilt measured; hover hold.");
                 SaveHeliProfile();
                 return;
             }
@@ -112,6 +129,26 @@ namespace KSPChatBridge
             heliLearnStage = 2; heliPhaseTime = 0;
             heliLearnMessage = "Measure climb, increasing demand up to 8 m/s.";
             ChatLog.Write("heli", heliLearnMessage);
+        }
+        void FinishHeliLearn(string message)
+        {
+            heliLearnStage = 5;
+            heliLearnMessage = message;
+            speed = 0;
+            altitude = vessel.altitude;
+            helicopterPositionHold = true;
+            hoverLat = vessel.latitude; hoverLon = vessel.longitude;
+            ChatLog.Write("heli", message);
+        }
+        void HeliLearnForward(ref double forward, ref double right)
+        {
+            if (!HeliLearning || heliLearnStage != 4) return;
+            forward = Math.Min(30, heliPhaseTime * .6);
+            right = 0;
+        }
+        double HeliTiltLimit()
+        {
+            return HeliLearning && heliLearnStage == 4 ? Math.Min(20, 3 + heliPhaseTime * .4) : 12;
         }
         double HeliLearnVerticalSpeed(double requested)
         {

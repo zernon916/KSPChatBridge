@@ -779,9 +779,11 @@ namespace KSPChatBridge
                         NavigationMath.Distance(vessel.latitude, vessel.longitude, hoverLat, hoverLon, vessel.mainBody.Radius),
                         NavigationMath.Bearing(vessel.latitude, vessel.longitude, hoverLat, hoverLon), FlightGlobals.ship_heading, out forwardTarget, out rightTarget);
                     HeliWaypointVelocity(ref forwardTarget, ref rightTarget);
+                    HeliLearnForward(ref forwardTarget, ref rightTarget);
                     if (emergency != "normal") { vs = -3; forwardTarget = vessel.radarAltitude < 12 ? 0 : 30; rightTarget = 0; }
-                    double pitchTarget = props.Compound ? 0 : FlightPolicy.Clamp(-1.5 * (forwardTarget - fwd), -12, 12);
-                    double rollTarget = FlightPolicy.Clamp(1.5 * (rightTarget - side), -12, 12);
+                    double heliTilt = HeliTiltLimit();
+                    double pitchTarget = props.Compound ? 0 : FlightPolicy.Clamp(-1.5 * (forwardTarget - fwd), -heliTilt, heliTilt);
+                    double rollTarget = FlightPolicy.Clamp(1.5 * (rightTarget - side), -heliTilt, heliTilt);
                     double yawRate = FlightPolicy.Wrap(FlightGlobals.ship_heading - lastHeliHeading) / dt; lastHeliHeading = FlightGlobals.ship_heading;
                     double yawDemand = vessel.LandedOrSplashed ? 0 : helicopterYaw.Step(FlightPolicy.Wrap(heading - FlightGlobals.ship_heading), yawRate, dt);
                     if (helicopterYaw.Observe(Time.realtimeSinceStartup, yawDemand, yawRate)) ChatWindow.Notice("Helicopter yaw actuator sign corrected from measured response.");
