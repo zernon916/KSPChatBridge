@@ -23,6 +23,14 @@ namespace KSPChatBridge
                 return me != null && (me.roverTopSpeedTrial != null || me.roverBrakingTrial != null || me.roverTurnTrial != null);
             }
         }
+        internal static bool RoverNavigation(out double latitude, out double longitude, out string destination)
+        {
+            var me = instance;
+            latitude = longitude = double.NaN; destination = "";
+            if (me == null || !me.roverNavigating) return false;
+            latitude = me.roverDestinationLat; longitude = me.roverDestinationLon; destination = me.roverDestination ?? "";
+            return true;
+        }
         internal static string RoverLearnStatus
         {
             get

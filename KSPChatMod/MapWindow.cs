@@ -213,6 +213,9 @@ namespace KSPChatBridge
                     if (span <= 8000) foreach (var p in tr.Points) { var q = Proj(p.Lat, p.Lon); if (q.x > 0 && q.y > 0 && q.x < Px && q.y < Px) Tag(c, new Rect(q.x + 4, q.y + 2, 110, 18), p.Name); }
                 }
                 foreach (var a in MapReveal.Airports) if (body.bodyName == "Kerbin") { var p = Proj(a.Lat, a.Lon); if (p.x > 0 && p.y > 0 && p.x < Px && p.y < Px) Tag(c, new Rect(p.x + 4, p.y - 8, 140, 18), a.Pad ? "▲ " + a.Name : a.Name); }
+                var v = FlightGlobals.ActiveVessel;
+                bool kscRover = tab == 0 && IsKscRover(v);
+                if (kscRover) DrawKscRoverMap(c, v);
             // chart legs: each side's join list, then FAF -> SF -> threshold
                 if (tab == 1 && rw != null && fixes.Count > 0)
                 {
@@ -239,8 +242,7 @@ namespace KSPChatBridge
                     }
                 if (act != null) { double dla, dlo, crsD = NavigationMath.Bearing(act.Lat, act.Lon, act.EndLat, act.EndLon); NavigationMath.Offset(act.Lat, act.Lon, crsD + 180, act.DecelStartDist, body.Radius, out dla, out dlo); var dp = Proj(dla, dlo); c.Dot(dp, 9, new Color(1, .55f, 0)); Tag(c, new Rect(dp.x + 6, dp.y - 20, 120, 18), "DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km"); }
                 if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); c.Dot(jp, 11, Color.magenta); Tag(c, new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
-                var v = FlightGlobals.ActiveVessel;
-                if (v != null) { var p = Proj(v.latitude, v.longitude); c.Dot(p, 8, Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; MfdInk.Line(c, p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, Color.red, 2); }
+                if (v != null) { var p = Proj(v.latitude, v.longitude); c.Dot(p, 8, kscRover ? Color.magenta : Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; MfdInk.Line(c, p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, kscRover ? Color.magenta : Color.red, 2); if (kscRover) Tag(c, new Rect(p.x + 7, p.y + 5, 70, 18), "ROVER"); }
                 if (mapMouse != null) mapMouse();   // the outside window only: the IMGUI mouse is map-square relative inside the group
             });
             var vv = FlightGlobals.ActiveVessel;
@@ -253,7 +255,59 @@ namespace KSPChatBridge
                 if (vv != null) RpmCorners(c, vv, area, th);
                 RpmBottom(c, area); return;
             }
+
             DataBox(c, area, DataBlock(rw, tab, mapMouse != null));
+        }
+
+        bool IsKscRover(Vessel v)
+        {
+            if (v == null || !v.LandedOrSplashed || body == null || body.bodyName != "Kerbin" || !NativeFlightController.ActiveRover) return false;
+            double midLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5;
+            return NavigationMath.Distance(v.latitude, v.longitude, KscRunway.Lat, midLon, body.Radius) <= 12000;
+        }
+
+        void DrawKscRoverMap(IMfdCanvas canvas, Vessel v)
+        {
+            foreach (KscRoverWaypoint waypoint in KscRoverMap.Points)
+            {
+                Vector2 p = Proj(waypoint.ApproachLat, waypoint.ApproachLon);
+                if (p.x < 0 || p.y < 0 || p.x > Px || p.y > Px) continue;
+                canvas.Dot(p, 7, new Color(1, .78f, .18f));
+                Tag(canvas, new Rect(p.x + 5, p.y - 8, 64, 18), RoverShortName(waypoint.Name));
+            }
+            double lat, lon; string destination;
+            if (NativeFlightController.RoverNavigation(out lat, out lon, out destination))
+            {
+                Vector2 from = Proj(v.latitude, v.longitude), to = Proj(lat, lon);
+                MfdInk.Line(canvas, from, to, new Color(.2f, 1, .8f), 3);
+                if (to.x >= 0 && to.y >= 0 && to.x <= Px && to.y <= Px)
+                {
+                    canvas.Dot(to, 9, new Color(.2f, 1, .8f));
+                    Tag(canvas, new Rect(to.x + 6, to.y - 8, 100, 18), "TO " + RoverShortName(destination));
+                }
+            }
+        }
+
+        static string RoverShortName(string name)
+        {
+            switch (name)
+            {
+                case "Launch Pad": return "LP";
+                case "Runway": return "RWY";
+                case "VAB": return "VAB";
+                case "SPH": return "SPH";
+                case "Tracking Station": return "TRACK";
+                case "Astronaut Complex": return "ASTRO";
+                case "Mission Control": return "MISSION";
+                case "R&D": return "R&D";
+                case "Admin": return "ADMIN";
+                case "Crawlerway": return "CRAWL";
+                case "KSC Grass": return "GRASS";
+                case "Shores": return "SHORE";
+                default:
+                    if (name.StartsWith("R&D - ", StringComparison.OrdinalIgnoreCase)) return "R&D-" + name.Substring(6, Math.Min(4, name.Length - 6));
+                    return name.Length <= 8 ? name : name.Substring(0, 8);
+            }
         }
 
         /// <summary>The MAP / CHART data box rows. tab: the page being drawn (not the outside window's Tab: the IVA screens draw their
