@@ -104,5 +104,27 @@ namespace KSPChatBridge
                 " dv " + node.DeltaV.magnitude.ToString("F1", CultureInfo.InvariantCulture));
             return node;
         }
+
+        internal static void WarpToFirst(Vessel v, double burnTime, double margin)
+        {
+            if (v == null || v.patchedConicSolver == null ||
+                v.patchedConicSolver.maneuverNodes == null || v.patchedConicSolver.maneuverNodes.Count == 0)
+            {
+                ChatLog.Write("rocket", "cannot warp to node: no maneuver node");
+                return;
+            }
+
+            if (TimeWarp.fetch == null)
+            {
+                ChatLog.Write("rocket", "cannot warp to node: time warp unavailable");
+                return;
+            }
+
+            ManeuverNode node = v.patchedConicSolver.maneuverNodes[0];
+            double now = Planetarium.GetUniversalTime();
+            double warpUt = OrbitMath.WarpUt(now, node.UT, burnTime / 2.0 + margin);
+            TimeWarp.fetch.WarpTo(warpUt);
+            ChatLog.Write("rocket", "warping to node at UT " + warpUt.ToString("F1", CultureInfo.InvariantCulture));
+        }
     }
 }
