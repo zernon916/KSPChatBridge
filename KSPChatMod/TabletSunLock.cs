@@ -19,6 +19,17 @@ namespace KSPChatBridge
             tabletSunLockScroll = GUILayout.BeginScrollView(tabletSunLockScroll);
             Rect c = TabletUi.CardPanel(new Rect(0, 0, width, pad + row), "SUN LOCK");
             TabletUi.Label(new Rect(c.x, c.y, c.width, row), "Space only: nose to the sun and hold (stock SAS). Best-face (side panels) not available yet.", true);
+
+            float y = pad + row + gap;
+            TabletUi.Label(new Rect(c.x + 12, y, c.width - 24, row), "INFO ONLY - enable LIVE LINK", true);
+            y += row + gap;
+
+            if (TabletUi.Button(new Rect(c.x + 12, y, (c.width - 24) / 2 - 4, row), "Sun Lock", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("sun_lock", "{\"on\":true}");
+
+            if (TabletUi.Button(new Rect(c.x + (c.width - 24) / 2, y, (c.width - 24) / 2 - 4, row), "Release", false, TabletLink) && TabletLink)
+                ChatWindow.ToolFromMenu("sun_lock", "{\"on\":false}");
+
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
