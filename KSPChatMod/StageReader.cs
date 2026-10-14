@@ -7,6 +7,16 @@ namespace KSPChatBridge
     {
         static double lastNotReady = double.NegativeInfinity;
 
+        internal static List<StageInfo> ForFlight()
+        {
+            return Read(FlightGlobals.ActiveVessel?.VesselDeltaV);
+        }
+
+        internal static List<StageInfo> ForEditor()
+        {
+            return Read(EditorLogic.fetch?.ship?.vesselDeltaV);
+        }
+
         internal static List<StageInfo> Read(VesselDeltaV dv)
         {
             var stages = new List<StageInfo>();
