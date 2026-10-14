@@ -146,7 +146,7 @@ Original long version: ROCKET_PLAN.md.pre-micro. Tasks written "ID [BIG - Grok/C
 - [ ] RK12c: Resources lines - create KSPChatMod/ResourceLines.cs (new), `internal static List<string> Lines(Vessel v)`: for LiquidFuel, Oxidizer, MonoPropellant, ElectricCharge, Ore: v.GetConnectedResourceTotals(id, out amt, out max) -> "LiquidFuel 120/400". Files: OrbitMath.cs (template), ResourceLines.cs (new). Check: builds.
 - [x] RK12d: Crew lines - create KSPChatMod/CrewLines.cs (new), `internal static List<string> Lines()`: HighLogic.CurrentGame.CrewRoster.Crew -> "name trait L{experienceLevel} {rosterStatus}". Files: OrbitMath.cs (template), CrewLines.cs (new). Check: builds.
 - [ ] I1 [BIG - Grok/Cursor]: Full body encyclopedia (biomes, peaks, landing dv) - Encyclopedia tab exists.
-- [ ] I3 [BIG - Grok/Cursor]: Ship info page extension.
+- [x] I3 [BIG - Grok/Cursor]: Ship info page extension.
 - [ ] I4 [BIG - Grok/Cursor]: Science tracker.
 - [ ] I5 [BIG - Grok/Cursor]: Comms page.
 - [ ] I8 [BIG - Grok/Cursor]: Contracts page.

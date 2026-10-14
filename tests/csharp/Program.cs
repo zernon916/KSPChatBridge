@@ -2413,6 +2413,7 @@ class Program
         ThrottleLearnTests.Run();
         RocketTests.Run();
         FlightLogTests.Run();
+        ShipInfoTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

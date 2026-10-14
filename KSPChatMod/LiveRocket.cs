@@ -19,15 +19,17 @@ namespace KSPChatBridge
 
         internal static LiveRocket Read(Vessel v)
         {
-            if (v == null) return null;
+            if (v == null || v.parts == null) return null;
 
             double maxTempRatio = 0;
             double thrust = 0;
             double fuelFlow = 0;
             foreach (Part part in v.parts)
             {
+                if (part == null) continue;
                 if (part.maxTemp > 0)
                     maxTempRatio = System.Math.Max(maxTempRatio, part.temperature / part.maxTemp);
+                if (part.Modules == null) continue;
                 foreach (PartModule module in part.Modules)
                 {
                     ModuleEngines e = module as ModuleEngines;
