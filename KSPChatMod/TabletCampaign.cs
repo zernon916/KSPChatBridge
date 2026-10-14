@@ -98,7 +98,7 @@ namespace KSPChatBridge
                     for (int i = 0; i < tabletCampaign.Phases.Count; i++)
                     {
                         CampaignPhase phase = tabletCampaign.Phases[i];
-                        float cardHeight = header + row * 5 + gap * 2 + 16;
+                        float cardHeight = header + row * 7 + gap * 3 + 16;
                         Rect card = TabletUi.CardPanel(new Rect(0, y, width, cardHeight), "PHASE " + (i + 1));
                         TabletUi.Label(new Rect(card.x, card.y, card.width, row), phase.Goal);
                         TabletUi.Label(new Rect(card.x, card.y + row, card.width, row),
@@ -120,6 +120,17 @@ namespace KSPChatBridge
                         TabletUi.Label(new Rect(card.x, card.y + row * 3 + gap, card.width, row), dvMessage, true);
                         if (TabletUi.Button(new Rect(card.x, card.y + row * 4 + gap * 2, card.width, row), "CHECK DV"))
                             tabletCampaignDvChecks[phase] = CheckCampaignPhaseDv(phase);
+                        Vessel trackedVessel = FindCampaignVessel(phase.VesselId);
+                        TabletUi.Label(new Rect(card.x, card.y + row * 5 + gap * 2, card.width, row),
+                            CampaignTracking.VesselLabel(phase, trackedVessel == null ? null : trackedVessel.vesselName,
+                                trackedVessel != null && trackedVessel == FlightGlobals.ActiveVessel), true);
+                        Vessel activeVessel = FlightGlobals.ActiveVessel;
+                        if (TabletUi.Button(new Rect(card.x, card.y + row * 6 + gap * 3, card.width, row),
+                            "TRACK ACTIVE VESSEL", false, activeVessel != null))
+                        {
+                            CampaignTracking.Track(phase, activeVessel.id.ToString());
+                            SaveTabletCampaign();
+                        }
                         y += cardHeight + gap;
                     }
                     GUILayout.Space(y + gap);
@@ -291,6 +302,15 @@ namespace KSPChatBridge
         static string FormatCampaignDv(double value)
         {
             return value.ToString("#,0", CultureInfo.InvariantCulture);
+        }
+
+        static Vessel FindCampaignVessel(string vesselId)
+        {
+            if (string.IsNullOrWhiteSpace(vesselId) || FlightGlobals.Vessels == null) return null;
+            foreach (Vessel vessel in FlightGlobals.Vessels)
+                if (vessel != null && CampaignTracking.IsAssignedTo(vesselId, vessel.id.ToString()))
+                    return vessel;
+            return null;
         }
     }
 }
