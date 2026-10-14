@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using UnityEngine;
@@ -13,6 +14,7 @@ namespace KSPChatBridge
         static int tabletCampaignEditing = -1;
         static string tabletCampaignNameT, tabletCampaignGoalT = "", tabletCampaignCraftT = "";
         static string tabletCampaignAltT = "80000", tabletCampaignIncT = "0", tabletCampaignMessage = "";
+        static readonly Dictionary<CampaignPhase, string> tabletCampaignDvChecks = new Dictionary<CampaignPhase, string>();
 
         void TabletCampaign(Rect area)
         {
@@ -75,7 +77,7 @@ namespace KSPChatBridge
                     for (int i = 0; i < tabletCampaign.Phases.Count; i++)
                     {
                         CampaignPhase phase = tabletCampaign.Phases[i];
-                        float cardHeight = header + row * 3 + gap + 16;
+                        float cardHeight = header + row * 5 + gap * 2 + 16;
                         Rect card = TabletUi.CardPanel(new Rect(0, y, width, cardHeight), "PHASE " + (i + 1));
                         TabletUi.Label(new Rect(card.x, card.y, card.width, row), phase.Goal);
                         TabletUi.Label(new Rect(card.x, card.y + row, card.width, row),
@@ -91,6 +93,12 @@ namespace KSPChatBridge
                             MoveCampaignPhase(i, 1);
                         if (TabletUi.Button(new Rect(card.x + (buttonWidth + 8) * 2, phaseButtonY, buttonWidth, row), "EDIT"))
                             EditCampaignPhase(i);
+                        string dvMessage;
+                        if (!tabletCampaignDvChecks.TryGetValue(phase, out dvMessage))
+                            dvMessage = "DV: Tap CHECK DV to compare the saved mission plan.";
+                        TabletUi.Label(new Rect(card.x, card.y + row * 3 + gap, card.width, row), dvMessage, true);
+                        if (TabletUi.Button(new Rect(card.x, card.y + row * 4 + gap * 2, card.width, row), "CHECK DV"))
+                            tabletCampaignDvChecks[phase] = CheckCampaignPhaseDv(phase);
                         y += cardHeight + gap;
                     }
                     GUILayout.Space(y + gap);
@@ -136,6 +144,7 @@ namespace KSPChatBridge
             {
                 if (tabletCampaignEditing < 0) tabletCampaign.AddPhase(phase);
                 else tabletCampaign.UpdatePhase(tabletCampaignEditing, phase);
+                tabletCampaignDvChecks.Clear();
                 ResetCampaignEditor();
                 SaveTabletCampaign();
             }
@@ -202,6 +211,49 @@ namespace KSPChatBridge
             {
                 tabletCampaignMessage = "Could not save campaign: " + ex.Message;
             }
+        }
+
+        static string CheckCampaignPhaseDv(CampaignPhase phase)
+        {
+            if (phase == null || string.IsNullOrWhiteSpace(phase.Craft))
+                return "DV: Phase craft is required.";
+
+            MissionData mission = MissionStore.Load(phase.Craft);
+            if (mission == null && !string.IsNullOrWhiteSpace(phase.VesselId) &&
+                !string.Equals(phase.Craft, phase.VesselId, StringComparison.Ordinal))
+                mission = MissionStore.Load(phase.VesselId);
+            if (mission == null)
+                return "DV: No saved Mission Planner plan for " + phase.Craft + ".";
+
+            double required;
+            if (!CampaignDvCheck.TryRequiredDeltaV(mission.Legs, out required))
+                return "DV: Saved mission plan has no valid legs.";
+
+            Vessel vessel = FlightGlobals.ActiveVessel;
+            bool matches = vessel != null &&
+                ((!string.IsNullOrEmpty(vessel.vesselName) &&
+                    string.Equals(vessel.vesselName, phase.Craft, StringComparison.OrdinalIgnoreCase)) ||
+                 (!string.IsNullOrEmpty(phase.VesselId) &&
+                    string.Equals(vessel.id.ToString(), phase.VesselId, StringComparison.Ordinal)));
+            if (!matches)
+                return "DV: " + FormatCampaignDv(required) + " m/s planned; load " + phase.Craft + " to compare.";
+
+            double available;
+            if (!TryStageDeltaV(out available))
+                return "DV: " + FormatCampaignDv(required) + " m/s planned; stock actual stage dV unavailable.";
+
+            if (CampaignDvCheck.HasEnoughDeltaV(required, available))
+                return "DV: " + FormatCampaignDv(required) + " m/s planned; " +
+                    FormatCampaignDv(available) + " m/s stock actual - SUFFICIENT.";
+
+            return "DV: " + FormatCampaignDv(required) + " m/s planned; " +
+                    FormatCampaignDv(available) + " m/s stock actual - SHORT " +
+                FormatCampaignDv(required - available) + " m/s.";
+        }
+
+        static string FormatCampaignDv(double value)
+        {
+            return value.ToString("#,0", CultureInfo.InvariantCulture);
         }
     }
 }

@@ -69,6 +69,8 @@
     <Compile Include="TransferDiagramMathTests.cs"/>
     <Compile Include="../../KSPChatMod/Campaign.cs"/>
     <Compile Include="CampaignTests.cs"/>
+    <Compile Include="../../KSPChatMod/CampaignDvCheck.cs"/>
+    <Compile Include="CampaignDvCheckTests.cs"/>
     <Compile Include="../../KSPChatMod/LearnTestGraph.cs"/>
     <Compile Include="LearnTestGraphsTests.cs"/>
     <Compile Include="../../KSPChatMod/EncyclopediaMath.cs"/>

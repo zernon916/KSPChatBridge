@@ -2420,6 +2420,7 @@ class Program
         EncyclopediaMathTests.Run();
         TransferDiagramMathTests.Run();
         CampaignTests.Run();
+        CampaignDvCheckTests.Run();
         LearnTestGraphsTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
