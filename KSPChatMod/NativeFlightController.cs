@@ -777,6 +777,7 @@ namespace KSPChatBridge
                     if (helicopterPositionHold) HelicopterPolicy.HoldVelocity(
                         NavigationMath.Distance(vessel.latitude, vessel.longitude, hoverLat, hoverLon, vessel.mainBody.Radius),
                         NavigationMath.Bearing(vessel.latitude, vessel.longitude, hoverLat, hoverLon), FlightGlobals.ship_heading, out forwardTarget, out rightTarget);
+                    HeliWaypointVelocity(ref forwardTarget, ref rightTarget);
                     if (emergency != "normal") { vs = -3; forwardTarget = vessel.radarAltitude < 12 ? 0 : 30; rightTarget = 0; }
                     double pitchTarget = props.Compound ? 0 : FlightPolicy.Clamp(-1.5 * (forwardTarget - fwd), -12, 12);
                     double rollTarget = FlightPolicy.Clamp(1.5 * (rightTarget - side), -12, 12);
@@ -1456,8 +1457,21 @@ namespace KSPChatBridge
                 case "heli_control":
                     if (!props.HasLift(vessel)) return "No lift rotor found; use aircraft controls.";
                     string heliMode = Str(a, "mode", "hover");
-                    if (heliMode != "hover" && heliMode != "hold" && heliMode != "fly" && heliMode != "land" && heliMode != "stop") return "Local helicopter mode not yet ported: " + heliMode;
+                    if (heliMode != "hover" && heliMode != "hold" && heliMode != "fly" && heliMode != "land" && heliMode != "stop" && heliMode != "waypoint") return "Local helicopter mode not yet ported: " + heliMode;
                     if (heliMode == "stop") { Stop(); return "Helicopter control stopped."; }
+                    TaxiMission.Point heliDestination = null;
+                    if (heliMode == "waypoint" || (heliMode == "fly" && Str(a, "direction", "").Length > 0))
+                    {
+                        try
+                        {
+                            var heliRoute = new TaxiMission(Str(a, "name", Str(a, "direction", "")), vessel.mainBody.bodyName, 8,
+                                label => spots.Point(label, vessel.mainBody.bodyName));
+                            if (heliRoute.Points.Count != 1) return "Choose one helicopter waypoint or latitude,longitude pair.";
+                            heliDestination = heliRoute.Points[0];
+                        }
+                        catch (ArgumentException ex) { return ex.Message; }
+                        if (Math.Abs(Pitch()) > 60) return "Select a forward control point for waypoint flight.";
+                    }
                     altitude = vessel.altitude - vessel.radarAltitude + Math.Max(1, Num(a, "altitude_m", 20));
                     heading = Num(a, "heading", FlightGlobals.ship_heading); if (heading < 0) heading = FlightGlobals.ship_heading;
                     speed = FlightPolicy.Clamp(Num(a, "speed", 0), 0, 50); helicopterLanding = heliMode == "land";
@@ -1471,6 +1485,14 @@ namespace KSPChatBridge
                     rotorEmergency = new RotorEmergency();
                     helicopterTouchdown = new TouchdownGate();
                     helicopterPositionHold = heliMode != "fly"; hoverLat = vessel.latitude; hoverLon = vessel.longitude;
+                    heliWaypoint = heliDestination;
+                    heliWaypointArrived = false;
+                    if (heliWaypoint != null)
+                    {
+                        helicopterPositionHold = false;
+                        speed = FlightPolicy.Clamp(Num(a, "speed", 15), 1, 20);
+                        ChatLog.Write("heli", "waypoint " + heliWaypoint.Name + "; slow inside 200 m, then hover");
+                    }
                     lastHeliHeading = FlightGlobals.ship_heading; sideIntegral = 0; rotorYawBias = FlightPolicy.Clamp(savedYawBias, -8, 8); nextRotorTrim = Time.realtimeSinceStartup + 8;
                     if (helicopterVerticalOnly) SetGroup(vessel, KSPActionGroup.SAS, true);
                     return StartRotorMode("helicopter");
