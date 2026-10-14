@@ -1,9 +1,54 @@
+using System;
 using System.Globalization;
 
 namespace KSPChatBridge
 {
     internal static class NodeWriter
     {
+        internal static string TransferTo(Vessel v, CelestialBody target)
+        {
+            if (v == null || v.orbit == null || target == null || target.orbit == null)
+                return "Cannot create transfer node: orbit unavailable.";
+
+            Orbit orbit = v.orbit;
+            CelestialBody primary = orbit.referenceBody;
+            if (primary == null || target.orbit.referenceBody != primary)
+                return "different SOI";
+
+            double sourceRadius = orbit.semiMajorAxis;
+            double targetRadius = target.orbit.semiMajorAxis;
+            double mu = primary.gravParameter;
+            if (sourceRadius <= 0 || targetRadius <= 0 || mu <= 0)
+                return "Cannot create transfer node: orbit values are invalid.";
+
+            double dv1, dv2, transferTime;
+            RocketMath.Hohmann(mu, sourceRadius, targetRadius, out dv1, out dv2, out transferTime);
+            double targetPhase = RocketMath.PhaseAngleDeg(mu, sourceRadius, targetRadius);
+            double now = Planetarium.GetUniversalTime();
+            Vector3d sourcePosition = orbit.getRelativePositionAtUT(now);
+            Vector3d targetPosition = target.orbit.getRelativePositionAtUT(now);
+            Vector3d normal = Vector3d.Cross(sourcePosition, orbit.getOrbitalVelocityAtUT(now)).normalized;
+            Vector3d sourceDirection = sourcePosition - normal * Vector3d.Dot(sourcePosition, normal);
+            Vector3d targetDirection = targetPosition - normal * Vector3d.Dot(targetPosition, normal);
+            if (normal.sqrMagnitude < .5 || sourceDirection.sqrMagnitude < 1 ||
+                targetDirection.sqrMagnitude < 1 || double.IsNaN(dv1) || double.IsInfinity(dv1) ||
+                double.IsNaN(transferTime) || double.IsInfinity(transferTime))
+                return "Cannot create transfer node: orbit values are invalid.";
+
+            double currentPhase = Math.Atan2(
+                Vector3d.Dot(normal, Vector3d.Cross(sourceDirection, targetDirection)),
+                Vector3d.Dot(sourceDirection, targetDirection)) * 180.0 / Math.PI;
+            double sourceRate = Math.Sqrt(mu / Math.Pow(sourceRadius, 3));
+            double targetRate = Math.Sqrt(mu / Math.Pow(targetRadius, 3));
+            double wait = WindowFinder.SecondsToPhase(currentPhase, targetPhase, sourceRate, targetRate);
+            if (double.IsNaN(wait) || double.IsInfinity(wait))
+                return "Cannot create transfer node: no transfer window.";
+
+            if (Add(v, now + wait, 0, 0, dv1) == null)
+                return "Cannot create transfer node.";
+            return "Hohmann transfer node added for " + target.bodyName + ".";
+        }
+
         internal static string CircularizeAtAp(Vessel v)
         {
             if (v == null || v.orbit == null || v.orbit.referenceBody == null)
