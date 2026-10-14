@@ -162,6 +162,7 @@ namespace KSPChatBridge
         NativeVerticalLanding verticalLanding;
         TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
+        double roverTargetSpeed, roverIntegral;
         double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
         void RememberLiftoff(double v)
         {
@@ -512,6 +513,28 @@ namespace KSPChatBridge
             try
             {
                 if (mode == "spool") return;
+                if (mode == "rover")
+                {
+                    if (!vessel.Landed) { Stop(); ChatWindow.Notice("Rover speed hold stopped: rover is no longer landed."); return; }
+                    double roverDt = Math.Max(.001, Math.Min(.1, Time.fixedDeltaTime));
+                    double error = roverTargetSpeed - vessel.srfSpeed;
+                    bool braking = vessel.srfSpeed > roverTargetSpeed + 2;
+                    if (braking)
+                    {
+                        roverIntegral = 0;
+                        c.wheelThrottle = 0;
+                        SetGroup(vessel, KSPActionGroup.Brakes, true);
+                    }
+                    else
+                    {
+                        SetGroup(vessel, KSPActionGroup.Brakes, false);
+                        roverIntegral = FlightPolicy.Clamp(roverIntegral + .05 * error * roverDt, 0, 1);
+                        c.wheelThrottle = (float)FlightPolicy.Clamp(.25 * error + roverIntegral, 0, 1);
+                    }
+                    c.wheelSteer = c.yaw = 0;
+                    c.mainThrottle = vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                    return;
+                }
                 if (mode == "vertical landing")
                 {
                     string previous = verticalLanding.Phase;
@@ -882,7 +905,7 @@ namespace KSPChatBridge
         {
             pendingLand = null; goAroundFlaps = false; try { RestoreFlaps(); } catch (Exception) { }
             bankOverride = false; pendingCircle = null;
-            if (mode == "taxi" && vessel != null)
+            if ((mode == "taxi" || mode == "rover") && vessel != null)
             {
                 vessel.ctrlState.wheelThrottle = vessel.ctrlState.wheelSteer = 0;
                 FlightInputHandler.state.wheelThrottle = FlightInputHandler.state.wheelSteer = 0;
@@ -1110,6 +1133,25 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     if (poweredTaxi) engines.Cancel(); else NativeEngines.Takeoff(vessel);
                     return "Local taxi started: straight lines; no obstacle avoidance.";
+                case "drive_speed":
+                    double roverSpeed = Num(a, "speed", double.NaN);
+                    if (double.IsNaN(roverSpeed) || double.IsInfinity(roverSpeed) || roverSpeed < 0 || roverSpeed > 25)
+                        return "Rover speed must be between 0 and 25 m/s.";
+                    if (!vessel.Landed) return "Rover speed hold requires a landed vessel.";
+                    bool roverWheels = false, roverMotors = false;
+                    foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
+                    {
+                        roverWheels |= module is ModuleWheelBase;
+                        var motor = module as ModuleWheels.ModuleWheelMotor;
+                        roverMotors |= motor != null && motor.motorEnabled;
+                    }
+                    if (!roverWheels || !roverMotors) return "Rover speed hold requires powered wheels.";
+                    if (mode != "rover") BeginHold();
+                    roverTargetSpeed = roverSpeed; roverIntegral = 0; mode = "rover";
+                    vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                    SetGroup(vessel, KSPActionGroup.Brakes, false);
+                    ChatLog.Write("rover", "speed target " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
+                    return "Rover speed hold: " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s.";
                 case "abort":
                     if (plan != null) plan.Pause();
                     bool descending = mode == "vertical landing";

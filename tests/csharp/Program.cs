@@ -1497,6 +1497,10 @@ class Program
                 Check(!double.IsNaN(PilotPolicy.VMax(10, 20, 1.0, 100, 150)) && double.IsNaN(PilotPolicy.VMax(10, 20, 1, 100, 10)), "vmax estimate (unknown when slow)");
                 Check(!PilotPolicy.PreemptsPlan("set_speed") && !PilotPolicy.PreemptsPlan("set_altitude") && !PilotPolicy.PreemptsPlan("set_throttle") && PilotPolicy.PreemptsPlan("land"), "tweaks modify the plan, land replaces");
                 Check(ToolRouter.Direct("max speed", "plane").Value.Key == "set_speed" && ToolRouter.Direct("set speed to max", "plane").Value.Value.Contains("max"), "max speed alias");
+                var roverSpeed = ToolRouter.Direct("drive speed 12.5", "rover");
+                Check(roverSpeed != null && roverSpeed.Value.Key == "drive_speed" && roverSpeed.Value.Value == "{\"speed\":12.5}"
+                    && ToolRouter.Direct("drive speed 12.5", "plane") == null && NativeCommands.IsPorted("drive_speed")
+                    && ToolRouter.Schemas.ContainsKey("drive_speed"), "rover drive speed direct command and schema");
                 Check(ToolRouter.Direct("turn around", "plane").Value.Key == "set_heading" && ToolRouter.Direct("turn around", "plane").Value.Value.Contains("180"), "turn around -> turn 180");
                 Check(FlightResidualPolicy.PreferBuiltIn("KSC 27 short final", new[] { "Island 27" }) && !FlightResidualPolicy.PreferBuiltIn("Island 27", new[] { "Island 27" }) && FlightResidualPolicy.PreferBuiltIn("27", new[] { "Island 27" }), "explicit KSC/built-in beats saved 'Island 27' spot");
                 Check(FlightResidualPolicy.DuplicatesBuiltIn(-1.5161, -71.8567) && !FlightResidualPolicy.DuplicatesBuiltIn(-1.0, -70), "duplicate Island spot hidden");
