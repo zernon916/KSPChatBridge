@@ -15,6 +15,7 @@ namespace KSPChatBridge
             TabletUi.Label(new Rect(c.x + 6, c.y + 6 + row, c.width - 12, row), "ASCENT 80 km orbit, LAND (target if set), EXEC NODE, RENDEZV + DOCK with the target, AIRCRAFT hold (current hdg/alt/speed), SPACEPLN autoland, ALL OFF.", true);
             float yb = c.yMax + 8;
             if (!TabletLink) { TabletUi.Label(new Rect(c.x + 6, yb, c.width - 12, row), "INFO ONLY - enable LIVE LINK", true); yb += row + 8; }
+            foreach (string key in MfdNav.Right("mjguide")) { if (string.IsNullOrEmpty(key) || key == "BACK") continue; if (TabletUi.Button(new Rect(c.x + 6, yb, c.width - 12, row), key, false, TabletLink) && TabletLink) { ChatLog.Write("g", "tablet mjguide: " + key); OnKey("mjguide", key); } yb += row + 8; }
         }
     }
 }
