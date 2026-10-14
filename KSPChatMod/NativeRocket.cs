@@ -13,6 +13,9 @@ namespace KSPChatBridge
         Vessel rocketAbortVessel;
         int rocketAbortStage = int.MinValue;
         double rocketPreviousThrust;
+        ManeuverNode rocketNode;
+        double rocketNodeDvLeft, rocketNodeBurnStartUt, rocketNodeLastUt;
+        float rocketNodeLastThrottle;
 
         void RocketSteer(FlightCtrlState c, Vector3d dir)
         {
@@ -66,9 +69,13 @@ namespace KSPChatBridge
                 string mode = args != null && args.TryGetValue("mode", out modeValue) ? modeValue as string : null;
                 if (string.IsNullOrWhiteSpace(mode)) return "Usage: rocket_point requires a mode.";
                 mode = mode.Trim();
-                rocketMode = "point:" + mode;
+                rocketMode = string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase) ? "node" : "point:" + mode;
+                rocketNode = null;
+                rocketNodeLastThrottle = 0;
+                rocketNodeHasStarted = false;
                 ChatLog.Write("rocket", "point " + mode);
-                return "Pointing " + mode + ".";
+                return string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase)
+                    ? "Executing maneuver node." : "Pointing " + mode + ".";
             }
 
             return null;
@@ -79,6 +86,7 @@ namespace KSPChatBridge
             RocketAutoStage();
             if (!rocketFairingsDone || rocketFairingsVessel != vessel)
                 RocketFairings(LiveRocket.Read(vessel));
+            if (rocketMode == "node") return RocketFlyNode(c);
             const string prefix = "point:";
             if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
             LiveRocket s = LiveRocket.Read(vessel);
@@ -89,6 +97,98 @@ namespace KSPChatBridge
             if (rocketMode == "off") return true;
             RocketSteer(c, direction);
             return true;
+        }
+
+        bool RocketFlyNode(FlightCtrlState c)
+        {
+            if (c == null) return true;
+            c.mainThrottle = 0;
+            if (vessel == null || vessel.patchedConicSolver == null ||
+                vessel.patchedConicSolver.maneuverNodes == null ||
+                vessel.patchedConicSolver.maneuverNodes.Count == 0 || vessel.orbit == null)
+                return true;
+
+            var solver = vessel.patchedConicSolver;
+            ManeuverNode node = solver.maneuverNodes[0];
+            LiveRocket s = LiveRocket.Read(vessel);
+            if (node == null || s == null) return true;
+
+            double now = Planetarium.GetUniversalTime();
+            if (rocketNode != node)
+            {
+                double dv = node.GetBurnVector(vessel.orbit).magnitude;
+                double accel = s.Mass > 0 ? s.Thrust / s.Mass : 0;
+                if (!FiniteRocketValue(dv) || dv < 0 || !FiniteRocketValue(node.UT))
+                    return true;
+                if (dv < 0.1)
+                {
+                    solver.RemoveManeuverNode(node);
+                    solver.UpdateFlightPlan();
+                    ChatLog.Write("rocket", "node burn complete");
+                    rocketMode = "off";
+                    return true;
+                }
+                if (!FiniteRocketValue(accel) || accel <= 0) return true;
+
+                rocketNode = node;
+                rocketNodeDvLeft = dv;
+                rocketNodeBurnStartUt = node.UT - dv / accel / 2;
+                rocketNodeLastUt = Math.Min(now, rocketNodeBurnStartUt);
+                rocketNodeLastThrottle = 0;
+                ChatLog.Write("rocket", "node burn planned: " + dv.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) +
+                    " m/s, start UT " + rocketNodeBurnStartUt.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            Vector3d direction = KSPChatBridge.PointAt.Dir(vessel, "node");
+            RocketSteer(c, direction);
+            if (now < rocketNodeBurnStartUt)
+            {
+                rocketNodeLastUt = now;
+                rocketNodeLastThrottle = 0;
+                return true;
+            }
+
+            if (rocketNodeLastUt < now)
+            {
+                double elapsed = now - Math.Max(rocketNodeLastUt, rocketNodeBurnStartUt);
+                double accel = s.Mass > 0 ? s.Thrust / s.Mass : 0;
+                if (FiniteRocketValue(elapsed) && FiniteRocketValue(accel) && accel > 0)
+                    rocketNodeDvLeft = Math.Max(0, rocketNodeDvLeft - accel * elapsed * rocketNodeLastThrottle);
+            }
+            rocketNodeLastUt = now;
+
+            if (rocketNodeDvLeft < 0.1)
+            {
+                c.mainThrottle = 0;
+                solver.RemoveManeuverNode(node);
+                solver.UpdateFlightPlan();
+                ChatLog.Write("rocket", "node burn complete");
+                rocketNode = null;
+                rocketMode = "off";
+                return true;
+            }
+
+            double currentAccel = s.Mass > 0 ? s.Thrust / s.Mass : 0;
+            if (currentAccel <= 0 || !FiniteRocketValue(currentAccel))
+                rocketNodeLastThrottle = 0;
+            else
+                rocketNodeLastThrottle = (float)(rocketNodeDvLeft < currentAccel
+                    ? Math.Max(0, Math.Min(1, rocketNodeDvLeft / currentAccel))
+                    : 1);
+            c.mainThrottle = rocketNodeLastThrottle;
+            if (rocketNodeLastThrottle > 0 && !rocketNodeHasStarted)
+            {
+                rocketNodeHasStarted = true;
+                ChatLog.Write("rocket", "node burn started");
+            }
+            return true;
+        }
+
+        bool rocketNodeHasStarted;
+
+        static bool FiniteRocketValue(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         void RocketAbortCheck(FlightCtrlState c, LiveRocket s, double attErrDeg, double thrustDrop)
