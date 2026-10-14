@@ -537,7 +537,9 @@ namespace KSPChatBridge
                         roverHeadingEnabled = true;
                     }
                     double roverPitch = Pitch(), roverRoll = Roll(), sideSpeed = Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.right);
-                    if (RoverTopSpeedTick(vessel.srfSpeed, roverPitch, roverRoll) || RoverBrakingTick(vessel.srfSpeed, roverPitch, roverRoll)) return;
+                    if (RoverTopSpeedTick(vessel.srfSpeed, roverPitch, roverRoll)
+                        || RoverBrakingTick(vessel.srfSpeed, roverPitch, roverRoll)
+                        || RoverTurnTick(vessel.srfSpeed, roverPitch, roverRoll)) return;
                     bool slowForSafety = KscRoverPolicy.ReduceSpeed(roverPitch, roverRoll, sideSpeed, vessel.srfSpeed);
                     bool brakeForRollover = KscRoverPolicy.BrakeForRollover(roverRoll);
                     if (slowForSafety != roverSafetySlow || brakeForRollover != roverSafetyBrake)
@@ -564,7 +566,7 @@ namespace KSPChatBridge
                         roverIntegral = FlightPolicy.Clamp(roverIntegral + .05 * error * roverDt, 0, 1);
                         c.wheelThrottle = (float)FlightPolicy.Clamp(.25 * error + roverIntegral, 0, 1);
                     }
-                    c.wheelSteer = roverHeadingEnabled
+                    c.wheelSteer = roverTurnTrial != null ? .2f : roverHeadingEnabled
                         ? (float)KscRoverPolicy.Steering(FlightPolicy.Wrap(roverHeading - FlightGlobals.ship_heading), vessel.srfSpeed)
                         : 0;
                     if (roverBrakingTrial != null && roverBrakingTrial.Braking)

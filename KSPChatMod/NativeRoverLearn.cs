@@ -8,6 +8,7 @@ namespace KSPChatBridge
     {
         RoverTopSpeedTrial roverTopSpeedTrial;
         RoverBrakingTrial roverBrakingTrial;
+        RoverTurnTrial roverTurnTrial;
         internal static string RoverLearnStatus
         {
             get
@@ -16,9 +17,10 @@ namespace KSPChatBridge
                 if (me == null) return "";
                 if (me.roverTopSpeedTrial != null) return "ROVER LEARN: measuring top speed ("
                     + me.roverTopSpeedTrial.BestSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s)";
-                return me.roverBrakingTrial == null ? "" : me.roverBrakingTrial.Braking
+                if (me.roverBrakingTrial != null) return me.roverBrakingTrial.Braking
                     ? "ROVER LEARN: measuring braking distance (" + me.roverBrakingTrial.Distance.ToString("0.0", CultureInfo.InvariantCulture) + " m)"
                     : "ROVER LEARN: accelerating to 10 m/s for brake test";
+                return me.roverTurnTrial == null ? "" : "ROVER LEARN: turn test at " + me.roverTurnTrial.TargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s";
             }
         }
 
@@ -26,7 +28,7 @@ namespace KSPChatBridge
         {
             if (vessel == null) return "No active vessel.";
             if (!vessel.Landed) return "ROVER LEARN requires a landed rover.";
-            if (roverTopSpeedTrial != null || roverBrakingTrial != null) return "Rover LEARN test already running.";
+            if (roverTopSpeedTrial != null || roverBrakingTrial != null || roverTurnTrial != null) return "Rover LEARN test already running.";
             if (vessel.srfSpeed > .5) return "Stop the rover before starting ROVER LEARN.";
             if (!KscRoverPolicy.FlatSurface(Pitch(), Roll(), 5)) return "ROVER LEARN requires a level surface (pitch and roll within 5 degrees).";
             bool wheels = false, motors = false;
@@ -39,23 +41,31 @@ namespace KSPChatBridge
             if (!wheels || !motors) return "ROVER LEARN requires powered wheels.";
             RoverProfile profile = LoadRoverProfile(vessel.vesselName);
             bool measureTopSpeed = profile == null || double.IsNaN(profile.TopSpeed);
+            bool measureBraking = !measureTopSpeed && double.IsNaN(profile.BrakingDistance);
+            bool measureTurn = !measureTopSpeed && !measureBraking && double.IsNaN(profile.SafeTurnSpeed);
+            if (!measureTopSpeed && !measureBraking && !measureTurn)
+                return "Rover LEARN steps 1-3 are complete. Their results are saved in this rover's profile.";
             if (mode != "rover") BeginHold();
             roverNavigating = false; roverDestination = null;
-            roverTargetSpeed = measureTopSpeed ? RoverTopSpeedTrial.TargetSpeed : 10;
-            roverHeading = FlightGlobals.ship_heading; roverHeadingEnabled = true; roverIntegral = 0;
+            roverTargetSpeed = measureTopSpeed ? RoverTopSpeedTrial.TargetSpeed : measureBraking ? 10 : Math.Min(2, profile.TopSpeed);
+            roverHeading = FlightGlobals.ship_heading; roverHeadingEnabled = !measureTurn; roverIntegral = 0;
             if (measureTopSpeed) roverTopSpeedTrial = new RoverTopSpeedTrial(Planetarium.GetUniversalTime());
-            else roverBrakingTrial = new RoverBrakingTrial(Planetarium.GetUniversalTime());
+            else if (measureBraking) roverBrakingTrial = new RoverBrakingTrial(Planetarium.GetUniversalTime());
+            else roverTurnTrial = new RoverTurnTrial(Planetarium.GetUniversalTime(), profile.TopSpeed);
             mode = "rover";
             vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
             SetGroup(vessel, KSPActionGroup.Brakes, false);
-            string test = measureTopSpeed ? "top-speed test" : "10 m/s braking test";
+            string test = measureTopSpeed ? "top-speed test" : measureBraking ? "10 m/s braking test" : "safe-turn-speed test";
             ChatLog.Write("rover", test + " started for " + vessel.vesselName + " on a level surface");
             ChatWindow.Notice(measureTopSpeed
                 ? "[ROVER LEARN] Starting straight-line top-speed test, capped at 25 m/s. Stop current cancels it."
-                : "[ROVER LEARN] Accelerating to 10 m/s, then braking to measure stopping distance. Stop current cancels it.");
+                : measureBraking
+                    ? "[ROVER LEARN] Accelerating to 10 m/s, then braking to measure stopping distance. Stop current cancels it."
+                    : "[ROVER LEARN] Starting a progressive turn test. Use a wide, level area; it stops at 15 degrees of roll. Stop current cancels it.");
             return measureTopSpeed
                 ? "ROVER LEARN step 1 started: measuring top speed on level ground, capped at 25 m/s."
-                : "ROVER LEARN step 2 started: measuring braking distance from 10 m/s.";
+                : measureBraking ? "ROVER LEARN step 2 started: measuring braking distance from 10 m/s."
+                    : "ROVER LEARN step 3 started: progressively turning until roll exceeds 15 degrees.";
         }
 
         bool RoverTopSpeedTick(double speed, double pitch, double roll)
@@ -100,6 +110,31 @@ namespace KSPChatBridge
             return true;
         }
 
+        bool RoverTurnTick(double speed, double pitch, double roll)
+        {
+            if (roverTurnTrial == null) return false;
+            var trial = roverTurnTrial;
+            if (!trial.Sample(Planetarium.GetUniversalTime(), speed, pitch, roll))
+            {
+                roverTargetSpeed = trial.TargetSpeed;
+                return false;
+            }
+            roverTurnTrial = null;
+            if (trial.Aborted)
+            {
+                ChatLog.Write("rover", "turn-speed test aborted: " + trial.Reason);
+                ChatWindow.Notice("[ROVER LEARN] Turn-speed test aborted: " + trial.Reason + ".");
+            }
+            else
+            {
+                var profile = LoadRoverProfile(vessel.vesselName) ?? new RoverProfile();
+                profile.SafeTurnSpeed = Math.Round(trial.LastSafeSpeed, 1);
+                SaveRoverProfile(profile, "safe turn speed", profile.SafeTurnSpeed, "m/s", trial.Reason);
+            }
+            Stop();
+            return true;
+        }
+
         void SaveRoverProfile(RoverProfile profile, string metric, double value, string unit, string reason)
         {
             profile.Date = DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
@@ -128,9 +163,10 @@ namespace KSPChatBridge
 
         void CancelRoverLearn()
         {
-            if (roverTopSpeedTrial == null && roverBrakingTrial == null) return;
+            if (roverTopSpeedTrial == null && roverBrakingTrial == null && roverTurnTrial == null) return;
             roverTopSpeedTrial = null;
             roverBrakingTrial = null;
+            roverTurnTrial = null;
             ChatLog.Write("rover", "rover LEARN test cancelled");
             ChatWindow.Notice("[ROVER LEARN] Test cancelled.");
         }

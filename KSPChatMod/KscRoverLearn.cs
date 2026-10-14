@@ -24,11 +24,15 @@ namespace KSPChatBridge
         internal static RoverProfile FromDict(Dictionary<string, object> data)
         {
             if (data == null) return null;
+            double topSpeed = Number(data, "top_speed"), brakingDistance = Number(data, "braking_distance"), safeTurnSpeed = Number(data, "safe_turn_speed");
+            if (topSpeed <= 0 || topSpeed > RoverTopSpeedTrial.TargetSpeed) topSpeed = double.NaN;
+            if (brakingDistance < 0 || brakingDistance > 10000) brakingDistance = double.NaN;
+            if (safeTurnSpeed <= 0 || safeTurnSpeed > RoverTopSpeedTrial.TargetSpeed) safeTurnSpeed = double.NaN;
             return new RoverProfile
             {
-                TopSpeed = Number(data, "top_speed"),
-                BrakingDistance = Number(data, "braking_distance"),
-                SafeTurnSpeed = Number(data, "safe_turn_speed"),
+                TopSpeed = topSpeed,
+                BrakingDistance = brakingDistance,
+                SafeTurnSpeed = safeTurnSpeed,
                 Date = data.ContainsKey("date") ? Convert.ToString(data["date"], CultureInfo.InvariantCulture) : ""
             };
         }
@@ -141,6 +145,48 @@ namespace KSPChatBridge
             else if (now - stoppedAt >= StopSettleSeconds) return Complete("stopped");
             if (now - brakingStartedAt >= BrakeTimeoutSeconds)
                 return Abort("brakes did not stop the rover within 20 seconds");
+            return false;
+        }
+
+        bool Complete(string reason) { Done = true; Reason = reason; return true; }
+        bool Abort(string reason) { Done = Aborted = true; Reason = reason; return true; }
+    }
+
+    internal sealed class RoverTurnTrial
+    {
+        const double StartSpeed = 2, SpeedStep = 1, TurnStepSeconds = 2, RollLimit = 15, PitchLimit = 8, TimeoutSeconds = 90;
+        readonly double startedAt, maxSpeed;
+        double nextStepAt;
+        internal double TargetSpeed { get; private set; }
+        internal double LastSafeSpeed { get; private set; }
+        internal bool Done { get; private set; }
+        internal bool Aborted { get; private set; }
+        internal string Reason { get; private set; }
+
+        internal RoverTurnTrial(double now, double maxSpeed)
+        {
+            startedAt = nextStepAt = now;
+            this.maxSpeed = Math.Max(0, Math.Min(RoverTopSpeedTrial.TargetSpeed, maxSpeed));
+            TargetSpeed = Math.Min(StartSpeed, this.maxSpeed);
+        }
+
+        internal bool Sample(double now, double speed, double pitch, double roll)
+        {
+            if (Done) return true;
+            if (double.IsNaN(now) || double.IsInfinity(now) || double.IsNaN(speed) || double.IsInfinity(speed) || speed < 0
+                || double.IsNaN(pitch) || double.IsInfinity(pitch) || double.IsNaN(roll) || double.IsInfinity(roll))
+                return Abort("invalid speed, attitude, or clock sample");
+            if (now < startedAt) return Abort("game clock moved backwards");
+            if (Math.Abs(pitch) > PitchLimit) return Abort("surface stopped being level");
+            if (Math.Abs(roll) > RollLimit)
+                return LastSafeSpeed > 0 ? Complete("roll exceeded 15 degrees") : Abort("roll exceeded 15 degrees before a safe speed was measured");
+            if (now - startedAt >= TimeoutSeconds)
+                return LastSafeSpeed > 0 ? Complete("90-second limit") : Abort("could not reach a safe turn speed");
+            if (now < nextStepAt || speed < TargetSpeed - .5) return false;
+            LastSafeSpeed = TargetSpeed;
+            if (TargetSpeed >= maxSpeed) return Complete("profile top-speed limit reached");
+            TargetSpeed = Math.Min(maxSpeed, TargetSpeed + SpeedStep);
+            nextStepAt = now + TurnStepSeconds;
             return false;
         }
 

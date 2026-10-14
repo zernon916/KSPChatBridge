@@ -1323,6 +1323,14 @@ class Program
                 && Math.Abs(brakingTrial.Distance - 1.3) < .001, "rover brake test integrates stopping distance and settles");
             brakingTrial = new RoverBrakingTrial(0);
             Check(brakingTrial.Sample(1, 10, 9, 0) && brakingTrial.Aborted, "rover brake test aborts on uneven surface");
+            var turnTrial = new RoverTurnTrial(0, 4);
+            Check(!turnTrial.Sample(2, 2, 0, 0) && turnTrial.TargetSpeed == 3 && turnTrial.LastSafeSpeed == 2
+                && !turnTrial.Sample(4, 3, 0, 0) && turnTrial.TargetSpeed == 4
+                && turnTrial.Sample(6, 4, 0, 0) && !turnTrial.Aborted && turnTrial.LastSafeSpeed == 4,
+                "rover turn test steps speed up to profile limit");
+            turnTrial = new RoverTurnTrial(0, 5);
+            Check(!turnTrial.Sample(2, 2, 0, 0) && turnTrial.Sample(3, 2.5, 0, 15.1)
+                && !turnTrial.Aborted && turnTrial.LastSafeSpeed == 2, "rover turn test records last safe speed at 15-degree roll");
             var roverProfile = new RoverProfile { TopSpeed = 12.1, Date = "2026-01-01 12:00" };
             var roverProfileJson = MiniJson.DeserializeObject(MiniJson.Serialize(roverProfile.ToDict())) as Dictionary<string, object>;
             var loadedRoverProfile = RoverProfile.FromDict(roverProfileJson);
@@ -1340,7 +1348,7 @@ class Program
             Check(string.Join(",", order.ConvertAll(i => i.ToString()).ToArray()) == "1,2,0", "tour order nearest-first");
             Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
         }
-        Console.WriteLine("Rover drive-to-building and LEARN: 17 behavior checks passed.");
+        Console.WriteLine("Rover drive-to-building and LEARN: 19 behavior checks passed.");
         // ---- Live test round 2: multi-turn replay (tool calls stop firing after the first) ----
         {
             var logDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-chatlog-" + Guid.NewGuid().ToString("N"));
