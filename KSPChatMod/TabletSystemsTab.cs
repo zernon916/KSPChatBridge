@@ -4,7 +4,7 @@ namespace KSPChatBridge
 {
     public partial class AicsMenu
     {
-        static readonly string[] TabletSystemsPages = { "MASTER ALARM", "SYSTEMS" };
+        static readonly string[] TabletSystemsPages = { "MASTER ALARM", "SYSTEMS", "STATUS" };
         static int tabletSystemsPage;
 
         void TabletSystemsTab(Rect area)
