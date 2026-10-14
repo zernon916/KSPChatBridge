@@ -69,13 +69,15 @@ namespace KSPChatBridge
                 string mode = args != null && args.TryGetValue("mode", out modeValue) ? modeValue as string : null;
                 if (string.IsNullOrWhiteSpace(mode)) return "Usage: rocket_point requires a mode.";
                 mode = mode.Trim();
-                rocketMode = string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase) ? "node" : "point:" + mode;
+                rocketMode = string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase) ? "node" :
+                    string.Equals(mode, "land", StringComparison.OrdinalIgnoreCase) ? "land" : "point:" + mode;
                 rocketNode = null;
                 rocketNodeLastThrottle = 0;
                 rocketNodeHasStarted = false;
                 ChatLog.Write("rocket", "point " + mode);
-                return string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase)
-                    ? "Executing maneuver node." : "Pointing " + mode + ".";
+                return string.Equals(mode, "node", StringComparison.OrdinalIgnoreCase) ? "Executing maneuver node." :
+                    string.Equals(mode, "land", StringComparison.OrdinalIgnoreCase) ? "Executing suicide burn landing." :
+                    "Pointing " + mode + ".";
             }
 
             return null;
@@ -86,6 +88,7 @@ namespace KSPChatBridge
             RocketAutoStage();
             if (!rocketFairingsDone || rocketFairingsVessel != vessel)
                 RocketFairings(LiveRocket.Read(vessel));
+            if (rocketMode == "land") return RocketFlyLand(c);
             if (rocketMode == "node") return RocketFlyNode(c);
             const string prefix = "point:";
             if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
@@ -96,6 +99,26 @@ namespace KSPChatBridge
             RocketAbortCheck(c, s, attErrDeg, thrustDrop);
             if (rocketMode == "off") return true;
             RocketSteer(c, direction);
+            return true;
+        }
+
+        bool RocketFlyLand(FlightCtrlState c)
+        {
+            if (c == null) return true;
+            c.mainThrottle = 0;
+            if (vessel == null) return true;
+
+            LiveRocket s = LiveRocket.Read(vessel);
+            if (s == null) return true;
+
+            Vector3d direction = vessel.srfSpeed > .5 && s.Vs < 0
+                ? -vessel.srf_velocity.normalized
+                : vessel.upAxis;
+            RocketSteer(c, direction);
+
+            double start = SuicideBurn.StartAlt(-s.Vs, s.LocalG, s.Thrust * 1000,
+                s.Mass * 1000, .15);
+            c.mainThrottle = s.RadarAlt < start ? 1 : 0;
             return true;
         }
 

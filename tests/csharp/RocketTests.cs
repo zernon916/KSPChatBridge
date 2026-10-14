@@ -22,6 +22,7 @@ internal static class RocketTests
     {
         passes = 0;
         PlanetViewMathChecks();
+        SuicideBurnChecks();
         // Stock KSP: Kerbin mu in m^3/s^2, 600 km radius, 100 km LKO,
         // Mun orbit radius 12,000 km. These are radii, not altitudes.
         const double kerbinMu = 3.5316e12, lkoRadius = 700000;
@@ -64,6 +65,14 @@ internal static class RocketTests
         SlopeChecks();
         DvTrackerChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void SuicideBurnChecks()
+    {
+        Check(Near(SuicideBurn.StartAlt(20, 10, 20000, 1000, .15), 23, 1e-10),
+            "suicide burn start altitude includes margin");
+        Check(double.IsPositiveInfinity(SuicideBurn.StartAlt(20, 10, 10000, 1000, .15)),
+            "suicide burn is unreachable without acceleration above local gravity");
     }
 
     static void PlanetViewMathChecks()
