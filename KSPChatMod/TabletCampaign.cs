@@ -17,6 +17,11 @@ namespace KSPChatBridge
         static string tabletCampaignAltT = "80000", tabletCampaignIncT = "0", tabletCampaignMessage = "";
         static readonly Dictionary<CampaignPhase, string> tabletCampaignDvChecks = new Dictionary<CampaignPhase, string>();
         static float nextCampaignProgressCheck;
+        static readonly CampaignRunner tabletCampaignRunner = new CampaignRunner();
+        static CampaignPhase tabletCampaignRunPhase;
+        static string tabletCampaignRunVesselId, tabletCampaignRunnerMessage = "Select RUN PHASE on a campaign phase.";
+        static int tabletCampaignTransferNodeCount;
+        static bool tabletCampaignTransferCommandSent;
 
         void TabletCampaign(Rect area)
         {
@@ -47,6 +52,22 @@ namespace KSPChatBridge
                     }
                     y += header + row * 2 + gap * 2 + 16;
 
+                    float runnerHeight = header + row * 2 + gap + 16;
+                    Rect runnerCard = TabletUi.CardPanel(new Rect(0, y, width, runnerHeight), "PHASE RUNNER");
+                    int runPhaseIndex = tabletCampaign.Phases == null || tabletCampaignRunPhase == null
+                        ? -1 : tabletCampaign.Phases.IndexOf(tabletCampaignRunPhase);
+                    string runnerState = tabletCampaignRunner.State.ToString().ToUpperInvariant();
+                    if (runPhaseIndex >= 0)
+                        runnerState += "  |  PHASE " + (runPhaseIndex + 1) + ": " + tabletCampaignRunPhase.Goal;
+                    TabletUi.Label(new Rect(runnerCard.x, runnerCard.y, runnerCard.width, row), runnerState, true);
+                    float abortWidth = runnerCard.width * .3f;
+                    TabletUi.Label(new Rect(runnerCard.x, runnerCard.y + row, runnerCard.width - abortWidth - 8, row),
+                        tabletCampaignRunnerMessage, true);
+                    if (TabletUi.Button(new Rect(runnerCard.xMax - abortWidth, runnerCard.y + row, abortWidth, row),
+                        "ABORT", false, TabletLink && CampaignRunActive()))
+                        AbortCampaignRun();
+                    y += runnerHeight + gap;
+
                     float editorHeight = header + row * 5 + gap + 16;
                     Rect editor = TabletUi.CardPanel(new Rect(0, y, width, editorHeight),
                         tabletCampaignEditing < 0 ? "NEW PHASE" : "EDIT PHASE " + (tabletCampaignEditing + 1));
@@ -73,7 +94,7 @@ namespace KSPChatBridge
                     for (int i = 0; i < tabletCampaign.Phases.Count; i++)
                     {
                         CampaignPhase phase = tabletCampaign.Phases[i];
-                        float cardHeight = header + row * 8 + gap * 3 + 16;
+                        float cardHeight = header + row * 9 + gap * 4 + 16;
                         Rect card = TabletUi.CardPanel(new Rect(0, y, width, cardHeight), "PHASE " + (i + 1));
                         TabletUi.Label(new Rect(card.x, card.y, card.width, row), phase.Goal);
                         TabletUi.Label(new Rect(card.x, card.y + row, card.width, row),
@@ -87,7 +108,9 @@ namespace KSPChatBridge
                         if (TabletUi.Button(new Rect(card.x + buttonWidth + 8, phaseButtonY, buttonWidth, row), "MOVE DOWN", false,
                             i < tabletCampaign.Phases.Count - 1))
                             MoveCampaignPhase(i, 1);
-                        if (TabletUi.Button(new Rect(card.x + (buttonWidth + 8) * 2, phaseButtonY, buttonWidth, row), "EDIT"))
+                        bool activeRunPhase = object.ReferenceEquals(phase, tabletCampaignRunPhase) && CampaignRunActive();
+                        if (TabletUi.Button(new Rect(card.x + (buttonWidth + 8) * 2, phaseButtonY, buttonWidth, row), "EDIT", false,
+                            !activeRunPhase))
                             EditCampaignPhase(i);
                         string dvMessage;
                         if (!tabletCampaignDvChecks.TryGetValue(phase, out dvMessage))
@@ -103,11 +126,15 @@ namespace KSPChatBridge
                             CampaignLaunchWindowLabel(i), true);
                         Vessel activeVessel = FlightGlobals.ActiveVessel;
                         if (TabletUi.Button(new Rect(card.x, card.y + row * 7 + gap * 3, card.width, row),
-                            "TRACK ACTIVE VESSEL", false, activeVessel != null))
+                            "TRACK ACTIVE VESSEL", false, activeVessel != null && !activeRunPhase))
                         {
                             CampaignTracking.Track(phase, activeVessel.id.ToString());
                             SaveTabletCampaign();
                         }
+                        if (TabletUi.Button(new Rect(card.x, card.y + row * 8 + gap * 4, card.width, row),
+                            activeRunPhase ? "PHASE RUNNING" : "RUN PHASE", false,
+                            TabletLink && !CampaignRunActive() && !activeRunPhase))
+                            StartCampaignRun(i);
                         y += cardHeight + gap;
                     }
                     GUILayout.Space(y + gap);
@@ -155,8 +182,14 @@ namespace KSPChatBridge
 
         internal static void OnCampaignLaunch(EventReport report)
         {
-            Vessel vessel = report != null && report.origin != null ? report.origin.vessel : FlightGlobals.ActiveVessel;
+            Vessel vessel = report != null && report.origin != null ? report.origin.vessel : null;
+            if (vessel == null && FlightGlobals.fetch != null) vessel = FlightGlobals.ActiveVessel;
             if (vessel == null || string.IsNullOrWhiteSpace(vessel.id.ToString())) return;
+            if (tabletCampaignRunner.State == CampaignRunnerState.Launching &&
+                CampaignTracking.IsAssignedTo(tabletCampaignRunVesselId, vessel.id.ToString()) &&
+                tabletCampaignRunner.Apply(CampaignRunnerInput.LaunchComplete))
+                tabletCampaignRunnerMessage = "Launch detected; waiting for the target orbit.";
+
             EnsureTabletCampaignLoaded();
             if (tabletCampaign == null || tabletCampaign.Phases == null) return;
 
@@ -192,6 +225,9 @@ namespace KSPChatBridge
                 Vessel vessel = FindCampaignVessel(phase.VesselId);
                 if (vessel != null) TryCompleteCampaignPhase(phase, vessel);
             }
+
+            if (tabletCampaignRunner.State == CampaignRunnerState.Transfer)
+                UpdateCampaignTransfer();
         }
 
         static void TryCompleteCampaignPhase(Vessel vessel)
@@ -220,8 +256,162 @@ namespace KSPChatBridge
                     vesselId, vessel.orbit.ApA, vessel.orbit.PeA, vessel.orbit.inclination))
                 return false;
 
+            if (object.ReferenceEquals(phase, tabletCampaignRunPhase) &&
+                tabletCampaignRunner.State == CampaignRunnerState.Ascending &&
+                tabletCampaignRunner.Apply(CampaignRunnerInput.AscentComplete))
+                BeginCampaignTransfer(vessel);
+
             SaveCampaignEvent(phase, vessel, false);
             return true;
+        }
+
+        static bool CampaignRunActive()
+        {
+            return tabletCampaignRunner.State != CampaignRunnerState.Idle &&
+                tabletCampaignRunner.State != CampaignRunnerState.Done &&
+                tabletCampaignRunner.State != CampaignRunnerState.Failed;
+        }
+
+        void StartCampaignRun(int phaseIndex)
+        {
+            if (!TabletLink)
+            {
+                tabletCampaignRunnerMessage = "Turn LIVE LINK on to run a campaign phase.";
+                return;
+            }
+            if (CampaignRunActive() || tabletCampaign == null || tabletCampaign.Phases == null ||
+                phaseIndex < 0 || phaseIndex >= tabletCampaign.Phases.Count)
+                return;
+
+            Vessel active = FlightGlobals.ActiveVessel;
+            if (active == null || (active.situation != Vessel.Situations.PRELAUNCH &&
+                active.situation != Vessel.Situations.LANDED))
+            {
+                tabletCampaignRunnerMessage = "Select a launch vessel on the pad or landed.";
+                return;
+            }
+
+            CampaignPhase phase = tabletCampaign.Phases[phaseIndex];
+            Vessel launchTarget = null;
+            string command;
+            string args;
+            if (phaseIndex > 0)
+            {
+                string launchWindow = CampaignLaunchWindowLabel(phaseIndex);
+                if (!launchWindow.StartsWith("Plane window to ", StringComparison.Ordinal))
+                {
+                    tabletCampaignRunnerMessage = launchWindow;
+                    return;
+                }
+                launchTarget = FindEarlierCampaignVessel(phaseIndex);
+                if (launchTarget == null || FlightGlobals.fetch == null)
+                {
+                    tabletCampaignRunnerMessage = "Launch window target is unavailable.";
+                    return;
+                }
+                FlightGlobals.fetch.SetVesselTarget(launchTarget);
+                command = "launch_to_target_plane";
+                args = "{\"target_altitude_km\":" +
+                    (phase.Alt / 1000).ToString("R", CultureInfo.InvariantCulture) + "}";
+            }
+            else
+            {
+                command = "mechjeb_ascent";
+                args = "{\"target_altitude_km\":" +
+                    (phase.Alt / 1000).ToString("R", CultureInfo.InvariantCulture) +
+                    ",\"inclination_deg\":" + phase.Inc.ToString("R", CultureInfo.InvariantCulture) + "}";
+            }
+
+            if (tabletCampaignRunner.State == CampaignRunnerState.Done ||
+                tabletCampaignRunner.State == CampaignRunnerState.Failed)
+                tabletCampaignRunner.Reset();
+            if (!tabletCampaignRunner.Apply(CampaignRunnerInput.Start) ||
+                !tabletCampaignRunner.Apply(CampaignRunnerInput.LaunchWindowReady))
+                return;
+
+            tabletCampaignRunPhase = phase;
+            tabletCampaignRunVesselId = active.id.ToString();
+            tabletCampaignTransferNodeCount = 0;
+            tabletCampaignTransferCommandSent = false;
+            phase.Status = "Planned";
+            CampaignTracking.Track(phase, tabletCampaignRunVesselId);
+            SaveTabletCampaign();
+            tabletCampaignRunnerMessage = command == "launch_to_target_plane"
+                ? "MechJeb launch-window countdown requested."
+                : "MechJeb ascent requested; waiting for launch.";
+            ChatWindow.ToolFromMenu(command, args);
+        }
+
+        void AbortCampaignRun()
+        {
+            if (!TabletLink || !CampaignRunActive()) return;
+            tabletCampaignRunner.Apply(CampaignRunnerInput.Abort);
+            tabletCampaignRunnerMessage = "Abort requested.";
+            ChatWindow.ToolFromMenu("abort", "{}");
+        }
+
+        static Vessel FindEarlierCampaignVessel(int phaseIndex)
+        {
+            for (int i = phaseIndex - 1; i >= 0; i--)
+            {
+                CampaignPhase earlier = tabletCampaign.Phases[i];
+                if (earlier == null || string.IsNullOrWhiteSpace(earlier.VesselId)) continue;
+                Vessel target = FindCampaignVessel(earlier.VesselId);
+                if (target != null) return target;
+            }
+            return null;
+        }
+
+        static void BeginCampaignTransfer(Vessel vessel)
+        {
+            if (vessel == null || vessel.patchedConicSolver == null ||
+                vessel.patchedConicSolver.maneuverNodes == null)
+            {
+                tabletCampaignRunnerMessage = "Target orbit reached; maneuver-node data is unavailable.";
+                tabletCampaignRunner.Apply(CampaignRunnerInput.TransferComplete);
+                return;
+            }
+
+            int nodeCount = vessel.patchedConicSolver.maneuverNodes.Count;
+            if (nodeCount == 0)
+            {
+                tabletCampaignRunnerMessage = "Target orbit reached; no existing transfer node to execute.";
+                tabletCampaignRunner.Apply(CampaignRunnerInput.TransferComplete);
+                return;
+            }
+
+            if (FlightGlobals.ActiveVessel != vessel)
+            {
+                tabletCampaignRunnerMessage = "Target orbit reached; switch to this vessel to execute its next node.";
+                return;
+            }
+
+            tabletCampaignTransferNodeCount = nodeCount;
+            tabletCampaignTransferCommandSent = true;
+            tabletCampaignRunnerMessage = "Executing the next existing maneuver node.";
+            ChatWindow.ToolFromMenu("mj_node", "{}");
+        }
+
+        static void UpdateCampaignTransfer()
+        {
+            Vessel vessel = FindCampaignVessel(tabletCampaignRunVesselId);
+            if (vessel == null)
+            {
+                tabletCampaignRunnerMessage = "Transfer waiting for the campaign vessel to be loaded.";
+                return;
+            }
+
+            if (!tabletCampaignTransferCommandSent)
+            {
+                BeginCampaignTransfer(vessel);
+                return;
+            }
+
+            if (vessel.patchedConicSolver == null || vessel.patchedConicSolver.maneuverNodes == null)
+                return;
+            if (vessel.patchedConicSolver.maneuverNodes.Count < tabletCampaignTransferNodeCount &&
+                tabletCampaignRunner.Apply(CampaignRunnerInput.TransferComplete))
+                tabletCampaignRunnerMessage = "Transfer node completed.";
         }
 
         static void SaveCampaignEvent(CampaignPhase phase, Vessel vessel, bool started)
