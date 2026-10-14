@@ -800,6 +800,7 @@ namespace KSPChatBridge
                     double collectiveOutput = collective.Step(vs, vessel.verticalSpeed, dt, vessel.LandedOrSplashed);
                     if (emergency == "autorotation" && liftKnown) collectiveOutput = HelicopterPolicy.Autorotation(vessel.radarAltitude, vessel.verticalSpeed, liftRpm, liftLimit);
                     props.Collective((float)collectiveOutput, "lift");
+                    HeliLearnSample(dt, collectiveOutput, emergency);
                     sideIntegral = FlightPolicy.Clamp(sideIntegral + .1 * (forwardTarget - fwd) * dt, -12, 20);
                     if (!helicopterVerticalOnly) props.Yaw((float)(helicopterYaw.Sign * yawDemand + rotorYawBias / 10), (float)FlightPolicy.Clamp(.8 * (forwardTarget - fwd) + sideIntegral, -12, 20));
                     if (emergency == "normal" && auto["master"] && auto["rotor"] && Time.realtimeSinceStartup >= nextRotorTrim && Math.Abs(vessel.verticalSpeed) < .8 && Math.Abs(roll) < 8 && vessel.srfSpeed < 25)
@@ -1457,7 +1458,7 @@ namespace KSPChatBridge
                 case "heli_control":
                     if (!props.HasLift(vessel)) return "No lift rotor found; use aircraft controls.";
                     string heliMode = Str(a, "mode", "hover");
-                    if (heliMode != "hover" && heliMode != "hold" && heliMode != "fly" && heliMode != "land" && heliMode != "stop" && heliMode != "waypoint") return "Local helicopter mode not yet ported: " + heliMode;
+                    if (heliMode != "hover" && heliMode != "hold" && heliMode != "fly" && heliMode != "land" && heliMode != "stop" && heliMode != "waypoint" && heliMode != "learn") return "Local helicopter mode not yet ported: " + heliMode;
                     if (heliMode == "stop") { Stop(); return "Helicopter control stopped."; }
                     TaxiMission.Point heliDestination = null;
                     if (heliMode == "waypoint" || (heliMode == "fly" && Str(a, "direction", "").Length > 0))
@@ -1485,6 +1486,7 @@ namespace KSPChatBridge
                     rotorEmergency = new RotorEmergency();
                     helicopterTouchdown = new TouchdownGate();
                     helicopterPositionHold = heliMode != "fly"; hoverLat = vessel.latitude; hoverLon = vessel.longitude;
+                    BeginHeliLearn(heliMode == "learn");
                     heliWaypoint = heliDestination;
                     heliWaypointArrived = false;
                     if (heliWaypoint != null)
