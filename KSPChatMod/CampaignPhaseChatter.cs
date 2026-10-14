@@ -25,6 +25,13 @@ namespace KSPChatBridge
             return true;
         }
 
+        internal static bool TryCompleteAtTargetOrbit(CampaignPhase phase, string vesselId,
+            double apoapsisAltitude, double periapsisAltitude, double inclinationDeg)
+        {
+            return TargetOrbitReached(apoapsisAltitude, periapsisAltitude, inclinationDeg, phase) &&
+                TryComplete(phase, vesselId);
+        }
+
         internal static bool TargetOrbitReached(double apoapsisAltitude, double periapsisAltitude,
             double inclinationDeg, CampaignPhase phase)
         {

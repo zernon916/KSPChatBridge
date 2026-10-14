@@ -11,6 +11,11 @@ namespace KSPChatBridge
             GameEvents.onVesselSituationChange.Add(AicsMenu.OnCampaignSituationChanged);
         }
 
+        void Update()
+        {
+            AicsMenu.UpdateCampaignProgress();
+        }
+
         void OnDestroy()
         {
             GameEvents.onLaunch.Remove(AicsMenu.OnCampaignLaunch);

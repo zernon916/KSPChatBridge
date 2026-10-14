@@ -39,6 +39,19 @@ internal static class CampaignPhaseChatterTests
         Check(!CampaignPhaseChatter.TryComplete(phase, "relay-1"), "duplicate orbit event does not repeat completion");
         Check(!CampaignPhaseChatter.TargetOrbitReached(double.NaN, 80000, 5, phase),
             "rejects unavailable orbit data");
+        var delayedPhase = new CampaignPhase
+        {
+            Goal = "Deploy relay",
+            Craft = "Relay",
+            VesselId = "relay-1",
+            Status = "Started",
+            Alt = 80000,
+            Inc = 5
+        };
+        Check(!CampaignPhaseChatter.TryCompleteAtTargetOrbit(delayedPhase, "relay-1", 82000, 70000, 6) &&
+            delayedPhase.Status == "Started", "keeps phase running while the target orbit is not reached");
+        Check(CampaignPhaseChatter.TryCompleteAtTargetOrbit(delayedPhase, "relay-1", 82000, 79000, 6) &&
+            delayedPhase.Status == "Complete", "completes phase when a later orbit check reaches its target");
         Console.WriteLine("CampaignPhaseChatterTests: " + checks + " behavior checks passed.");
     }
 }

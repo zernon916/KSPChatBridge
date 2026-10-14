@@ -16,6 +16,7 @@ namespace KSPChatBridge
         static string tabletCampaignNameT, tabletCampaignGoalT = "", tabletCampaignCraftT = "";
         static string tabletCampaignAltT = "80000", tabletCampaignIncT = "0", tabletCampaignMessage = "";
         static readonly Dictionary<CampaignPhase, string> tabletCampaignDvChecks = new Dictionary<CampaignPhase, string>();
+        static float nextCampaignProgressCheck;
 
         void TabletCampaign(Rect area)
         {
@@ -172,19 +173,55 @@ namespace KSPChatBridge
         {
             Vessel vessel = change.host;
             if (vessel == null || change.to != Vessel.Situations.ORBITING) return;
+            TryCompleteCampaignPhase(vessel);
+        }
+
+        internal static void UpdateCampaignProgress()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (now < nextCampaignProgressCheck) return;
+            nextCampaignProgressCheck = now + 1f;
+
             EnsureTabletCampaignLoaded();
-            if (tabletCampaign == null || tabletCampaign.Phases == null || vessel.orbit == null ||
-                vessel.orbit.referenceBody == null) return;
+            if (tabletCampaign == null || tabletCampaign.Phases == null || FlightGlobals.Vessels == null) return;
+
+            foreach (CampaignPhase phase in tabletCampaign.Phases)
+            {
+                if (phase == null || !string.Equals(phase.Status, "Started", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                Vessel vessel = FindCampaignVessel(phase.VesselId);
+                if (vessel != null) TryCompleteCampaignPhase(phase, vessel);
+            }
+        }
+
+        static void TryCompleteCampaignPhase(Vessel vessel)
+        {
+            if (vessel == null || vessel.orbit == null || vessel.orbit.referenceBody == null) return;
+            EnsureTabletCampaignLoaded();
+            if (tabletCampaign == null || tabletCampaign.Phases == null) return;
 
             string vesselId = vessel.id.ToString();
             foreach (CampaignPhase phase in tabletCampaign.Phases)
             {
-                if (!CampaignPhaseChatter.TargetOrbitReached(vessel.orbit.ApA, vessel.orbit.PeA,
-                        vessel.orbit.inclination, phase) ||
-                    !CampaignPhaseChatter.TryComplete(phase, vesselId)) continue;
-                SaveCampaignEvent(phase, vessel, false);
+                if (!TryCompleteCampaignPhase(phase, vesselId, vessel)) continue;
                 break;
             }
+        }
+
+        static bool TryCompleteCampaignPhase(CampaignPhase phase, Vessel vessel)
+        {
+            return TryCompleteCampaignPhase(phase, vessel == null ? null : vessel.id.ToString(), vessel);
+        }
+
+        static bool TryCompleteCampaignPhase(CampaignPhase phase, string vesselId, Vessel vessel)
+        {
+            if (string.IsNullOrWhiteSpace(vesselId) || vessel == null || vessel.orbit == null ||
+                vessel.orbit.referenceBody == null || !CampaignPhaseChatter.TryCompleteAtTargetOrbit(phase,
+                    vesselId, vessel.orbit.ApA, vessel.orbit.PeA, vessel.orbit.inclination))
+                return false;
+
+            SaveCampaignEvent(phase, vessel, false);
+            return true;
         }
 
         static void SaveCampaignEvent(CampaignPhase phase, Vessel vessel, bool started)
