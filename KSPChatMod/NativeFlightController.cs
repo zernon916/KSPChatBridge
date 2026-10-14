@@ -766,6 +766,7 @@ namespace KSPChatBridge
                     }
                     double vs = helicopterLanding ? (vessel.radarAltitude > 30 ? -3 : vessel.radarAltitude > 10 ? -2 : vessel.radarAltitude > 3 ? -1 : -.7)
                         : FlightPolicy.Clamp(.3 * (altitude - vessel.altitude), -3, 3);
+                    vs = HeliLearnVerticalSpeed(vs);
                     double liftRpm, liftLimit; bool liftMotor, liftLocked;
                     bool liftKnown = props.LiftSnapshot(out liftRpm, out liftLimit, out liftMotor, out liftLocked);
                     string previousEmergency = rotorEmergency.Mode;

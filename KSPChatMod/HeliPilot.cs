@@ -8,7 +8,7 @@ namespace KSPChatBridge
     public partial class NativeFlightController
     {
         int heliLearnStage;
-        double heliLearnTime, heliStableTime, heliCollectiveSum;
+        double heliLearnTime, heliStableTime, heliCollectiveSum, heliPhaseTime, heliMaxClimb, heliMaxDescent;
         int heliCollectiveSamples;
         string heliLearnMessage = "No helicopter tests yet.";
         Dictionary<string, object> heliProfile = new Dictionary<string, object>();
@@ -48,7 +48,7 @@ namespace KSPChatBridge
         void BeginHeliLearn(bool enabled)
         {
             heliLearnStage = enabled ? 1 : 0;
-            heliLearnTime = heliStableTime = heliCollectiveSum = 0;
+            heliLearnTime = heliStableTime = heliCollectiveSum = heliPhaseTime = heliMaxClimb = heliMaxDescent = 0;
             heliCollectiveSamples = 0;
             LoadHeliProfile();
             if (!enabled) return;
@@ -70,6 +70,32 @@ namespace KSPChatBridge
                 ChatLog.Write("heli", heliLearnMessage);
                 return;
             }
+            if (heliLearnStage == 2 || heliLearnStage == 3)
+            {
+                heliPhaseTime += dt;
+                bool controlled = !vessel.LandedOrSplashed && Math.Abs(Pitch()) < 8 && Math.Abs(Roll()) < 8 && vessel.horizontalSrfSpeed < 2;
+                if (controlled && heliPhaseTime > 5)
+                {
+                    if (heliLearnStage == 2) heliMaxClimb = Math.Max(heliMaxClimb, vessel.verticalSpeed);
+                    else if (vessel.radarAltitude > 25) heliMaxDescent = Math.Max(heliMaxDescent, -vessel.verticalSpeed);
+                }
+                if (heliPhaseTime < 30 && (heliLearnStage != 3 || vessel.radarAltitude > 25)) return;
+                if (heliLearnStage == 2)
+                {
+                    heliProfile["climb"] = Math.Max(0, heliMaxClimb);
+                    heliLearnStage = 3; heliPhaseTime = 0;
+                    heliLearnMessage = "Measure controlled descent, capped at 3 m/s.";
+                }
+                else
+                {
+                    heliProfile["descent"] = Math.Max(0, heliMaxDescent);
+                    heliLearnStage = 5;
+                    altitude = vessel.altitude;
+                    heliLearnMessage = "Climb and safe descent measured.";
+                }
+                SaveHeliProfile();
+                return;
+            }
             if (heliLearnStage != 1) return;
             bool stable = !vessel.LandedOrSplashed && vessel.radarAltitude >= 10 &&
                 Math.Abs(vessel.verticalSpeed) < .4 && vessel.horizontalSrfSpeed < .8 &&
@@ -83,7 +109,16 @@ namespace KSPChatBridge
             heliProfile["mass"] = vessel.totalMass;
             heliLearnMessage = "Hover collective measured at current mass.";
             SaveHeliProfile();
-            heliLearnStage = 5;
+            heliLearnStage = 2; heliPhaseTime = 0;
+            heliLearnMessage = "Measure climb, increasing demand up to 8 m/s.";
+            ChatLog.Write("heli", heliLearnMessage);
+        }
+        double HeliLearnVerticalSpeed(double requested)
+        {
+            if (!HeliLearning) return requested;
+            if (heliLearnStage == 2) return Math.Min(8, .5 + heliPhaseTime * .3);
+            if (heliLearnStage == 3) return vessel.radarAltitude <= 25 ? 0 : -Math.Min(3, .3 + heliPhaseTime * .12);
+            return requested;
         }
 
         TaxiMission.Point heliWaypoint;
