@@ -1315,6 +1315,14 @@ class Program
             Check(topSpeedTrial.Sample(1, 2, 9, 0) && topSpeedTrial.Aborted, "rover top-speed test aborts on uneven surface");
             topSpeedTrial = new RoverTopSpeedTrial(0);
             Check(topSpeedTrial.Sample(10, 0, 0, 0) && topSpeedTrial.Aborted, "rover top-speed test rejects a stationary plateau");
+            var brakingTrial = new RoverBrakingTrial(0);
+            Check(!brakingTrial.Sample(1, 9.9, 0, 0) && !brakingTrial.Braking
+                && !brakingTrial.Sample(1.1, 10, 0, 0) && brakingTrial.Braking, "rover brake test starts braking at 10 m/s");
+            Check(!brakingTrial.Sample(1.2, 8, 0, 0) && !brakingTrial.Sample(1.3, 0, 0, 0)
+                && !brakingTrial.Sample(1.79, 0, 0, 0) && brakingTrial.Sample(1.81, 0, 0, 0) && !brakingTrial.Aborted
+                && Math.Abs(brakingTrial.Distance - 1.3) < .001, "rover brake test integrates stopping distance and settles");
+            brakingTrial = new RoverBrakingTrial(0);
+            Check(brakingTrial.Sample(1, 10, 9, 0) && brakingTrial.Aborted, "rover brake test aborts on uneven surface");
             var roverProfile = new RoverProfile { TopSpeed = 12.1, Date = "2026-01-01 12:00" };
             var roverProfileJson = MiniJson.DeserializeObject(MiniJson.Serialize(roverProfile.ToDict())) as Dictionary<string, object>;
             var loadedRoverProfile = RoverProfile.FromDict(roverProfileJson);
@@ -1332,7 +1340,7 @@ class Program
             Check(string.Join(",", order.ConvertAll(i => i.ToString()).ToArray()) == "1,2,0", "tour order nearest-first");
             Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
         }
-        Console.WriteLine("Rover drive-to-building and LEARN: 14 behavior checks passed.");
+        Console.WriteLine("Rover drive-to-building and LEARN: 17 behavior checks passed.");
         // ---- Live test round 2: multi-turn replay (tool calls stop firing after the first) ----
         {
             var logDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-chatlog-" + Guid.NewGuid().ToString("N"));
