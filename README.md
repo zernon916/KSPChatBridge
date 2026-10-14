@@ -13,7 +13,7 @@
 - **LEARN:** a test flight that measures your plane (stall, climb, decel, turns, touchdown angle) and tunes the autopilot to it; pick tests from a checklist.
 - **AICS MFD control box:** one movable, resizable cockpit-style panel with all pages (autopilot, map / chart / ILS, plans, comms, crew, science, power, systems, settings); also inside stock cockpits (IVA) and RasterPropMonitor.
 - **Crew chatter:** your kerbals talk on the intercom with their own personalities; talk back with `@Name`.
-- **Tablet (new):** a second, bigger window with a modern look (cards, gauges, live graphs). Tabs: Flight (live data + Aircraft page), Map, Tests (touch Learn checklist), Encyclopedia (live facts for every planet and moon). **LIVE LINK** switch: off = information only, on = the tablet's buttons work.
+- **Tablet (new):** a second, bigger window with a modern look (cards, gauges, live graphs). Tabs: Flight (live data + Aircraft page), Map, Tests (touch Learn checklist with per-test measurements and learned-data graphs), Encyclopedia (live facts for every planet and moon). **LIVE LINK** switch: off = information only, on = the tablet's buttons work.
 - **Also:** taxi routes, flight plans, science watcher, landing spots, systems dashboard with master alarm, map reveal (SCANsat aware), optional MechJeb2 orbital tools.
 
 ## Coming next

@@ -462,6 +462,17 @@ namespace KSPChatBridge
             o.AddRange(LearnFlight.ProfileChecklist(p, MfdNav.LearnCursor));
             return o;
         }
+        /// <summary>Current learned data for the tablet checklist, including samples from a test in progress.</summary>
+        internal static PlaneProfile LearnGraphProfile
+        {
+            get
+            {
+                var me = instance;
+                if (me == null) return null;
+                if (me.learn != null && !me.learn.Done) return me.learn.P;
+                return me.profile ?? (me.learn != null ? me.learn.P : null);
+            }
+        }
         /// <summary>Current ABOUT curve for outside-MFD graph drawing; null when not on a CURVE page.</summary>
         internal static PerfCurve AboutCurve()
         {

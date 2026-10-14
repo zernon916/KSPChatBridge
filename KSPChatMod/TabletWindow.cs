@@ -160,37 +160,162 @@ namespace KSPChatBridge
             foreach (var l in ll) r.Add(System.Text.RegularExpressions.Regex.IsMatch(l, @"^[> ] {0,2}\[[ x*>]\] \d") ? j++ : -1);
             return r;
         }
+        static Vector2 tabletTestsScroll;
         void TabletTests(Rect area)
         {   // S5: the LEARN page; keys go through OnKey("learn", ...) exactly like the MFD LEARN page's right column.
             // Touch: tap a test row to put the TOGGLE cursor there, tap the selected row again to toggle it (LIVE LINK on only).
             var keys = MfdNav.Right("learn"); float kh = Mathf.Max(48, tabletFont * 2.6f), x = area.x, y = area.y;
+            bool savedEnabled = GUI.enabled;
             GUI.enabled = TabletLink;
-            foreach (var k in keys)
+            try
             {
-                if (string.IsNullOrEmpty(k)) continue; float w = Mathf.Max(110, tabletFont * (k.Length * .7f + 2f));
-                if (x + w > area.xMax) { x = area.x; y += kh + 6; }
-                if (GUI.Button(new Rect(x, y, w, kh), k, tabletKey) && TabletLink) OnKey("learn", k);
-                x += w + 8;
+                foreach (var k in keys)
+                {
+                    if (string.IsNullOrEmpty(k)) continue;
+                    float w = Mathf.Max(110, tabletFont * (k.Length * .7f + 2f));
+                    if (x + w > area.xMax) { x = area.x; y += kh + 6; }
+                    if (GUI.Button(new Rect(x, y, w, kh), k, tabletKey) && TabletLink)
+                    {
+                        OnKey("learn", k);
+                        if (k == "SCROLL UP") tabletTestsScroll.y = Mathf.Max(0, tabletTestsScroll.y - kh * 2);
+                        else if (k == "SCROLL DN") tabletTestsScroll.y += kh * 2;
+                    }
+                    x += w + 8;
+                }
             }
-            GUI.enabled = true;
-            if (!TabletLink) GUI.Label(new Rect(x + 4, y, area.xMax - x - 4, kh), "INFO ONLY - turn LIVE LINK on to use the controls", tabletText);
-            var ll = NativeFlightController.LearnLines(); var codes = LearnRowCodes(ll); bool toggle = NativeFlightController.LearnToggleMode;
-            float lh = Mathf.Max(30, tabletFont * 1.9f);   // touch-sized rows
-            float top = y + kh + 8; int vis = Mathf.Max(3, (int)((area.yMax - top) / lh));
-            if (Event.current.type == EventType.ScrollWheel && area.Contains(Event.current.mousePosition)) { MfdNav.AboutScroll(Event.current.delta.y > 0 ? 3 : -3); Event.current.Use(); }
-            int off = MfdNav.AboutWindow(ll, vis);
-            TabletUi.Ensure(tabletFont); lh = Mathf.Max(44, tabletFont * 2.5f); vis = Mathf.Max(3, (int)((area.yMax - top) / lh)); off = MfdNav.AboutWindow(ll, vis);
-            for (int i = off; i < ll.Count && i < off + vis; i++)
-            {   // modern rows: a card per test with a status chip; text rows (titles / drill notes / hints) stay plain
-                Rect row = new Rect(area.x, top + (i - off) * lh, area.width, lh - 4); int j = codes[i]; string l = ll[i];
-                if (j < 0) { TabletUi.Label(new Rect(row.x + 6, row.y, row.width - 12, row.height), l.Trim(), i > 0); continue; }
-                bool sel = toggle && j == MfdNav.LearnCursor; string chip; Color cc; string name = LearnRowParse(l, out chip, out cc);
-                TabletUi.Fill(row, sel ? TabletUi.CardHi : TabletUi.Card); if (sel) TabletUi.Rect(new Rect(row.x, row.y + 6, 4, row.height - 12), TabletUi.Accent);
-                float cw = Mathf.Max(90, tabletFont * 5.5f);
-                TabletUi.Label(new Rect(row.x + 14, row.y, row.width - cw - 28, row.height), name);
-                TabletUi.Chip(new Rect(row.xMax - cw - 8, row.y + row.height * .2f, cw, row.height * .6f), chip, cc);
-                if (toggle && TabletLink && j < LearnFlight.Codes.Length && GUI.Button(row, GUIContent.none, GUIStyle.none)) { if (j == MfdNav.LearnCursor) OnKey("learn", "TOGGLE"); else MfdNav.LearnCursor = j; }
+            finally
+            {
+                GUI.enabled = savedEnabled;
             }
+
+            TabletUi.Ensure(tabletFont);
+            if (!TabletLink)
+            {
+                GUI.Label(new Rect(area.x, y + kh + 2, area.width, kh), "INFO ONLY - turn LIVE LINK on to use the controls", tabletText);
+                y += kh + 6;
+            }
+            var ll = NativeFlightController.LearnLines();
+            var codes = LearnRowCodes(ll);
+            bool toggle = NativeFlightController.LearnToggleMode;
+            PlaneProfile profile = NativeFlightController.LearnGraphProfile;
+            float top = y + kh + 8;
+            float cardW = Mathf.Max(0, area.width - 18);
+            var graphs = new LearnTestGraph[LearnFlight.Codes.Length];
+            for (int j = 0; j < graphs.Length; j++) graphs[j] = LearnTestGraphFor(profile, LearnFlight.Codes[j]);
+            float contentHeight = 8;
+            for (int i = 1; i < ll.Count; i++)
+            {
+                int j = codes[i];
+                contentHeight += (j >= 0 && j < LearnFlight.Codes.Length && graphs[j] != null && graphs[j].Count > 1 ? 130 : j >= 0 ? 78 : 42) + 8;
+            }
+            Rect scrollArea = new Rect(area.x, top, area.width, Mathf.Max(0, area.yMax - top));
+            tabletTestsScroll.y = Mathf.Min(tabletTestsScroll.y, Mathf.Max(0, contentHeight - scrollArea.height));
+            GUI.BeginScrollView(scrollArea, tabletTestsScroll, new Rect(0, 0, cardW, contentHeight), false, true);
+            try
+            {
+                float cy = 8;
+                for (int i = 1; i < ll.Count; i++)
+                {
+                    int j = codes[i];
+                    string line = ll[i];
+                    if (j < 0 || j >= LearnFlight.Codes.Length)
+                    {
+                        float h = 42;
+                        GUI.Label(new Rect(6, cy, cardW - 12, h), line.Trim(), tabletText);
+                        cy += h + 8;
+                        continue;
+                    }
+
+                    int code = LearnFlight.Codes[j];
+                    string chip;
+                    Color chipColor;
+                    string name = LearnRowParse(line, out chip, out chipColor);
+                    LearnTestGraph graph = graphs[j];
+                    bool hasGraph = graph != null && graph.Count > 1;
+                    float hCard = hasGraph ? 130 : 78;
+                    Rect row = new Rect(0, cy, cardW, hCard);
+                    Rect inner = TabletUi.CardPanel(row, null);
+                    float chipW = Mathf.Max(90, tabletFont * 5.5f);
+                    TabletUi.Label(new Rect(inner.x + 2, inner.y, inner.width - chipW - 12, tabletFont * 1.8f), name);
+                    TabletUi.Chip(new Rect(inner.xMax - chipW, inner.y + 2, chipW, tabletFont * 1.6f), chip, chipColor);
+                    TabletUi.Label(new Rect(inner.x + 2, inner.y + tabletFont * 1.8f, inner.width - 4, tabletFont * 1.5f), LearnTestSummary(profile, code), true);
+                    if (hasGraph)
+                    {
+                        TabletUi.Graph(new Rect(inner.x + 2, inner.y + tabletFont * 3.15f, inner.width - 4, 54),
+                            new[] { graph.YLabel + " vs " + graph.XLabel }, new[] { graph.Y }, graph.Count, graph.Count, new[] { graph.Unit }, graph.X);
+                    }
+                    bool selected = toggle && j == MfdNav.LearnCursor;
+                    if (selected) TabletUi.Rect(new Rect(row.x, row.y + 6, 4, row.height - 12), TabletUi.Accent);
+                    if (toggle && TabletLink && GUI.Button(row, GUIContent.none, GUIStyle.none))
+                    {
+                        if (selected) OnKey("learn", "TOGGLE");
+                        else MfdNav.LearnCursor = j;
+                    }
+                    cy += hCard + 8;
+                }
+            }
+            finally
+            {
+                GUI.EndScrollView();
+            }
+        }
+        static LearnTestGraph LearnTestGraphFor(PlaneProfile p, int code)
+        {
+            if (p == null) return null;
+            switch (code)
+            {
+                case 2: return LearnTestGraph.FromPoints(p.Curves.Climb.Points, 0, 1, "Altitude (km)", "Climb rate", "m/s");
+                case 3: return LearnTestGraph.FromPoints(p.Curves.Accel.Points, 0, 1, "Speed", "Acceleration", "m/s2");
+                case 4: return LearnTestGraph.FromPoints(p.Curves.FuelBurn.Points, 0, 3, "Speed", "Fuel burn", "%/s");
+                case 6: return LearnTestGraph.FromPoints(p.Curves.RollRate.Points, 0, 1, "Speed", "Roll rate", "deg/s");
+                case 7: return LearnTestGraph.FromPoints(p.Envelope, 0, 1, "Speed", "Safe bank", "deg");
+                case 8: return LearnTestGraph.FromPoints(p.Dives, 0, 1, "Dive pitch", "Sink rate", "m/s");
+                case 9:
+                case 91: return LearnTestGraph.FromPoints(LearnSinkPoints(p, code == 91), 1, 3, "Speed", "Sink rate", "m/s");
+                case 10: return LearnTestGraph.FromPoints(LearnStallPoints(p, false), 0, 1, "Flap setting", "Stall speed", "m/s");
+                case 101: return LearnTestGraph.FromPoints(LearnStallPoints(p, true), 0, 1, "Flap setting", "Stall speed", "m/s");
+                default: return null;
+            }
+        }
+        static List<double[]> LearnSinkPoints(PlaneProfile p, bool flapsFull)
+        {
+            var points = new List<double[]>();
+            foreach (var point in p.Curves.Sink.Points)
+                if (point.Length >= 5 && (point[2] >= 2) == flapsFull) points.Add(point);
+            return points;
+        }
+        static List<double[]> LearnStallPoints(PlaneProfile p, bool flapsFull)
+        {
+            var points = new List<double[]>();
+            foreach (var point in p.Curves.Stall.Points)
+                if (point.Length >= 3 && (point[0] >= 2) == flapsFull) points.Add(point);
+            return points;
+        }
+        static string LearnTestSummary(PlaneProfile p, int code)
+        {
+            if (p == null) return "No learned measurements yet.";
+            switch (code)
+            {
+                case 1: return "Liftoff " + LearnMetric(p.Liftoff, "m/s") + "   Ground roll " + LearnMetric(p.Perf.GroundRoll, "m");
+                case 2: return "Mean climb rate " + LearnMetric(p.ClimbVs, "m/s") + "   Climb time " + LearnMetric(p.Perf.ClimbTime, "s");
+                case 3: return "Acceleration " + LearnMetric(p.Accel, "m/s2") + "   Idle deceleration " + LearnMetric(p.Decel, "m/s2");
+                case 4: return "Cruise speed " + LearnMetric(p.Perf.CruiseSpeed, "m/s") + "   Fuel burn " + LearnMetric(p.Perf.CruiseFracPerS * 6000, "%/min");
+                case 5: return "Max level speed " + LearnMetric(p.Perf.MaxLevel, "m/s");
+                case 6: return "Roll rate " + LearnMetric(p.Perf.RollRate, "deg/s") + "   Pitch rate " + LearnMetric(p.Perf.PitchRate, "deg/s");
+                case 7: return "Safe-turn envelope samples: " + p.Envelope.Count;
+                case 8: return "Dive samples: " + p.Dives.Count;
+                case 9: return "Sink-map samples: " + LearnSinkPoints(p, false).Count;
+                case 91: return "Flaps-full sink-map samples: " + LearnSinkPoints(p, true).Count;
+                case 10: return "Clean stall speed " + LearnMetric(p.Stall, "m/s") + "   Altitude loss " + LearnMetric(p.StallAltLoss, "m");
+                case 101: return "Flaps-full stall speed " + LearnMetric(p.FlapStall, "m/s") + "   Altitude loss " + LearnMetric(p.FlapStallAltLoss, "m");
+                case 11: return "Recovery time " + LearnMetric(p.StallT.RecoverS, "s") + "   Total altitude loss " + LearnMetric(p.StallT.TotalLoss, "m");
+                case 12: return "Landing rollout " + LearnMetric(p.Perf.Rollout, "m");
+                default: return "No learned measurements yet.";
+            }
+        }
+        static string LearnMetric(double value, string unit)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value) ? "-" : value.ToString("0.##", CultureInfo.InvariantCulture) + " " + unit;
         }
         /// <summary>"&gt;  [x] 9b Flaps-full sink map (done)" -> name "9b Flaps-full sink map", chip DONE / QUEUED / RUNNING / SETUP / OFF.</summary>
         internal static string LearnRowParse(string l, out string chip, out Color c)

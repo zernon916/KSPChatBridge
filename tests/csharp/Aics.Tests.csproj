@@ -67,6 +67,8 @@
     <Compile Include="DvMapMathTests.cs"/>
     <Compile Include="../../KSPChatMod/TransferDiagramMath.cs"/>
     <Compile Include="TransferDiagramMathTests.cs"/>
+    <Compile Include="../../KSPChatMod/LearnTestGraph.cs"/>
+    <Compile Include="LearnTestGraphsTests.cs"/>
     <Compile Include="../../KSPChatMod/EncyclopediaMath.cs"/>
     <Compile Include="EncyclopediaMathTests.cs"/>
     <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
