@@ -90,6 +90,96 @@ namespace KSPChatBridge
             return pts;
         }
 
+        internal static List<P> GroundRoute(P from, P destination, P hub, double radius)
+        {
+            var points = new List<P>();
+            if (D(from, destination, radius) > DirectRange
+                && D(from, hub, radius) > 30 && D(destination, hub, radius) > 30)
+                points.Add(hub);
+            points.Add(destination);
+            return points;
+        }
+
+        internal static double GroundRouteDistance(P from, P destination, P hub, double radius)
+        {
+            var points = GroundRoute(from, destination, hub, radius);
+            double distance = 0;
+            P previous = from;
+            foreach (P point in points) { distance += D(previous, point, radius); previous = point; }
+            return distance;
+        }
+
+        /// <summary>Shortest KSC stop order; Held-Karp for up to 16 biomes, with 2-opt for larger custom maps.</summary>
+        internal static List<int> ShortestOrder(P start, IList<P> stops, P hub, double radius)
+        {
+            int n = stops.Count;
+            if (n == 0) return new List<int>();
+            if (n > 16) return ImproveOrder(start, stops, hub, radius, Order(start, stops, radius));
+
+            int states = 1 << n;
+            var costs = new double[states, n];
+            var previous = new short[states, n];
+            for (int mask = 0; mask < states; mask++)
+                for (int i = 0; i < n; i++) { costs[mask, i] = double.PositiveInfinity; previous[mask, i] = -1; }
+            for (int i = 0; i < n; i++) costs[1 << i, i] = GroundRouteDistance(start, stops[i], hub, radius);
+
+            for (int mask = 1; mask < states; mask++)
+                for (int last = 0; last < n; last++)
+                {
+                    double cost = costs[mask, last];
+                    if (double.IsInfinity(cost) || (mask & (1 << last)) == 0) continue;
+                    for (int next = 0; next < n; next++)
+                    {
+                        int bit = 1 << next;
+                        if ((mask & bit) != 0) continue;
+                        int nextMask = mask | bit;
+                        double candidate = cost + GroundRouteDistance(stops[last], stops[next], hub, radius);
+                        if (candidate < costs[nextMask, next])
+                        {
+                            costs[nextMask, next] = candidate;
+                            previous[nextMask, next] = (short)last;
+                        }
+                    }
+                }
+
+            int full = states - 1, end = 0;
+            for (int i = 1; i < n; i++) if (costs[full, i] < costs[full, end]) end = i;
+            var order = new List<int>();
+            for (int mask = full, at = end; at >= 0;)
+            {
+                order.Add(at);
+                int prior = previous[mask, at];
+                mask ^= 1 << at;
+                at = prior;
+            }
+            order.Reverse();
+            return order;
+        }
+
+        static List<int> ImproveOrder(P start, IList<P> stops, P hub, double radius, List<int> order)
+        {
+            bool changed;
+            do
+            {
+                changed = false;
+                for (int first = 0; first < order.Count - 1 && !changed; first++)
+                    for (int last = first + 1; last < order.Count; last++)
+                    {
+                        P before = first == 0 ? start : stops[order[first - 1]];
+                        P after = stops[order[last]];
+                        double oldCost = GroundRouteDistance(before, stops[order[first]], hub, radius);
+                        if (last + 1 < order.Count) oldCost += GroundRouteDistance(after, stops[order[last + 1]], hub, radius);
+                        double newCost = GroundRouteDistance(before, after, hub, radius);
+                        if (last + 1 < order.Count) newCost += GroundRouteDistance(stops[order[first]], stops[order[last + 1]], hub, radius);
+                        if (newCost + .01 >= oldCost) continue;
+                        order.Reverse(first, last - first + 1);
+                        changed = true;
+                        break;
+                    }
+            } while (changed);
+            return order;
+        }
+
         /// <summary>Nearest-neighbour visiting order from the start.</summary>
         internal static List<int> Order(P start, IList<P> stops, double radius)
         {

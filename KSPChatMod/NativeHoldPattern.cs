@@ -16,7 +16,9 @@ namespace KSPChatBridge
         void ExtrasCancel(string name)
         {
             if (patternOn && NavTakeover.Contains(name)) { patternOn = false; }
-            if (touring && (name == "taxi_to" || name == "stop_current" || name == "takeoff" || name == "drive_to_building")) touring = false;
+            if (touring && (name == "taxi_to" || name == "drive_to" || name == "stop_current" || name == "takeoff" || name == "drive_to_building")) touring = false;
+            if (scienceTouring && (name == "drive_speed" || name == "drive_heading" || name == "drive_to"
+                || name == "drive_to_building" || name == "stop_current" || name == "takeoff")) scienceTouring = false;
             TerrainCancel(name);
         }
         partial void TerrainCancel(string name);
@@ -30,6 +32,7 @@ namespace KSPChatBridge
                 case "fuel_check_return": return FuelReturnArm(a);
                 case "formation": return Formation(a);
                 case "drive_to_building": return DriveToBuilding(a);
+                case "rover_science_tour": return RoverScienceTour(a);
                 case "hold_pattern": return HoldPattern(a);
                 case "taxi_route": return TaxiRouteCmd(a);
                 case "craft_class": return CraftClassCmd(Str(a, "mode", "auto"));

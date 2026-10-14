@@ -83,20 +83,19 @@ namespace KSPChatBridge
             {
                 string expId = kv.Key;
                 var exp = ResearchAndDevelopment.GetExperiment(expId);
-                string biome = "";
-                double value = 0; string subjectId = "";
+                var science = new AvailableScience { Experiment = exp };
                 if (exp != null && body != null)
                 {
                     try
                     {
-                        biome = exp.BiomeIsRelevantWhile(sit) ? ScienceUtil.GetExperimentBiome(body, vessel.latitude, vessel.longitude) : "";
-                        var subj = ResearchAndDevelopment.GetExperimentSubject(exp, sit, body, biome, biome);
-                        if (subj != null) { subjectId = subj.id; value = ResearchAndDevelopment.GetScienceValue(exp.baseValue * exp.dataScale, subj); }
+                        science = ScienceAt(expId, sit, body, vessel.latitude, vessel.longitude);
                     }
-                    catch (Exception) { }
+                    catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science value: " + ex.Message); }
                 }
+                string biome = science.Biome;
+                double value = science.Value; string subjectId = science.SubjectId;
                 bool storedOnboard = subjectId.Length > 0 && stored.Contains(subjectId);
-                bool available = exp != null && body != null && exp.IsAvailableWhile(sit, body);
+                bool available = science.Available;
                 bool ranThisType = false;
                 foreach (var e in kv.Value)
                 {
@@ -118,6 +117,76 @@ namespace KSPChatBridge
                 }
             }
             return ran;
+        }
+
+        double ScienceValueAt(double latitude, double longitude, out int experimentCount)
+        {
+            experimentCount = 0;
+            if (vessel == null || vessel.mainBody == null || SciencePolicy.RunBlocker(EcPct()) != null) return 0;
+            var sit = ScienceUtil.GetExperimentSituation(vessel);
+            var body = vessel.mainBody;
+            var groups = new Dictionary<string, List<ModuleScienceExperiment>>();
+            foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
+            {
+                string id = e.experimentID ?? "";
+                List<ModuleScienceExperiment> group;
+                if (!groups.TryGetValue(id, out group)) groups[id] = group = new List<ModuleScienceExperiment>();
+                group.Add(e);
+            }
+            var stored = StoredSubjectIds();
+            bool scientist = false; foreach (var crewMember in vessel.GetVesselCrew()) scientist |= crewMember.trait == "Scientist";
+            int crew = vessel.GetCrewCount(); bool controllable = vessel.IsControllable;
+            bool inAtmo = body.atmosphere && vessel.altitude < body.atmosphereDepth;
+            double totalValue = 0;
+            foreach (var group in groups)
+            {
+                AvailableScience experiment;
+                try { experiment = ScienceAt(group.Key, sit, body, latitude, longitude); }
+                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science route estimate: " + ex.Message); continue; }
+                if (experiment.Experiment == null) continue;
+                bool storedOnboard = experiment.SubjectId.Length > 0 && stored.Contains(experiment.SubjectId);
+                foreach (ModuleScienceExperiment module in group.Value)
+                {
+                    if (!SciencePolicy.CanRun(module.usageReqMaskInternal, crew, module.part.protoModuleCrew.Count,
+                        scientist, controllable, experiment.Experiment.requireAtmosphere, inAtmo)) continue;
+                    string skip = SciencePolicy.AutoSkipReason(module.Inoperable, module.GetScienceCount() > 0,
+                        experiment.Available, storedOnboard, experiment.Value, false, false, module.rerunnable);
+                    if (skip != null) continue;
+                    totalValue += experiment.Value;
+                    experimentCount++;
+                    break;
+                }
+            }
+            return totalValue;
+        }
+
+        sealed class AvailableScience
+        {
+            internal ScienceExperiment Experiment;
+            internal string Biome = "";
+            internal string SubjectId;
+            internal double Value;
+            internal bool Available;
+        }
+
+        static AvailableScience ScienceAt(string experimentId, ExperimentSituations situation, CelestialBody body, double latitude, double longitude)
+        {
+            var result = new AvailableScience();
+            result.Experiment = ResearchAndDevelopment.GetExperiment(experimentId);
+            if (result.Experiment == null) return result;
+            result.Available = result.Experiment.IsAvailableWhile(situation, body);
+            try
+            {
+                result.Biome = result.Experiment.BiomeIsRelevantWhile(situation) ? ScienceUtil.GetExperimentBiome(body, latitude, longitude) : "";
+                var subject = ResearchAndDevelopment.GetExperimentSubject(result.Experiment, situation, body, result.Biome, result.Biome);
+                if (subject != null)
+                {
+                    result.SubjectId = subject.id;
+                    result.Value = ResearchAndDevelopment.GetScienceValue(result.Experiment.baseValue * result.Experiment.dataScale, subject);
+                }
+            }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science value: " + ex.Message); }
+            return result;
         }
 
         /// <summary>Run an experiment WITHOUT the stock ExperimentsResultDialog: ModuleScienceExperiment.gatherData(silent: true)

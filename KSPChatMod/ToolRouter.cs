@@ -21,7 +21,7 @@ namespace KSPChatBridge
         static readonly HashSet<string> HeliOnly = new HashSet<string> { "heli_control", "prop_control" };
         static readonly HashSet<string> SpaceOnly = new HashSet<string> { "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis", "change_periapsis",
           "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with", "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude", "land_at" };
-        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_heading", "drive_to", "drive_to_building", "learn_rover" };
+        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_heading", "drive_to", "drive_to_building", "rover_science_tour", "learn_rover" };
 
         /// <summary>Is this tool sensible for the craft kind ("plane" | "heli" | "rocket" | "rover" | "" = unknown)?</summary>
         internal static bool Fits(string tool, string craft)
@@ -44,7 +44,7 @@ namespace KSPChatBridge
             { "set_speed", "speed knots fast slow" }, { "set_altitude", "altitude climb descend feet meters height" }, { "set_throttle", "throttle power full max idle percent" },
             { "heli_control", "hover helicopter heli rotor" }, { "taxi_to", "taxi drive runway hangar" }, { "fuel_check", "fuel tank remaining" },
             { "get_status", "status how are we doing report situation" }, { "circularize", "circularize circular orbit" }, { "sun_lock", "sun point solar" },
-            { "run_science", "science experiment experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
+            { "run_science", "science experiment experiments" }, { "rover_science_tour", "rover science tour KSC biomes collect experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
             { "fly_to", "fly to go to head to navigate" }, { "how_far", "how far distance" }, { "get_landing_eta", "eta how long arrive arrival" },
             { "transfer_to", "transfer mun minmus duna go to moon" }, { "warp_to_apoapsis", "warp apoapsis ap" }, { "change_apoapsis", "apoapsis raise ap" },
             { "change_periapsis", "periapsis pe lower" }, { "level_off", "level off level wings" }, { "hold_pattern", "holding pattern orbit circle loiter over" }, { "fuel_check_return", "bingo fuel return home rtb enough fuel get back" }, { "formation", "formation wingman wing escort echelon join up" }, { "tech_advisor", "tech tree research unlock node nodes r&d rnd science points" }, { "drive_to_building", "drive rover building buildings vab sph r&d tracking station mission control astronaut complex administration tour ksc" }, { "roll", "roll bank inverted upside down barrel wings level" }, { "autopilot", "autopilot ap engage disengage" }, { "make_flight_plan", "flight plan route mission out back turn around" }, { "follow_terrain", "terrain follow agl ground hug low nap earth height above" }, { "stage", "stage staging next stage" },
@@ -105,6 +105,8 @@ namespace KSPChatBridge
             if (dh.Success) return R("drive_heading", "{\"heading\":" + dh.Groups[1].Value + "}");
             var dr = Regex.Match(m, @"^drive to (.{1,50})$");
             if (dr.Success) return R("drive_to", "{\"name\":" + MiniJson.Serialize(dr.Groups[1].Value.Trim()) + "}");
+            if (Regex.IsMatch(m, @"^(rover )?science tour$|^rover tour science$"))
+                return R("rover_science_tour", "{}");
             if (Regex.IsMatch(m, @"^(learn rover|rover learn)$")) return R("learn_rover", "{}");
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
@@ -160,6 +162,7 @@ namespace KSPChatBridge
         const string RoverHeadingSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_heading\",\"description\":\"Hold a landed rover on a target compass heading in degrees; use drive_speed to control its speed.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"heading\":{\"type\":\"number\",\"minimum\":0,\"maximum\":359.9}},\"required\":[\"heading\"]}}}";
         const string RoverDriveToSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_to\",\"description\":\"Drive a landed rover to one named saved waypoint or a latitude,longitude coordinate; slow within 100 m and stop within 10 m.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}}}";
         const string RoverLearnSchema = "{\"type\":\"function\",\"function\":{\"name\":\"learn_rover\",\"description\":\"Run the next incomplete landed-rover LEARN step: top speed, braking distance, or safe turn speed. Requires a level surface; turn testing should use a wide open area.\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}}";
+        const string RoverScienceTourSchema = "{\"type\":\"function\",\"function\":{\"name\":\"rover_science_tour\",\"description\":\"Drive a landed Kerbin rover through KSC biomes that still have science for its experiments; routes via the Crawlerway, runs AUTO science at each stop, and caps speed at 10 m/s.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"speed\":{\"type\":\"number\",\"minimum\":2,\"maximum\":10}}}}}";
         /// <summary>name -> schema object, parsed once from NativeToolSchemas.Json plus local additions.</summary>
         internal static Dictionary<string, object> Schemas
         {
@@ -184,6 +187,9 @@ namespace KSPChatBridge
                 var roverLearn = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverLearnSchema);
                 var roverLearnFunction = (Dictionary<string, object>)roverLearn["function"];
                 s["learn_rover"] = roverLearn; d["learn_rover"] = roverLearnFunction["description"].ToString();
+                var roverScienceTour = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverScienceTourSchema);
+                var roverScienceTourFunction = (Dictionary<string, object>)roverScienceTour["function"];
+                s["rover_science_tour"] = roverScienceTour; d["rover_science_tour"] = roverScienceTourFunction["description"].ToString();
                 descriptions = d; return schemas = s;
             }
         }

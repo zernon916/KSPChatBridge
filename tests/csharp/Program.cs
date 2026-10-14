@@ -1161,7 +1161,7 @@ class Program
         for (int s = 0; s < 1200; s++) offPosted += off.TripTick(s, "v1", true, crew, "Sidry Kerman", false, false, double.NaN).Count;
         Check(offPosted == 0, "chatter off = silent");
         int portedTools = 0; foreach (var pn in NativeCommands.Ported) if (!pn.Contains("/")) portedTools++;
-        Check(NativeToolSchemas.Count == portedTools, "tool schemas cover every ported tool (" + NativeToolSchemas.Count + "/" + portedTools + ")");
+        Check(NativeToolSchemas.Count + 1 == portedTools, "generated plus local tool schemas cover every ported tool (" + NativeToolSchemas.Count + "+1/" + portedTools + ")");
         Check(EmbeddedLlm.UnloadOnScene("MAINMENU") && !EmbeddedLlm.UnloadOnScene("FLIGHT") && !EmbeddedLlm.UnloadOnScene("SPACECENTER"), "model unloads only at the main menu");
         EmbeddedLlm.Unload(); Check(!EmbeddedLlm.Loaded, "unload with nothing loaded is safe; next chat reloads lazily");
         Console.WriteLine("Live bug fixes (menus, brakes, runway, voice, chatter, tools): 25 behavior checks passed.");
@@ -1356,9 +1356,32 @@ class Program
             Check(near.Count == 1, "close: drive straight to the front");
             var order = KscRoverPolicy.Order(new KscRoverPolicy.P(0, 0), new[] { new KscRoverPolicy.P(0, 900 / m), new KscRoverPolicy.P(0, 100 / m), new KscRoverPolicy.P(0, 400 / m) }, R);
             Check(string.Join(",", order.ConvertAll(i => i.ToString()).ToArray()) == "1,2,0", "tour order nearest-first");
+            var scienceStops = new[] { new KscRoverPolicy.P(0, 100 / m), new KscRoverPolicy.P(1 / m, 100 / m),
+                new KscRoverPolicy.P(0, 200 / m), new KscRoverPolicy.P(1 / m, 0) };
+            var start = new KscRoverPolicy.P(0, 0);
+            var fastest = KscRoverPolicy.ShortestOrder(start, scienceStops, hub, R);
+            var greedy = KscRoverPolicy.Order(start, scienceStops, R);
+            Func<List<int>, double> routeLength = sequence =>
+            {
+                double length = 0; var from = start;
+                foreach (int index in sequence)
+                {
+                    length += KscRoverPolicy.GroundRouteDistance(from, scienceStops[index], hub, R);
+                    from = scienceStops[index];
+                }
+                return length;
+            };
+            Check(routeLength(fastest) <= routeLength(greedy) + .01, "science tour uses shortest KSC stop order");
+            var viaHub = KscRoverPolicy.GroundRoute(new KscRoverPolicy.P(0, -500 / m), new KscRoverPolicy.P(0, 500 / m), hub, R);
+            Check(viaHub.Count == 2 && viaHub[0].Lon == hub.Lon, "science tour routes long legs via the safe ground hub");
             Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
+            var directScienceTour = ToolRouter.Direct("rover science tour", "rover");
+            Check(NativeCommands.IsPorted("rover_science_tour") && ToolRouter.Fits("rover_science_tour", "rover")
+                && !ToolRouter.Fits("rover_science_tour", "plane") && directScienceTour.HasValue
+                && directScienceTour.Value.Key == "rover_science_tour" && ToolRouter.Schemas.ContainsKey("rover_science_tour"),
+                "rover science tour command, direct phrase and schema registered");
         }
-        Console.WriteLine("Rover drive-to-building and LEARN: 22 behavior checks passed.");
+        Console.WriteLine("Rover drive-to-building, science tour and LEARN: 25 behavior checks passed.");
         // ---- Live test round 2: multi-turn replay (tool calls stop firing after the first) ----
         {
             var logDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-chatlog-" + Guid.NewGuid().ToString("N"));
