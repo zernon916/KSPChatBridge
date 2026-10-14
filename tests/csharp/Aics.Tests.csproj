@@ -65,6 +65,8 @@
     <Compile Include="../../KSPChatMod/RocketMath.cs"/>
     <Compile Include="../../KSPChatMod/DvMapMath.cs"/>
     <Compile Include="DvMapMathTests.cs"/>
+    <Compile Include="../../KSPChatMod/EncyclopediaMath.cs"/>
+    <Compile Include="EncyclopediaMathTests.cs"/>
     <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
     <Compile Include="../../KSPChatMod/TargetLandMath.cs" Link="TargetLandMath.cs"/>
     <Compile Include="../../KSPChatMod/SlopeMath.cs" Link="SlopeMath.cs"/>

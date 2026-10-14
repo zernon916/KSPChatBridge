@@ -265,24 +265,52 @@ namespace KSPChatBridge
             var objs = new List<Vessel>(); if (FlightGlobals.Vessels != null) foreach (var v in FlightGlobals.Vessels) if (v != null && v.vesselType == VesselType.SpaceObject) objs.Add(v);
             float lw = Mathf.Min(area.width * .35f, Mathf.Max(200, tabletFont * 12)), rh = Mathf.Max(28, tabletFont * 1.7f);
             var head = new GUIStyle(tabletHead) { fontSize = tabletFont }; var item = new GUIStyle(tabletText) { wordWrap = false, alignment = TextAnchor.MiddleLeft };
-            GUILayout.BeginArea(new Rect(area.x, area.y, lw, area.height)); encListScroll = GUILayout.BeginScrollView(encListScroll);
-            foreach (var g in new[] { "Stars", "Planets", "Moons", "Asteroids" })
+            GUILayout.BeginArea(new Rect(area.x, area.y, lw, area.height));
+            try
             {
-                GUILayout.Label(g.ToUpperInvariant(), head);
-                foreach (var n in groups[g]) if (GUILayout.Button((encSel == n ? "\u25B8 " : "  ") + n, item, GUILayout.Height(rh))) { encSel = n; encInfoScroll = Vector2.zero; }
-                if (g == "Asteroids") foreach (var v in objs) { string k = "#" + v.id; if (GUILayout.Button((encSel == k ? "\u25B8 " : "  ") + v.vesselName, item, GUILayout.Height(rh))) { encSel = k; encInfoScroll = Vector2.zero; } }
-                if (g == "Asteroids" && groups[g].Count == 0 && objs.Count == 0) GUILayout.Label("  (none tracked)", tabletText);
+                encListScroll = GUILayout.BeginScrollView(encListScroll);
+                try
+                {
+                    foreach (var g in new[] { "Stars", "Planets", "Moons", "Asteroids" })
+                    {
+                        GUILayout.Label(g.ToUpperInvariant(), head);
+                        foreach (var n in groups[g]) if (GUILayout.Button((encSel == n ? "\u25B8 " : "  ") + n, item, GUILayout.Height(rh))) { encSel = n; encInfoScroll = Vector2.zero; }
+                        if (g == "Asteroids") foreach (var v in objs) { string k = "#" + v.id; if (GUILayout.Button((encSel == k ? "\u25B8 " : "  ") + v.vesselName, item, GUILayout.Height(rh))) { encSel = k; encInfoScroll = Vector2.zero; } }
+                        if (g == "Asteroids" && groups[g].Count == 0 && objs.Count == 0) GUILayout.Label("  (none tracked)", tabletText);
+                    }
+                }
+                finally
+                {
+                    GUILayout.EndScrollView();
+                }
             }
-            GUILayout.EndScrollView(); GUILayout.EndArea();
+            finally
+            {
+                GUILayout.EndArea();
+            }
             var o = GUI.color; GUI.color = new Color(.35f, 1f, .45f, .4f); GUI.DrawTexture(new Rect(area.x + lw + 6, area.y, 1, area.height), Texture2D.whiteTexture); GUI.color = o;
             var lines = new List<string>();
             if (encSel == null) lines.Add("Select a body on the left.");
             else if (encSel.StartsWith("#")) { var v = objs.Find(x => "#" + x.id == encSel); if (v == null) lines.Add("Object no longer tracked."); else { lines.Add(v.vesselName); lines.Add("Tracked space object (asteroid / comet)"); OrbitLines(lines, v.orbit); } }
             else { var b = bodies.Find(x => x != null && x.bodyName == encSel); if (b == null) lines.Add("Body not found."); else BodyLines(lines, b); }
-            GUILayout.BeginArea(new Rect(area.x + lw + 16, area.y, area.width - lw - 16, area.height)); encInfoScroll = GUILayout.BeginScrollView(encInfoScroll);
-            TabletPlanetView(area.width - lw - 42, bodies.Find(x => x != null && x.bodyName == encSel));
-            for (int i = 0; i < lines.Count; i++) GUILayout.Label(lines[i], i == 0 ? tabletHead : tabletText);
-            GUILayout.EndScrollView(); GUILayout.EndArea();
+            GUILayout.BeginArea(new Rect(area.x + lw + 16, area.y, area.width - lw - 16, area.height));
+            try
+            {
+                encInfoScroll = GUILayout.BeginScrollView(encInfoScroll);
+                try
+                {
+                    TabletPlanetView(area.width - lw - 42, bodies.Find(x => x != null && x.bodyName == encSel));
+                    for (int i = 0; i < lines.Count; i++) GUILayout.Label(lines[i], i == 0 ? tabletHead : tabletText);
+                }
+                finally
+                {
+                    GUILayout.EndScrollView();
+                }
+            }
+            finally
+            {
+                GUILayout.EndArea();
+            }
         }
         internal static string EncDist(double m) { if (double.IsInfinity(m) || double.IsNaN(m)) return "-"; return Math.Abs(m) >= 1e9 ? (m / 1e9).ToString("0.###", CultureInfo.InvariantCulture) + " Gm" : Math.Abs(m) >= 1e4 ? (m / 1000).ToString("#,0.#", CultureInfo.InvariantCulture) + " km" : m.ToString("0", CultureInfo.InvariantCulture) + " m"; }
         internal static string EncDur(double s)
@@ -299,6 +327,21 @@ namespace KSPChatBridge
             o.Add("Mass: " + b.Mass.ToString("0.###e+0", ci) + " kg");
             o.Add("Surface gravity: " + b.GeeASL.ToString("0.###", ci) + " g");
             o.Add("SOI: " + (star || double.IsInfinity(b.sphereOfInfluence) ? "infinite" : EncDist(b.sphereOfInfluence)));
+            double peakAltitude;
+            bool hasPeak = TryMappedPeakAltitude(b, out peakAltitude);
+            o.Add(hasPeak ? "Mapped terrain peak: " + EncDist(peakAltitude) : "Mapped terrain peak: unavailable");
+            o.Add(BiomeLine(b));
+            if (!b.hasSolidSurface)
+                o.Add("Landing Δv: not applicable (no solid surface)");
+            else if (hasPeak)
+            {
+                double landingDv = EncyclopediaMath.IdealLandingDeltaV(b.gravParameter, b.Radius, peakAltitude, 1000);
+                o.Add(double.IsNaN(landingDv) || double.IsInfinity(landingDv)
+                    ? "Landing Δv: unavailable"
+                    : "Landing Δv baseline (circular orbit 1 km above peak; vacuum, no rotation): " +
+                        landingDv.ToString("#,0", ci) + " m/s");
+            }
+            else o.Add("Landing Δv: unavailable (terrain peak unknown)");
             o.Add("Day (sidereal): " + EncDur(b.rotationPeriod) + (b.tidallyLocked ? "  - tidally locked" : ""));
             if (b.atmosphere)
             {
@@ -308,6 +351,24 @@ namespace KSPChatBridge
             }
             else o.Add("Atmosphere: none");
             if (!star) OrbitLines(o, b.orbit);
+        }
+        static string BiomeLine(CelestialBody body)
+        {
+            if (body == null || body.BiomeMap == null || body.BiomeMap.Attributes == null)
+                return "Biomes: unavailable";
+            var names = new List<string>();
+            foreach (var attribute in body.BiomeMap.Attributes)
+                if (attribute != null && !string.IsNullOrEmpty(attribute.name)) names.Add(attribute.name);
+            return names.Count == 0 ? "Biomes: unavailable" : "Biomes: " + string.Join(", ", names.ToArray());
+        }
+        static bool TryMappedPeakAltitude(CelestialBody body, out double altitude)
+        {
+            altitude = double.NaN;
+            if (body == null || body.pqsController == null) return false;
+            double mappedPeak = body.pqsController.mapMaxHeight;
+            if (double.IsNaN(mappedPeak) || double.IsInfinity(mappedPeak) || mappedPeak < 0) return false;
+            altitude = mappedPeak;
+            return true;
         }
         static void OrbitLines(List<string> o, Orbit orb)
         {
