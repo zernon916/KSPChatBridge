@@ -1299,6 +1299,9 @@ class Program
         {
             Check(KscRoverPolicy.Facility("SpaceCenter/VehicleAssemblyBuilding/Facility/mainBuilding") == "VehicleAssemblyBuilding" && KscRoverPolicy.Facility("Junk/Rock") == null, "facility from building id");
             Check(Math.Abs(KscRoverPolicy.Steering(20, 20)) < Math.Abs(KscRoverPolicy.Steering(20, 0)), "rover steering tapers at higher speed");
+            Check(KscRoverPolicy.ReduceSpeed(21, 0, 0, 8) && KscRoverPolicy.ReduceSpeed(0, -21, 0, 8)
+                && KscRoverPolicy.ReduceSpeed(0, 0, 3, 8) && !KscRoverPolicy.ReduceSpeed(20, 20, 2, 8)
+                && KscRoverPolicy.BrakeForRollover(-31) && !KscRoverPolicy.BrakeForRollover(30), "rover attitude/slip safety thresholds");
             Check(KscRoverPolicy.Match("the VAB") == "VehicleAssemblyBuilding" && KscRoverPolicy.Match("r&d") == "ResearchAndDevelopment" && KscRoverPolicy.Match("tracking station") == "TrackingStation", "player words -> facility");
             Check(KscRoverPolicy.Match("mission control") == "MissionControl" && KscRoverPolicy.Match("pizza") == null && KscRoverPolicy.Display("SpaceplaneHangar") == "SPH", "more names; unknown -> null");
             double R = 600000, m = Math.PI / 180 * R;

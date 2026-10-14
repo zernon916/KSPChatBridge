@@ -163,7 +163,7 @@ namespace KSPChatBridge
         TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
         double roverTargetSpeed, roverIntegral, roverHeading;
-        bool roverHeadingEnabled;
+        bool roverHeadingEnabled, roverSafetySlow, roverSafetyBrake;
         double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
         void RememberLiftoff(double v)
         {
@@ -518,8 +518,21 @@ namespace KSPChatBridge
                 {
                     if (!vessel.Landed) { Stop(); ChatWindow.Notice("Rover speed hold stopped: rover is no longer landed."); return; }
                     double roverDt = Math.Max(.001, Math.Min(.1, Time.fixedDeltaTime));
-                    double error = roverTargetSpeed - vessel.srfSpeed;
-                    bool braking = vessel.srfSpeed > roverTargetSpeed + 2;
+                    double roverPitch = Pitch(), roverRoll = Roll(), sideSpeed = Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.right);
+                    bool slowForSafety = KscRoverPolicy.ReduceSpeed(roverPitch, roverRoll, sideSpeed, vessel.srfSpeed);
+                    bool brakeForRollover = KscRoverPolicy.BrakeForRollover(roverRoll);
+                    if (slowForSafety != roverSafetySlow || brakeForRollover != roverSafetyBrake)
+                    {
+                        string detail = "safety: pitch " + roverPitch.ToString("0.0", CultureInfo.InvariantCulture) + " deg, roll "
+                            + roverRoll.ToString("0.0", CultureInfo.InvariantCulture) + " deg, sideways " + sideSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s";
+                        ChatLog.Write("rover", slowForSafety || brakeForRollover
+                            ? detail + (slowForSafety ? "; speed target halved" : "") + (brakeForRollover ? "; braking for rollover" : "")
+                            : "safety cleared");
+                        roverSafetySlow = slowForSafety; roverSafetyBrake = brakeForRollover;
+                    }
+                    double safeTargetSpeed = slowForSafety ? roverTargetSpeed * .5 : roverTargetSpeed;
+                    double error = safeTargetSpeed - vessel.srfSpeed;
+                    bool braking = brakeForRollover || vessel.srfSpeed > safeTargetSpeed + 2;
                     if (braking)
                     {
                         roverIntegral = 0;
@@ -914,6 +927,7 @@ namespace KSPChatBridge
                 vessel.ctrlState.wheelThrottle = vessel.ctrlState.wheelSteer = 0;
                 FlightInputHandler.state.wheelThrottle = FlightInputHandler.state.wheelSteer = 0;
                 if (vessel.LandedOrSplashed) { vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); }
+                roverSafetySlow = roverSafetyBrake = false;
             }
             if (reverseRollout != null && reverseRollout.Reversed && vessel != null)
             {

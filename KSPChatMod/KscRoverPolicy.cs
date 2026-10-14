@@ -13,6 +13,12 @@ namespace KSPChatBridge
             double limit = FlightPolicy.Clamp(8 / (8 + Math.Max(0, speed)), .2, 1);
             return FlightPolicy.WheelSteering(headingError, limit);
         }
+        internal static bool ReduceSpeed(double pitch, double roll, double sideSpeed, double speed)
+        {
+            return Math.Abs(pitch) > 20 || Math.Abs(roll) > 20
+                || Math.Abs(sideSpeed) > Math.Max(2, Math.Max(0, speed) * .35);
+        }
+        internal static bool BrakeForRollover(double roll) { return Math.Abs(roll) > 30; }
 
         static readonly string[][] Names =
         {
