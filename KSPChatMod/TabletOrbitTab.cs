@@ -20,6 +20,7 @@ namespace KSPChatBridge
                 case 2: TabletDocking(body); break;
                 case 3: TabletSunLock(body); break;
                 case 4: TabletMjAtt(body); break;
+                case 5: TabletMjGuide(body); break;
             }
         }
     }
