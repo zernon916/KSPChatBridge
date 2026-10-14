@@ -9,3 +9,5 @@ EXTRA2 range guard deferred after two full-suite failures. Builds passed; reques
 LAND2 retry: proximity plus along-track capture failed the existing 90-degree join replay twice (excess circling). Both builds passed. Retry discarded per instruction; route skipping remains unresolved.
 
 BANK retry: requested simple command clamp is now implemented before and after roll-command shaping for all landing phases, regardless of learned/explicit bank. Pure command tests and full suite pass. This supersedes EXTRA1's missing-cap note; route geometry remains deferred and live landings are not validated.
+
+RANGE retry: 140 km guard now implemented; it commands home bearing through the normal hold, suppresses test samples during the return, and resumes inside 130 km. LAND during suspended setup and low-fuel aborts are covered. Full suite and Release build passed. This supersedes EXTRA2's missing-range note.

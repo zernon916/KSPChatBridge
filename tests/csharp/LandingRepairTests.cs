@@ -37,6 +37,19 @@ static class LandingRepairTests
         var oldPaused = MfdNav.LearnPaused;
         try { MfdNav.LearnRunning = () => true; MfdNav.LearnPaused = () => true; Check(Array.IndexOf(MfdNav.Right("learn"), "RESUME") >= 0, "paused LEARN exposes RESUME"); }
         finally { MfdNav.LearnRunning = oldRunning; MfdNav.LearnPaused = oldPaused; }
+        var range = new LearnFlight(null, new int[0], true);
+        var ri = new LearnIn { T = 0, Speed = 120, Alt = 5000, FuelFrac = 1, HomeKnown = true, HomeDist = 140001, HomeBrg = 210 };
+        range.Step(ri);
+        Check(range.HoldHdg == 210 && range.P.AcceptedSamples == 0, "outside 140 km return toward KSC without learning the return turn");
+        ri.T = 100; ri.HomeDist = 135000; ri.HomeBrg = 200; range.Step(ri);
+        Check(range.RangeReturning && range.HoldHdg == 200 && range.P.AcceptedSamples == 0, "range return tracks home with hysteresis");
+        range.Request(12);
+        Check(range.Phase == "flyhome" && !range.RangeReturning, "LAND preempts a range hold even during setup");
+        var returnOnly = new LearnFlight(); returnOnly.Step(ri); ri.HomeDist = 141000; returnOnly.Step(ri);
+        ri.T = 200; ri.HomeDist = 129999; returnOnly.Step(ri);
+        Check(!returnOnly.RangeReturning && !returnOnly.Done, "test resumes after returning within 130 km");
+        var lowFuelRange = new LearnFlight(); ri.HomeDist = 141000; ri.FuelFrac = .2; lowFuelRange.Step(ri);
+        Check(lowFuelRange.Done && lowFuelRange.Aborted && !lowFuelRange.HoldingTest, "fuel abort exits range holding and allows landing handoff");
         double ci = 0, crab = 0;
         RunwayMission.CenterlineHeading(50, 270, 270, 80, ref ci, 8, 270, ref crab, false, 1500);
         Check(ci > 0, "persistent 50 metre offset participates in integral correction");

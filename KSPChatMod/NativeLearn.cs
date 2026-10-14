@@ -84,6 +84,7 @@ namespace KSPChatBridge
                 directPitch = directBank = directVs = null; bankOverride = false;
                 if (!learnHoldActive) { altitude = vessel.altitude; heading = hdg; speed = Math.Max(vessel.srfSpeed, 1.5 * stall); capture = null; pitchIntegral = vsIntegral = 0; }
                 learnHoldActive = true; holdAltitude = holdHeading = holdSpeed = true;
+                if (learn.RangeReturning) { heading = learn.HoldHdg; speed = learn.SpeedTarget; ApFieldSync.Heading(heading); }
                 return;
             }
             learnHoldActive = false;

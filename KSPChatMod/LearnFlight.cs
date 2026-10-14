@@ -243,7 +243,9 @@ namespace KSPChatBridge
         bool restartSample;
         internal bool SamplingBlocked { get; private set; }
         internal bool Paused { get; private set; }
-        internal bool HoldingTest { get { return Paused || SamplingBlocked; } }
+        internal bool RangeReturning { get; private set; }
+        internal const double MaxTestRange = 140000, ResumeTestRange = 130000;
+        internal bool HoldingTest { get { return Paused || SamplingBlocked || RangeReturning; } }
         internal string SetPaused(bool paused)
         {
             if (Done) return "No running LEARN test.";
@@ -372,6 +374,13 @@ namespace KSPChatBridge
         internal string Request(int code)
         {
             if (!ManualMode || Done) return "No test flight running: press LEARN.";
+            if (code == 12 && RangeReturning)
+            {
+                RangeReturning = Paused = SamplingBlocked = false;
+                landRequested = true; Queue.Clear(); activeTest = 0;
+                Go("flyhome", last, "Ending the range return: flying home to KSC 27, then landing.");
+                return Status;
+            }
             if (code == 1 || code == 2)
             {   // setup boxes toggle too: unchecking the running takeoff/climb = SKIP (climb skip waits right here); otherwise flip the mark
                 if (!setupDone && activeTest == 0 && StepNo == code)
@@ -728,6 +737,7 @@ namespace KSPChatBridge
         }
         void Finish(bool aborted, string why)
         {
+            RangeReturning = Paused = SamplingBlocked = false;
             RestoreMissingResults();
             if (prior != null && Only != null)
             {   // keep the old setup data unless that step was selected
@@ -861,6 +871,18 @@ namespace KSPChatBridge
         internal void Step(LearnIn i)
         {
             if (Done) return;
+            if (i.HomeKnown && !i.Landed && Phase != "flyhome" && i.HomeDist > MaxTestRange) RangeReturning = true;
+            if (RangeReturning && (Phase == "flyhome" || !i.HomeKnown || i.HomeDist <= ResumeTestRange)) RangeReturning = false;
+            if (RangeReturning)
+            {
+                last = i; // Keep navigation current so LAND can preempt a range hold, including during setup.
+                if (i.FuelFrac < FuelAbort || i.PartLost) { Finish(true, "range return safety abort"); return; }
+                HoldHdg = i.HomeBrg;
+                Throttle = Pitch = Bank = Elevator = Aileron = double.NaN;
+                SpeedTarget = WaitSpeed(i); restartSample = true;
+                Status = "Range limit: returning toward KSC; tests resume inside 130 km.";
+                return;
+            }
             if (Paused)
             {
                 last = i;
