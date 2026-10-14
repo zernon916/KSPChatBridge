@@ -17,6 +17,7 @@ namespace KSPChatBridge
             {
                 case 0: TabletAlarm(body); break;
                 case 1: TabletSystems(body); break;
+                case 2: TabletStatus(body); break;
             }
         }
     }
