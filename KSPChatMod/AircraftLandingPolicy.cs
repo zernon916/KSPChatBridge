@@ -14,6 +14,7 @@ namespace KSPChatBridge
     internal static class FinalApproachPolicy
     {
         internal const double LookAheadM = 1500;
+        internal static double BankCommand(double bank, bool landing) { return landing ? double.IsNaN(bank) ? 0 : FlightPolicy.Clamp(bank, -30, 30) : bank; }
         // A virtual point on the extended 3-degree path; flare takes over before touchdown.
         internal static double Slope(double slope) { return double.IsNaN(slope) || double.IsInfinity(slope) || slope <= 0 ? Math.Tan(3 * Math.PI / 180) : slope; }
         internal static double TargetAltitude(double elevation, double along, double touchdown, double slope = double.NaN)

@@ -7,3 +7,5 @@ EXTRA1 bank cap deferred after two full-suite failures, per the requested rule. 
 EXTRA2 range guard deferred after two full-suite failures. Builds passed; requesting land while setup was suspended outside the range boundary did not enter flyhome. All range-guard changes/tests discarded per instruction. No 140 km limit is present in the retained build.
 
 LAND2 retry: proximity plus along-track capture failed the existing 90-degree join replay twice (excess circling). Both builds passed. Retry discarded per instruction; route skipping remains unresolved.
+
+BANK retry: requested simple command clamp is now implemented before and after roll-command shaping for all landing phases, regardless of learned/explicit bank. Pure command tests and full suite pass. This supersedes EXTRA1's missing-cap note; route geometry remains deferred and live landings are not validated.

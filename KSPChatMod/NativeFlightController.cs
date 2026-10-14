@@ -850,6 +850,7 @@ namespace KSPChatBridge
                 DecisionLog.Use("roll rate", double.IsNaN(learnedRoll) || learnedRoll <= 5 ? "default " + TurnOnset.RollRate + " deg/s" : "learned roll rate", learnedRoll);
             double rollGain = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(TurnOnset.RollRate / learnedRoll, .5, 1.5) : 1;   // fast-rolling airframe -> less gain   // AUTOPILOT_REVIEW #7
                 double pitchGain = !double.IsNaN(learnedPitch) && learnedPitch > 5 ? FlightPolicy.Clamp(20 / learnedPitch, .5, 1.5) : 1;
+                bank = FinalApproachPolicy.BankCommand(bank, mode == "landing");
                 if (!vessel.LandedOrSplashed && !directBank.HasValue)
                 {   // turn onset: roll-rate + g-onset ramp (no choppy g at turn entry); LEARN roll rate when known
                     double want = bank; double onsetRoll = !double.IsNaN(learnedRoll) && learnedRoll > 5 ? FlightPolicy.Clamp(learnedRoll, 10, 60) : TurnOnset.RollRate;
@@ -859,6 +860,8 @@ namespace KSPChatBridge
                     if (Time.realtimeSinceStartup < gTraceUntil && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + .5f; ChatLog.Write("g", "turn entry: want=" + want.ToString("0") + " cmd=" + bankCmd.ToString("0") + " bank=" + Roll().ToString("0") + " n=" + vessel.geeForce.ToString("0.00")); }
                 }
                 else bankCmd = vessel.LandedOrSplashed ? 0 : bank;
+                bank = FinalApproachPolicy.BankCommand(bank, mode == "landing");
+                bankCmd = FinalApproachPolicy.BankCommand(bankCmd, mode == "landing");
                 // Approach banks are sized from the learned envelope / TurnBank; the slow/decel SafeBank clamp would crush them to 5-10 deg (AUTOPILOT_REVIEW #1).
                 if (!bankOverride && !vessel.LandedOrSplashed && mode != "takeoff" && !(mode == "landing" && (landBank || ApproachProfile.SafeBank != null)))
                     bank = PilotPolicy.SafeBank(bank, Eas(), PilotPolicy.SaneStall(stall, StallEstimate()), decel);   // EAS vs EAS stall (KSP IAS at altitude clamped ferry turns to 5 deg, live 20:27)

@@ -18,6 +18,8 @@ static class LandingRepairTests
         Check(warped.Phase == "start" && warped.P.Decel == 2 && warped.P.RejectedSamples == 1, "warp neither advances tests nor replaces known values");
         var qp = PlaneProfile.FromDict(warped.P.ToDict());
         Check(qp.LearningSession == warped.P.LearningSession && qp.RejectedSamples == 1, "learning provenance survives persistence");
+        Check(FinalApproachPolicy.BankCommand(80, true) == 30 && FinalApproachPolicy.BankCommand(-80, true) == -30, "landing command has a hard signed 30 degree cap");
+        Check(FinalApproachPolicy.BankCommand(80, false) == 80 && FinalApproachPolicy.BankCommand(12, true) == 12, "cap preserves nonlanding and modest landing commands");
         double ci = 0, crab = 0;
         RunwayMission.CenterlineHeading(50, 270, 270, 80, ref ci, 8, 270, ref crab, false, 1500);
         Check(ci > 0, "persistent 50 metre offset participates in integral correction");
