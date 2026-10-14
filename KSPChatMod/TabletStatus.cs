@@ -21,6 +21,23 @@ namespace KSPChatBridge
                 TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), r[0] + ": " + r[1], true);
                 y += row + 8;
             }
+            if (!TabletLink)
+            {
+                TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), "INFO ONLY - enable LIVE LINK", true);
+                y += row + 8;
+            }
+            if (TabletUi.Button(new Rect(c.x + 6, y, c.width - 12, row), "ABORT autopilot", false, TabletLink) && TabletLink)
+            {
+                ChatLog.Write("g", "tablet status: abort");
+                ChatWindow.ToolFromMenu("abort", "{}");
+            }
+            y += row + 8;
+            if (TabletUi.Button(new Rect(c.x + 6, y, c.width - 12, row), "Autopilot status (heading error +right / -left)", false, TabletLink) && TabletLink)
+            {
+                ChatLog.Write("g", "tablet status: autopilot_status");
+                ChatWindow.ToolFromMenu("autopilot_status", "{}");
+            }
+            y += row + 8;
         }
     }
 }
