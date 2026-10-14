@@ -14,6 +14,8 @@ namespace KSPChatBridge
             tabletSunLockScroll = GUILayout.BeginScrollView(tabletSunLockScroll);
             Rect c = TabletUi.CardPanel(new Rect(0, 0, width, pad + row), "SUN LOCK");
             TabletUi.Label(new Rect(c.x, c.y, c.width, row), "SUN LOCK - port in progress", true);
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
     }
 }
