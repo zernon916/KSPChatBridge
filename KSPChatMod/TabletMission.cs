@@ -72,7 +72,24 @@ namespace KSPChatBridge
                         }
                     }
 
-                    GUILayout.Space(stagesY + stagesHeight + gap);
+                    List<LegBudget.Leg> legs = MissionLegs();
+                    float legsY = stagesY + stagesHeight + gap;
+                    float legsHeight = pad + row * Math.Max(1, legs.Count);
+                    Rect legsCard = TabletUi.CardPanel(new Rect(0, legsY, width, legsHeight), "DELTA-V LEGS");
+                    if (legs.Count == 0)
+                    {
+                        TabletUi.Label(new Rect(legsCard.x, legsCard.y, legsCard.width, row), "No legs available.", true);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < legs.Count; i++)
+                        {
+                            string line = legs[i].Name + " " + legs[i].Dv.ToString("0", CultureInfo.InvariantCulture) + " m/s";
+                            TabletUi.Label(new Rect(legsCard.x, legsCard.y + i * row, legsCard.width, row), line, true);
+                        }
+                    }
+
+                    GUILayout.Space(legsY + legsHeight + gap);
                 }
                 finally
                 {
@@ -83,6 +100,28 @@ namespace KSPChatBridge
             {
                 GUILayout.EndArea();
             }
+        }
+
+        List<LegBudget.Leg> MissionLegs()
+        {
+            CelestialBody home = BodyInfo.Find("Kerbin");
+            CelestialBody destination = BodyInfo.Find(missionBody);
+            List<LegBudget.Leg> legs = new List<LegBudget.Leg>();
+            double orbitAlt;
+            if (home == null || destination == null || destination == home ||
+                destination.orbit == null ||
+                !double.TryParse(missionAltT, NumberStyles.Float, CultureInfo.InvariantCulture, out orbitAlt) ||
+                orbitAlt < 0)
+                return legs;
+
+            double launch = LegBudget.LaunchDv(home.gravParameter, home.Radius, orbitAlt,
+                home.atmosphere ? home.atmosphereDepth : 0);
+            double transferDv;
+            double unusedDv;
+            double unusedTime;
+            RocketMath.Hohmann(home.gravParameter, home.Radius + orbitAlt, destination.orbit.semiMajorAxis,
+                out transferDv, out unusedDv, out unusedTime);
+            return LegBudget.Legs(launch, transferDv, 0, 0, 0);
         }
 
         static string[] MissionBodyNames()
