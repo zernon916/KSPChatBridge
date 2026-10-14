@@ -21,6 +21,8 @@ namespace KSPChatBridge
             {
                 TabletUi.Label(new Rect(c.x + 6, c.y + 6, c.width - 12, c.height), status, true);
             }
+            float row = Mathf.Max(44, tabletFont * 2.6f), y = c.y + row + 14;
+            if (!TabletLink) { TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), "INFO ONLY - enable LIVE LINK", true); y += row + 8; }
         }
     }
 }
