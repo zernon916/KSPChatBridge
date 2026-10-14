@@ -7,6 +7,7 @@ namespace KSPChatBridge
     public partial class NativeFlightController
     {
         string rocketMode = "off";
+        double rocketEmptyT = -1;
 
         void RocketSteer(FlightCtrlState c, Vector3d dir)
         {
@@ -70,10 +71,77 @@ namespace KSPChatBridge
 
         internal bool RocketFly(FlightCtrlState c)
         {
+            RocketAutoStage();
             const string prefix = "point:";
             if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
             RocketSteer(c, KSPChatBridge.PointAt.Dir(vessel, rocketMode.Substring(prefix.Length)));
             return true;
+        }
+
+        void RocketAutoStage()
+        {
+            if (vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed || vessel.parts == null)
+            {
+                rocketEmptyT = -1;
+                return;
+            }
+
+            bool flameout = false;
+            bool hasIgnitedEngine = false;
+            bool tankEmpty = true;
+            PartResourceLibrary resourceLibrary = PartResourceLibrary.Instance;
+            foreach (Part part in vessel.parts)
+            {
+                if (part == null || part.Modules == null) continue;
+                foreach (PartModule module in part.Modules)
+                {
+                    ModuleEngines engine = module as ModuleEngines;
+                    if (engine == null || !engine.EngineIgnited) continue;
+                    hasIgnitedEngine = true;
+                    if (engine.flameout) flameout = true;
+                    if (engine.propellants == null || engine.propellants.Count == 0 || resourceLibrary == null)
+                    {
+                        tankEmpty = false;
+                        continue;
+                    }
+
+                    foreach (Propellant propellant in engine.propellants)
+                    {
+                        if (propellant == null || string.IsNullOrEmpty(propellant.name))
+                        {
+                            tankEmpty = false;
+                            continue;
+                        }
+                        PartResourceDefinition definition = resourceLibrary.GetDefinition(propellant.name);
+                        if (definition == null)
+                        {
+                            tankEmpty = false;
+                            continue;
+                        }
+                        double amount, capacity;
+                        vessel.GetConnectedResourceTotals(definition.id, out amount, out capacity);
+                        if (amount > 0.0001) tankEmpty = false;
+                    }
+                }
+            }
+            tankEmpty = hasIgnitedEngine && tankEmpty;
+
+            bool empty = flameout || tankEmpty;
+            double now = Time.realtimeSinceStartup;
+            if (empty)
+            {
+                if (rocketEmptyT < 0) rocketEmptyT = now;
+            }
+            else rocketEmptyT = -1;
+
+            string reason = StagingPolicy.ShouldStage(flameout, tankEmpty,
+                rocketEmptyT < 0 ? 0 : now - rocketEmptyT);
+            if (reason == null) return;
+
+            rocketEmptyT = -1;
+            KSP.UI.Screens.StageManager.ActivateNextStage();
+            ChatWindow.Notice("Stage " + vessel.currentStage + " empty, staging.");
+            ChatLog.Write("rocket", "stage: " + reason);
         }
     }
 }
