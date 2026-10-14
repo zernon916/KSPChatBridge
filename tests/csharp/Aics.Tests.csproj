@@ -70,6 +70,8 @@
     <Compile Include="CampaignLaunchTimingTests.cs"/>
     <Compile Include="../../KSPChatMod/TransferDiagramMath.cs"/>
     <Compile Include="TransferDiagramMathTests.cs"/>
+    <Compile Include="../../KSPChatMod/PorkchopColorMap.cs"/>
+    <Compile Include="PorkchopColorMapTests.cs"/>
     <Compile Include="../../KSPChatMod/Campaign.cs"/>
     <Compile Include="CampaignTests.cs"/>
     <Compile Include="../../KSPChatMod/CampaignRunner.cs"/>

@@ -2421,6 +2421,7 @@ class Program
         ScienceTrackerTests.Run();
         EncyclopediaMathTests.Run();
         TransferDiagramMathTests.Run();
+        PorkchopColorMapTests.Run();
         CampaignTests.Run();
         CampaignRunnerTests.Run();
         CampaignTrackingTests.Run();

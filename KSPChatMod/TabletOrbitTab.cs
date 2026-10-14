@@ -4,7 +4,7 @@ namespace KSPChatBridge
 {
     public partial class AicsMenu
     {
-        static readonly string[] TabletOrbitPages = { "ORBITAL AP", "CAPTURE", "DOCKING", "SUN LOCK", "SMARTASS", "GUIDANCE", "RENDEZVOUS" };
+        static readonly string[] TabletOrbitPages = { "ORBITAL AP", "CAPTURE", "DOCKING", "SUN LOCK", "SMARTASS", "GUIDANCE", "RENDEZVOUS", "PORKCHOP" };
         static int tabletOrbitPage;
 
         void TabletOrbitTab(Rect area)
@@ -22,6 +22,7 @@ namespace KSPChatBridge
                 case 4: TabletMjAtt(body); break;
                 case 5: TabletMjGuide(body); break;
                 case 6: TabletRendezvous(body); break;
+                case 7: TabletPorkchop(body); break;
             }
         }
     }
