@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 
@@ -26,6 +27,10 @@ namespace KSPChatBridge
                     Vessel active = FlightGlobals.ActiveVessel;
                     ITargetable selectedTarget = FlightGlobals.fetch == null ? null : FlightGlobals.fetch.VesselTarget;
                     ModuleDockingNode targetPort = selectedTarget as ModuleDockingNode;
+                    Vessel targetVessel = targetPort != null && targetPort.part != null
+                        ? targetPort.part.vessel : selectedTarget == null ? null : selectedTarget.GetVessel();
+                    List<ModuleDockingNode> targetPorts = targetVessel == null || targetVessel == active
+                        ? new List<ModuleDockingNode>() : DockingPorts(targetVessel);
 
                     if (active == null)
                     {
@@ -46,8 +51,8 @@ namespace KSPChatBridge
                         TabletUi.Label(new Rect(card.x, y, card.width, row), "Target port: " + PortName(targetPort));
                         y += row;
 
-                        Vessel targetVessel = targetPort.part.vessel;
-                        if (targetVessel == null)
+                        Vessel targetPortVessel = targetPort.part.vessel;
+                        if (targetPortVessel == null)
                         {
                             TabletUi.Label(new Rect(card.x, y, card.width, row), "Target vessel data unavailable.", true);
                         }
@@ -74,7 +79,7 @@ namespace KSPChatBridge
                                 Vector3 activeAxis = activePort.nodeTransform.up;
                                 Vector3 targetAxis = targetPort.nodeTransform.up;
                                 Vector3d relativeVelocity =
-                                    PortVelocity(active, activeWorldPosition) - PortVelocity(targetVessel, targetWorldPosition);
+                                    PortVelocity(active, activeWorldPosition) - PortVelocity(targetPortVessel, targetWorldPosition);
                                 DockingEstimate estimate = DockingMath.Estimate(
                                     relativePosition.x, relativePosition.y, relativePosition.z,
                                     relativeVelocity.x, relativeVelocity.y, relativeVelocity.z,
@@ -108,6 +113,48 @@ namespace KSPChatBridge
                     }
 
                     GUILayout.Space(cardHeight + gap);
+
+                    float controlsHeight = row * (Mathf.Max(1, targetPorts.Count) + 3) + CardHeaderHeight;
+                    Rect controls = TabletUi.CardPanel(new Rect(0, cardHeight + gap, width, controlsHeight), "DOCKING CONTROLS");
+                    float controlsY = controls.y;
+                    if (!TabletLink)
+                    {
+                        TabletUi.Label(new Rect(controls.x, controlsY, controls.width, row),
+                            "INFO ONLY - enable LIVE LINK to change the target or engage docking.", true);
+                        controlsY += row;
+                    }
+
+                    if (targetPorts.Count == 0)
+                    {
+                        TabletUi.Label(new Rect(controls.x, controlsY, controls.width, row),
+                            active == null ? "No active vessel." : targetVessel == active
+                                ? "Select a docking port on another vessel." : "No target docking ports available.", true);
+                        controlsY += row;
+                    }
+                    else
+                    {
+                        TabletUi.Label(new Rect(controls.x, controlsY, controls.width, row),
+                            "Target vessel: " + (targetVessel.vesselName ?? "(unnamed vessel)"), true);
+                        controlsY += row;
+                        foreach (ModuleDockingNode port in targetPorts)
+                        {
+                            bool isSelected = targetPort == port;
+                            if (TabletUi.Button(new Rect(controls.x, controlsY, controls.width, row),
+                                (isSelected ? "TARGETED: " : "SET TARGET: ") + PortName(port), isSelected,
+                                TabletLink && active != null && FlightGlobals.fetch != null) && FlightGlobals.fetch != null)
+                                FlightGlobals.fetch.SetVesselTarget(port);
+                            controlsY += row;
+                        }
+                    }
+
+                    bool canEngage = targetPort != null && targetPort.part != null &&
+                        targetPort.part.vessel != null && active != null && targetPort.part.vessel != active &&
+                        FlightGlobals.fetch != null;
+                    if (TabletUi.Button(new Rect(controls.x, controlsY, controls.width, row), "ENGAGE DOCKING",
+                        false, TabletLink && canEngage))
+                        ChatWindow.ToolFromMenu("dock_with", "{\"name\":\"target\"}");
+
+                    GUILayout.Space(controlsHeight + gap);
                 }
                 finally
                 {
@@ -122,30 +169,39 @@ namespace KSPChatBridge
 
         static ModuleDockingNode ClosestDockingPort(Vessel vessel, Vector3d targetPosition)
         {
-            if (vessel == null || vessel.parts == null) return null;
-
             ModuleDockingNode closest = null;
             double closestDistance = double.PositiveInfinity;
+            foreach (ModuleDockingNode port in DockingPorts(vessel))
+            {
+                Vector3 position = port.nodeTransform.position;
+                Vector3d delta = new Vector3d(position.x, position.y, position.z) - targetPosition;
+                double distance = delta.magnitude;
+                if (distance < closestDistance)
+                {
+                    closest = port;
+                    closestDistance = distance;
+                }
+            }
+
+            return closest;
+        }
+
+        static List<ModuleDockingNode> DockingPorts(Vessel vessel)
+        {
+            List<ModuleDockingNode> ports = new List<ModuleDockingNode>();
+            if (vessel == null || vessel.parts == null) return ports;
+
             foreach (Part part in vessel.parts)
             {
                 if (part == null || part.Modules == null) continue;
                 foreach (PartModule module in part.Modules)
                 {
                     ModuleDockingNode port = module as ModuleDockingNode;
-                    if (port == null || port.nodeTransform == null) continue;
-
-                    Vector3 position = port.nodeTransform.position;
-                    Vector3d delta = new Vector3d(position.x, position.y, position.z) - targetPosition;
-                    double distance = delta.magnitude;
-                    if (distance < closestDistance)
-                    {
-                        closest = port;
-                        closestDistance = distance;
-                    }
+                    if (port != null && port.nodeTransform != null) ports.Add(port);
                 }
             }
 
-            return closest;
+            return ports;
         }
 
         static Vector3d PortVelocity(Vessel vessel, Vector3d portPosition)
