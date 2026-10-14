@@ -2422,6 +2422,7 @@ class Program
         EncyclopediaMathTests.Run();
         TransferDiagramMathTests.Run();
         CampaignTests.Run();
+        CampaignRunnerTests.Run();
         CampaignTrackingTests.Run();
         CampaignPhaseChatterTests.Run();
         CampaignDvCheckTests.Run();

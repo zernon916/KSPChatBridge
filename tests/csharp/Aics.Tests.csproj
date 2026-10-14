@@ -72,6 +72,8 @@
     <Compile Include="TransferDiagramMathTests.cs"/>
     <Compile Include="../../KSPChatMod/Campaign.cs"/>
     <Compile Include="CampaignTests.cs"/>
+    <Compile Include="../../KSPChatMod/CampaignRunner.cs"/>
+    <Compile Include="CampaignRunnerTests.cs"/>
     <Compile Include="../../KSPChatMod/CampaignTracking.cs"/>
     <Compile Include="CampaignTrackingTests.cs"/>
     <Compile Include="../../KSPChatMod/CampaignPhaseChatter.cs"/>
