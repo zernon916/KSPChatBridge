@@ -11,7 +11,7 @@ namespace KSPChatBridge
         internal const int Side = 8, BottomCount = 8, TopCount = 8, BackKey = 0, PrevKey = 6, NextKey = 7, Ctx = 5;
         internal sealed class Item
         {
-            internal string Id; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
+            internal string Id; internal bool Tablet; internal int Panel = -1;   // AicsMenu panel index, -1 = custom page
             string label;
             /// <summary>The ABOUT item is named after the active vessel (Oct 11: "ABOUT &lt;vessel&gt;", not "ABOUT PLANE").</summary>
             internal string Label { get { return Id == "about" ? AboutLabel(VesselName == null ? null : VesselName()) : label; } set { label = value; } }
