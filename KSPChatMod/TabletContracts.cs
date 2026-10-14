@@ -88,13 +88,13 @@ namespace KSPChatBridge
 
             double expiry = isOffer ? contract.DateExpire : contract.DateDeadline;
             string timeLabel = isOffer ? "Offer expires in: " : "Deadline in: ";
-            string remaining = RemainingTime(expiry, now);
+            string remaining = ContractFormat.RemainingTime(expiry, now, GameSettings.KERBIN_TIME ? 21600 : 86400);
             TabletUi.Label(new Rect(c.x, c.y + row, contentWidth, row), timeLabel + remaining, true);
             GUI.Label(new Rect(c.x, c.y + row * 2, contentWidth, summaryHeight), summary, tabletText);
 
-            string reward = "Funds: " + Funds(contract.FundsCompletion);
+            string reward = "Funds: " + ContractFormat.Funds(contract.FundsCompletion);
             if (contract.FundsAdvance > 0)
-                reward += "  |  Advance: " + Funds(contract.FundsAdvance);
+                reward += "  |  Advance: " + ContractFormat.Funds(contract.FundsAdvance);
             if (contract.ScienceCompletion > 0)
                 reward += "  |  Science: " + contract.ScienceCompletion.ToString("0.##", CultureInfo.InvariantCulture);
             if (contract.ReputationCompletion > 0)
@@ -103,19 +103,5 @@ namespace KSPChatBridge
             return y + height + gap;
         }
 
-        static string RemainingTime(double deadline, double now)
-        {
-            if (double.IsNaN(deadline) || double.IsInfinity(deadline) || deadline <= 0) return "no time limit";
-            double remaining = deadline - now;
-            if (double.IsNaN(remaining) || double.IsInfinity(remaining)) return "unavailable";
-            if (remaining <= 0) return "expired";
-            return remaining.ToString("#,0", CultureInfo.InvariantCulture) + " s";
-        }
-
-        static string Funds(double amount)
-        {
-            if (double.IsNaN(amount) || double.IsInfinity(amount)) return "--";
-            return "\u00A4" + amount.ToString("#,0", CultureInfo.InvariantCulture);
-        }
     }
 }

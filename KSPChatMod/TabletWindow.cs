@@ -211,7 +211,15 @@ namespace KSPChatBridge
             }
             Rect scrollArea = new Rect(area.x, top, area.width, Mathf.Max(0, area.yMax - top));
             tabletTestsScroll.y = Mathf.Min(tabletTestsScroll.y, Mathf.Max(0, contentHeight - scrollArea.height));
-            GUI.BeginScrollView(scrollArea, tabletTestsScroll, new Rect(0, 0, cardW, contentHeight), false, true);
+            Event current = Event.current;
+            if (current.type == EventType.ScrollWheel && scrollArea.Contains(current.mousePosition))
+            {
+                tabletTestsScroll.y = Mathf.Clamp(tabletTestsScroll.y + current.delta.y * 20f, 0,
+                    Mathf.Max(0, contentHeight - scrollArea.height));
+                current.Use();
+            }
+            tabletTestsScroll = GUI.BeginScrollView(scrollArea, tabletTestsScroll,
+                new Rect(0, 0, cardW, contentHeight), false, true);
             try
             {
                 float cy = 8;

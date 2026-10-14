@@ -2422,6 +2422,7 @@ class Program
         CampaignTests.Run();
         CampaignDvCheckTests.Run();
         LearnTestGraphsTests.Run();
+        ContractFormatTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

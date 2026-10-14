@@ -11,6 +11,7 @@ namespace KSPChatBridge
         static Vector2 tabletCampaignScroll;
         static Campaign tabletCampaign;
         static bool tabletCampaignLoaded;
+        static bool tabletCampaignNeedsBackup;
         static int tabletCampaignEditing = -1;
         static string tabletCampaignNameT, tabletCampaignGoalT = "", tabletCampaignCraftT = "";
         static string tabletCampaignAltT = "80000", tabletCampaignIncT = "0", tabletCampaignMessage = "";
@@ -21,7 +22,27 @@ namespace KSPChatBridge
             TabletUi.Ensure(tabletFont);
             if (!tabletCampaignLoaded)
             {
-                tabletCampaign = CampaignStore.Load(Path.Combine(AicsCore.PluginDataDirectory, "campaign.json"));
+                string path = Path.Combine(AicsCore.PluginDataDirectory, "campaign.json");
+                try
+                {
+                    tabletCampaign = CampaignStore.Load(path);
+                }
+                catch (InvalidDataException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (IOException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (ArgumentException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    StartFreshCampaign();
+                }
                 tabletCampaignNameT = tabletCampaign.Name;
                 tabletCampaignLoaded = true;
             }
@@ -46,7 +67,7 @@ namespace KSPChatBridge
                         else
                         {
                             tabletCampaign.Name = tabletCampaignNameT.Trim();
-                            SaveTabletCampaign();
+                            SaveTabletCampaign(true);
                         }
                     }
                     y += header + row * 2 + gap * 2 + 16;
@@ -186,17 +207,26 @@ namespace KSPChatBridge
             tabletCampaignIncT = "0";
         }
 
-        void SaveTabletCampaign()
+        void SaveTabletCampaign(bool confirmUnreadableReplacement = false)
         {
             if (string.IsNullOrWhiteSpace(tabletCampaignNameT))
             {
                 tabletCampaignMessage = "Campaign name is required.";
                 return;
             }
+            if (tabletCampaignNeedsBackup && !confirmUnreadableReplacement)
+            {
+                tabletCampaignMessage = "Press SAVE CAMPAIGN to replace the unreadable file.";
+                return;
+            }
             try
             {
                 tabletCampaign.Name = tabletCampaignNameT.Trim();
-                CampaignStore.Save(Path.Combine(AicsCore.PluginDataDirectory, "campaign.json"), tabletCampaign);
+                string path = Path.Combine(AicsCore.PluginDataDirectory, "campaign.json");
+                if (tabletCampaignNeedsBackup && File.Exists(path))
+                    File.Copy(path, path + ".bad", false);
+                CampaignStore.Save(path, tabletCampaign);
+                tabletCampaignNeedsBackup = false;
                 tabletCampaignMessage = "Campaign saved.";
             }
             catch (IOException ex)
@@ -211,6 +241,13 @@ namespace KSPChatBridge
             {
                 tabletCampaignMessage = "Could not save campaign: " + ex.Message;
             }
+        }
+
+        void StartFreshCampaign()
+        {
+            tabletCampaign = new Campaign();
+            tabletCampaignNeedsBackup = true;
+            tabletCampaignMessage = "Campaign file unreadable, started fresh (old file kept).";
         }
 
         static string CheckCampaignPhaseDv(CampaignPhase phase)
