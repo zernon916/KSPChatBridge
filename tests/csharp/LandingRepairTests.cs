@@ -27,6 +27,35 @@ static class LandingRepairTests
         rw.Step(la, lo, 70 + 5350 * .08, 428, 80, false, 600000, 45, 270, 270);
         Check(Math.Abs(rw.DesiredVs + 80 * .08) < .01, "vertical guidance follows the selected chart slope");
         Check(Math.Abs(rw.Ils.AboveGsM) < .01, "ILS display and guidance share the chart glidepath");
+        var unsafeFinal = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = -.2, Elevation = 70, Phase = "final" };
+        NavigationMath.Offset(0, 0, 90, 800, 600000, out la, out lo);
+        NavigationMath.Offset(la, lo, 0, 50, 600000, out la, out lo);
+        unsafeFinal.Step(la, lo, 80, 10, 62, false, 600000, 45, 270, 270);
+        Check(unsafeFinal.Phase == "go around", "parallel offset must not enter flare below the alignment gate");
+        // Pure final-guidance replay: direct/default and generated-chart inputs, both runway heights and offset signs.
+        foreach (bool generated in new[] { false, true }) foreach (double elevation in new[] { 0.0, 70.0 }) foreach (double offset in new[] { -50.0, 50.0 })
+        {
+            var replay = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = -.2, Elevation = elevation, Phase = "final" };
+            var chart = ApproachChart.Build(0, 0, 270, elevation, 80, 20, 600000, null);
+            if (generated) {
+                string why; var ov = ApproachOverride.Parse(MiniJson.Deserialize(EntryPolicy.ChartJson(chart, "replay")), 0, 0, elevation, 600000, out why);
+                Check(ov != null, "generated chart parses for replay"); chart.Apply(ov);
+            }
+            replay.Chart = chart;
+            NavigationMath.Offset(0, 0, 90, 8000, 600000, out la, out lo);
+            NavigationMath.Offset(la, lo, 0, offset, 600000, out la, out lo);
+            double h = 270;
+            for (int k = 0; k < 1500; k++) {
+                double dist = NavigationMath.Distance(0, 0, la, lo, 600000);
+                replay.Step(la, lo, elevation + (dist + 350) * replay.FinalSlope, 500, 80, false, 600000, 45, h, h);
+                double error = FlightPolicy.Wrap(replay.DesiredHeading - h);
+                double bank = FlightPolicy.Clamp(PilotPolicy.HeadingBank(error, PilotPolicy.RudderSteer(error, false, 80, true)), -30, 30);
+                h += 9.81 * Math.Tan(bank * Math.PI / 180) / 80 * 180 / Math.PI * .1;
+                NavigationMath.Offset(la, lo, h, 8, 600000, out la, out lo);
+                if (replay.Distance < 1500) break;
+            }
+            Check(replay.Phase == "final" && replay.Distance < 1500 && Math.Abs(replay.Cross) < 5, "final capture converges for chart source/runway/offset matrix: " + replay.Cross);
+        }
         string previous = ChartStore.Dir, dir = Path.Combine(Path.GetTempPath(), "landing-" + Guid.NewGuid());
         try {
             ChartStore.Dir = dir;
