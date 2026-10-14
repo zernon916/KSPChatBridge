@@ -162,7 +162,8 @@ namespace KSPChatBridge
         NativeVerticalLanding verticalLanding;
         TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
-        double roverTargetSpeed, roverIntegral;
+        double roverTargetSpeed, roverIntegral, roverHeading;
+        bool roverHeadingEnabled;
         double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
         void RememberLiftoff(double v)
         {
@@ -531,7 +532,10 @@ namespace KSPChatBridge
                         roverIntegral = FlightPolicy.Clamp(roverIntegral + .05 * error * roverDt, 0, 1);
                         c.wheelThrottle = (float)FlightPolicy.Clamp(.25 * error + roverIntegral, 0, 1);
                     }
-                    c.wheelSteer = c.yaw = 0;
+                    c.wheelSteer = roverHeadingEnabled
+                        ? (float)KscRoverPolicy.Steering(FlightPolicy.Wrap(roverHeading - FlightGlobals.ship_heading), vessel.srfSpeed)
+                        : 0;
+                    c.yaw = 0;
                     c.mainThrottle = vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
                     return;
                 }
@@ -1152,6 +1156,15 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     ChatLog.Write("rover", "speed target " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
                     return "Rover speed hold: " + roverSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s.";
+                case "drive_heading":
+                    double roverHeadingTarget = Num(a, "heading", double.NaN);
+                    if (double.IsNaN(roverHeadingTarget) || double.IsInfinity(roverHeadingTarget))
+                        return "Rover heading must be a number in degrees.";
+                    if (mode != "rover") return "Start rover speed hold with \"drive speed N\" first.";
+                    roverHeading = (roverHeadingTarget % 360 + 360) % 360;
+                    roverHeadingEnabled = true;
+                    ChatLog.Write("rover", "heading target " + roverHeading.ToString("0.0", CultureInfo.InvariantCulture) + " deg");
+                    return "Rover heading hold: " + roverHeading.ToString("000", CultureInfo.InvariantCulture) + " deg.";
                 case "abort":
                     if (plan != null) plan.Pause();
                     bool descending = mode == "vertical landing";

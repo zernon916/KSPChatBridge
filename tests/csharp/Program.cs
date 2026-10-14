@@ -1298,6 +1298,7 @@ class Program
         // ---- Rover drive-to-building ----
         {
             Check(KscRoverPolicy.Facility("SpaceCenter/VehicleAssemblyBuilding/Facility/mainBuilding") == "VehicleAssemblyBuilding" && KscRoverPolicy.Facility("Junk/Rock") == null, "facility from building id");
+            Check(Math.Abs(KscRoverPolicy.Steering(20, 20)) < Math.Abs(KscRoverPolicy.Steering(20, 0)), "rover steering tapers at higher speed");
             Check(KscRoverPolicy.Match("the VAB") == "VehicleAssemblyBuilding" && KscRoverPolicy.Match("r&d") == "ResearchAndDevelopment" && KscRoverPolicy.Match("tracking station") == "TrackingStation", "player words -> facility");
             Check(KscRoverPolicy.Match("mission control") == "MissionControl" && KscRoverPolicy.Match("pizza") == null && KscRoverPolicy.Display("SpaceplaneHangar") == "SPH", "more names; unknown -> null");
             double R = 600000, m = Math.PI / 180 * R;
@@ -1501,6 +1502,10 @@ class Program
                 Check(roverSpeed != null && roverSpeed.Value.Key == "drive_speed" && roverSpeed.Value.Value == "{\"speed\":12.5}"
                     && ToolRouter.Direct("drive speed 12.5", "plane") == null && NativeCommands.IsPorted("drive_speed")
                     && ToolRouter.Schemas.ContainsKey("drive_speed"), "rover drive speed direct command and schema");
+                var roverHeading = ToolRouter.Direct("drive heading 270", "rover");
+                Check(roverHeading != null && roverHeading.Value.Key == "drive_heading" && roverHeading.Value.Value == "{\"heading\":270}"
+                    && ToolRouter.Direct("drive heading 270", "plane") == null && NativeCommands.IsPorted("drive_heading")
+                    && ToolRouter.Schemas.ContainsKey("drive_heading"), "rover drive heading direct command and schema");
                 Check(ToolRouter.Direct("turn around", "plane").Value.Key == "set_heading" && ToolRouter.Direct("turn around", "plane").Value.Value.Contains("180"), "turn around -> turn 180");
                 Check(FlightResidualPolicy.PreferBuiltIn("KSC 27 short final", new[] { "Island 27" }) && !FlightResidualPolicy.PreferBuiltIn("Island 27", new[] { "Island 27" }) && FlightResidualPolicy.PreferBuiltIn("27", new[] { "Island 27" }), "explicit KSC/built-in beats saved 'Island 27' spot");
                 Check(FlightResidualPolicy.DuplicatesBuiltIn(-1.5161, -71.8567) && !FlightResidualPolicy.DuplicatesBuiltIn(-1.0, -70), "duplicate Island spot hidden");

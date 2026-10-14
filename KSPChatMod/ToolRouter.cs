@@ -21,7 +21,7 @@ namespace KSPChatBridge
         static readonly HashSet<string> HeliOnly = new HashSet<string> { "heli_control", "prop_control" };
         static readonly HashSet<string> SpaceOnly = new HashSet<string> { "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis", "change_periapsis",
           "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with", "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude", "land_at" };
-        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_to", "drive_to_building" };
+        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_heading", "drive_to", "drive_to_building" };
 
         /// <summary>Is this tool sensible for the craft kind ("plane" | "heli" | "rocket" | "rover" | "" = unknown)?</summary>
         internal static bool Fits(string tool, string craft)
@@ -101,6 +101,8 @@ namespace KSPChatBridge
             if (m.Length == 0 || m.Length > 60 || m.StartsWith("/") || m.Contains("?") || m.Contains(" and ") || m.Contains(" then ")) return null;
             var ds = Regex.Match(m, @"^drive speed (\d+(?:\.\d+)?)$");
             if (ds.Success) return R("drive_speed", "{\"speed\":" + ds.Groups[1].Value + "}");
+            var dh = Regex.Match(m, @"^drive heading (\d+(?:\.\d+)?)$");
+            if (dh.Success) return R("drive_heading", "{\"heading\":" + dh.Groups[1].Value + "}");
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
             if (Regex.IsMatch(m, @"^(brakes?|parking brake) on$|^(set|apply) (the )?brakes?$")) return R("set_brakes", "{\"on\":true}");
@@ -152,6 +154,7 @@ namespace KSPChatBridge
         static Dictionary<string, object> schemas;
         static Dictionary<string, string> descriptions;
         const string RoverSpeedSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_speed\",\"description\":\"Hold a landed rover at a target ground speed in meters per second; applies brakes above the target plus 2 m/s.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"speed\":{\"type\":\"number\",\"minimum\":0,\"maximum\":25}},\"required\":[\"speed\"]}}}";
+        const string RoverHeadingSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_heading\",\"description\":\"Hold a landed rover on a target compass heading in degrees; use drive_speed to control its speed.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"heading\":{\"type\":\"number\",\"minimum\":0,\"maximum\":359.9}},\"required\":[\"heading\"]}}}";
         /// <summary>name -> schema object, parsed once from NativeToolSchemas.Json plus local additions.</summary>
         internal static Dictionary<string, object> Schemas
         {
@@ -167,6 +170,9 @@ namespace KSPChatBridge
                 var roverSpeed = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverSpeedSchema);
                 var roverFunction = (Dictionary<string, object>)roverSpeed["function"];
                 s["drive_speed"] = roverSpeed; d["drive_speed"] = roverFunction["description"].ToString();
+                var roverHeading = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverHeadingSchema);
+                var headingFunction = (Dictionary<string, object>)roverHeading["function"];
+                s["drive_heading"] = roverHeading; d["drive_heading"] = headingFunction["description"].ToString();
                 descriptions = d; return schemas = s;
             }
         }

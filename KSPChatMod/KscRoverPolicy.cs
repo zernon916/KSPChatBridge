@@ -8,6 +8,11 @@ namespace KSPChatBridge
     internal static class KscRoverPolicy
     {
         internal const double Approach = 45, DirectRange = 250, Arrived = 60;
+        internal static double Steering(double headingError, double speed)
+        {
+            double limit = FlightPolicy.Clamp(8 / (8 + Math.Max(0, speed)), .2, 1);
+            return FlightPolicy.WheelSteering(headingError, limit);
+        }
 
         static readonly string[][] Names =
         {
