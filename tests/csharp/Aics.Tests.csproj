@@ -63,6 +63,8 @@
     <Compile Include="../../KSPChatMod/EjectionMath.cs" Link="EjectionMath.cs"/>
     <Compile Include="../../KSPChatMod/Porkchop.cs" Link="Porkchop.cs"/>
     <Compile Include="../../KSPChatMod/RocketMath.cs"/>
+    <Compile Include="../../KSPChatMod/DvMapMath.cs"/>
+    <Compile Include="DvMapMathTests.cs"/>
     <Compile Include="../../KSPChatMod/SuicideBurn.cs"/>
     <Compile Include="../../KSPChatMod/TargetLandMath.cs" Link="TargetLandMath.cs"/>
     <Compile Include="../../KSPChatMod/SlopeMath.cs" Link="SlopeMath.cs"/>
