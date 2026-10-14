@@ -8,6 +8,8 @@ namespace KSPChatBridge
     {
         string rocketMode = "off";
         double rocketEmptyT = -1;
+        bool rocketFairingsDone;
+        Vessel rocketFairingsVessel;
 
         void RocketSteer(FlightCtrlState c, Vector3d dir)
         {
@@ -72,10 +74,39 @@ namespace KSPChatBridge
         internal bool RocketFly(FlightCtrlState c)
         {
             RocketAutoStage();
+            if (!rocketFairingsDone || rocketFairingsVessel != vessel)
+                RocketFairings(LiveRocket.Read(vessel));
             const string prefix = "point:";
             if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
             RocketSteer(c, KSPChatBridge.PointAt.Dir(vessel, rocketMode.Substring(prefix.Length)));
             return true;
+        }
+
+        void RocketFairings(LiveRocket s)
+        {
+            if (vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed || vessel.parts == null)
+                return;
+            if (rocketFairingsVessel != vessel)
+            {
+                rocketFairingsVessel = vessel;
+                rocketFairingsDone = false;
+            }
+            if (rocketFairingsDone || s == null) return;
+
+            string reason = FairingPolicy.CanDeploy(s.QKpa, s.Alt, s.MaxTempRatio);
+            if (reason == null) return;
+
+            rocketFairingsDone = true;
+            foreach (Part part in vessel.parts)
+            {
+                if (part == null || part.Modules == null) continue;
+                foreach (PartModule module in part.Modules)
+                {
+                    ModuleProceduralFairing fairing = module as ModuleProceduralFairing;
+                    if (fairing != null) fairing.DeployFairing();
+                }
+            }
+            ChatLog.Write("rocket", "fairings: " + reason);
         }
 
         void RocketAutoStage()
