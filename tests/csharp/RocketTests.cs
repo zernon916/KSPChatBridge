@@ -21,6 +21,7 @@ internal static class RocketTests
     internal static void Run()
     {
         passes = 0;
+        PlanetViewMathChecks();
         // Stock KSP: Kerbin mu in m^3/s^2, 600 km radius, 100 km LKO,
         // Mun orbit radius 12,000 km. These are radii, not altitudes.
         const double kerbinMu = 3.5316e12, lkoRadius = 700000;
@@ -63,6 +64,24 @@ internal static class RocketTests
         SlopeChecks();
         DvTrackerChecks();
         Console.WriteLine("RocketTests: " + passes + " behavior checks passed.");
+    }
+
+    static void PlanetViewMathChecks()
+    {
+        double d = PlanetViewMath.Distance(100, 60, 1);
+        Check(Near(d, 230, 1e-10), "planet sphere fit includes border");
+        Check(Near(PlanetViewMath.Distance(200, 60, 1), 2 * d, 1e-10), "planet framing scales with radius");
+        Check(Near(PlanetViewMath.Distance(100, 60, 2), d, 1e-10), "wide viewport limited by vertical FOV");
+        double narrow = PlanetViewMath.Distance(100, 60, .5);
+        Check(narrow > d && Math.Asin(100 / narrow) < Math.Atan(Math.Tan(Math.PI / 6) * .5),
+            "narrow viewport contains whole sphere horizontally");
+        Check(double.IsNaN(PlanetViewMath.Distance(0, 60, 1)) &&
+            double.IsNaN(PlanetViewMath.Distance(1, 180, 1)) &&
+            double.IsNaN(PlanetViewMath.Distance(1, 60, 0)) &&
+            double.IsNaN(PlanetViewMath.Distance(double.PositiveInfinity, 60, 1)) &&
+            double.IsNaN(PlanetViewMath.Distance(1, double.NaN, 1)), "invalid framing rejected");
+        Check(PlanetViewMath.Wrap(-20) == 340 && PlanetViewMath.Wrap(740) == 20 &&
+            PlanetViewMath.Wrap(double.NaN) == 0, "camera yaw wraps safely");
     }
 
     static void TargetLandMathChecks()

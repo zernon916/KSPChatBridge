@@ -275,6 +275,7 @@ namespace KSPChatBridge
             else if (encSel.StartsWith("#")) { var v = objs.Find(x => "#" + x.id == encSel); if (v == null) lines.Add("Object no longer tracked."); else { lines.Add(v.vesselName); lines.Add("Tracked space object (asteroid / comet)"); OrbitLines(lines, v.orbit); } }
             else { var b = bodies.Find(x => x != null && x.bodyName == encSel); if (b == null) lines.Add("Body not found."); else BodyLines(lines, b); }
             GUILayout.BeginArea(new Rect(area.x + lw + 16, area.y, area.width - lw - 16, area.height)); encInfoScroll = GUILayout.BeginScrollView(encInfoScroll);
+            TabletPlanetView(area.width - lw - 42, bodies.Find(x => x != null && x.bodyName == encSel));
             for (int i = 0; i < lines.Count; i++) GUILayout.Label(lines[i], i == 0 ? tabletHead : tabletText);
             GUILayout.EndScrollView(); GUILayout.EndArea();
         }
