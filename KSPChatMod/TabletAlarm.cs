@@ -9,7 +9,30 @@ namespace KSPChatBridge
         void TabletAlarm(Rect area)
         {
             var c = TabletUi.CardPanel(area, "MASTER ALARM");
-            TabletUi.Label(new Rect(c.x + 6, c.y + 6, c.width - 12, c.height), "MASTER ALARM - port in progress", true);
+            float row = Mathf.Max(44, tabletFont * 2.6f);
+            if (FlightGlobals.ActiveVessel == null)
+            {
+                TabletUi.Label(new Rect(c.x + 6, c.y + 6, c.width - 12, row), "No active vessel", true);
+                return;
+            }
+            string lvl = StatusWindow.AlarmLevel;
+            TabletUi.Chip(new Rect(c.x + 6, c.y + 6, c.width - 12, row),
+                string.IsNullOrEmpty(lvl) ? "NO ALARM" : lvl.ToUpperInvariant(),
+                lvl == "warning" ? TabletUi.Bad : lvl == "caution" ? TabletUi.Warn : TabletUi.Good);
+            float y = c.y + 6 + row + 8;
+            if (!string.IsNullOrEmpty(StatusWindow.AlarmText))
+            {
+                TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), StatusWindow.AlarmText, true);
+                y += row + 8;
+            }
+            TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), StatusWindow.AlarmUnacked ? "UNACKNOWLEDGED" : "acknowledged", true);
+            y += row + 8;
+            foreach (string line in StatusWindow.AlarmLines())
+            {
+                if (string.IsNullOrEmpty(line)) continue;
+                TabletUi.Label(new Rect(c.x + 6, y, c.width - 12, row), line, true);
+                y += row + 8;
+            }
         }
     }
 }
