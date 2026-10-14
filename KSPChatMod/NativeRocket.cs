@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace KSPChatBridge
@@ -41,6 +42,11 @@ namespace KSPChatBridge
 
         internal string RocketCommand(string name)
         {
+            return RocketCommand(name, null);
+        }
+
+        internal string RocketCommand(string name, Dictionary<string, object> args)
+        {
             if (name == "rocket_stop")
             {
                 rocketMode = "off";
@@ -48,7 +54,26 @@ namespace KSPChatBridge
                 return "Rocket autopilot off.";
             }
 
+            if (name == "rocket_point")
+            {
+                object modeValue;
+                string mode = args != null && args.TryGetValue("mode", out modeValue) ? modeValue as string : null;
+                if (string.IsNullOrWhiteSpace(mode)) return "Usage: rocket_point requires a mode.";
+                mode = mode.Trim();
+                rocketMode = "point:" + mode;
+                ChatLog.Write("rocket", "point " + mode);
+                return "Pointing " + mode + ".";
+            }
+
             return null;
+        }
+
+        internal bool RocketFly(FlightCtrlState c)
+        {
+            const string prefix = "point:";
+            if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            RocketSteer(c, KSPChatBridge.PointAt.Dir(vessel, rocketMode.Substring(prefix.Length)));
+            return true;
         }
     }
 }
