@@ -378,17 +378,19 @@ namespace KSPChatBridge
             TabletUi.Tile(new Rect(area.x + 2 * (tw + gap), area.y, tw, th), "VERT SPEED", v.verticalSpeed.ToString("+0.0;-0.0;0"), "m/s", v.verticalSpeed < -15 ? TabletUi.Warn : TabletUi.Good);
             TabletUi.Tile(new Rect(area.x + 3 * (tw + gap), area.y, tw, th), "HEADING", hdg.ToString("000"), "deg", TabletUi.Accent);
             // row 2: attitude dials + throttle / AP card
-            float y2 = area.y + th + gap, dh = Mathf.Max(130, tabletFont * 7.5f), dw = (area.width - 3 * gap) / 4;
+            float barHeight = Mathf.Max(30, tabletFont * 2.4f), apHeight = Mathf.Max(28, tabletFont * 1.8f);
+            // Card padding/title + two complete gauges + separate AP row, including both gaps.
+            float y2 = area.y + th + gap, dh = Mathf.Max(130, 16 + tabletFont * 1.6f + 2 * barHeight + 12 + apHeight), dw = (area.width - 3 * gap) / 4;
             var ap = NativeFlightController.ApLine; bool apOn = !ap.StartsWith("AP OFF");
             Rect c1 = TabletUi.CardPanel(new Rect(area.x, y2, dw * 2 + gap, dh), "Attitude"); float sub = (c1.width - 2 * gap) / 3;
             TabletUi.Dial(new Rect(c1.x, c1.y, sub, c1.height), "PITCH " + pitch.ToString("0.0"), (float)((pitch + 90) / 180), pitch.ToString("0") + "\u00B0", TabletUi.Accent);
             TabletUi.Dial(new Rect(c1.x + sub + gap, c1.y, sub, c1.height), "BANK " + roll.ToString("0"), (float)((roll + 180) / 360), roll.ToString("0") + "\u00B0", Math.Abs(roll) > 45 ? TabletUi.Warn : TabletUi.Good);
             TabletUi.Dial(new Rect(c1.x + 2 * (sub + gap), c1.y, sub, c1.height), "AoA " + aoa.ToString("0.0"), (float)((aoa + 10) / 40), aoa.ToString("0.0") + "\u00B0", aoa > 15 ? TabletUi.Bad : TabletUi.Series[3]);
             Rect c2 = TabletUi.CardPanel(new Rect(area.x + 2 * (dw + gap), y2, dw * 2 + gap, dh), "Engines / Autopilot");
-            float thr = v.ctrlState != null ? v.ctrlState.mainThrottle : 0, bh = Mathf.Max(30, tabletFont * 2.4f);
+            float thr = v.ctrlState != null ? v.ctrlState.mainThrottle : 0, bh = barHeight;
             TabletUi.Bar(new Rect(c2.x, c2.y, c2.width, bh), "Throttle", thr, (thr * 100).ToString("0") + " %", TabletUi.Series[1]);
             TabletUi.Bar(new Rect(c2.x, c2.y + bh + 6, c2.width, bh), "Mach", (float)(v.mach / 3), v.mach.ToString("0.00"), TabletUi.Series[2]);
-            TabletUi.Chip(new Rect(c2.x, c2.yMax - Mathf.Max(28, tabletFont * 1.8f), c2.width, Mathf.Max(28, tabletFont * 1.8f)), ap, apOn ? TabletUi.Good : TabletUi.Warn);
+            TabletUi.Chip(new Rect(c2.x, c2.y + 2 * bh + 12, c2.width, apHeight), ap, apOn ? TabletUi.Good : TabletUi.Warn);
             // row 3: live graph
             float y3 = y2 + dh + gap; if (area.yMax - y3 < 80) return;
             Rect c3 = TabletUi.CardPanel(new Rect(area.x, y3, area.width, area.yMax - y3), "Last 2 minutes");
