@@ -45,6 +45,7 @@ namespace KSPChatBridge
             GameEvents.onVesselSOIChanged.Add(OnSoiChanged);
             GameEvents.onVesselSituationChange.Add(OnSituationChanged);
             GameEvents.onCrash.Add(OnCrash);
+            GameEvents.onCrashSplashdown.Add(OnCrashSplashdown);
             registered = true;
         }
 
@@ -56,6 +57,7 @@ namespace KSPChatBridge
             GameEvents.onVesselSOIChanged.Remove(OnSoiChanged);
             GameEvents.onVesselSituationChange.Remove(OnSituationChanged);
             GameEvents.onCrash.Remove(OnCrash);
+            GameEvents.onCrashSplashdown.Remove(OnCrashSplashdown);
             registered = false;
         }
 
@@ -92,12 +94,23 @@ namespace KSPChatBridge
 
         static void OnCrash(EventReport report)
         {
+            RecordCrash(report, "Crash");
+        }
+
+        static void OnCrashSplashdown(EventReport report)
+        {
+            RecordCrash(report, "Splashdown");
+        }
+
+        static void RecordCrash(EventReport report, string kind)
+        {
             Vessel vessel = report != null && report.origin != null ? report.origin.vessel : FlightGlobals.ActiveVessel;
             Vessel active = FlightGlobals.ActiveVessel;
             if (vessel == null || (active != null && vessel != active)) return;
+            string action = kind == "Splashdown" ? " splashed down." : " crashed.";
             string text = report != null && !string.IsNullOrEmpty(report.msg) ? report.msg :
-                (report != null && !string.IsNullOrEmpty(report.sender) ? report.sender + " crashed." : "Vessel crashed.");
-            Record(vessel, "Crash", text);
+                (report != null && !string.IsNullOrEmpty(report.sender) ? report.sender + action : "Vessel" + action);
+            Record(vessel, kind, text);
         }
 
         static void Record(Vessel vessel, string kind, string text, string bodyOverride = null)

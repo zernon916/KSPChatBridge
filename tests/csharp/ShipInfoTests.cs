@@ -14,7 +14,7 @@ internal static class ShipInfoTests
     internal static void Run()
     {
         passes = 0;
-        Check(ShipInfo.Distance(999.5) == "1,000 m", "formats sub-kilometer distances in meters");
+        Check(ShipInfo.Distance(999.5) == "1.0 km", "switches to kilometers when rounded meters reach 1000");
         Check(ShipInfo.Distance(12500) == "12.5 km", "formats large distances in kilometers");
         Check(ShipInfo.Distance(double.NaN) == "--" && ShipInfo.Distance(double.NegativeInfinity) == "--",
             "invalid distance is safe to display");

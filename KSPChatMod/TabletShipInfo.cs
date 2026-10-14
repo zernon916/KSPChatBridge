@@ -121,10 +121,12 @@ namespace KSPChatBridge
                 return y + height + gap;
             }
 
-            double twr = live.Mass > 0 ? live.Thrust / (live.Mass * 9.80665) : double.NaN;
-            TabletUi.Label(new Rect(c.x, c.y, c.width, row), "Available thrust: " +
+            bool validTwr = live.Mass > 0 && live.LocalG > 0 && !double.IsNaN(live.Mass) &&
+                !double.IsInfinity(live.Mass) && !double.IsNaN(live.LocalG) && !double.IsInfinity(live.LocalG);
+            double twr = validTwr ? live.Thrust / (live.Mass * live.LocalG) : double.NaN;
+            TabletUi.Label(new Rect(c.x, c.y, c.width, row), "Current thrust: " +
                 (double.IsNaN(live.Thrust) || double.IsInfinity(live.Thrust) ? "--" : live.Thrust.ToString("#,0.0", CultureInfo.InvariantCulture) + " kN"), true);
-            TabletUi.Label(new Rect(c.x, c.y + row, c.width, row), "Current TWR: " + ShipInfo.Ratio(twr) +
+            TabletUi.Label(new Rect(c.x, c.y + row, c.width, row), "Current TWR: " + (validTwr ? ShipInfo.Ratio(twr) : "-") +
                 "  |  Stage: " + (live.Stage < 0 ? "n/a" : live.Stage.ToString(CultureInfo.InvariantCulture)), true);
             TabletUi.Label(new Rect(c.x, c.y + row * 2, c.width, row), "Peak part temperature: " + ShipInfo.Percent(live.MaxTempRatio), true);
             return y + height + gap;

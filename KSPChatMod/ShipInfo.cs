@@ -10,9 +10,10 @@ namespace KSPChatBridge
         internal static string Distance(double meters)
         {
             if (!Finite(meters)) return "--";
-            return Math.Abs(meters) >= 1000
+            double roundedMeters = Math.Round(meters, MidpointRounding.AwayFromZero);
+            return Math.Abs(roundedMeters) >= 1000
                 ? (meters / 1000).ToString("#,0.0", Inv) + " km"
-                : meters.ToString("#,0", Inv) + " m";
+                : roundedMeters.ToString("#,0", Inv) + " m";
         }
 
         internal static string Speed(double metersPerSecond)
