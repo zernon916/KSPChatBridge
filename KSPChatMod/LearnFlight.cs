@@ -242,6 +242,18 @@ namespace KSPChatBridge
         int accepted, rejected;
         bool restartSample;
         internal bool SamplingBlocked { get; private set; }
+        internal bool Paused { get; private set; }
+        internal bool HoldingTest { get { return Paused || SamplingBlocked; } }
+        internal string SetPaused(bool paused)
+        {
+            if (Done) return "No running LEARN test.";
+            if (Paused == paused) return Status;
+            Paused = paused; restartSample = true;
+            Throttle = Pitch = Bank = Elevator = Aileron = SpeedTarget = double.NaN;
+            if (!paused) sampleGate.Accept(last.T, 2, true);
+            Status = paused ? "PAUSED: holding flight; test samples and timers suspended." : "RESUMING: settling for 3 seconds before restarting the segment.";
+            return Status;
+        }
         internal void RestoreMissingResults()
         {
             if (prior == null) return;
@@ -560,9 +572,9 @@ namespace KSPChatBridge
             else { turnPass = 0; passSpeed = double.NaN; turnTargets = null; Go("recover", i, "Turn envelope done: " + why + "; " + res + ". Leveling off."); }
         }
         /// <summary>Turn step phases (turnprep / turn / turn recover): NFC skips the low-energy bank clamp and the G term of CapHot.</summary>
-        internal bool TurnPhase { get { return Phase == "turn" || Phase == "turnprep" || (Phase == "recover" && idx < 100); } }
+        internal bool TurnPhase { get { return !HoldingTest && (Phase == "turn" || Phase == "turnprep" || (Phase == "recover" && idx < 100)); } }
         /// <summary>Sink map phases: NFC skips the MinSafeSpeed hold floor and the low-energy override (the map flies 1.25x by pitch).</summary>
-        internal bool SinkPhase { get { return Phase != null && Phase.StartsWith("sink"); } }
+        internal bool SinkPhase { get { return !HoldingTest && Phase != null && Phase.StartsWith("sink"); } }
         /// <summary>Legacy helper: first-pass target ≈ current speed (soft-capped); prefer BuildTurnTargets for the full ladder.</summary>
         internal double TurnSpeed(double v0, double stall)
         {
@@ -849,6 +861,12 @@ namespace KSPChatBridge
         internal void Step(LearnIn i)
         {
             if (Done) return;
+            if (Paused)
+            {
+                last = i;
+                if (!i.Landed && (i.PartLost || i.FuelFrac < FuelAbort)) { Paused = false; Finish(true, "safety abort while paused"); }
+                return;
+            }
             bool finite = LearningSampleGate.Finite(i.T) && LearningSampleGate.Finite(i.Speed) && LearningSampleGate.Finite(i.Alt) && LearningSampleGate.Finite(i.Vs) && LearningSampleGate.Finite(i.Pitch) && LearningSampleGate.Finite(i.Bank);
             SamplingBlocked = !sampleGate.Accept(i.T, i.WarpRate, finite);
             P.LearningSession = session;

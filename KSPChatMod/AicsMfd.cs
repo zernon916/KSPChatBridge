@@ -411,6 +411,7 @@ namespace KSPChatBridge
         internal static void OnKey(string item, string key)
         {
             if (item == "learn" && NativeFlightController.LearnToggleMode && (key == "SCROLL UP" || key == "SCROLL DN")) { MfdNav.MoveCursor(key == "SCROLL UP" ? -1 : 1, LearnFlight.Codes.Length); return; }
+            if (item == "learn" && (key == "PAUSE" || key == "RESUME")) { ChatWindow.Notice("[LEARN] " + NativeFlightController.SetLearnPaused(key == "PAUSE")); return; }
             if (item == "learn" && key == "SKIP") { Tool("learn_skip", "{}"); return; }
             if (item == "learn" && key == "TOGGLE") { ChatWindow.Notice("[LEARN] " + NativeFlightController.ToggleLearnCode(LearnFlight.Codes[Math.Max(0, Math.Min(LearnFlight.Codes.Length - 1, MfdNav.LearnCursor))])); return; }
             if ((item == "about" || item == "learn") && key == "SCROLL UP") { MfdNav.AboutScroll(-3); return; }

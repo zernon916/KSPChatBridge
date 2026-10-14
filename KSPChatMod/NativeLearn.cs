@@ -33,17 +33,22 @@ namespace KSPChatBridge
             }
         }
 
+        internal static string SetLearnPaused(bool paused)
+        {
+            var me = instance;
+            return me == null || me.learn == null ? "No running plane LEARN test." : me.learn.SetPaused(paused);
+        }
         string LearnPlaneCmd(Dictionary<string, object> a)
         {
             if (vessel == null) return "No active vessel.";
             if (props != null && props.HasLift(vessel))
             {
                 if (HeliLearning) return "Helicopter test flight already running: " + heliLearnMessage;
-                MfdNav.LearnRunning = () => LearnIsRunning;
+                MfdNav.LearnRunning = () => LearnIsRunning; MfdNav.LearnPaused = () => instance != null && instance.learn != null && instance.learn.Paused;
                 return Command("heli_control", new Dictionary<string, object> { { "mode", "learn" }, { "altitude_m", Math.Max(30, vessel.radarAltitude) } });
             }
             if (liftArea <= 0) return "LEARN THIS PLANE is for winged planes only.";
-            MfdNav.LearnRunning = () => LearnIsRunning;
+            MfdNav.LearnRunning = () => LearnIsRunning; MfdNav.LearnPaused = () => instance != null && instance.learn != null && instance.learn.Paused;
             if (learn != null && !learn.Done) return "Test flight already running: " + learn.Status;
             // Oct 11 manual test picker: take off, climb, wait (holding altitude + heading); checked boxes run one test each, then back to waiting
             var queue = profile != null ? new List<int>(profile.Rerun) : new List<int>(); if (profile != null) profile.Rerun.Clear(); if ((profile == null || !profile.NoLand) && !queue.Contains(12)) queue.Add(12);   // box 12 checked by default (Oct 12)
@@ -73,12 +78,15 @@ namespace KSPChatBridge
             double stress = 0; foreach (Part p in vessel.parts) { if (p.maxTemp > 0) stress = Math.Max(stress, p.temperature / p.maxTemp); if (p.skinMaxTemp > 0) stress = Math.Max(stress, p.skinTemperature / p.skinMaxTemp); }
             var i = BuildIn(t, frac, rate, tr, stress, pitch);
             learn.Step(i);
-            if (learn.SamplingBlocked)
+            if (learn.HoldingTest)
             {
                 learnRates.Reset(); learnPrevFuel = learnPrevHdg = learnPrevT = double.NaN;
                 directPitch = directBank = directVs = null; bankOverride = false;
+                if (!learnHoldActive) { altitude = vessel.altitude; heading = hdg; speed = Math.Max(vessel.srfSpeed, 1.5 * stall); capture = null; pitchIntegral = vsIntegral = 0; }
+                learnHoldActive = true; holdAltitude = holdHeading = holdSpeed = true;
                 return;
             }
+            learnHoldActive = false;
             if (learn.TestsDone != learnTestsSaved) { learnTestsSaved = learn.TestsDone; learn.RestoreMissingResults(); profile = learn.P; SaveProfile(learn.P); ChatLog.Write("learn", "test done, profile saved: " + learn.P.Summary()); }
             EngineDrillTick(t, i.ThrustFrac);
             if (learn.Phase == "stallsink") StallCrew();   // Oct 12: the stall break (power idle, so the emergency branch may not fire)
@@ -115,7 +123,7 @@ namespace KSPChatBridge
                     + ", thr " + ((double.IsNaN(gate.Out) ? vessel.ctrlState.mainThrottle : gate.Out) * 100).ToString("0.00") + "%, spd " + vessel.srfSpeed.ToString("0") + ", shaped " + lastDesiredPitch.ToString("0.0") + " elev " + elevator.ToString("0.00") + (CraftClass.Gentle(CraftCls) ? " (heavy: pitch rate g-limited " + CraftClass.HeavyPitchG.ToString("0.0") + " g)" : "") + (Math.Abs(elevator) > .98 ? " PITCH LIMITED: elevator saturated, no authority" : !double.IsNaN(learn.Pitch) && learn.Pitch - pitch > 5 && lastDesiredPitch - pitch < 2 ? " PITCH LIMITED: shaper/g-limit" : ""));
             }
         }
-        double learnTraceNext; string learnPhaseSeen = "";
+        bool learnHoldActive; double learnTraceNext; string learnPhaseSeen = "";
         readonly RateMeter learnRates = new RateMeter(); int learnTestsSaved; float learnPilotUntil; bool learnPilotHad;
         /// <summary>Manual learn wait: the pilot is flying (stick keys within the last 2 s); the controller does not touch the controls.</summary>
         bool LearnPilotFlying { get { return learn != null && learn.Waiting && Time.realtimeSinceStartup < learnPilotUntil; } }
@@ -184,7 +192,7 @@ namespace KSPChatBridge
                 if (lastLearn.TrackLanding(BuildIn(Planetarium.GetUniversalTime(), fr, 0, 0, 0, 0))) { SaveProfile(lastLearn.P); ChatLog.Write("learn", "rollout " + lastLearn.P.Perf.Rollout.ToString("0") + " m"); ChatWindow.Notice("[LEARN] Landing rollout " + lastLearn.P.Perf.Rollout.ToString("0") + " m. Profile complete."); }
                 return;
             }
-            if (learn == null || learn.SamplingBlocked || learn.Phase == "takeoff" || mode == "takeoff") return;
+            if (learn == null || learn.HoldingTest || learn.Phase == "takeoff" || mode == "takeoff") return;
             if (!double.IsNaN(learn.Throttle) && double.IsNaN(learn.SpeedTarget)) { c.mainThrottle = (float)learn.Throttle; throttleKind = learn.TestThrottle ? "test" : "pi"; throttleWhy = "learn " + learn.Phase; }
             if (!double.IsNaN(learn.Aileron)) c.roll = (float)learn.Aileron;
             if (!double.IsNaN(learn.Elevator)) c.pitch = (float)learn.Elevator;
@@ -492,6 +500,7 @@ namespace KSPChatBridge
             if (ActiveRover) { o.Add("ROVER PROFILE"); o.AddRange(me.RoverLearnLines()); return o; }
             if (me.props != null && me.props.HasLift(me.vessel)) { o.AddRange(me.HeliLearnLines()); return o; }
             var p = me.profile; var lf = me.learn ?? me.lastLearn;
+            if (lf != null && lf.HoldingTest) o.Add(lf.Status);
             if (lf != null && lf.ManualMode && !lf.Done) { o.AddRange(lf.ManualChecklist(MfdNav.LearnCursor)); return o; }
             if (lf != null && (!lf.Done || !lf.LandingDone)) { o.AddRange(lf.Checklist()); return o; }
             if (p == null) { o.Add("No test flight yet. LEARN starts one."); return o; }

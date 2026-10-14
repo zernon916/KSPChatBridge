@@ -23,6 +23,20 @@ static class LandingRepairTests
         Check(LearnFlight.StallTargetFor(12000) == 11000 && LearnFlight.StallTargetFor(7670) == 6670, "stall test is 1000 metres below the learned ceiling");
         var ceilingProfile = new PlaneProfile { Ceiling = 12000 };
         Check(LearnFlight.ProfileChecklist(ceilingProfile, 0).Exists(line => line.Contains("Stall") && line.Contains("11000")), "stall checklist title exposes actual target altitude");
+        var oldRunning = MfdNav.LearnRunning;
+        try { MfdNav.LearnRunning = () => true; Check(Array.IndexOf(MfdNav.Right("learn"), "PAUSE") >= 0, "running LEARN exposes a PAUSE button"); }
+        finally { MfdNav.LearnRunning = oldRunning; }
+        var pause = new LearnFlight(); var pi = new LearnIn { T = 0, Speed = 120, Alt = 5000, FuelFrac = 1 };
+        pause.Step(pi); pause.Phase = "decel"; pause.SetPaused(true);
+        int beforePause = pause.P.AcceptedSamples; pi.T = 1000; pause.Step(pi);
+        Check(pause.Paused && pause.Phase == "decel" && pause.P.AcceptedSamples == beforePause && double.IsNaN(pause.Throttle), "pause releases test commands without advancing phase or collecting samples");
+        pause.SetPaused(false); pi.T = 1001; pause.Step(pi);
+        Check(pause.HoldingTest && pause.Phase == "decel", "resume includes settling instead of skipping dwell timers");
+        pi.T = 1004; pause.Step(pi);
+        Check(!pause.HoldingTest && pause.Phase == "decel", "resume restarts interrupted segment");
+        var oldPaused = MfdNav.LearnPaused;
+        try { MfdNav.LearnRunning = () => true; MfdNav.LearnPaused = () => true; Check(Array.IndexOf(MfdNav.Right("learn"), "RESUME") >= 0, "paused LEARN exposes RESUME"); }
+        finally { MfdNav.LearnRunning = oldRunning; MfdNav.LearnPaused = oldPaused; }
         double ci = 0, crab = 0;
         RunwayMission.CenterlineHeading(50, 270, 270, 80, ref ci, 8, 270, ref crab, false, 1500);
         Check(ci > 0, "persistent 50 metre offset participates in integral correction");

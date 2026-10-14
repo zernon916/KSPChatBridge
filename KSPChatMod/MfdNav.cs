@@ -80,7 +80,7 @@ namespace KSPChatBridge
         internal static string FuelStatus(double amount, double cap) { if (cap <= 0) return ""; double f = amount / cap; return f < .01 ? "!Empty!" : "LF " + (100 * f).ToString("0") + "%"; }
         internal static string[] Right(string item) { return Pad(RightKeys(item), Side); }
         /// <summary>Set by the flight controller: a Learn flight is running (LEARN page key shows RUNNING; there is no Learn abort).</summary>
-        internal static Func<bool> LearnRunning;
+        internal static Func<bool> LearnRunning, LearnPaused;
         internal static Func<bool> LearnRover;
         /// <summary>Oct 12: the LEARN key on ABOUT / AIRCRAFT only navigates to the LEARN page; START LEARN on that page starts it.</summary>
         internal static string LearnKeyAction(string item, string key) { if (key == "LEARN" && (item == "about" || item == "aircraft" || item == "learn")) return "open"; if (key == "START LEARN" && item == "learn") return "start"; if (key == "RUNNING" && item == "learn") return "status"; if (key == "STOP" && item == "learn") return "stop"; return null; }
@@ -97,7 +97,7 @@ namespace KSPChatBridge
                     bool rover = LearnRover != null && LearnRover();
                     return rover
                         ? new[] { running ? "STOP" : "START LEARN", "SCROLL UP", "SCROLL DN", null, null }
-                        : new[] { running ? "RUNNING" : "START LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP" };
+                        : new[] { running ? "RUNNING" : "START LEARN", "SCROLL UP", "SCROLL DN", "TOGGLE", "SKIP", running ? LearnPaused != null && LearnPaused() ? "RESUME" : "PAUSE" : null };
                 case "aircraft": return new[] { "TAKEOFF", "LAND", "GO AROUND", "ABORT", "STATUS", "LEARN" };
                 case "approach": return new[] { "LAND", "GO AROUND", "ABORT", null, null, null };
                 case "taxi": return new[] { "HANGAR", "RWY 09", "RWY 27", "STOP", null, null };
