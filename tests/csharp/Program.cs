@@ -12,6 +12,7 @@ class Program
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
     static void Main()
     {
+        LandingRepairTests.Run();
         Check(RotorMeasurements.Rpm(new Rotor()) == 380, "physics RPM beats stale UI field");
         Check(float.IsNaN(RotorMeasurements.Rpm(new object())), "missing measurement is unknown");
         Console.WriteLine("Rotor measurement: 2 behavior checks passed.");

@@ -1440,7 +1440,7 @@ namespace KSPChatBridge
                                 if (end != null)
                                 {
                                     selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why, selectedRunway.Terrain);
-                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using Luke's chart for " + selectedRunway.Key : "chart " + selectedRunway.Key + " invalid (" + why + "); computed chart");
+                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using " + System.IO.Path.GetFileName(ChartStore.PathFor(selectedRunway.Key)) + " for " + selectedRunway.Key + "; profile " + (profileTrusted && profile != null ? vessel.vesselName + "|" + profile.Date : "untrusted/default") : "chart " + selectedRunway.Key + " invalid (" + why + "); computed chart");
                                 }
                             }
                         }

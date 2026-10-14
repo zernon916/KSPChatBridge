@@ -24,7 +24,7 @@ namespace KSPChatBridge
             try { if (File.Exists(ActivePath)) return MiniJson.Deserialize(File.ReadAllText(ActivePath)) ?? new Dictionary<string, object>(); } catch (Exception) { }
             return new Dictionary<string, object>();
         }
-        internal static string Active(string key) { object v; return ActiveMap().TryGetValue(key, out v) && v != null ? Convert.ToString(v) : ""; }
+        internal static string Active(string key) { object v; return ActiveMap().TryGetValue(key, out v) && v != null ? Convert.ToString(v) : Dir != null && File.Exists(Path.Combine(Dir, FileName(key, "generated"))) ? "generated" : ""; }
         internal static void SetActive(string key, string variant)
         {
             Directory.CreateDirectory(Dir); var m = ActiveMap(); m[key] = variant ?? ""; AtomicFile.Write(ActivePath, MiniJson.Serialize(m));

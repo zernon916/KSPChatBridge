@@ -157,6 +157,8 @@ namespace KSPChatBridge
         /// <summary>After the test (complete or aborted): ferry + approach to KSC 27, verified; one retry straight into land_plane if it did not engage.</summary>
         void StartLearnLanding()
         {
+            EnsureCharts(); GenerateCharts(vessel.mainBody);
+            if (profileTrusted && profile != null && System.IO.File.Exists(System.IO.Path.Combine(ChartStore.Dir, ChartStore.FileName("KSC 27", "generated")))) ChartStore.SetActive("KSC 27", "generated");
             var args = new Dictionary<string, object> { { "where", "ksc 27" } };
             string r; try { r = Command("land", args); } catch (Exception ex) { r = "land failed: " + ex.Message; }
             ChatWindow.Notice(r);
