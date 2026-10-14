@@ -21,18 +21,41 @@ namespace KSPChatBridge
             }
             else if (v.isEVA)
             {
-                Rect eva = TabletUi.CardPanel(new Rect(0, 0, width, pad + row * 2), "CREW / EVA");
-                TabletUi.Label(new Rect(eva.x, eva.y, eva.width, row), "On EVA: board the nearest free seat with a hatch (within 50 m).", true);
-                if (!string.IsNullOrEmpty(crewMsg)) TabletUi.Label(new Rect(eva.x, eva.y + row, eva.width, row), crewMsg, true);
-                GUILayout.Space(pad + row * 2 + gap);
+                Rect eva = TabletUi.CardPanel(new Rect(0, 0, width, pad + row * 4), "CREW / EVA");
+                float yb = eva.y;
+                TabletUi.Label(new Rect(eva.x, yb, eva.width, row), "On EVA: board the nearest free seat with a hatch (within 50 m).", true);
+                yb += row;
+                if (!TabletLink) { TabletUi.Label(new Rect(eva.x, yb, eva.width, row), "INFO ONLY - enable LIVE LINK", true); yb += row; }
+                if (TabletUi.Button(new Rect(eva.x, yb, eva.width, row), "EVA: return to ship", false, TabletLink) && TabletLink)
+                {
+                    ChatLog.Write("g", "tablet crew: EVA return to ship");
+                    crewMsg = BoardNearest(v);
+                }
+                yb += row;
+                if (!string.IsNullOrEmpty(crewMsg)) TabletUi.Label(new Rect(eva.x, yb, eva.width, row), crewMsg, true);
+                GUILayout.Space(pad + row * 4 + gap);
             }
             else
             {
                 var crew = v.GetVesselCrew();
                 int count = crew == null ? 0 : crew.Count;
-                float h = pad + row * (count > 0 ? count + 1 : 2);
+                ProtoCrewMember selK = null;
+                Part selP = null;
+                foreach (Part p in v.parts)
+                {
+                    if (p.CrewCapacity <= 0) continue;
+                    foreach (ProtoCrewMember k in p.protoModuleCrew)
+                        if (k.name == crewPick) { selK = k; selP = p; }
+                }
+                int dests = 0;
+                if (selK != null)
+                    foreach (Part p in v.parts)
+                        if (p != selP && p.CrewCapacity > p.protoModuleCrew.Count) dests++;
+                int rows = 1 + (count > 0 ? count * 2 : 1) + (selK != null ? dests + 1 : 0) + (string.IsNullOrEmpty(crewMsg) ? 0 : 1);
+                float h = pad + row * rows;
                 Rect card = TabletUi.CardPanel(new Rect(0, 0, width, h), "CREW / EVA");
                 float y = card.y;
+                if (!TabletLink) { TabletUi.Label(new Rect(card.x, y, card.width, row), "INFO ONLY - enable LIVE LINK", true); y += row; }
                 if (count == 0)
                 {
                     TabletUi.Label(new Rect(card.x, y, card.width, row), "no crew aboard", true);
@@ -43,6 +66,28 @@ namespace KSPChatBridge
                     foreach (ProtoCrewMember k in crew)
                     {
                         TabletUi.Label(new Rect(card.x, y, card.width, row), k.name + " (" + k.experienceTrait.Title + ")", true);
+                        y += row;
+                        if (TabletUi.Button(new Rect(card.x, y, card.width, row), crewPick == k.name ? "selected" : "move", crewPick == k.name, TabletLink) && TabletLink)
+                        {
+                            ChatLog.Write("g", "tablet crew: " + (crewPick == k.name ? "deselect " : "select ") + k.name);
+                            crewPick = crewPick == k.name ? "" : k.name;
+                        }
+                        y += row;
+                    }
+                }
+                if (selK != null)
+                {
+                    TabletUi.Label(new Rect(card.x, y, card.width, row), "Move " + selK.name + " to (free seats):", true);
+                    y += row;
+                    foreach (Part p in v.parts)
+                    {
+                        if (p == selP || p.CrewCapacity <= p.protoModuleCrew.Count) continue;
+                        if (TabletUi.Button(new Rect(card.x, y, card.width, row), p.partInfo.title + "  (" + p.protoModuleCrew.Count + "/" + p.CrewCapacity + ")", false, TabletLink) && TabletLink)
+                        {
+                            ChatLog.Write("g", "tablet crew: move " + selK.name + " to " + p.partInfo.title);
+                            crewMsg = MoveCrew(selK, selP, p);
+                            crewPick = "";
+                        }
                         y += row;
                     }
                 }
