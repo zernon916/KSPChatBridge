@@ -2412,6 +2412,7 @@ class Program
         LearnAbortStallTests.Run();
         ThrottleLearnTests.Run();
         RocketTests.Run();
+        FlightLogTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {

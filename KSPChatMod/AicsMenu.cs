@@ -107,9 +107,10 @@ namespace KSPChatBridge
         {
             cfgFile = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/aics.txt");
             if (!loaded) { Load(); loaded = true; }
+            FlightLogEvents.Register();
         }
 
-        void OnDestroy() { Save(); SetCamLock(false); SetTypeLock(false); }
+        void OnDestroy() { FlightLogEvents.Unregister(); Save(); SetCamLock(false); SetTypeLock(false); }
 
         // Block KSP keyboard controls (space = stage!) while typing in an AICS key/URL field.
         static void SetTypeLock(bool on)

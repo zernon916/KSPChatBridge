@@ -50,6 +50,8 @@
     <Compile Include="../../KSPChatMod/OrbitMath.cs"/>
     <Compile Include="RocketTests.cs"/>
     <Compile Include="../../KSPChatMod/PlanetViewMath.cs" Link="PlanetViewMath.cs"/>
+    <Compile Include="../../KSPChatMod/FlightLog.cs" Link="FlightLog.cs"/>
+    <Compile Include="FlightLogTests.cs"/>
     <Compile Include="../../KSPChatMod/MissionStore.cs" Link="MissionStore.cs"/>
     <Compile Include="../../KSPChatMod/CorrectionMath.cs" Link="CorrectionMath.cs"/>
     <Compile Include="../../KSPChatMod/EjectionMath.cs" Link="EjectionMath.cs"/>
