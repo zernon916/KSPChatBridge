@@ -12,7 +12,7 @@ namespace KSPChatBridge
     {
         const int TabletId = 0x4B434D54;
         const float TabletMinW = 520, TabletMinH = 420, TabletBezel = 16, TabletHead = 40, TabletTabH = 46;
-        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests", "Encyclopedia", "Flight", "Plan", "Orbit", "Log", "Comms", "Contracts" };
+        internal static readonly string[] TabletTabs = { "Mission", "Burns", "Map", "Graphs", "Tests", "Encyclopedia", "Flight", "Plan", "Orbit", "Log", "Comms", "Contracts", "Science" };
         /// <summary>LIVE LINK (default OFF): OFF = information only - the tablet shows live craft data but every control is
         /// disabled and does nothing (the autopilot itself keeps running). ON = the tablet keys work like the MFD keys.</summary>
         internal static bool TabletLink;
@@ -104,6 +104,7 @@ namespace KSPChatBridge
                     case 9: TabletFlightLog(area); break;
                     case 10: TabletComms(area); break;
                     case 11: TabletContracts(area); break;
+                    case 12: TabletScience(area); break;
                     default:
                         GUI.Label(new Rect(area.x, area.y + area.height * .4f, area.width, tabletFont * 4), TabletTabs[tabletTab].ToUpperInvariant() + "\n\ncoming soon", new GUIStyle(tabletHead) { alignment = TextAnchor.MiddleCenter, wordWrap = true });
                         break;

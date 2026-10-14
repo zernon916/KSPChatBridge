@@ -2415,6 +2415,7 @@ class Program
         FlightLogTests.Run();
         ShipInfoTests.Run();
         CommsStatusTests.Run();
+        ScienceTrackerTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {
