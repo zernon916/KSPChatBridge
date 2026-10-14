@@ -98,7 +98,7 @@ namespace KSPChatBridge
                     for (int i = 0; i < tabletCampaign.Phases.Count; i++)
                     {
                         CampaignPhase phase = tabletCampaign.Phases[i];
-                        float cardHeight = header + row * 7 + gap * 3 + 16;
+                        float cardHeight = header + row * 8 + gap * 3 + 16;
                         Rect card = TabletUi.CardPanel(new Rect(0, y, width, cardHeight), "PHASE " + (i + 1));
                         TabletUi.Label(new Rect(card.x, card.y, card.width, row), phase.Goal);
                         TabletUi.Label(new Rect(card.x, card.y + row, card.width, row),
@@ -124,8 +124,10 @@ namespace KSPChatBridge
                         TabletUi.Label(new Rect(card.x, card.y + row * 5 + gap * 2, card.width, row),
                             CampaignTracking.VesselLabel(phase, trackedVessel == null ? null : trackedVessel.vesselName,
                                 trackedVessel != null && trackedVessel == FlightGlobals.ActiveVessel), true);
+                        TabletUi.Label(new Rect(card.x, card.y + row * 6 + gap * 3, card.width, row),
+                            CampaignLaunchWindowLabel(i), true);
                         Vessel activeVessel = FlightGlobals.ActiveVessel;
-                        if (TabletUi.Button(new Rect(card.x, card.y + row * 6 + gap * 3, card.width, row),
+                        if (TabletUi.Button(new Rect(card.x, card.y + row * 7 + gap * 3, card.width, row),
                             "TRACK ACTIVE VESSEL", false, activeVessel != null))
                         {
                             CampaignTracking.Track(phase, activeVessel.id.ToString());
@@ -311,6 +313,98 @@ namespace KSPChatBridge
                 if (vessel != null && CampaignTracking.IsAssignedTo(vesselId, vessel.id.ToString()))
                     return vessel;
             return null;
+        }
+
+        string CampaignLaunchWindowLabel(int phaseIndex)
+        {
+            if (phaseIndex <= 0)
+                return "Launch window: an earlier tracked phase is required.";
+
+            CampaignPhase earlierPhase = null;
+            for (int i = phaseIndex - 1; i >= 0; i--)
+            {
+                if (!string.IsNullOrWhiteSpace(tabletCampaign.Phases[i].VesselId))
+                {
+                    earlierPhase = tabletCampaign.Phases[i];
+                    break;
+                }
+            }
+            if (earlierPhase == null)
+                return "Launch window: track an earlier phase vessel first.";
+
+            Vessel target = FindCampaignVessel(earlierPhase.VesselId);
+            if (target == null)
+                return "Launch window: earlier phase vessel is not loaded.";
+
+            Vessel active = FlightGlobals.ActiveVessel;
+            if (active == null)
+                return "Launch window: no active launch vessel.";
+            if (target == active)
+                return "Launch window: the earlier phase vessel cannot be the launch vessel.";
+            if (active.situation != Vessel.Situations.PRELAUNCH && active.situation != Vessel.Situations.LANDED)
+                return "Launch window: available only while the launch vessel is on the pad or landed.";
+
+            Orbit targetOrbit = target.orbit;
+            CelestialBody body = active.mainBody;
+            if (body == null || targetOrbit == null || targetOrbit.referenceBody != body)
+                return "Launch window: both vessels must use the launch site's reference body.";
+            if (!CampaignLaunchFinite(body.rotationPeriod) || body.rotationPeriod <= 0)
+                return "Launch window: launch-site rotation is unavailable.";
+
+            double now = Planetarium.GetUniversalTime();
+            if (!CampaignLaunchFinite(now))
+                return "Launch window: universal time is unavailable.";
+            Vector3d position = targetOrbit.getRelativePositionAtUT(now).xzy;
+            Vector3d velocity = targetOrbit.getOrbitalVelocityAtUT(now).xzy;
+            Vector3d normal = Vector3d.Cross(position, velocity);
+            if (!CampaignLaunchFinite(position) || !CampaignLaunchFinite(velocity) ||
+                !CampaignLaunchFinite(normal) || normal.sqrMagnitude <= 0)
+                return "Launch window: earlier vessel orbit data is unavailable.";
+            Vector3d site = body.GetWorldSurfacePosition(active.latitude, active.longitude, 0) - body.position;
+            Vector3d east = (body.GetWorldSurfacePosition(active.latitude, active.longitude + .01, 0) -
+                body.GetWorldSurfacePosition(active.latitude, active.longitude, 0)).normalized;
+            Vector3d northAxis = (body.GetWorldSurfacePosition(90, 0, 0) - body.position).normalized;
+            if (!CampaignLaunchFinite(site) || !CampaignLaunchFinite(east) || east.sqrMagnitude <= 0 ||
+                !CampaignLaunchFinite(northAxis) || northAxis.sqrMagnitude <= 0)
+                return "Launch window: launch-site position is unavailable.";
+            Vector3d parallel = northAxis * Vector3d.Dot(site, northAxis);
+            Vector3d perpendicular = site - parallel;
+            bool ascending;
+            double wait = MechJebPolicy.LaunchWindow(
+                new[] { normal.x, normal.y, normal.z },
+                new[] { parallel.x, parallel.y, parallel.z },
+                new[] { perpendicular.x, perpendicular.y, perpendicular.z },
+                new[] { east.x, east.y, east.z },
+                new[] { northAxis.x, northAxis.y, northAxis.z },
+                2 * Math.PI / body.rotationPeriod, out ascending);
+            if (!CampaignLaunchFinite(wait))
+                return "Launch window: the earlier vessel's plane does not cross this launch site.";
+
+            string targetName = string.IsNullOrEmpty(target.vesselName) ? "earlier vessel" : target.vesselName;
+            return "Plane window to " + targetName + ": in " + FormatCampaignLaunchWait(wait) +
+                (ascending ? " (ascending); not a rendezvous guarantee." : " (descending); not a rendezvous guarantee.");
+        }
+
+        static string FormatCampaignLaunchWait(double seconds)
+        {
+            if (seconds >= 3600)
+                return (seconds / 3600).ToString("0", CultureInfo.InvariantCulture) + " h " +
+                    ((seconds % 3600) / 60).ToString("00", CultureInfo.InvariantCulture) + " min";
+            if (seconds >= 60)
+                return (seconds / 60).ToString("0", CultureInfo.InvariantCulture) + " min " +
+                    (seconds % 60).ToString("00", CultureInfo.InvariantCulture) + " s";
+            return seconds.ToString("0", CultureInfo.InvariantCulture) + " s";
+        }
+
+        static bool CampaignLaunchFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        static bool CampaignLaunchFinite(Vector3d value)
+        {
+            return CampaignLaunchFinite(value.x) && CampaignLaunchFinite(value.y) &&
+                CampaignLaunchFinite(value.z);
         }
     }
 }
