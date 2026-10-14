@@ -163,6 +163,9 @@ namespace KSPChatBridge
         TaxiMission taxi; readonly Derotation derot = new Derotation();
         bool poweredTaxi;
         double roverTargetSpeed, roverIntegral, roverHeading;
+        double roverDestinationLat, roverDestinationLon;
+        string roverDestination;
+        bool roverNavigating;
         bool roverHeadingEnabled, roverSafetySlow, roverSafetyBrake;
         double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
         void RememberLiftoff(double v)
@@ -518,6 +521,21 @@ namespace KSPChatBridge
                 {
                     if (!vessel.Landed) { Stop(); ChatWindow.Notice("Rover speed hold stopped: rover is no longer landed."); return; }
                     double roverDt = Math.Max(.001, Math.Min(.1, Time.fixedDeltaTime));
+                    double targetSpeed = roverTargetSpeed;
+                    if (roverNavigating)
+                    {
+                        double distance = NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
+                        if (KscRoverPolicy.ReachedDestination(distance))
+                        {
+                            string destination = roverDestination;
+                            ChatLog.Write("rover", "arrived at " + destination + " (" + distance.ToString("0.0", CultureInfo.InvariantCulture) + " m)");
+                            ChatWindow.Notice("Rover arrived at " + destination + ".");
+                            Stop(); return;
+                        }
+                        targetSpeed = KscRoverPolicy.ApproachSpeed(targetSpeed, distance);
+                        roverHeading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon);
+                        roverHeadingEnabled = true;
+                    }
                     double roverPitch = Pitch(), roverRoll = Roll(), sideSpeed = Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.right);
                     bool slowForSafety = KscRoverPolicy.ReduceSpeed(roverPitch, roverRoll, sideSpeed, vessel.srfSpeed);
                     bool brakeForRollover = KscRoverPolicy.BrakeForRollover(roverRoll);
@@ -530,7 +548,7 @@ namespace KSPChatBridge
                             : "safety cleared");
                         roverSafetySlow = slowForSafety; roverSafetyBrake = brakeForRollover;
                     }
-                    double safeTargetSpeed = slowForSafety ? roverTargetSpeed * .5 : roverTargetSpeed;
+                    double safeTargetSpeed = slowForSafety ? targetSpeed * .5 : targetSpeed;
                     double error = safeTargetSpeed - vessel.srfSpeed;
                     bool braking = brakeForRollover || vessel.srfSpeed > safeTargetSpeed + 2;
                     if (braking)
@@ -928,6 +946,7 @@ namespace KSPChatBridge
                 FlightInputHandler.state.wheelThrottle = FlightInputHandler.state.wheelSteer = 0;
                 if (vessel.LandedOrSplashed) { vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); }
                 roverSafetySlow = roverSafetyBrake = false;
+                roverNavigating = false; roverDestination = null;
             }
             if (reverseRollout != null && reverseRollout.Reversed && vessel != null)
             {
@@ -1176,9 +1195,36 @@ namespace KSPChatBridge
                         return "Rover heading must be a number in degrees.";
                     if (mode != "rover") return "Start rover speed hold with \"drive speed N\" first.";
                     roverHeading = (roverHeadingTarget % 360 + 360) % 360;
+                    roverNavigating = false; roverDestination = null;
                     roverHeadingEnabled = true;
                     ChatLog.Write("rover", "heading target " + roverHeading.ToString("0.0", CultureInfo.InvariantCulture) + " deg");
                     return "Rover heading hold: " + roverHeading.ToString("000", CultureInfo.InvariantCulture) + " deg.";
+                case "drive_to":
+                    string destinationName = Str(a, "name", "").Trim();
+                    if (destinationName.Length == 0) return "Rover destination can't be empty.";
+                    if (!vessel.Landed) return "Rover navigation requires a landed vessel.";
+                    bool driveWheels = false, driveMotors = false;
+                    foreach (Part part in vessel.parts) foreach (PartModule module in part.Modules)
+                    {
+                        driveWheels |= module is ModuleWheelBase;
+                        var motor = module as ModuleWheels.ModuleWheelMotor;
+                        driveMotors |= motor != null && motor.motorEnabled;
+                    }
+                    if (!driveWheels || !driveMotors) return "Rover navigation requires powered wheels.";
+                    TaxiMission destinationRoute;
+                    try { destinationRoute = new TaxiMission(destinationName, vessel.mainBody.bodyName, 8, label => spots.Point(label, vessel.mainBody.bodyName)); }
+                    catch (ArgumentException ex) { return ex.Message; }
+                    if (destinationRoute.Points.Count != 1) return "Enter one rover waypoint or latitude,longitude coordinate.";
+                    TaxiMission.Point destinationPoint = destinationRoute.Points[0];
+                    if (mode != "rover") BeginHold();
+                    if (roverTargetSpeed <= 0) roverTargetSpeed = 8;
+                    roverDestination = destinationPoint.Name;
+                    roverDestinationLat = destinationPoint.Lat; roverDestinationLon = destinationPoint.Lon;
+                    roverNavigating = true; roverHeadingEnabled = true; roverIntegral = 0; mode = "rover";
+                    vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
+                    SetGroup(vessel, KSPActionGroup.Brakes, false);
+                    ChatLog.Write("rover", "drive to " + roverDestination + " at " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
+                    return "Rover driving to " + roverDestination + " at up to " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s.";
                 case "abort":
                     if (plan != null) plan.Pause();
                     bool descending = mode == "vertical landing";

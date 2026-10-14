@@ -103,6 +103,8 @@ namespace KSPChatBridge
             if (ds.Success) return R("drive_speed", "{\"speed\":" + ds.Groups[1].Value + "}");
             var dh = Regex.Match(m, @"^drive heading (\d+(?:\.\d+)?)$");
             if (dh.Success) return R("drive_heading", "{\"heading\":" + dh.Groups[1].Value + "}");
+            var dr = Regex.Match(m, @"^drive to (.{1,50})$");
+            if (dr.Success) return R("drive_to", "{\"name\":" + MiniJson.Serialize(dr.Groups[1].Value.Trim()) + "}");
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
             if (Regex.IsMatch(m, @"^(brakes?|parking brake) on$|^(set|apply) (the )?brakes?$")) return R("set_brakes", "{\"on\":true}");
@@ -155,6 +157,7 @@ namespace KSPChatBridge
         static Dictionary<string, string> descriptions;
         const string RoverSpeedSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_speed\",\"description\":\"Hold a landed rover at a target ground speed in meters per second; applies brakes above the target plus 2 m/s.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"speed\":{\"type\":\"number\",\"minimum\":0,\"maximum\":25}},\"required\":[\"speed\"]}}}";
         const string RoverHeadingSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_heading\",\"description\":\"Hold a landed rover on a target compass heading in degrees; use drive_speed to control its speed.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"heading\":{\"type\":\"number\",\"minimum\":0,\"maximum\":359.9}},\"required\":[\"heading\"]}}}";
+        const string RoverDriveToSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_to\",\"description\":\"Drive a landed rover to one named saved waypoint or a latitude,longitude coordinate; slow within 100 m and stop within 10 m.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}}}";
         /// <summary>name -> schema object, parsed once from NativeToolSchemas.Json plus local additions.</summary>
         internal static Dictionary<string, object> Schemas
         {
@@ -173,6 +176,9 @@ namespace KSPChatBridge
                 var roverHeading = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverHeadingSchema);
                 var headingFunction = (Dictionary<string, object>)roverHeading["function"];
                 s["drive_heading"] = roverHeading; d["drive_heading"] = headingFunction["description"].ToString();
+                var roverDriveTo = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverDriveToSchema);
+                var driveToFunction = (Dictionary<string, object>)roverDriveTo["function"];
+                s["drive_to"] = roverDriveTo; d["drive_to"] = driveToFunction["description"].ToString();
                 descriptions = d; return schemas = s;
             }
         }

@@ -1302,6 +1302,8 @@ class Program
             Check(KscRoverPolicy.ReduceSpeed(21, 0, 0, 8) && KscRoverPolicy.ReduceSpeed(0, -21, 0, 8)
                 && KscRoverPolicy.ReduceSpeed(0, 0, 3, 8) && !KscRoverPolicy.ReduceSpeed(20, 20, 2, 8)
                 && KscRoverPolicy.BrakeForRollover(-31) && !KscRoverPolicy.BrakeForRollover(30), "rover attitude/slip safety thresholds");
+            Check(KscRoverPolicy.ApproachSpeed(8, 100) == 8 && KscRoverPolicy.ApproachSpeed(8, 99) < 4
+                && KscRoverPolicy.ApproachSpeed(8, 20) == 1 && KscRoverPolicy.ReachedDestination(10) && !KscRoverPolicy.ReachedDestination(10.1), "rover approach speed and arrival range");
             Check(KscRoverPolicy.Match("the VAB") == "VehicleAssemblyBuilding" && KscRoverPolicy.Match("r&d") == "ResearchAndDevelopment" && KscRoverPolicy.Match("tracking station") == "TrackingStation", "player words -> facility");
             Check(KscRoverPolicy.Match("mission control") == "MissionControl" && KscRoverPolicy.Match("pizza") == null && KscRoverPolicy.Display("SpaceplaneHangar") == "SPH", "more names; unknown -> null");
             double R = 600000, m = Math.PI / 180 * R;
@@ -1509,6 +1511,10 @@ class Program
                 Check(roverHeading != null && roverHeading.Value.Key == "drive_heading" && roverHeading.Value.Value == "{\"heading\":270}"
                     && ToolRouter.Direct("drive heading 270", "plane") == null && NativeCommands.IsPorted("drive_heading")
                     && ToolRouter.Schemas.ContainsKey("drive_heading"), "rover drive heading direct command and schema");
+                var roverTo = ToolRouter.Direct("drive to 12.5,-45", "rover");
+                Check(roverTo != null && roverTo.Value.Key == "drive_to" && roverTo.Value.Value == "{\"name\":\"12.5,-45\"}"
+                    && ToolRouter.Direct("drive to 12.5,-45", "plane") == null && NativeCommands.IsPorted("drive_to")
+                    && ToolRouter.Schemas.ContainsKey("drive_to"), "rover drive-to direct command and schema");
                 Check(ToolRouter.Direct("turn around", "plane").Value.Key == "set_heading" && ToolRouter.Direct("turn around", "plane").Value.Value.Contains("180"), "turn around -> turn 180");
                 Check(FlightResidualPolicy.PreferBuiltIn("KSC 27 short final", new[] { "Island 27" }) && !FlightResidualPolicy.PreferBuiltIn("Island 27", new[] { "Island 27" }) && FlightResidualPolicy.PreferBuiltIn("27", new[] { "Island 27" }), "explicit KSC/built-in beats saved 'Island 27' spot");
                 Check(FlightResidualPolicy.DuplicatesBuiltIn(-1.5161, -71.8567) && !FlightResidualPolicy.DuplicatesBuiltIn(-1.0, -70), "duplicate Island spot hidden");

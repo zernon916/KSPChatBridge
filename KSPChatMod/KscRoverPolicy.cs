@@ -19,6 +19,11 @@ namespace KSPChatBridge
                 || Math.Abs(sideSpeed) > Math.Max(2, Math.Max(0, speed) * .35);
         }
         internal static bool BrakeForRollover(double roll) { return Math.Abs(roll) > 30; }
+        internal static double ApproachSpeed(double target, double distance)
+        {
+            return distance < 100 ? Math.Min(target, Math.Max(1, Math.Min(4, distance / 25))) : target;
+        }
+        internal static bool ReachedDestination(double distance) { return distance <= 10; }
 
         static readonly string[][] Names =
         {
