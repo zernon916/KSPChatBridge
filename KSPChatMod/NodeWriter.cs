@@ -49,6 +49,33 @@ namespace KSPChatBridge
             return "Hohmann transfer node added for " + target.bodyName + ".";
         }
 
+        internal static string CaptureAtPe(Vessel v, double apTarget)
+        {
+            if (v == null || v.orbit == null || v.orbit.referenceBody == null)
+                return "Cannot create capture node: orbit unavailable.";
+
+            Orbit orbit = v.orbit;
+            double mu = orbit.referenceBody.gravParameter;
+            double periapsis = orbit.PeR;
+            if (mu <= 0 || periapsis <= 0 || apTarget <= periapsis)
+                return "Cannot create capture node: orbit values are invalid.";
+
+            double speed = orbit.getOrbitalSpeedAt(periapsis);
+            double escapeSpeed = Math.Sqrt(2.0 * mu / periapsis);
+            double excessSquared = speed * speed - escapeSpeed * escapeSpeed;
+            if (excessSquared < 0 || double.IsNaN(excessSquared) || double.IsInfinity(excessSquared))
+                return "Cannot create capture node: orbit values are invalid.";
+
+            double dv = -RocketMath.CaptureDv(mu, periapsis, Math.Sqrt(excessSquared), apTarget);
+            if (double.IsNaN(dv) || double.IsInfinity(dv))
+                return "Cannot create capture node: orbit values are invalid.";
+
+            double ut = Planetarium.GetUniversalTime() + orbit.timeToPe;
+            if (Add(v, ut, 0, 0, dv) == null)
+                return "Cannot create capture node.";
+            return "Capture node added at periapsis.";
+        }
+
         internal static string CircularizeAtAp(Vessel v)
         {
             if (v == null || v.orbit == null || v.orbit.referenceBody == null)
