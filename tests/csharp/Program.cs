@@ -2423,6 +2423,7 @@ class Program
         TransferDiagramMathTests.Run();
         CampaignTests.Run();
         CampaignTrackingTests.Run();
+        CampaignPhaseChatterTests.Run();
         CampaignDvCheckTests.Run();
         LearnTestGraphsTests.Run();
         ContractFormatTests.Run();

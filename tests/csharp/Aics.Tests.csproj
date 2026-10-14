@@ -74,6 +74,8 @@
     <Compile Include="CampaignTests.cs"/>
     <Compile Include="../../KSPChatMod/CampaignTracking.cs"/>
     <Compile Include="CampaignTrackingTests.cs"/>
+    <Compile Include="../../KSPChatMod/CampaignPhaseChatter.cs"/>
+    <Compile Include="CampaignPhaseChatterTests.cs"/>
     <Compile Include="../../KSPChatMod/CampaignDvCheck.cs"/>
     <Compile Include="CampaignDvCheckTests.cs"/>
     <Compile Include="../../KSPChatMod/LearnTestGraph.cs"/>

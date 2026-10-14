@@ -20,33 +20,7 @@ namespace KSPChatBridge
         void TabletCampaign(Rect area)
         {
             TabletUi.Ensure(tabletFont);
-            if (!tabletCampaignLoaded)
-            {
-                string path = Path.Combine(AicsCore.PluginDataDirectory, "campaign.json");
-                try
-                {
-                    tabletCampaign = CampaignStore.Load(path);
-                }
-                catch (InvalidDataException)
-                {
-                    StartFreshCampaign();
-                }
-                catch (IOException)
-                {
-                    StartFreshCampaign();
-                }
-                catch (ArgumentException)
-                {
-                    StartFreshCampaign();
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    StartFreshCampaign();
-                }
-                tabletCampaignNameT = tabletCampaign.Name;
-                tabletCampaignLoaded = true;
-            }
-
+            EnsureTabletCampaignLoaded();
             GUILayout.BeginArea(area);
             try
             {
@@ -148,6 +122,95 @@ namespace KSPChatBridge
             }
         }
 
+        static void EnsureTabletCampaignLoaded()
+        {
+            if (!tabletCampaignLoaded)
+            {
+                string path = Path.Combine(AicsCore.PluginDataDirectory, "campaign.json");
+                try
+                {
+                    tabletCampaign = CampaignStore.Load(path);
+                }
+                catch (InvalidDataException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (IOException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (ArgumentException)
+                {
+                    StartFreshCampaign();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    StartFreshCampaign();
+                }
+                tabletCampaignNameT = tabletCampaign.Name;
+                tabletCampaignLoaded = true;
+            }
+        }
+
+        internal static void OnCampaignLaunch(EventReport report)
+        {
+            Vessel vessel = report != null && report.origin != null ? report.origin.vessel : FlightGlobals.ActiveVessel;
+            if (vessel == null || string.IsNullOrWhiteSpace(vessel.id.ToString())) return;
+            EnsureTabletCampaignLoaded();
+            if (tabletCampaign == null || tabletCampaign.Phases == null) return;
+
+            string vesselId = vessel.id.ToString();
+            foreach (CampaignPhase phase in tabletCampaign.Phases)
+            {
+                if (!CampaignPhaseChatter.TryStart(phase, vesselId)) continue;
+                SaveCampaignEvent(phase, vessel, true);
+                break;
+            }
+        }
+
+        internal static void OnCampaignSituationChanged(GameEvents.HostedFromToAction<Vessel, Vessel.Situations> change)
+        {
+            Vessel vessel = change.host;
+            if (vessel == null || change.to != Vessel.Situations.ORBITING) return;
+            EnsureTabletCampaignLoaded();
+            if (tabletCampaign == null || tabletCampaign.Phases == null || vessel.orbit == null ||
+                vessel.orbit.referenceBody == null) return;
+
+            string vesselId = vessel.id.ToString();
+            foreach (CampaignPhase phase in tabletCampaign.Phases)
+            {
+                if (!CampaignPhaseChatter.TargetOrbitReached(vessel.orbit.ApA, vessel.orbit.PeA,
+                        vessel.orbit.inclination, phase) ||
+                    !CampaignPhaseChatter.TryComplete(phase, vesselId)) continue;
+                SaveCampaignEvent(phase, vessel, false);
+                break;
+            }
+        }
+
+        static void SaveCampaignEvent(CampaignPhase phase, Vessel vessel, bool started)
+        {
+            SaveTabletCampaign();
+            string goal = string.IsNullOrEmpty(phase.Goal) ? "campaign phase" : phase.Goal;
+            string message = started ? "Phase started: " + goal + ". Engines are lit - let's fly." :
+                "Phase complete: " + goal + ". Target orbit achieved.";
+            ChatLog.Write("campaign", message);
+            List<ProtoCrewMember> crew = vessel.GetVesselCrew();
+            if (crew == null || crew.Count == 0) return;
+            ProtoCrewMember speaker = null;
+            foreach (ProtoCrewMember member in crew)
+            {
+                if (member == null) continue;
+                if (speaker == null) speaker = member;
+                if (IntercomTalk.NormTrait(member.trait) == "pilot")
+                {
+                    speaker = member;
+                    break;
+                }
+            }
+            if (speaker != null)
+                ChatWindow.Notice(IntercomTalk.Fmt(speaker.name, speaker.trait, message));
+        }
+
         void CampaignEditorField(Rect editor, float labelWidth, float row, int index, string label, ref string value)
         {
             float y = editor.y + row * index;
@@ -220,7 +283,7 @@ namespace KSPChatBridge
             tabletCampaignIncT = "0";
         }
 
-        void SaveTabletCampaign(bool confirmUnreadableReplacement = false)
+        static void SaveTabletCampaign(bool confirmUnreadableReplacement = false)
         {
             if (string.IsNullOrWhiteSpace(tabletCampaignNameT))
             {
@@ -256,7 +319,7 @@ namespace KSPChatBridge
             }
         }
 
-        void StartFreshCampaign()
+        static void StartFreshCampaign()
         {
             tabletCampaign = new Campaign();
             tabletCampaignNeedsBackup = true;
