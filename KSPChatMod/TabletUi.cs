@@ -9,7 +9,7 @@ namespace KSPChatBridge
     internal static class TabletUi
     {
         internal static readonly Color Bg = new Color(.07f, .08f, .10f), Card = new Color(.13f, .15f, .18f), CardHi = new Color(.18f, .21f, .25f),
-            Text = new Color(.90f, .93f, .96f), Dim = new Color(.55f, .60f, .66f), Accent = new Color(.25f, .75f, 1f), Good = new Color(.30f, .85f, .45f),
+            Text = new Color(.90f, .93f, .96f), Dim = new Color(.78f, .82f, .87f), Accent = new Color(.25f, .75f, 1f), Good = new Color(.30f, .85f, .45f),
             Warn = new Color(1f, .70f, .20f), Bad = new Color(1f, .33f, .30f), Grid = new Color(1, 1, 1, .07f);
         internal static readonly Color[] Series = { new Color(.25f, .75f, 1f), new Color(1f, .70f, .20f), new Color(.30f, .85f, .45f), new Color(.85f, .45f, 1f) };
         static Texture2D round, ring; static GUIStyle cardS, title, label, value, unit, small, btn, btnOn, chip, rightLabel, field, toggleCap; static int builtFor = -1;
@@ -50,7 +50,7 @@ namespace KSPChatBridge
             small = new GUIStyle(label) { fontSize = Mathf.Max(10, font - 5) };
             btn = new GUIStyle { alignment = TextAnchor.MiddleCenter, fontSize = font, fontStyle = FontStyle.Bold, border = new RectOffset(11, 11, 11, 11), clipping = TextClipping.Clip };
             btn.normal.background = btn.hover.background = btn.active.background = round; btn.normal.textColor = btn.hover.textColor = Text; btn.active.textColor = Accent;
-            btnOn = new GUIStyle(btn); btnOn.normal.textColor = btnOn.hover.textColor = Color.black;
+            btnOn = new GUIStyle(btn); btnOn.normal.textColor = btnOn.hover.textColor = btnOn.active.textColor = btnOn.focused.textColor = Color.black;
             chip = new GUIStyle(btn) { fontSize = Mathf.Max(10, font - 5) }; chip.normal.textColor = Color.black;
             rightLabel = new GUIStyle(label) { alignment = TextAnchor.MiddleRight };
             // holds/settings pages: touch text field + switch row. The field paints its own rounded bed, so GUI.color only tints the text.
@@ -145,10 +145,21 @@ namespace KSPChatBridge
         /// <summary>Touch-size rounded button (min 44 px high recommended); disabled = greyed, never returns true.</summary>
         internal static bool Button(Rect r, string text, bool on = false, bool enabled = true)
         {
-            var o = GUI.color; GUI.color = !enabled ? new Color(.35f, .37f, .40f) : on ? Accent : CardHi;
-            var st = on ? btnOn : btn; var oc = st.normal.textColor; if (!enabled) st.normal.textColor = st.hover.textColor = Dim;
-            bool hit = GUI.Button(r, text, st); GUI.color = o; if (!enabled) st.normal.textColor = st.hover.textColor = oc;
-            return hit && enabled;
+            // Tint only the background: GUI.color also multiplies the label and made inactive tabs almost black.
+            var oldColor = GUI.color; var oldBackground = GUI.backgroundColor; var oldContent = GUI.contentColor;
+            var st = on ? btnOn : btn; var normal = st.normal.textColor; var hover = st.hover.textColor;
+            try
+            {
+                GUI.color = GUI.contentColor = Color.white;
+                GUI.backgroundColor = !enabled ? new Color(.25f, .27f, .30f) : on ? Accent : CardHi;
+                if (!enabled) st.normal.textColor = st.hover.textColor = Dim;
+                return GUI.Button(r, text, st) && enabled;
+            }
+            finally
+            {
+                GUI.color = oldColor; GUI.backgroundColor = oldBackground; GUI.contentColor = oldContent;
+                st.normal.textColor = normal; st.hover.textColor = hover;
+            }
         }
         /// <summary>Small coloured status chip ("DONE", "QUEUED", ...).</summary>
         internal static void Chip(Rect r, string text, Color c) { var o = GUI.color; GUI.color = c; GUI.Box(r, GUIContent.none, cardS); GUI.color = o; GUI.Label(r, text, chip); }
