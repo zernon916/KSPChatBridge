@@ -1304,6 +1304,22 @@ class Program
                 && KscRoverPolicy.BrakeForRollover(-31) && !KscRoverPolicy.BrakeForRollover(30), "rover attitude/slip safety thresholds");
             Check(KscRoverPolicy.ApproachSpeed(8, 100) == 8 && KscRoverPolicy.ApproachSpeed(8, 99) < 4
                 && KscRoverPolicy.ApproachSpeed(8, 20) == 1 && KscRoverPolicy.ReachedDestination(10) && !KscRoverPolicy.ReachedDestination(10.1), "rover approach speed and arrival range");
+            Check(KscRoverPolicy.FlatSurface(5, -5, 5) && !KscRoverPolicy.FlatSurface(5.1, 0, 5)
+                && !KscRoverPolicy.FlatSurface(double.NaN, 0, 5), "rover learn flat-surface limits");
+            var topSpeedTrial = new RoverTopSpeedTrial(0);
+            Check(!topSpeedTrial.Sample(1, 12, 0, 0) && topSpeedTrial.Sample(10, 12.1, 0, 0)
+                && !topSpeedTrial.Aborted && topSpeedTrial.BestSpeed == 12.1, "rover top speed completes after a stable speed plateau");
+            topSpeedTrial = new RoverTopSpeedTrial(0);
+            Check(topSpeedTrial.Sample(1, 24.6, 0, 0) && !topSpeedTrial.Aborted, "rover top-speed test respects 25 m/s cap");
+            topSpeedTrial = new RoverTopSpeedTrial(0);
+            Check(topSpeedTrial.Sample(1, 2, 9, 0) && topSpeedTrial.Aborted, "rover top-speed test aborts on uneven surface");
+            topSpeedTrial = new RoverTopSpeedTrial(0);
+            Check(topSpeedTrial.Sample(10, 0, 0, 0) && topSpeedTrial.Aborted, "rover top-speed test rejects a stationary plateau");
+            var roverProfile = new RoverProfile { TopSpeed = 12.1, Date = "2026-01-01 12:00" };
+            var roverProfileJson = MiniJson.DeserializeObject(MiniJson.Serialize(roverProfile.ToDict())) as Dictionary<string, object>;
+            var loadedRoverProfile = RoverProfile.FromDict(roverProfileJson);
+            Check(loadedRoverProfile != null && loadedRoverProfile.TopSpeed == 12.1 && double.IsNaN(loadedRoverProfile.BrakingDistance)
+                && loadedRoverProfile.Date == roverProfile.Date, "rover profile round trip retains top speed");
             Check(KscRoverPolicy.Match("the VAB") == "VehicleAssemblyBuilding" && KscRoverPolicy.Match("r&d") == "ResearchAndDevelopment" && KscRoverPolicy.Match("tracking station") == "TrackingStation", "player words -> facility");
             Check(KscRoverPolicy.Match("mission control") == "MissionControl" && KscRoverPolicy.Match("pizza") == null && KscRoverPolicy.Display("SpaceplaneHangar") == "SPH", "more names; unknown -> null");
             double R = 600000, m = Math.PI / 180 * R;
@@ -1316,7 +1332,7 @@ class Program
             Check(string.Join(",", order.ConvertAll(i => i.ToString()).ToArray()) == "1,2,0", "tour order nearest-first");
             Check(NativeCommands.IsPorted("drive_to_building") && ToolRouter.Fits("drive_to_building", "rover") && !ToolRouter.Fits("drive_to_building", "plane"), "drive_to_building registered, rover-only");
         }
-        Console.WriteLine("Rover drive-to-building: 7 behavior checks passed.");
+        Console.WriteLine("Rover drive-to-building and LEARN: 14 behavior checks passed.");
         // ---- Live test round 2: multi-turn replay (tool calls stop firing after the first) ----
         {
             var logDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics-chatlog-" + Guid.NewGuid().ToString("N"));
@@ -1515,6 +1531,10 @@ class Program
                 Check(roverTo != null && roverTo.Value.Key == "drive_to" && roverTo.Value.Value == "{\"name\":\"12.5,-45\"}"
                     && ToolRouter.Direct("drive to 12.5,-45", "plane") == null && NativeCommands.IsPorted("drive_to")
                     && ToolRouter.Schemas.ContainsKey("drive_to"), "rover drive-to direct command and schema");
+                var roverLearn = ToolRouter.Direct("learn rover", "rover");
+                Check(roverLearn != null && roverLearn.Value.Key == "learn_rover" && roverLearn.Value.Value == "{}"
+                    && ToolRouter.Direct("learn rover", "plane") == null && NativeCommands.IsPorted("learn_rover")
+                    && ToolRouter.Fits("learn_rover", "rover") && ToolRouter.Schemas.ContainsKey("learn_rover"), "rover LEARN direct command and schema");
                 Check(ToolRouter.Direct("turn around", "plane").Value.Key == "set_heading" && ToolRouter.Direct("turn around", "plane").Value.Value.Contains("180"), "turn around -> turn 180");
                 Check(FlightResidualPolicy.PreferBuiltIn("KSC 27 short final", new[] { "Island 27" }) && !FlightResidualPolicy.PreferBuiltIn("Island 27", new[] { "Island 27" }) && FlightResidualPolicy.PreferBuiltIn("27", new[] { "Island 27" }), "explicit KSC/built-in beats saved 'Island 27' spot");
                 Check(FlightResidualPolicy.DuplicatesBuiltIn(-1.5161, -71.8567) && !FlightResidualPolicy.DuplicatesBuiltIn(-1.0, -70), "duplicate Island spot hidden");

@@ -24,6 +24,11 @@ namespace KSPChatBridge
             return distance < 100 ? Math.Min(target, Math.Max(1, Math.Min(4, distance / 25))) : target;
         }
         internal static bool ReachedDestination(double distance) { return distance <= 10; }
+        internal static bool FlatSurface(double pitch, double roll, double maxAngle)
+        {
+            return !double.IsNaN(pitch) && !double.IsInfinity(pitch) && !double.IsNaN(roll) && !double.IsInfinity(roll)
+                && Math.Abs(pitch) <= maxAngle && Math.Abs(roll) <= maxAngle;
+        }
 
         static readonly string[][] Names =
         {

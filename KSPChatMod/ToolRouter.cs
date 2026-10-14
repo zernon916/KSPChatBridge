@@ -21,7 +21,7 @@ namespace KSPChatBridge
         static readonly HashSet<string> HeliOnly = new HashSet<string> { "heli_control", "prop_control" };
         static readonly HashSet<string> SpaceOnly = new HashSet<string> { "sync_orbit_altitude", "time_to_target", "warp_to_apoapsis", "warp_to_soi_change", "circularize", "change_apoapsis", "change_periapsis",
           "deorbit_burn", "change_inclination", "sun_lock", "antenna_lock", "mechjeb_ascent", "dock_with", "transfer_to", "match_target_plane", "launch_to_target_plane", "course_correction", "station_keep", "apsis_longitude", "land_at" };
-        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_heading", "drive_to", "drive_to_building" };
+        static readonly HashSet<string> RoverOnly = new HashSet<string> { "drive_speed", "drive_heading", "drive_to", "drive_to_building", "learn_rover" };
 
         /// <summary>Is this tool sensible for the craft kind ("plane" | "heli" | "rocket" | "rover" | "" = unknown)?</summary>
         internal static bool Fits(string tool, string craft)
@@ -105,6 +105,7 @@ namespace KSPChatBridge
             if (dh.Success) return R("drive_heading", "{\"heading\":" + dh.Groups[1].Value + "}");
             var dr = Regex.Match(m, @"^drive to (.{1,50})$");
             if (dr.Success) return R("drive_to", "{\"name\":" + MiniJson.Serialize(dr.Groups[1].Value.Trim()) + "}");
+            if (Regex.IsMatch(m, @"^(learn rover|rover learn)$")) return R("learn_rover", "{}");
             if (Regex.IsMatch(m, @"^(gear|wheels) (down|out)$|^(lower|drop) (the )?gear$")) return R("set_gear", "{\"down\":true}");
             if (Regex.IsMatch(m, @"^(gear|wheels) up$|^(raise|retract) (the )?gear$")) return R("set_gear", "{\"down\":false}");
             if (Regex.IsMatch(m, @"^(brakes?|parking brake) on$|^(set|apply) (the )?brakes?$")) return R("set_brakes", "{\"on\":true}");
@@ -158,6 +159,7 @@ namespace KSPChatBridge
         const string RoverSpeedSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_speed\",\"description\":\"Hold a landed rover at a target ground speed in meters per second; applies brakes above the target plus 2 m/s.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"speed\":{\"type\":\"number\",\"minimum\":0,\"maximum\":25}},\"required\":[\"speed\"]}}}";
         const string RoverHeadingSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_heading\",\"description\":\"Hold a landed rover on a target compass heading in degrees; use drive_speed to control its speed.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"heading\":{\"type\":\"number\",\"minimum\":0,\"maximum\":359.9}},\"required\":[\"heading\"]}}}";
         const string RoverDriveToSchema = "{\"type\":\"function\",\"function\":{\"name\":\"drive_to\",\"description\":\"Drive a landed rover to one named saved waypoint or a latitude,longitude coordinate; slow within 100 m and stop within 10 m.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}}}";
+        const string RoverLearnSchema = "{\"type\":\"function\",\"function\":{\"name\":\"learn_rover\",\"description\":\"Measure and save a landed rover's top speed on a level surface; drives straight under wheel control, stops on speed plateau and is capped at 25 m/s.\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}}";
         /// <summary>name -> schema object, parsed once from NativeToolSchemas.Json plus local additions.</summary>
         internal static Dictionary<string, object> Schemas
         {
@@ -179,6 +181,9 @@ namespace KSPChatBridge
                 var roverDriveTo = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverDriveToSchema);
                 var driveToFunction = (Dictionary<string, object>)roverDriveTo["function"];
                 s["drive_to"] = roverDriveTo; d["drive_to"] = driveToFunction["description"].ToString();
+                var roverLearn = (Dictionary<string, object>)MiniJson.DeserializeObject(RoverLearnSchema);
+                var roverLearnFunction = (Dictionary<string, object>)roverLearn["function"];
+                s["learn_rover"] = roverLearn; d["learn_rover"] = roverLearnFunction["description"].ToString();
                 descriptions = d; return schemas = s;
             }
         }

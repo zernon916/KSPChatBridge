@@ -537,6 +537,7 @@ namespace KSPChatBridge
                         roverHeadingEnabled = true;
                     }
                     double roverPitch = Pitch(), roverRoll = Roll(), sideSpeed = Vector3d.Dot(vessel.srf_velocity, vessel.ReferenceTransform.right);
+                    if (RoverTopSpeedTick(vessel.srfSpeed, roverPitch, roverRoll)) return;
                     bool slowForSafety = KscRoverPolicy.ReduceSpeed(roverPitch, roverRoll, sideSpeed, vessel.srfSpeed);
                     bool brakeForRollover = KscRoverPolicy.BrakeForRollover(roverRoll);
                     if (slowForSafety != roverSafetySlow || brakeForRollover != roverSafetyBrake)
@@ -938,6 +939,7 @@ namespace KSPChatBridge
         }
         void Stop(bool interruptPlan = true)
         {
+            CancelRoverLearn();
             pendingLand = null; goAroundFlaps = false; try { RestoreFlaps(); } catch (Exception) { }
             bankOverride = false; pendingCircle = null;
             if ((mode == "taxi" || mode == "rover") && vessel != null)

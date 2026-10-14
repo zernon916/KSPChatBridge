@@ -34,6 +34,7 @@ namespace KSPChatBridge
                 case "taxi_route": return TaxiRouteCmd(a);
                 case "craft_class": return CraftClassCmd(Str(a, "mode", "auto"));
                 case "learn_plane": return LearnPlaneCmd(a);
+                case "learn_rover": return LearnRoverCmd();
                 case "learn_skip": return LearnSkip();
                 case "carry_plane_profile": return CarryPlaneProfileCmd(a);
             }
