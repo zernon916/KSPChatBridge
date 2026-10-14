@@ -10,6 +10,9 @@ namespace KSPChatBridge
         double rocketEmptyT = -1;
         bool rocketFairingsDone;
         Vessel rocketFairingsVessel;
+        Vessel rocketAbortVessel;
+        int rocketAbortStage = int.MinValue;
+        double rocketPreviousThrust;
 
         void RocketSteer(FlightCtrlState c, Vector3d dir)
         {
@@ -78,8 +81,57 @@ namespace KSPChatBridge
                 RocketFairings(LiveRocket.Read(vessel));
             const string prefix = "point:";
             if (rocketMode == null || !rocketMode.StartsWith(prefix, StringComparison.Ordinal)) return false;
-            RocketSteer(c, KSPChatBridge.PointAt.Dir(vessel, rocketMode.Substring(prefix.Length)));
+            LiveRocket s = LiveRocket.Read(vessel);
+            Vector3d direction = KSPChatBridge.PointAt.Dir(vessel, rocketMode.Substring(prefix.Length));
+            double attErrDeg = RocketAttitudeError(direction);
+            double thrustDrop = RocketThrustDrop(s);
+            RocketAbortCheck(c, s, attErrDeg, thrustDrop);
+            if (rocketMode == "off") return true;
+            RocketSteer(c, direction);
             return true;
+        }
+
+        void RocketAbortCheck(FlightCtrlState c, LiveRocket s, double attErrDeg, double thrustDrop)
+        {
+            if (c == null || s == null || vessel == null || vessel.ActionGroups == null) return;
+            string reason = AbortPolicy.Check(s.AngRate, attErrDeg, thrustDrop);
+            if (reason == null) return;
+
+            c.mainThrottle = 0;
+            SetGroup(vessel, KSPActionGroup.Abort, true);
+            ChatWindow.Notice(IntercomTalk.Fmt("Jebediah", "Pilot", "Abort! " + reason));
+            ChatLog.Write("rocket", "abort: " + reason);
+            rocketMode = "off";
+        }
+
+        double RocketAttitudeError(Vector3d direction)
+        {
+            if (vessel == null || vessel.transform == null) return 0;
+            double directionMagnitude = direction.magnitude;
+            if (directionMagnitude <= 0 || double.IsNaN(directionMagnitude) || double.IsInfinity(directionMagnitude)) return 0;
+            Vector3d forward = vessel.transform.up;
+            double forwardMagnitude = forward.magnitude;
+            if (forwardMagnitude <= 0 || double.IsNaN(forwardMagnitude) || double.IsInfinity(forwardMagnitude)) return 0;
+            double dot = Vector3d.Dot(forward / forwardMagnitude, direction / directionMagnitude);
+            return Math.Acos(Math.Max(-1, Math.Min(1, dot))) * (180 / Math.PI);
+        }
+
+        double RocketThrustDrop(LiveRocket s)
+        {
+            if (s == null) return 0;
+            if (rocketAbortVessel != vessel || rocketAbortStage != s.Stage)
+            {
+                rocketAbortVessel = vessel;
+                rocketAbortStage = s.Stage;
+                rocketPreviousThrust = s.Thrust;
+                return 0;
+            }
+
+            double drop = rocketPreviousThrust > 0 && s.Thrust < rocketPreviousThrust
+                ? (rocketPreviousThrust - s.Thrust) / rocketPreviousThrust
+                : 0;
+            rocketPreviousThrust = s.Thrust;
+            return drop;
         }
 
         void RocketFairings(LiveRocket s)
