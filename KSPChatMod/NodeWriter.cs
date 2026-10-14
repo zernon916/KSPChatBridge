@@ -92,6 +92,31 @@ namespace KSPChatBridge
             return "Circularization node added at apoapsis.";
         }
 
+        internal static string DeorbitBelow(Vessel v)
+        {
+            if (v == null || v.orbit == null || v.orbit.referenceBody == null)
+                return "Cannot create deorbit node: orbit unavailable.";
+
+            Orbit orbit = v.orbit;
+            double now = Planetarium.GetUniversalTime();
+            double ut = now + 60.0;
+            double mu = orbit.referenceBody.gravParameter;
+            double radius = orbit.referenceBody.Radius;
+            double r = orbit.getRelativePositionAtUT(ut).magnitude;
+            double a = orbit.semiMajorAxis;
+            if (mu <= 0 || radius <= 0 || r <= 0 || a <= 0)
+                return "Cannot create deorbit node: orbit values are invalid.";
+
+            double dv = OrbitMath.ApsisChangeDv(mu, r, a, radius * 0.98);
+            if (double.IsNaN(dv) || double.IsInfinity(dv))
+                return "Cannot create deorbit node: orbit values are invalid.";
+
+            if (Add(v, ut, 0, 0, -Math.Abs(dv)) == null)
+                return "Cannot create deorbit node.";
+            ChatLog.Write("rocket", "deorbit node targets periapsis below surface");
+            return "Deorbit node added.";
+        }
+
         internal static ManeuverNode Add(Vessel v, double ut, double radial, double normal, double prograde)
         {
             if (v == null || v.patchedConicSolver == null) return null;
