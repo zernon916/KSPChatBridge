@@ -1042,6 +1042,11 @@ namespace KSPChatBridge
         }
         string Command(string name, Dictionary<string, object> a)
         {
+            if (name != null && name.StartsWith("rocket_", StringComparison.Ordinal))
+            {
+                string rocketResult = RocketCommand(name, a);
+                if (rocketResult != null) return rocketResult;
+            }
             if (!NativeCommands.IsPorted(name)) return "Local command not yet ported: " + name;
             string extra = ExtrasCommand(name, a); if (extra != null) return extra;
             switch (name)

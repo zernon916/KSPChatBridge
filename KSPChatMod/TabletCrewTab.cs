@@ -16,6 +16,7 @@ namespace KSPChatBridge
             switch (tabletCrewPage)
             {
                 case 0: TabletCrew(body); break;
+                case 1: TabletPower(body); break;
             }
         }
     }
