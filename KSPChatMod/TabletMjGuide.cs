@@ -16,6 +16,8 @@ namespace KSPChatBridge
             float yb = c.yMax + 8;
             if (!TabletLink) { TabletUi.Label(new Rect(c.x + 6, yb, c.width - 12, row), "INFO ONLY - enable LIVE LINK", true); yb += row + 8; }
             foreach (string key in MfdNav.Right("mjguide")) { if (string.IsNullOrEmpty(key) || key == "BACK") continue; if (TabletUi.Button(new Rect(c.x + 6, yb, c.width - 12, row), key, false, TabletLink) && TabletLink) { ChatLog.Write("g", "tablet mjguide: " + key); OnKey("mjguide", key); } yb += row + 8; }
+            foreach (string key in MfdNav.Bottom(false, "mjguide", 0, 1)) { if (string.IsNullOrEmpty(key) || key == "BACK") continue; if (TabletUi.Button(new Rect(c.x + 6, yb, c.width - 12, row), key, false, TabletLink) && TabletLink) { ChatLog.Write("g", "tablet mjguide: " + key); OnKey("mjguide", key); } yb += row + 8; }
+            GUILayout.Space(yb + 8);
         }
     }
 }
