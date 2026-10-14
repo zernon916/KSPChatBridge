@@ -110,6 +110,7 @@ namespace KSPChatBridge
                     case 15: TabletCampaign(area); break;
                     case 16: TabletCrewTab(area); break;
                     case 17: TabletSystemsTab(area); break;
+                    case 18: TabletSettingsTab(area); break;
                     default:
                         GUI.Label(new Rect(area.x, area.y + area.height * .4f, area.width, tabletFont * 4), TabletTabs[tabletTab].ToUpperInvariant() + "\n\ncoming soon", new GUIStyle(tabletHead) { alignment = TextAnchor.MiddleCenter, wordWrap = true });
                         break;
