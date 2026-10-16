@@ -1152,6 +1152,7 @@ namespace KSPChatBridge
                 if (rocketResult != null) return rocketResult;
             }
             if (!NativeCommands.IsPorted(name)) return "Local command not yet ported: " + name;
+            if (name == "get_gps" && vessel == null) return "No active vessel.";
             string extra = ExtrasCommand(name, a); if (extra != null) return extra;
             switch (name)
             {
@@ -1290,6 +1291,11 @@ namespace KSPChatBridge
                     if (plan == null || plan.Text.Trim() != text.Trim()) { plan = ParsePlan(text); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }   // same text = resume from the current step
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan " + plan.Status;
                 case "get_status": case "autopilot_status": return PilotPolicy.StatusLine(mode, vessel.vesselName, mode == "landing" && runway != null ? runway.Phase : null, mode == "landing" && runway != null ? runway.Distance : double.NaN, vessel.altitude, vessel.srfSpeed, FlightGlobals.ship_heading, plan != null && plan.Running ? plan.Index + 1 : 0);
+                case "get_gps":
+                    if (vessel == null) return "No active vessel.";
+                    Vector3d v = vessel.srf_velocity;
+                    double track = FlightPolicy.GroundTrack(Vector3d.Dot(v, vessel.north), Vector3d.Dot(v, vessel.east));
+                    return GpsInfo.Format(vessel.vesselName, vessel.mainBody.bodyName, vessel.mainBody.Radius, vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, FlightGlobals.ship_heading, track, vessel.horizontalSrfSpeed, vessel.Landed || vessel.Splashed, vessel.situation.ToString(), Planetarium.GetUniversalTime());
                 case "set_gear": gearSaid = Bool(a, "down", true); SetGroup(vessel, KSPActionGroup.Gear, gearSaid.Value); return "Gear " + (gearSaid.Value ? "down." : "up.");
                 case "set_brakes": parkingReleased = !Bool(a, "on", true); SetGroup(vessel, KSPActionGroup.Brakes, !parkingReleased); return "Brakes set.";
                 case "set_lights": SetGroup(vessel, KSPActionGroup.Light, Bool(a, "on", true)); return "Lights set.";

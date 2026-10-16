@@ -12,7 +12,7 @@ namespace KSPChatBridge
         {
             "abort", "stop_current", "plane_hold", "takeoff", "land_here", "land_plane", "land_at_spot",
             "heli_control", "taxi_to", "drive_speed", "drive_heading", "drive_to", "learn_rover", "taxi/list", "get_trim_state", "set_trim", "save_craft_notes",
-            "save_landing_spot", "get_status", "autopilot_status", "set_gear", "set_brakes", "set_lights",
+            "save_landing_spot", "get_status", "get_gps", "autopilot_status", "set_gear", "set_brakes", "set_lights",
             "set_rcs", "set_sas", "auto_trim_now", "trim", "set_heading", "set_speed",
             "flightplan/check", "flightplan/fly", "flightplan/stop", "flightplan/resume", "flightplan/status", "flightplan/follow",
             "list_landing_spots", "list_taxi_points", "set_ai_name", "remember_preference",

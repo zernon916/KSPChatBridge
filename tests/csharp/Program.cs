@@ -19,6 +19,7 @@ class Program
         else
         {
             T("LandingRepairTests", LandingRepairTests.Run);
+            T("GpsInfoTests", GpsInfoTests.Run);
             T("Program inline checks", Inline);
             T("ProfileJsonParsingTests", ProfileJsonParsingTests.Run);
             T("LearnAbortStallTests", LearnAbortStallTests.Run);

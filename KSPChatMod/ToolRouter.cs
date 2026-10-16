@@ -43,7 +43,7 @@ namespace KSPChatBridge
             { "set_rcs", "rcs thrusters" }, { "plane_hold", "hold altitude heading speed cruise autopilot climb descend" }, { "set_heading", "heading turn to course bearing" },
             { "set_speed", "speed knots fast slow" }, { "set_altitude", "altitude climb descend feet meters height" }, { "set_throttle", "throttle power full max idle percent" },
             { "heli_control", "hover helicopter heli rotor" }, { "taxi_to", "taxi drive runway hangar" }, { "fuel_check", "fuel tank remaining" },
-            { "get_status", "status how are we doing report situation" }, { "circularize", "circularize circular orbit" }, { "sun_lock", "sun point solar" },
+            { "get_status", "status how are we doing report situation" }, { "get_gps", "gps coordinates position location where am i latitude longitude" }, { "circularize", "circularize circular orbit" }, { "sun_lock", "sun point solar" },
             { "run_science", "science experiment experiments" }, { "rover_science_tour", "rover science tour KSC biomes collect experiments" }, { "deploy_parachutes", "chute chutes parachute parachutes" }, { "go_around", "go around abort landing missed approach" },
             { "fly_to", "fly to go to head to navigate" }, { "how_far", "how far distance" }, { "get_landing_eta", "eta how long arrive arrival" },
             { "transfer_to", "transfer mun minmus duna go to moon" }, { "warp_to_apoapsis", "warp apoapsis ap" }, { "change_apoapsis", "apoapsis raise ap" },
@@ -96,6 +96,7 @@ namespace KSPChatBridge
             if (Regex.IsMatch(m, @"^(land and circle|circle and land|circle (the )?runway (and|then) land)") && m.Length <= 80)   // circle first, then land
                 return R("make_flight_plan", "{\"request\":" + MiniJson.Serialize("circle 1 lap, land at KSC") + "}");
             if (Regex.IsMatch(m, @"^(current job|what('?s| is) (the |our )?(current )?(job|status|plan)|status( report)?|sitrep)\??$")) return R("get_status", "{}");
+            if (Regex.IsMatch(m, @"^(what are my coordinates|where am i|gps|my position|what('?s| is) my lat(?:itude)?(?:\s*/\s*| and )?lon(?:gitude)?)\??$")) return R("get_gps", "{}");
             var bl = Regex.Match(m, @"^bank (\d{1,2})(?: deg\w*)?,? (?:and |then )?land(?: at)? (?:the )?(.+)$");
             if (bl.Success) return R("land_plane", "{\"name\":" + MiniJson.Serialize(bl.Groups[2].Value.Trim()) + ",\"bank\":" + bl.Groups[1].Value + "}");
             if (m.Length == 0 || m.Length > 60 || m.StartsWith("/") || m.Contains("?") || m.Contains(" and ") || m.Contains(" then ")) return null;
