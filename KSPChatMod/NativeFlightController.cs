@@ -751,6 +751,8 @@ namespace KSPChatBridge
                             derot.Step(pitch, dt, NoseGearDown(), vessel.srfSpeed); c.pitch = (float)derot.Elevator(pitch, q);   // speed-based derotation, limited to 2.5 deg/s
                             c.roll = (float)FlightPolicy.Clamp(-.02 * roll - .006 * p, -1, 1);
                             c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
+                            lateralBankAsk = 0;
+                            LogLandingLateral(c);
                             SetGroup(vessel, KSPActionGroup.Brakes, derot.BrakesAllowed && (vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0)));   // wheel brakes only once the nose wheel is down
                             return;
                         }
@@ -917,6 +919,7 @@ namespace KSPChatBridge
                 bool pitchOwned = PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls)); if (pitchOwned) c.pitch = elevator;   // T5: the owned flags mark the axes the hold drives this tick - only those get the takeover blend
                 if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
+                lateralBankAsk = bank;
                 bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(AuthorityScale(false) * (.014 * rollGain * (bank - roll) - .01 * p), -1, 1);
                 if (rudderOn) c.yaw = (float)PilotPolicy.RudderYaw(hdgErr, hdgRate);   // T6: the rudder flies the last few degrees of heading error; above them c.yaw stays the pilot's live input
                 if (takeoverT < PilotPolicy.TakeoverSeconds)
@@ -956,6 +959,7 @@ namespace KSPChatBridge
                 { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
             FerryTick(); FlapsTick();
             LearnApply(c);
+            LogLandingLateral(c);
             if (mode == "takeoff" && vessel.LandedOrSplashed && throttleKind == "pi") { throttleKind = "test"; throttleWhy = "takeoff roll power ramp"; }
             gate.K = shold.K; c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, throttleKind, throttleWhy); if (holdSpeed || learn != null || throttleKind == "emergency") FlightInputHandler.state.mainThrottle = c.mainThrottle; throttleKind = "pi"; throttleWhy = "";   // ONE smooth output path; the pilot's throttle mirrors it
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
