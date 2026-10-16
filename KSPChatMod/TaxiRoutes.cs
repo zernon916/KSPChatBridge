@@ -92,18 +92,18 @@ namespace KSPChatBridge
         internal static double ExitLon = -74.6073;   // runway middle: the taxiway into the KSC
         internal static List<TaxiRoute> KscDefaults(double sphLat, double sphLon, double hubLat, double hubLon)
         {
-            double lat = KscRunway.Lat;
             Func<string, double, double, Wp> W = (n, a, o) => new Wp { Name = n, Lat = a, Lon = o };
             // apron point in front of the SPH (hub side) and a taxiway point between the runway exit and the hub
             double t = .5, frontLat = sphLat + (hubLat - sphLat) * .25, frontLon = sphLon + (hubLon - sphLon) * .25;
+            double lat = KscRunway.LatAt(ExitLon);
             Wp exit = W("RWY EXIT", lat, ExitLon), twy = W("TWY", lat + (hubLat - lat) * t, ExitLon + (hubLon - ExitLon) * t), hub = W("HUB", hubLat, hubLon), apron = W("SPH APRON", frontLat, frontLon);
             var res = new List<TaxiRoute>();
             Func<string, string, string, Wp[], TaxiRoute> R = (n, f, to, ps) => { var r = new TaxiRoute { Name = n, From = f, To = to }; r.Points.AddRange(ps); return r; };
             // from either runway end: roll along the centerline to the exit, then in
-            res.Add(R("RWY27_TO_SPH", "runway 27", "SPH", new[] { W("RWY 27 THR", lat, KscRunway.Lon27), exit, twy, hub, apron }));
-            res.Add(R("RWY09_TO_SPH", "runway 09", "SPH", new[] { W("RWY 09 THR", lat, KscRunway.Lon09), exit, twy, hub, apron }));
-            res.Add(R("SPH_TO_RWY09", "SPH", "runway 09", new[] { apron, hub, twy, exit, W("RWY 09 THR", lat, KscRunway.Lon09 + .002) }));
-            res.Add(R("SPH_TO_RWY27", "SPH", "runway 27", new[] { apron, hub, twy, exit, W("RWY 27 THR", lat, KscRunway.Lon27 - .002) }));
+            res.Add(R("RWY27_TO_SPH", "runway 27", "SPH", new[] { W("RWY 27 THR", KscRunway.Lat27, KscRunway.Lon27), exit, twy, hub, apron }));
+            res.Add(R("RWY09_TO_SPH", "runway 09", "SPH", new[] { W("RWY 09 THR", KscRunway.Lat09, KscRunway.Lon09), exit, twy, hub, apron }));
+            res.Add(R("SPH_TO_RWY09", "SPH", "runway 09", new[] { apron, hub, twy, exit, W("RWY 09 THR", KscRunway.LatAt(KscRunway.Lon09 + .002), KscRunway.Lon09 + .002) }));
+            res.Add(R("SPH_TO_RWY27", "SPH", "runway 27", new[] { apron, hub, twy, exit, W("RWY 27 THR", KscRunway.LatAt(KscRunway.Lon27 - .002), KscRunway.Lon27 - .002) }));
             return res;
         }
 
@@ -113,7 +113,7 @@ namespace KSPChatBridge
             string d = (dest ?? "").ToLowerInvariant();
             if (d.Contains("09")) return "SPH_TO_RWY09";
             if (d.Contains("27")) return "SPH_TO_RWY27";
-            bool onRunway = Math.Abs(lat - KscRunway.Lat) < .003 && lon > KscRunway.Lon09 - .003 && lon < KscRunway.Lon27 + .003;
+            bool onRunway = Math.Abs(lat - KscRunway.LatAt(lon)) < .003 && lon > KscRunway.Lon09 - .003 && lon < KscRunway.Lon27 + .003;
             return onRunway && lon < ExitLon ? "RWY09_TO_SPH" : "RWY27_TO_SPH";   // west of the exit: the 09 leg (eastbound); else the 27 leg
         }
 

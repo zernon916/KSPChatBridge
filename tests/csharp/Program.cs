@@ -10,7 +10,13 @@ class Program
     class Rotor : Servo { public float currentRPM = 0; }
     internal static string DirectOrNull(string m) { var d = ToolRouter.Direct(m, "plane"); return d == null ? "null" : d.Value.Key; }
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
-    static void Main(string[] testOptions)
+    static int Main(string[] testOptions)
+    {
+        // A failed Check throws; report it and exit non-zero instead of crashing (avoids WER 0xe0434352 dialogs).
+        try { RunAll(testOptions); return 0; }
+        catch (Exception ex) { Console.Error.WriteLine("TEST FAILURE: " + ex); return 1; }
+    }
+    static void RunAll(string[] testOptions)
     {
         if (testOptions.Length == 1 && testOptions[0] == "--runway-geometry") { LandingRepairTests.RunwayGeometry(); return; }
         LandingRepairTests.Run();
@@ -2294,12 +2300,12 @@ class Program
             Console.WriteLine("Final speed schedule: 3 behavior checks passed.");
         }
         {   // Luke 3:44 PM: KSC 27 localizer must be the TRUE runway centerline (landed 230 m south)
-            var r27 = Ils.Compute(-.0486, -74.60, 69.1, KscRunway.Lat, KscRunway.Lon27, KscRunway.Lat, KscRunway.Lon09, 69.1, 600000);
+            var r27 = Ils.Compute(KscRunway.LatAt(-74.60), -74.60, 69.1, KscRunway.Lat27, KscRunway.Lon27, KscRunway.Lat09, KscRunway.Lon09, 69.1, 600000);
             Check(Math.Abs(r27.CrossM) < 2 && Math.Abs(r27.LocDeg) < .02, "point on the runway at lat -0.0486: ILS 27 cross-track ~0 (" + r27.CrossM.ToString("0.0") + " m)");
-            var r09 = Ils.Compute(-.0486, -74.75, 400, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, 600000);
-            Check(Math.Abs(r09.CrossM) < 2 && Math.Abs(FlightPolicy.Wrap(r09.Course - 90)) < .1, "ILS 09 course 090, on centerline west of the runway");
-            var south = Ils.Compute(-.0507, -74.48, 120, KscRunway.Lat, KscRunway.Lon27, KscRunway.Lat, KscRunway.Lon09, 69.1, 600000);
-            Check(south.CrossM < -15 && south.CrossM > -30, "the 15:4x landing line (lat -0.0507 = 0.0021 deg = ~22 m) reads south of the 27 course (" + south.CrossM.ToString("0") + " m)");
+            var r09 = Ils.Compute(KscRunway.LatAt(-74.75), -74.75, 400, KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27, 69.1, 600000);
+            Check(Math.Abs(r09.CrossM) < 2 && Math.Abs(FlightPolicy.Wrap(r09.Course - 90.43)) < .05, "ILS 09 course 090.4 (surveyed), on centerline west of the runway");
+            var south = Ils.Compute(-.0507, -74.48, 120, KscRunway.Lat27, KscRunway.Lon27, KscRunway.Lat09, KscRunway.Lon09, 69.1, 600000);
+            Check(south.CrossM < 0 && south.CrossM > -5, "the 15:4x landing line (lat -0.0507) is only ~2 m south of the surveyed (slanted) 27 centerline (" + south.CrossM.ToString("0") + " m)");
             Console.WriteLine("KSC runway centerline: 3 behavior checks passed.");
         }
         {   // Luke 3:45 PM taxi: low throttle, wheel brakes when fast, full stop first
@@ -2318,11 +2324,11 @@ class Program
             Check(defs.Count == 4 && defs.TrueForAll(r => r.Points.Count >= 4), "4 default KSC taxi charts (both runway ends <-> SPH)");
             string why; var back = TaxiRoute.Parse(defs[0].ToJson(), out why);
             Check(back != null && back.Points.Count == defs[0].Points.Count && TaxiRoute.Parse("{oops", out why) == null && TaxiRoute.Parse("{\"points\":[{\"lat\":0,\"lon\":0}]}", out why) == null, "taxi chart JSON round trip; bad file rejected (old route kept)");
-            Check(TaxiRoute.Pick("hangar", KscRunway.Lat, -74.55) == "RWY27_TO_SPH" && TaxiRoute.Pick("hangar", KscRunway.Lat, -74.68) == "RWY09_TO_SPH" && TaxiRoute.Pick("runway 27", sphLat, sphLon) == "SPH_TO_RWY27", "route picked from where the plane stopped (either runway end)");
+            Check(TaxiRoute.Pick("hangar", KscRunway.LatAt(-74.55), -74.55) == "RWY27_TO_SPH" && TaxiRoute.Pick("hangar", KscRunway.LatAt(-74.68), -74.68) == "RWY09_TO_SPH" && TaxiRoute.Pick("runway 27", sphLat, sphLon) == "SPH_TO_RWY27", "route picked from where the plane stopped (either runway end)");
             var r27 = TaxiRoute.Parse(System.Linq.Enumerable.First(defs, d => d.Name == "RWY27_TO_SPH").ToJson(), out why);
-            int leg = r27.Join(KscRunway.Lat + .002, -74.55, R);   // stopped after a 27 landing, ~21 m off the centerline
+            int leg = r27.Join(KscRunway.LatAt(-74.55) + .002, -74.55, R);   // stopped after a 27 landing, ~21 m off the centerline
             Check(leg == 0, "joins the runway leg ahead (not the threshold behind)");
-            var tm = new TaxiMission(r27, leg, 9); double lat = KscRunway.Lat + .002, lon = -74.55, hdg = 270, v = 0, t = 0, maxCrossLate = 0; bool halted = false;
+            var tm = new TaxiMission(r27, leg, 9); double lat = KscRunway.LatAt(-74.55) + .002, lon = -74.55, hdg = 270, v = 0, t = 0, maxCrossLate = 0; bool halted = false;
             for (int i = 0; i < 6000 && !halted; i++)
             {
                 tm.Step(t, lat, lon, hdg, v, R, true, false, 1); t += .1;

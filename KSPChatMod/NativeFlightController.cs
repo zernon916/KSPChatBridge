@@ -1400,7 +1400,7 @@ namespace KSPChatBridge
                         if (vessel.mainBody.bodyName != "Kerbin") return "Built-in runways are on Kerbin.";
                         direction = builtIn.Item2; destination = "";
                         selectedRunway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
-                            : new RunwayMission { Lat = KscRunway.Lat, Lon = KscRunway.Lon09, EndLat = KscRunway.Lat, EndLon = KscRunway.Lon27, Elevation = 69.1 };
+                            : new RunwayMission { Lat = KscRunway.Lat09, Lon = KscRunway.Lon09, EndLat = KscRunway.Lat27, EndLon = KscRunway.Lon27, Elevation = 69.1 };
                     }
                     if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEnd(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading)
                     : !savedRunway && (island ? direction == "09" : direction == "27"))

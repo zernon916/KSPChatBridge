@@ -127,9 +127,11 @@ static class LandingRepairTests
         var atWest = Ils.Compute(a, x, 70, a, x, b, y, 70, radius);
         var atEast = Ils.Compute(b, y, 70, a, x, b, y, 70, radius);
         Check(Math.Abs(atWest.CrossM) < 1e-6 && Math.Abs(atEast.CrossM) < 1e-6, "survey line endpoints have zero cross-track");
-        var codeWest = Ils.Compute(a, x, 70, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, radius);
-        var codeEast = Ils.Compute(b, y, 70, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, radius);
-        // Diagnostic only: a future coordinate repair must not be forced to preserve this discrepancy.
+        var codeWest = Ils.Compute(a, x, 70, KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27, 69.1, radius);
+        var codeEast = Ils.Compute(b, y, 70, KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27, 69.1, radius);
+        Check(Math.Abs(NavigationMath.Bearing(KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27) - 90.4337) < .01, "coded runway bearing matches surveyed eastbound heading");
+        Check(Math.Abs(NavigationMath.Bearing(KscRunway.Lat27, KscRunway.Lon27, KscRunway.Lat09, KscRunway.Lon09) - 270.4337) < .01, "coded runway bearing matches surveyed reciprocal heading");
+        Check(Math.Abs(codeWest.CrossM) < .5 && Math.Abs(codeEast.CrossM) < .5, "survey points lie on coded runway centerline");
         Console.WriteLine("Survey versus current runway: west cross={0:F2} m, east cross={1:F2} m", codeWest.CrossM, codeEast.CrossM);
         Console.WriteLine("Runway geometry: 30 checks passed (analytic offsets, reciprocal signs, units, survey alignment).");
     }

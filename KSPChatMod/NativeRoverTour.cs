@@ -66,8 +66,9 @@ namespace KSPChatBridge
             if (vessel.mainBody == null || vessel.mainBody.bodyName != "Kerbin") return "The KSC rover science tour is only available on Kerbin.";
             if (!HasPoweredWheels()) return "Rover science tours require powered wheels.";
             if (KscRoverMap.Points.Count == 0) return "KSC map data is not available yet; load the rover at the Space Center and try again.";
-            double kscDistance = NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.Lat,
-                (KscRunway.Lon09 + KscRunway.Lon27) * .5, vessel.mainBody.Radius);
+            double midLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5;
+            double kscDistance = NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.LatAt(midLon),
+                midLon, vessel.mainBody.Radius);
             if (kscDistance > 12000) return "Drive the rover within 12 km of KSC before starting the science tour.";
             if (!TourHub(out scienceTourHub)) return "No flat Crawlerway or runway waypoint is available for a safe rover route.";
 

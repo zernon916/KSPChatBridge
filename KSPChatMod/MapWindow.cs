@@ -263,7 +263,7 @@ namespace KSPChatBridge
         {
             if (v == null || !v.LandedOrSplashed || body == null || body.bodyName != "Kerbin" || !NativeFlightController.ActiveRover) return false;
             double midLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5;
-            return NavigationMath.Distance(v.latitude, v.longitude, KscRunway.Lat, midLon, body.Radius) <= 12000;
+            return NavigationMath.Distance(v.latitude, v.longitude, KscRunway.LatAt(midLon), midLon, body.Radius) <= 12000;
         }
 
         void DrawKscRoverMap(IMfdCanvas canvas, Vessel v)

@@ -33,7 +33,7 @@ namespace KSPChatBridge
         static readonly Site[] Facilities =
         {
             new Site("LaunchPad", "Launch Pad", "LaunchPad", -.0972, -74.5577),
-            new Site("Runway", "Runway", "Runway", KscRunway.Lat, (KscRunway.Lon09 + KscRunway.Lon27) * .5),
+            new Site("Runway", "Runway", "Runway", KscRunway.LatAt((KscRunway.Lon09 + KscRunway.Lon27) * .5), (KscRunway.Lon09 + KscRunway.Lon27) * .5),
             new Site("VehicleAssemblyBuilding", "VAB", "VehicleAssemblyBuilding", -.0958, -74.6170),
             new Site("SpaceplaneHangar", "SPH", "SpaceplaneHangar", -.0520, -74.6750),
             new Site("ResearchAndDevelopment", "R&D", "ResearchAndDevelopment", -.0870, -74.6420),
@@ -77,7 +77,7 @@ namespace KSPChatBridge
                     foreach (Building building in list) { hubLat += building.Lat; hubLon += building.Lon; hubCount++; }
                 }
             }
-            if (hubCount == 0) { hubLat = KscRunway.Lat; hubLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5; }
+            if (hubCount == 0) { hubLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5; hubLat = KscRunway.LatAt(hubLon); }
             else { hubLat /= hubCount; hubLon /= hubCount; }
 
             var facilityPoints = new Dictionary<string, KscRoverWaypoint>(StringComparer.OrdinalIgnoreCase);
@@ -120,7 +120,7 @@ namespace KSPChatBridge
             Add("Crawlerway", "Crawlerway", crawlerLat, crawlerLon, between + 90, 20, body.Radius, "derived from facility transforms", obstacles);
 
             double grassLat, grassLon, shoresLat, shoresLon;
-            double kscLat = KscRunway.Lat, kscLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5;
+            double kscLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5, kscLat = KscRunway.LatAt(kscLon);
             NavigationMath.Offset(kscLat, kscLon, 270, 300, body.Radius, out grassLat, out grassLon);
             NavigationMath.Offset(kscLat, kscLon, 180, 1000, body.Radius, out shoresLat, out shoresLon);
             Add("KSC Grass", "KSC", grassLat, grassLon, 0, 40, body.Radius, "fallback offset from KSC center", obstacles);
@@ -168,7 +168,7 @@ namespace KSPChatBridge
         static double ApproachBearing(string name, double lat, double lon, double hubLat, double hubLon)
         {
             if (name == "Runway")
-                return NavigationMath.Bearing(KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27) + 90;
+                return NavigationMath.Bearing(KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27) + 90;
             return NavigationMath.Distance(lat, lon, hubLat, hubLon, 600000) < 1 ? 0 : NavigationMath.Bearing(lat, lon, hubLat, hubLon);
         }
 

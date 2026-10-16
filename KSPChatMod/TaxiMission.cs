@@ -8,8 +8,8 @@ namespace KSPChatBridge
     {
         internal sealed class Point { internal string Name; internal double Lat, Lon; }
         internal static readonly Dictionary<string, Point> Builtin = new Dictionary<string, Point>(StringComparer.OrdinalIgnoreCase) {
-            { "Runway 09 start", new Point { Name="Runway 09 start", Lat=-.0485997, Lon=-74.724375 } },
-            { "Runway 27 start", new Point { Name="Runway 27 start", Lat=-.0485997, Lon=-74.490300 } },
+            { "Runway 09 start", new Point { Name="Runway 09 start", Lat=KscRunway.Lat09, Lon=KscRunway.Lon09 } },
+            { "Runway 27 start", new Point { Name="Runway 27 start", Lat=KscRunway.Lat27, Lon=KscRunway.Lon27 } },
             { "Runway middle", new Point { Name="Runway middle", Lat=-.0494058, Lon=-74.6073375 } },
             { "KSC Pad", new Point { Name="KSC Pad", Lat=-.0972, Lon=-74.5577 } },
             { "Island 27 start", new Point { Name="Island 27 start", Lat=-1.516092, Lon=-71.856744 } },

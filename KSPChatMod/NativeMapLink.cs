@@ -18,8 +18,8 @@ namespace KSPChatBridge
             if (body == null) return outp;
             if (body.bodyName == "Kerbin")
             {
-                outp.Add(new MapRunway { Key = "KSC 09", Lat = -.0485997, Lon = -74.724375, EndLat = -.0485997, EndLon = -74.490300, Elevation = 69.1 });
-                outp.Add(new MapRunway { Key = "KSC 27", Lat = -.0485997, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 69.1 });
+                outp.Add(new MapRunway { Key = "KSC 09", Lat = KscRunway.Lat09, Lon = KscRunway.Lon09, EndLat = KscRunway.Lat27, EndLon = KscRunway.Lon27, Elevation = 69.1 });
+                outp.Add(new MapRunway { Key = "KSC 27", Lat = KscRunway.Lat27, Lon = KscRunway.Lon27, EndLat = KscRunway.Lat09, EndLon = KscRunway.Lon09, Elevation = 69.1 });
                 outp.Add(new MapRunway { Key = "Island 27", Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 });
                 outp.Add(new MapRunway { Key = "Island 09", Lat = -1.514809, Lon = -71.961815, EndLat = -1.516092, EndLon = -71.856744, Elevation = 134.6 });
             }
