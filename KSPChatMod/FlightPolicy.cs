@@ -6,6 +6,12 @@ namespace KSPChatBridge
     {
         internal static double Clamp(double value, double lo, double hi) { return Math.Max(lo, Math.Min(hi, value)); }
         internal static double Wrap(double degrees) { return (degrees % 360 + 540) % 360 - 180; }
+        internal static double GroundTrack(double vNorth, double vEast, double minSpeed = 5)
+        {
+            if (double.IsNaN(vNorth) || double.IsNaN(vEast) || Math.Sqrt(vNorth * vNorth + vEast * vEast) < minSpeed) return double.NaN;
+            double bearing = Math.Atan2(vEast, vNorth) * 180 / Math.PI;
+            return (bearing % 360 + 360) % 360;
+        }
         internal static double BankLimit(double speed) { return speed > 250 ? 10 : 20; }
         internal static double WheelSteering(double headingError, double limit)
         { return Clamp(-.04 * Wrap(headingError), -limit, limit); }

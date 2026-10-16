@@ -6,6 +6,13 @@ static class LandingRepairTests
     static void Check(bool ok, string name) { if (!ok) throw new Exception("LAND: " + name); }
     internal static void Run()
     {
+        Check(Math.Abs(FlightPolicy.GroundTrack(10, 0) - 0) < 1e-9, "ground track north");
+        Check(Math.Abs(FlightPolicy.GroundTrack(0, 10) - 90) < 1e-9, "ground track east");
+        Check(Math.Abs(FlightPolicy.GroundTrack(-10, 0) - 180) < 1e-9, "ground track south");
+        Check(Math.Abs(FlightPolicy.GroundTrack(0, -10) - 270) < 1e-9, "ground track west");
+        Check(Math.Abs(FlightPolicy.GroundTrack(10, 10) - 45) < 1e-9, "ground track northeast");
+        Check(double.IsNaN(FlightPolicy.GroundTrack(3, 3)), "ground track below minimum speed");
+        Check(double.IsNaN(FlightPolicy.GroundTrack(double.NaN, 10)), "ground track rejects NaN");
         RunwayGeometry();
         Check(!PilotPolicy.RudderSteer(1.9, false, 80, true), "localizer bank correction is not suppressed by rudder-only steering");
         var invalid = new LearnFlight();

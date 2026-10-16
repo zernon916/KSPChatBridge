@@ -457,7 +457,7 @@ namespace KSPChatBridge
             try { ScienceTick(); }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] Local science watcher: " + ex.Message); }
         }
-        double Track() { return vessel.srfSpeed < 5 ? double.NaN : FlightGlobals.ship_heading; }   // nose heading ~ track (no wind in KSP)
+        double Track() { Vector3d v = vessel.srf_velocity; return FlightPolicy.GroundTrack(Vector3d.Dot(v, vessel.north), Vector3d.Dot(v, vessel.east)); }   // ground track from surface velocity; NaN below 5 m/s so callers fall back to heading
         double Pitch() { return Math.Asin(FlightPolicy.Clamp(Vector3d.Dot(vessel.ReferenceTransform.up, vessel.upAxis), -1, 1)) * 180 / Math.PI; }
         double Roll() { return -Math.Atan2(Vector3d.Dot(vessel.ReferenceTransform.right, vessel.upAxis), Vector3d.Dot(-vessel.ReferenceTransform.forward, vessel.upAxis)) * 180 / Math.PI; }
         Dictionary<string, object> pendingLand; double ferryLat, ferryLon, ferryHandoff = 145000, ferryTod, ferrySink = 10; bool ferryDescending; float ferryNext, capNext;
