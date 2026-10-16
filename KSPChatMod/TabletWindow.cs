@@ -72,6 +72,7 @@ namespace KSPChatBridge
             tabletRect = GUI.Window(TabletId, tabletRect, DrawTablet, "", GUIStyle.none);
         }
 
+        float tabletErrorNext;
         void DrawTablet(int id)
         {
             float W = tabletRect.width, H = tabletRect.height, b = TabletBezel;
@@ -93,6 +94,8 @@ namespace KSPChatBridge
             var saved = GUI.skin; GUI.skin = mfdSkin;
             try
             {
+                // Mission/Burns can be the first page opened; initialize before any page draws.
+                TabletUi.Ensure(tabletFont);
                 area = TabletHomeStatus(area);
                 if (homeVisible) DrawTabletHome(area);
                 else switch (tabletTab)
@@ -121,7 +124,15 @@ namespace KSPChatBridge
                         break;
                 }
             }
-            catch (Exception ex) { GUI.Label(new Rect(area.x, area.yMax - 30, area.width, 30), "page error: " + ex.Message, tabletText); }
+            catch (Exception ex)
+            {
+                if (Time.realtimeSinceStartup >= tabletErrorNext)
+                {
+                    tabletErrorNext = Time.realtimeSinceStartup + 10;
+                    ChatLog.Write("tablet-error", "page=" + tabletTab + " " + ex);
+                }
+                GUI.Label(new Rect(area.x, area.yMax - 30, area.width, 30), "page error: " + ex.Message, tabletText);
+            }
             finally { GUI.skin = saved; }
             DrawTabletHomeBar(new Rect(b, H - TabletTabH - b + 6, W - 2 * b, TabletTabH - 6));
             // resize corner (bottom-right bezel) + drag by the bezel

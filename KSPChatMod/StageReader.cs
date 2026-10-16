@@ -20,7 +20,7 @@ namespace KSPChatBridge
         internal static List<StageInfo> Read(VesselDeltaV dv)
         {
             var stages = new List<StageInfo>();
-            if (dv == null || !dv.IsReady)
+            if (dv == null || !dv.IsReady || dv.OperatingStageInfo == null)
             {
                 double now = Time.realtimeSinceStartup;
                 if (now - lastNotReady >= 1)
@@ -33,6 +33,7 @@ namespace KSPChatBridge
 
             foreach (DeltaVStageInfo source in dv.OperatingStageInfo)
             {
+                if (source == null) continue;
                 stages.Add(new StageInfo
                 {
                     Stage = source.stage,
