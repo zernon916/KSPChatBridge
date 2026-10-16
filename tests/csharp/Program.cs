@@ -9,17 +9,52 @@ class Program
     class Servo { private float transformRateOfMotion = 380; }
     class Rotor : Servo { public float currentRPM = 0; }
     internal static string DirectOrNull(string m) { var d = ToolRouter.Direct(m, "plane"); return d == null ? "null" : d.Value.Key; }
-    static void Check(bool value, string name) { if (!value) throw new Exception(name); }
+    static int failures;
+    static void Check(bool value, string name) { if (!value) { failures++; Console.Error.WriteLine("FAIL: " + name); } }
     static int Main(string[] testOptions)
     {
-        // A failed Check throws; report it and exit non-zero instead of crashing (avoids WER 0xe0434352 dialogs).
-        try { RunAll(testOptions); return 0; }
-        catch (Exception ex) { Console.Error.WriteLine("TEST FAILURE: " + ex); return 1; }
+        // Never let a test exception escape (unhandled exceptions raise WER 0xe0434352 popups): report FAIL, keep going, exit non-zero.
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => { Console.Error.WriteLine("FAIL (unhandled, background thread): " + e.ExceptionObject); Console.Error.Flush(); Environment.Exit(1); };
+        if (testOptions.Length == 1 && testOptions[0] == "--runway-geometry") T("RunwayGeometry", LandingRepairTests.RunwayGeometry);
+        else
+        {
+            T("LandingRepairTests", LandingRepairTests.Run);
+            T("Program inline checks", Inline);
+            T("ProfileJsonParsingTests", ProfileJsonParsingTests.Run);
+            T("LearnAbortStallTests", LearnAbortStallTests.Run);
+            T("ThrottleLearnTests", ThrottleLearnTests.Run);
+            T("RocketTests", RocketTests.Run);
+            T("DvMapMathTests", DvMapMathTests.Run);
+            T("RendezvousMathTests", RendezvousMathTests.Run);
+            T("DockingMathTests", DockingMathTests.Run);
+            T("PointAtMathTests", PointAtMathTests.Run);
+            T("CampaignLaunchTimingTests", CampaignLaunchTimingTests.Run);
+            T("FlightLogTests", FlightLogTests.Run);
+            T("ShipInfoTests", ShipInfoTests.Run);
+            T("CommsStatusTests", CommsStatusTests.Run);
+            T("ScienceTrackerTests", ScienceTrackerTests.Run);
+            T("EncyclopediaMathTests", EncyclopediaMathTests.Run);
+            T("TransferDiagramMathTests", TransferDiagramMathTests.Run);
+            T("PorkchopColorMapTests", PorkchopColorMapTests.Run);
+            T("CampaignTests", CampaignTests.Run);
+            T("CampaignRunnerTests", CampaignRunnerTests.Run);
+            T("CampaignTrackingTests", CampaignTrackingTests.Run);
+            T("CampaignPhaseChatterTests", CampaignPhaseChatterTests.Run);
+            T("CampaignDvCheckTests", CampaignDvCheckTests.Run);
+            T("LearnTestGraphsTests", LearnTestGraphsTests.Run);
+            T("ContractFormatTests", ContractFormatTests.Run);
+        }
+        if (Environment.ExitCode != 0 && failures == 0) failures++;   // some suites report failure via Environment.ExitCode
+        Console.WriteLine(failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED: " + failures + " failure(s)");
+        return failures == 0 ? 0 : 1;
     }
-    static void RunAll(string[] testOptions)
+    static void T(string name, Action test)
     {
-        if (testOptions.Length == 1 && testOptions[0] == "--runway-geometry") { LandingRepairTests.RunwayGeometry(); return; }
-        LandingRepairTests.Run();
+        try { test(); }
+        catch (Exception ex) { failures++; Console.Error.WriteLine("FAIL [" + name + "]: " + ex); }
+    }
+    static void Inline()
+    {
         Check(RotorMeasurements.Rpm(new Rotor()) == 380, "physics RPM beats stale UI field");
         Check(float.IsNaN(RotorMeasurements.Rpm(new object())), "missing measurement is unknown");
         Console.WriteLine("Rotor measurement: 2 behavior checks passed.");
@@ -2508,29 +2543,6 @@ class Program
                 Console.WriteLine("P5-5 llama smoke: generated " + text.Length + " chars on CPU: " + text.Replace("\n", " ").Substring(0, Math.Min(60, text.Length)));
             }
         }
-        ProfileJsonParsingTests.Run();
-        LearnAbortStallTests.Run();
-        ThrottleLearnTests.Run();
-        RocketTests.Run();
-        DvMapMathTests.Run();
-        RendezvousMathTests.Run();
-        DockingMathTests.Run();
-        PointAtMathTests.Run();
-        CampaignLaunchTimingTests.Run();
-        FlightLogTests.Run();
-        ShipInfoTests.Run();
-        CommsStatusTests.Run();
-        ScienceTrackerTests.Run();
-        EncyclopediaMathTests.Run();
-        TransferDiagramMathTests.Run();
-        PorkchopColorMapTests.Run();
-        CampaignTests.Run();
-        CampaignRunnerTests.Run();
-        CampaignTrackingTests.Run();
-        CampaignPhaseChatterTests.Run();
-        CampaignDvCheckTests.Run();
-        LearnTestGraphsTests.Run();
-        ContractFormatTests.Run();
     }
     static string CreateTempBytes(string dir, string name, int size)
     {
