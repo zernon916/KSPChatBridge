@@ -6,6 +6,7 @@ static class LandingRepairTests
     static void Check(bool ok, string name) { if (!ok) throw new Exception("LAND: " + name); }
     internal static void Run()
     {
+        RunwayGeometry();
         Check(!PilotPolicy.RudderSteer(1.9, false, 80, true), "localizer bank correction is not suppressed by rudder-only steering");
         var invalid = new LearnFlight();
         invalid.Step(new LearnIn { T = 0, Speed = double.NaN, Alt = 5000, FuelFrac = 1 });
@@ -97,5 +98,39 @@ static class LandingRepairTests
             ChartStore.SetActive("KSC 27", "");
             Check(ChartStore.PathFor("KSC 27").EndsWith("KSC_27.json"), "explicit manual default is preserved");
         } finally { ChartStore.Dir = previous; if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+    internal static void RunwayGeometry()
+    {
+        const double radius = 600000, rad = Math.PI / 180;
+        // Independent analytic fixture: equator, eastbound runway, midpoint at lon=0.
+        // Latitude offset in radians * radius gives the known north/south distance.
+        foreach (double north in new[] { -100.0, -30, 0, 30, 100 })
+        {
+            double lat = north / radius / rad;
+            var east = Ils.Compute(lat, 0, 70, 0, -.1, 0, .1, 70, radius);
+            var west = Ils.Compute(lat, 0, 70, 0, .1, 0, -.1, 70, radius);
+            Check(Math.Abs(east.CrossM + north) < .001, "eastbound right is south, metres " + north);
+            Check(Math.Abs(west.CrossM - north) < .001, "westbound right is north, metres " + north);
+            Check(Math.Abs(east.CrossM + west.CrossM) < .001, "reciprocal cross-track reverses sign");
+            Check(north == 0 ? Math.Abs(east.LocDeg) < 1e-9 : Math.Sign(east.LocDeg) == -Math.Sign(north), "localizer sign");
+            double integral = 0, crab = 0;
+            double ask = RunwayMission.CenterlineHeading(east.CrossM, 90, 90, 100, ref integral, 0, 90, ref crab, false, 1500);
+            Check(north == 0 ? Math.Abs(ask - 90) < 1e-9 : Math.Sign(FlightPolicy.Wrap(ask - 90)) == Math.Sign(north), "heading corrects toward centerline");
+        }
+        Check(Math.Abs(NavigationMath.Distance(0, 0, 0, 1, radius) - radius * rad) < 1e-6, "distance uses body radius in metres");
+        // Independent user survey: these are approximate interior points, not thresholds.
+        const double a = -.04882020197652228, x = -74.704418240108154;
+        const double b = -.050267211662821734, y = -74.513222861563392;
+        Check(Math.Abs(NavigationMath.Distance(a, x, b, y, radius) - 2002.25) < .02, "survey separation");
+        Check(Math.Abs(NavigationMath.Bearing(a, x, b, y) - 90.43370) < .00002, "survey eastbound bearing");
+        Check(Math.Abs(NavigationMath.Bearing(b, y, a, x) - 270.4337) < .001, "survey reciprocal bearing");
+        var atWest = Ils.Compute(a, x, 70, a, x, b, y, 70, radius);
+        var atEast = Ils.Compute(b, y, 70, a, x, b, y, 70, radius);
+        Check(Math.Abs(atWest.CrossM) < 1e-6 && Math.Abs(atEast.CrossM) < 1e-6, "survey line endpoints have zero cross-track");
+        var codeWest = Ils.Compute(a, x, 70, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, radius);
+        var codeEast = Ils.Compute(b, y, 70, KscRunway.Lat, KscRunway.Lon09, KscRunway.Lat, KscRunway.Lon27, 69.1, radius);
+        // Diagnostic only: a future coordinate repair must not be forced to preserve this discrepancy.
+        Console.WriteLine("Survey versus current runway: west cross={0:F2} m, east cross={1:F2} m", codeWest.CrossM, codeEast.CrossM);
+        Console.WriteLine("Runway geometry: 30 checks passed (analytic offsets, reciprocal signs, units, survey alignment).");
     }
 }

@@ -10,8 +10,9 @@ class Program
     class Rotor : Servo { public float currentRPM = 0; }
     internal static string DirectOrNull(string m) { var d = ToolRouter.Direct(m, "plane"); return d == null ? "null" : d.Value.Key; }
     static void Check(bool value, string name) { if (!value) throw new Exception(name); }
-    static void Main()
+    static void Main(string[] testOptions)
     {
+        if (testOptions.Length == 1 && testOptions[0] == "--runway-geometry") { LandingRepairTests.RunwayGeometry(); return; }
         LandingRepairTests.Run();
         Check(RotorMeasurements.Rpm(new Rotor()) == 380, "physics RPM beats stale UI field");
         Check(float.IsNaN(RotorMeasurements.Rpm(new object())), "missing measurement is unknown");
