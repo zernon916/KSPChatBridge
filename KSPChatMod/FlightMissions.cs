@@ -578,7 +578,7 @@ namespace KSPChatBridge
         internal static double Norm(double a) { a %= 360; return a < 0 ? a + 360 : a; }   // headings
         static double[] Right(double hdg) { double h = hdg * Math.PI / 180; return new[] { Math.Cos(h), -Math.Sin(h) }; }
         static double Brg(double dx, double dy) { return Norm(Math.Atan2(dx, dy) * 180 / Math.PI); }
-        internal static DubinsPath Plan(double x0, double y0, double h0, double x1, double y1, double h1, double r, string prefer = null, double hysteresis = 0)
+        internal static DubinsPath Plan(double x0, double y0, double h0, double x1, double y1, double h1, double r, string prefer = null, double hysteresis = 0, double dirHysteresis = double.NaN)
         {
             DubinsPath best = null, pref = null, same = null; var r0 = Right(h0); var r1 = Right(h1);   // GROK LAND3: same = same first turn as the committed plan
             foreach (int d1 in new[] { -1, 1 })
@@ -606,7 +606,8 @@ namespace KSPChatBridge
                     if (prefer != null && prefer.Length == 3 && prefer != "LINE" && p.Type[0] == prefer[0] && (same == null || p.Length < same.Length)) same = p;
                 }
             if (pref != null && best != null && pref.Length <= best.Length + hysteresis) return pref;
-            return same != null && best != null && same.Length <= best.Length + hysteresis ? same : best;   // GROK LAND3: keep the turn direction unless clearly worse
+            double dh = double.IsNaN(dirHysteresis) ? hysteresis : dirHysteresis;   // GROK LAND4d: established in the first turn = never reverse it (dirHysteresis +inf)
+            return same != null && best != null && same.Length <= best.Length + dh ? same : best;   // GROK LAND3: keep the turn direction unless clearly worse
         }
         /// <summary>Heading to fly now: keep turning on the first circle (up to 60 deg ahead, the bank saturates at the planned bank),
         /// then the tangent line toward T2, then the final circle onto the required course.</summary>
@@ -619,7 +620,7 @@ namespace KSPChatBridge
         /// <summary>GROK JOIN1 guidance: the Dubins path ends one turn radius BEFORE the fix on its course line (a short straight
         /// to settle the roll-out), then the course line is tracked through the fix (cross-track law, max 30 deg cut). Returns the
         /// heading to fly; plan = the Dubins path (with the course-line stub appended in Points) or null while on the line.</summary>
-        internal static double JoinSteer(double x, double y, double h, double fx, double fy, double crs, double r, string prefer, out DubinsPath plan)
+        internal static double JoinSteer(double x, double y, double h, double fx, double fy, double crs, double r, string prefer, out DubinsPath plan, bool lockDir = false)
         {
             double ux = Math.Sin(crs * Math.PI / 180), uy = Math.Cos(crs * Math.PI / 180), dx = x - fx, dy = y - fy;
             double along = dx * ux + dy * uy, cross = dx * uy - dy * ux, ext = r;
@@ -629,7 +630,7 @@ namespace KSPChatBridge
                 plan = new DubinsPath { Type = "LINE", R = r, X0 = x, Y0 = y, H0 = h, X1 = fx, Y1 = fy, H1 = crs, T1 = new[] { x, y }, T2 = new[] { x, y }, C1 = new[] { x, y }, C2 = new[] { x, y }, Hu = crs, Length = -along };
                 return Norm(crs - FlightPolicy.Clamp(cross / (.35 * r) * 30, -30, 30));
             }
-            plan = Plan(x, y, h, fx - ext * ux, fy - ext * uy, crs, r, prefer, CommitHysteresis(r));
+            plan = Plan(x, y, h, fx - ext * ux, fy - ext * uy, crs, r, prefer, CommitHysteresis(r), lockDir ? double.PositiveInfinity : double.NaN);
             if (plan == null) return h;
             plan.X1 = fx; plan.Y1 = fy; plan.Stub = new[] { fx - ext * ux, fy - ext * uy };
             return plan.Command();
@@ -650,6 +651,17 @@ namespace KSPChatBridge
             return best;
         }
         internal static double CommitHysteresis(double r) { return Math.Max(.5 * r, 1000); }
+        /// <summary>GROK LAND4d (Luke): joins are planned at a MEDIAN bank (55% of the safe bank, 10 deg min) so the controller keeps reserve bank
+        /// (up to the safe max) to pull back onto a committed path instead of replanning. Was the 30 deg cap at the instantaneous speed: r 8.3-10.7 km.</summary>
+        internal const double PlanBankFrac = .55;
+        internal static double MedianBank(double safeMax) { double m = double.IsNaN(safeMax) || safeMax <= 0 ? 25 : safeMax; return Math.Min(m, Math.Max(10, PlanBankFrac * m)); }
+        /// <summary>GROK LAND4d: bank on a committed Dubins circle = the plan bank (feed-forward) plus up to the reserve (safe max - plan) to pull back
+        /// onto the circle: outside it by 10% r = full reserve, inside = less bank (never reversed).</summary>
+        internal static double ArcBank(double dir, double distCenter, double r, double planBank, double maxBank)
+        { double e = FlightPolicy.Clamp((distCenter - r) / Math.Max(100, .1 * r), -1, 1); double b = e >= 0 ? planBank + e * Math.Max(0, maxBank - planBank) : planBank * (1 + e); return Math.Sign(dir) * FlightPolicy.Clamp(b, 0, maxBank); }
+        /// <summary>GROK LAND4d: established in the committed first turn = already turned 10 deg its way since the commit (live 03:46-03:48: LSL/LSR/RSL/LSR/RSL/LSR every 10-30 s).</summary>
+        internal static bool Established(string type, double commitHdg, double trk)
+        { return type != null && type.Length == 3 && type != "LINE" && !double.IsNaN(commitHdg) && !double.IsNaN(trk) && (type[0] == 'R' ? 1 : -1) * FlightPolicy.Wrap(trk - commitHdg) > 10; }
         /// <summary>GROK LAND3: planning state filters - radius only re-sized on a real (12%) speed change; track low-passed (angle-safe).</summary>
         internal static double CommitRadius(double committed, double now) { return double.IsNaN(committed) || Math.Abs(now - committed) > .12 * committed ? now : committed; }
         internal static double FilterTrack(double filt, double track, double k) { if (double.IsNaN(track)) return filt; if (double.IsNaN(filt)) return track; return Norm(filt + FlightPolicy.Wrap(track - filt) * k); }
@@ -1435,7 +1447,7 @@ namespace KSPChatBridge
         internal const int RebuildCooldownSteps = 1000;
         internal static bool RebuildDue(int stepsSinceRebuild) { return stepsSinceRebuild >= RebuildCooldownSteps; }
         int stepsSinceRebuild = RebuildCooldownSteps; bool holdLast; internal int Rebuilds;
-        string dubType, dubFix; double dubR = double.NaN, dubTrk = double.NaN; internal List<double[]> DubinsPts; internal double DubinsR; internal string DubinsLog = "";   // GROK JOIN1
+        string dubType, dubFix; double dubR = double.NaN, dubTrk = double.NaN, dubCommitHdg = double.NaN, dubPlanBank; internal List<double[]> DubinsPts; internal double DubinsR; internal string DubinsLog = "";   // GROK JOIN1
         /// <summary>Distance flown since the fix became current before an 'overflown' skip (frame-rate independent): half the spacing, >= 150 m.</summary>
         internal static double BehindMinMove(double spacing) { return Math.Max(150, double.IsNaN(spacing) ? 300 : .5 * spacing); }
         /// <summary>GROK FIX2 (Oct 19: legs 1-12 of a 593 m-spaced arc consumed in 0.23 s): capture radius max(700, .3 r) but never more
@@ -1534,7 +1546,7 @@ namespace KSPChatBridge
                         if (!userFirst && !double.IsNaN(track))
                         {   // GROK LAND4: the shortest Dubins join onto the extended final (>= FAF) wins unless the chart route is about as short (03:28: 86.8 km vs 20.7 direct)
                             double k0 = Math.PI / 180 * radius, cl0 = Math.Cos(lat * Math.PI / 180), tx = (Lon - lon) * k0 * cl0, ty = (Lat - lat) * k0;
-                            double fjR = PredictedPath.Radius(Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), TurnBank > 0 ? TurnBank : 25), sinkOk = .7 * ApproachProfile.SinkLimit(LearnedSink, 15) / Math.Max(50, speed), fd, ft;
+                            double fjR = PredictedPath.Radius(PlanSpeed > 0 ? PlanSpeed : Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25)), sinkOk = .7 * ApproachProfile.SinkLimit(LearnedSink, 15) / Math.Max(50, speed), fd, ft;
                             var fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, Math.Max(Chart.FafD, FafDistance + 2000), 40000, (fdd, pl) => altitude - Chart.GlideAlt(fdd) <= pl * sinkOk, out fd, out ft);
                             double cur = 0, pla = lat, plo = lon; if (Route != null) foreach (var w in Route) { cur += NavigationMath.Distance(pla, plo, w.Lat, w.Lon, radius); pla = w.Lat; plo = w.Lon; }
                             cur += NavigationMath.Distance(pla, plo, Lat, Lon, radius);
@@ -1545,6 +1557,7 @@ namespace KSPChatBridge
                                 Chart.RouteFixAlt = Chart.LongAlt; finalJoinRoute = true;
                                 JoinLog = "DUBINS FINAL JOIN: " + fj.Type + " onto the final at " + (fd / 1000).ToString("0.0") + " km, total " + (ft / 1000).ToString("0.0") + " km (chart route " + (cur / 1000).ToString("0.0") + " km, r " + Math.Round(fjR) + " m)";
                             }
+                            else JoinLog += fj == null ? " [no feasible Dubins final join]" : " [Dubins final join " + (ft / 1000).ToString("0.0") + " km not 10% shorter than the chart route]";   // GROK LAND4d
                         }
                     }
                     else JoinLog = "short final (head-on)";
@@ -1603,21 +1616,27 @@ namespace KSPChatBridge
                     bool dubLeg = (RouteIndex == 0 || holdLast && last) && !double.IsNaN(track), dubAligned = true;
                     if (dubLeg)
                     {   // GROK JOIN1: fly a Dubins turn-tangent-turn path that ARRIVES at the fix on its required course (the next leg / the final)
-                        dubR = DubinsPath.CommitRadius(dubR, PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25)); dubTrk = DubinsPath.FilterTrack(dubTrk, track, .03);   // GROK LAND3: plan from filtered state
+                        if (wp.Name != dubFix || double.IsNaN(dubR)) { dubPlanBank = DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25); dubR = PredictedPath.Radius(PlanSpeed > 0 ? PlanSpeed : speed, dubPlanBank); }   // GROK LAND4d: radius locked per fix (plan speed, median bank)
+                        dubTrk = DubinsPath.FilterTrack(dubTrk, track, .03);   // GROK LAND3: plan from filtered state
                         double r = dubR, k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180);
                         double x1 = (wp.Lon - lon) * k * cl, y1 = (wp.Lat - lat) * k;
-                        if (wp.Name != dubFix) { dubFix = wp.Name; dubType = null; }   // a new fix = a fresh choice
-                        DubinsPath dp; double cmd = DubinsPath.JoinSteer(0, 0, dubTrk, x1, y1, nextBrg, r, dubType, out dp);
+                        if (wp.Name != dubFix) { dubFix = wp.Name; dubType = null; dubCommitHdg = double.NaN; }   // a new fix = a fresh choice
+                        DubinsPath dp; double cmd = DubinsPath.JoinSteer(0, 0, dubTrk, x1, y1, nextBrg, r, dubType, out dp, DubinsPath.Established(dubType, dubCommitHdg, dubTrk));
                         if (dp != null)
                         {
-                            if (dp.Type != dubType) { dubType = dp.Type; DubinsLog = "join path to " + wp.Name + ": " + dp.Type + " " + Math.Round(dp.A1) + "/" + Math.Round(dp.A2) + " deg, straight " + (dp.S / 1000).ToString("0.0") + " km, r " + Math.Round(r) + " m at bank " + Math.Round(TurnBank) + ", arrives on " + Math.Round((nextBrg + 360) % 360) + " deg"; }
+                            if (dp.Type != dubType) { if (dubType == null || dubType.Length != 3 || dp.Type.Length != 3 || dubType[0] != dp.Type[0]) dubCommitHdg = dubTrk; dubType = dp.Type; DubinsLog = "join path to " + wp.Name + ": " + dp.Type + " " + Math.Round(dp.A1) + "/" + Math.Round(dp.A2) + " deg, straight " + (dp.S / 1000).ToString("0.0") + " km, r " + Math.Round(r) + " m at plan bank " + Math.Round(dubPlanBank) + " (max " + Math.Round(TurnBank) + "), arrives on " + Math.Round((nextBrg + 360) % 360) + " deg"; }
                             DesiredHeading = cmd; ArcBank = 0; leadTurn = false; DubinsR = r;
+                            if (dp.Type != "LINE")
+                            {   // GROK LAND4d: fly the committed circle with plan bank + reserve, not a saturated heading error
+                                bool c1 = dp.A1 > 2, c2 = !c1 && dp.S <= Math.Max(50, .05 * dp.R) && dp.A2 > 2; double[] cc = c1 ? dp.C1 : c2 ? dp.C2 : null;
+                                if (cc != null) LatBank = DubinsPath.ArcBank(c1 ? dp.D1 : dp.D2, Math.Sqrt(cc[0] * cc[0] + cc[1] * cc[1]), r, dubPlanBank, TurnBank > 0 ? TurnBank : 25);
+                            }
                             if (dp.Type == "LINE") { double ux = Math.Sin(nextBrg * Math.PI / 180), uy = Math.Cos(nextBrg * Math.PI / 180), lh; LatBank = LateralCapture.Bank(nextBrg, -x1 * uy + y1 * ux, track, speed, TurnBank > 0 ? TurnBank : 25, out lh); DesiredHeading = lh; }   // GROK LAND3: on the course line into the fix - same capture law (overshot 1 km at 03:09:30)
                             var pts = new List<double[]>(); foreach (var q in dp.Points()) pts.Add(new[] { lat + q[1] / k, lon + q[0] / (k * cl) }); DubinsPts = pts;
                         }
                         dubAligned = Math.Abs(FlightPolicy.Wrap(track - nextBrg)) < 30;   // never "capture" the join while crossing it on the wrong course
                     }
-                    else { DubinsPts = null; dubType = null; dubR = dubTrk = double.NaN; dubFix = null; }
+                    else { DubinsPts = null; dubType = null; dubR = dubTrk = dubCommitHdg = double.NaN; dubFix = null; }
                     bool behindUs = !dubLeg && !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     if (holdLast && last)
                     {   // fly all the way out to the join point

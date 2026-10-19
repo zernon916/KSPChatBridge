@@ -129,6 +129,32 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND4d regression (live 03:46-03:48): join to D9.4KSC flip-flopped LSL/LSR/RSL every 10-30 s with r 8.3-10.7 km; replay with track/speed noise
+            var rnd = new Random(7); int worst = 0; bool arrivedAll = true; double rLock = PredictedPath.Radius(230, DubinsPath.MedianBank(30));
+            foreach (var st4 in new[] { new[] { 20000.0, -18000, 0 }, new[] { 30000.0, 9000, 200 }, new[] { -5000.0, -25000, 90 }, new[] { 15000.0, 12000, 150 } })
+            {
+                double px4 = st4[0], py4 = st4[1], hd4 = st4[2], trkF = hd4, commit = double.NaN; string ty4 = null; int flips = 0; double prevA1 = 0; bool es4 = false, arrived = false;
+                for (int k4 = 0; k4 < 2400 && !arrived; k4++)
+                {   // 1 s steps, speed 200-260 (radius stays locked), +-3 deg track noise (pitch bob)
+                    double sv4 = 230 + 30 * Math.Sin(k4 / 37.0), trk = hd4 + (rnd.NextDouble() - .5) * 6; trkF = DubinsPath.FilterTrack(trkF, trk, .3);
+                    bool lockDir = DubinsPath.Established(ty4, commit, trkF); DubinsPath dp4; double cm4 = DubinsPath.JoinSteer(px4, py4, trkF, 0, 0, 270, rLock, ty4, out dp4, lockDir);
+                    if (dp4 != null && dp4.Type != ty4) { if (ty4 != null && ty4 != "LINE" && dp4.Type != "LINE" && ty4[0] != dp4.Type[0] && es4 && prevA1 > 15) flips++; if (ty4 == null || ty4.Length != 3 || dp4.Type.Length != 3 || ty4[0] != dp4.Type[0]) commit = trkF; ty4 = dp4.Type; }
+                    if (dp4 != null) prevA1 = dp4.Type == "LINE" ? 0 : dp4.A1;
+                    es4 = DubinsPath.Established(ty4, commit, trkF);
+                    double bk4;
+                    if (dp4 != null && dp4.Type != "LINE" && dp4.A1 > 2) bk4 = DubinsPath.ArcBank(dp4.D1, Math.Sqrt((dp4.C1[0] - px4) * (dp4.C1[0] - px4) + (dp4.C1[1] - py4) * (dp4.C1[1] - py4)), rLock, DubinsPath.MedianBank(30), 30);
+                    else bk4 = FlightPolicy.Clamp(FlightPolicy.Wrap(cm4 - hd4) * 1.5, -30, 30);
+                    hd4 = ((hd4 + 9.81 * Math.Tan(bk4 * Math.PI / 180) / sv4 * 180 / Math.PI) % 360 + 360) % 360;
+                    px4 += sv4 * Math.Sin(hd4 * Math.PI / 180); py4 += sv4 * Math.Cos(hd4 * Math.PI / 180);
+                    if (px4 < 0 && Math.Abs(py4) < 300 && Math.Abs(FlightPolicy.Wrap(hd4 - 270)) < 10) arrived = true;
+                }
+                worst = Math.Max(worst, flips); arrivedAll &= arrived;
+            }
+            Check(worst == 0, "LAND4d: no first-turn reversal once established in the committed join turn (track/speed noise)");
+            Check(arrivedAll, "LAND4d: locked median-bk4 joins still arrive on the final course");
+            Check(Math.Abs(DubinsPath.MedianBank(30) - 16.5) < .01 && DubinsPath.MedianBank(12) >= 10 && DubinsPath.MedianBank(8) <= 8, "LAND4d: plan bank = 55% of the safe bank (min 10)");
+            Check(Math.Abs(DubinsPath.ArcBank(1, 5000, 5000, 16, 30) - 16) < .01 && Math.Abs(DubinsPath.ArcBank(-1, 5600, 5000, 16, 30) + 30) < .01 && DubinsPath.ArcBank(1, 4500, 5000, 16, 30) < 16 && DubinsPath.ArcBank(1, 4000, 5000, 16, 30) >= 0, "LAND4d: circle bank = plan bank + reserve to pull back");
+        }
         {   // GROK TO3 regression (live 03:45): above Vr the rotate phase must ask nose-up, keep asking while the nose stays down, and a 190 m/s liftoff (Vr 51) must not poison the stall
             var to3 = new TakeoffMission(0); bool upAll = true; for (double sp = 52; sp <= 190; sp += 2) { double tp = to3.Step(10, sp, 1, true, 41, double.NaN, double.NaN, double.NaN, 46); upAll &= to3.Phase == "rotate" && tp >= 2; }
             Check(upAll && to3.Step(10, 120, 1, true, 41, double.NaN, double.NaN, double.NaN, 46) >= 10, "TO3: rotate phase commands nose-up above Vr (12 deg past 1.3 Vr)");
@@ -484,7 +510,7 @@ class Program
             {
                 if (s == 6000) at120 = rc.Rebuilds;
                 rc.Step(la, lo, al0, al0 - 70, sp, false, Rk, 70, hd); ph = rc.Phase; sawFinal |= ph == "final";
-                double er = FlightPolicy.Wrap(rc.DesiredHeading - hd), rate = 9.81 * Math.Tan(25 * Math.PI / 180) / sp * 180 / Math.PI * dt0; hd = (hd + Math.Max(-rate, Math.Min(rate, er)) + 360) % 360;
+                double er = FlightPolicy.Wrap(rc.DesiredHeading - hd), rate = 9.81 * Math.Tan(25 * Math.PI / 180) / sp * 180 / Math.PI * dt0; hd = (hd + (!double.IsNaN(rc.LatBank) && (ph == "entry" || ph == "intercept") ? 9.81 * Math.Tan(FlightPolicy.Clamp(rc.LatBank, -25, 25) * Math.PI / 180) / sp * 180 / Math.PI * dt0 : Math.Max(-rate, Math.Min(rate, er))) + 360) % 360;   // LAND4d: bank-commanded legs fly the bank, like the controller
                 al0 += Math.Max(-25, Math.Min(12, rc.DesiredVs)) * dt0; double nl, no; NavigationMath.Offset(la, lo, hd, sp * dt0, Rk, out nl, out no); la = nl; lo = no;
             }
             ApproachProfile.JoinG = jg0;
