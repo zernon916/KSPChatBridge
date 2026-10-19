@@ -481,6 +481,31 @@ namespace KSPChatBridge
     }
 
     /// <summary>Per-craft deceleration at idle (and idle + airbrakes) vs speed, learned in flight, persisted (Luke). Pure; tested.</summary>
+    /// <summary>GROK MAP1: the path the plane will actually fly to a fix - a constant-bank turn (radius from the current speed and
+    /// the bank the controller will use) until the fix is ahead, then a straight line. A fix inside the turn circle shows as a full
+    /// circle (the Oct 19 orbit). Points are lat/lon pairs; 5 deg steps, at most 360 deg of turn.</summary>
+    internal static class PredictedPath
+    {
+        internal static double Radius(double speed, double bankDeg) { return speed * speed / (9.81 * Math.Tan(Math.Max(5, Math.Min(60, bankDeg)) * Math.PI / 180)); }
+        internal static List<double[]> Points(double lat, double lon, double track, double speed, double bankDeg, double tLat, double tLon, double radius)
+        {
+            var pts = new List<double[]> { new[] { lat, lon } };
+            if (!double.IsNaN(track) && speed > 1)
+            {
+                double r = Radius(speed, bankDeg), hdg = track, la = lat, lo = lon; const double step = 5;
+                double chord = 2 * r * Math.Sin(step * Math.PI / 360);
+                for (int k = 0; k < 72; k++)
+                {
+                    double err = FlightPolicy.Wrap(NavigationMath.Bearing(la, lo, tLat, tLon) - hdg);
+                    if (Math.Abs(err) <= step || NavigationMath.Distance(la, lo, tLat, tLon, radius) < chord) break;
+                    double turn = Math.Sign(err) * step;
+                    NavigationMath.Offset(la, lo, hdg + turn / 2, chord, radius, out la, out lo); hdg = (hdg + turn + 360) % 360;
+                    pts.Add(new[] { la, lo });
+                }
+            }
+            pts.Add(new[] { tLat, tLon }); return pts;
+        }
+    }
     /// <summary>GROK FIX3 (Oct 19 airbrake chatter on approach): stateful airbrake hysteresis - out above plan + 8 m/s, in below
     /// plan + 2, at least DwellS between changes. Not allowed (ground / below 30 m) retracts at once. A pilot toggle is adopted
     /// as the current state. Step returns true when the airbrakes should change; Why says why (for the [brakes] log).</summary>

@@ -241,7 +241,16 @@ namespace KSPChatBridge
                         if (i > 0) MfdInk.Line(c, Proj(act.Route[i - 1].Lat, act.Route[i - 1].Lon), p, Color.green, 3);
                     }
                 if (act != null) { double dla, dlo, crsD = NavigationMath.Bearing(act.Lat, act.Lon, act.EndLat, act.EndLon); NavigationMath.Offset(act.Lat, act.Lon, crsD + 180, act.DecelStartDist, body.Radius, out dla, out dlo); var dp = Proj(dla, dlo); c.Dot(dp, 9, new Color(1, .55f, 0)); Tag(c, new Rect(dp.x + 6, dp.y - 20, 120, 18), "DECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km"); }
-                if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); c.Dot(jp, 11, Color.magenta); Tag(c, new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
+                if (act != null && v != null && act.Phase == "entry" && act.Route != null && act.RouteIndex >= 0 && act.RouteIndex < act.Route.Count)
+            {   // GROK MAP1: predicted path to the current fix at the bank the controller will fly (amber)
+                double pb = act.TurnBank > 0 ? act.TurnBank : 25; var tw = act.Route[act.RouteIndex]; var amber = new Color(1f, .78f, .15f);
+                Vector3d sv = v.srf_velocity; double trk = sv.magnitude > 5 ? (Math.Atan2(Vector3d.Dot(sv, Vector3d.Cross(v.upAxis, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)), Vector3d.Dot(sv, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)) * 180 / Math.PI + 360) % 360 : FlightGlobals.ship_heading;
+                var pp = PredictedPath.Points(v.latitude, v.longitude, trk, v.srfSpeed, pb, tw.Lat, tw.Lon, body.Radius);
+                for (int i = 1; i < pp.Count; i++) MfdInk.Line(c, Proj(pp[i - 1][0], pp[i - 1][1]), Proj(pp[i][0], pp[i][1]), amber, 2);
+                var lp = Proj(pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][0], pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][1]);
+                Tag(c, new Rect(lp.x + 6, lp.y + 4, 150, 18), "predicted (bank " + Math.Round(pb) + ")");
+            }
+            if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); c.Dot(jp, 11, Color.magenta); Tag(c, new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
                 if (v != null) { var p = Proj(v.latitude, v.longitude); c.Dot(p, 8, kscRover ? Color.magenta : Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; MfdInk.Line(c, p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, kscRover ? Color.magenta : Color.red, 2); if (kscRover) Tag(c, new Rect(p.x + 7, p.y + 5, 70, 18), "ROVER"); }
                 if (mapMouse != null) mapMouse();   // the outside window only: the IMGUI mouse is map-square relative inside the group
             });

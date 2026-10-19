@@ -2081,6 +2081,15 @@ class Program
             Check(PilotPolicy.SwapEndInbound(90, 84, 260, 20000) && !PilotPolicy.SwapEndInbound(90, 84, 90, 20000), "far out: the end not needing a reversal after reaching the field");
             Check(!PilotPolicy.SwapEndInbound(90, 84, 260, 3000) && PilotPolicy.SwapEndInbound(90, 270, 270, 20000), "close in / aligned: heading rule unchanged");
             Console.WriteLine("Capped planning bank, waypoint advance, runway end: 9 behavior checks passed.");
+            {   // GROK MAP1: predicted path
+                double tla, tlo; NavigationMath.Offset(0, 0, 90, 20000, 600000, out tla, out tlo);
+                Check(PredictedPath.Points(0, 0, 90, 200, 30, tla, tlo, 600000).Count == 2, "fix straight ahead: straight line only");
+                var back = PredictedPath.Points(0, 0, 270, 200, 30, tla, tlo, 600000);
+                Check(back.Count > 36 && back.Count < 60, "fix behind: 180+ deg turn arc (the fix drifts as we turn) then the line (" + back.Count + " points)");
+                double cla, clo; NavigationMath.Offset(0, 0, 0, 3000, 600000, out cla, out clo);   // 3 km to the left of a 16 km circle at bank 15
+                Check(PredictedPath.Points(0, 0, 90, 205, 15, cla, clo, 600000).Count >= 72, "fix inside the turn circle: full circle (the Oct 19 orbit)");
+                Check(Math.Abs(PredictedPath.Radius(205, 15) - 15990) < 50, "radius at 205 m/s / 15 deg ~16 km");
+            }
         }
             Check(PilotPolicy.Nearest(-1.4, -72.0, new List<double[]> { new[] { -.0494, -74.607 }, new[] { -1.5154, -71.909 }, new[] { 2.0, -70.0 } }, 600000) == 1, "nearest of built-ins + saved runways");
             Check(ToolRouter.Direct("land at 27 short final", "plane").Value.Value == "{\"where\":\"27 short final\"}" && FlightResidualPolicy.BuiltInRunway("27 short final", "").Item2 == "27", "'short final' in chat");
