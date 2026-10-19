@@ -11,6 +11,7 @@ namespace KSPChatBridge
         sealed class FlapSnap { internal bool Deploy, Invert; internal float Angle; }
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
+        readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 1, rfApplied = -1; float rfLast;   // GROK RF1
         int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
         internal static int FlapSetting { get { return instance == null ? 0 : instance.flapSet; } }
         internal static bool HasFlapsNow { get { return instance != null && instance.flaps.Count > 0; } }
@@ -24,7 +25,7 @@ namespace KSPChatBridge
         /// are brakes, never flaps; untagged leading-edge surfaces are left alone. Each part's role is logged whenever the result changes.</summary>
         void ScanFlaps()
         {
-            flaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
+            flaps.Clear(); rollFlaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
             var surfs = new List<ModuleControlSurface>();
             foreach (Part p in vessel.parts)
             {
@@ -32,11 +33,11 @@ namespace KSPChatBridge
                 foreach (var cs in p.FindModulesImplementing<ModuleControlSurface>()) { surfs.Add(cs); if (SurfaceRoles.FromTag(AicsSurfaceTag.TagOf(p)).HasValue) surfTagged = true; }
             }
             Transform rt = vessel.ReferenceTransform; Vector3 fwd = rt.up, right = rt.right, top = -rt.forward, com = vessel.CoM;
-            var wings = new List<Vector3>(); double half = 0;
+            var wings = new List<Vector3>(); double half = 0, maxWing = 0;
             foreach (Part p in vessel.parts)
             {
                 Vector3 d = p.transform.position - com; Vector3 l = new Vector3(Vector3.Dot(d, right), Vector3.Dot(d, fwd), Vector3.Dot(d, top));
-                if (p.FindModuleImplementing<ModuleLiftingSurface>() != null && p.FindModuleImplementing<ModuleControlSurface>() == null) wings.Add(l);
+                var ls = p.FindModuleImplementing<ModuleLiftingSurface>(); if (ls != null && p.FindModuleImplementing<ModuleControlSurface>() == null) { wings.Add(l); maxWing = Math.Max(maxWing, ls.deflectionLiftCoeff); }
                 half = Math.Max(half, Math.Abs(l.x));
             }
             var log = new System.Text.StringBuilder();
@@ -59,17 +60,26 @@ namespace KSPChatBridge
                     float dz = Vector3.Dot(moved - lever, top); defl = dz < -.02f ? 1 : dz > .02f ? -1 : 0;
                 }
                 catch (Exception) { defl = 0; }
+                bool mainTe = false;
+                try
+                {   // GROK RF1: ROLL / FLAPS auto = attached to a main wing panel (>= half the biggest panel), horizontal hinge, not on the leading edge, not ahead of the CoM (canard)
+                    Part par = p.parent; var pls = par != null && par.FindModuleImplementing<ModuleControlSurface>() == null ? par.FindModuleImplementing<ModuleLiftingSurface>() : null;
+                    Transform hinge = (string.IsNullOrEmpty(cs.transformName) ? null : p.FindModelTransform(cs.transformName)) ?? p.transform;
+                    mainTe = pls != null && maxWing > 0 && pls.deflectionLiftCoeff >= .5 * maxWing && Math.Abs(Vector3.Dot(hinge.right, right)) > .7f && chord != 1 && l.y < .5f;
+                }
+                catch (Exception) { mainTe = false; }
+
                 bool brakeAg = false;
                 foreach (BaseAction a in cs.Actions) if ((a.actionGroup & KSPActionGroup.Brakes) != 0) brakeAg = true;
                 bool aero = cs is ModuleAeroSurface;
                 if (surfTagged) { role = tagged ?? SurfRole.Other; why = tagged.HasValue ? "tag '" + AicsSurfaceTag.TagOf(p) + "'" : "untagged (tags in use)"; }
-                else { role = SurfaceRoles.Classify(!cs.ignorePitch, !cs.ignoreYaw, !cs.ignoreRoll, aero, brakeAg, span01, chord, vert, defl); why = "auto"; }
-                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) rollFlapCount++; }
+                else { role = SurfaceRoles.Classify(!cs.ignorePitch, !cs.ignoreYaw, !cs.ignoreRoll, aero, brakeAg, span01, chord, vert, defl, mainTe); why = "auto"; }
+                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) { rollFlapCount++; rollFlaps.Add(cs); } }
                 else if (role == SurfRole.Brake) brakeSurfs.Add(cs);
                 log.Append(p.partInfo != null ? p.partInfo.title : p.name).Append(" @").Append(l.x.ToString("0.0")).Append("/").Append(l.y.ToString("0.0")).Append("/").Append(l.z.ToString("0.0"))
                    .Append(" span ").Append(span01.ToString("0.00")).Append(chord == 1 ? " LE" : chord == -1 ? " TE" : " mid").Append(vert == 1 ? " top" : vert == -1 ? " bottom" : "")
                    .Append(defl == 1 ? " defl-down" : defl == -1 ? " defl-up" : "").Append(brakeAg ? " brakesAG" : "").Append(aero ? " airbrake" : "")
-                   .Append(" -> ").Append(role == SurfRole.Unknown ? "unknown (leading edge, left alone)" : role.ToString().ToLowerInvariant()).Append(" [").Append(why).Append("]; ");
+                   .Append(mainTe ? " mainwing" : "").Append(" -> ").Append(role == SurfRole.Unknown ? "unknown (leading edge, left alone)" : role == SurfRole.RollFlap ? "ROLL / FLAPS" + (cs.ignorePitch ? "" : " (has pitch: never drooped)") : role.ToString().ToLowerInvariant()).Append(" [").Append(why).Append("]; ");
             }
             string s2 = log.ToString();
             if (SurfaceRoles.ShouldLog(ref surfLog, vessel != null ? vessel.id.ToString() : "", s2)) { ChatLog.Write("flaps", "surfaces (" + (surfTagged ? "TAGGED: tags only" : "auto-detect") + ", " + flaps.Count + " high-lift, " + brakeSurfs.Count + " brake): " + s2); }
@@ -118,6 +128,7 @@ namespace KSPChatBridge
             if (flapVessel != vessel || Time.realtimeSinceStartup > flapScanAt + 10) { if (flapVessel != vessel) RestoreFlaps(); ScanFlaps(); flapScanAt = Time.realtimeSinceStartup; }
             BrakeSurfacesTick();
             if (flaps.Count == 0) return;
+            RollFlapTick();
             int want = FlapsPolicy.GroundZero(vessel.LandedOrSplashed, mode, takeoffFlaps) ? 0 : FlapsWanted();   // Oct 12: the ground gate zeroed takeoff flaps
             want = Math.Min(want, FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet));   // flap limit is a stall multiple: EAS (dfbcd0b)
             if (want == 0 && flapSet > 0 && learn != null && !learn.Done)
@@ -135,15 +146,25 @@ namespace KSPChatBridge
                 ChatLog.Write("flaps", (takeoffFlaps ? (want >= flapSet ? "takeoff deploy " : "takeoff retract step ") : "") + FlapsPolicy.Name(flapSet) + " at " + vessel.radarAltitude.ToString("0") + " m AGL, " + Eas().ToString("0") + " m/s (limit " + FlapLimit().ToString("0") + ", " + flaps.Count + " surfaces, " + rollFlapCount + " roll-only)");
             }
         }
+        /// <summary>GROK RF1: ROLL / FLAPS droop follows the roll demand every tick (roll first, droop back when wings are level again).</summary>
+        void RollFlapTick()
+        {
+            if (rollFlaps.Count == 0) return;
+            float now = Time.realtimeSinceStartup; double dt = rfLast > 0 ? now - rfLast : 0; rfLast = now;
+            double bank = Roll(), want = FlapsPolicy.RollFlapDroop(vessel.ctrlState.roll, bankCmd - bank, bank);
+            rfDroop = FlapsPolicy.DroopStep(rfDroop, want, dt);
+            if (flapSet > 0 && Math.Abs(rfDroop - rfApplied) > .02) { rfApplied = rfDroop; ApplyFlaps(); }
+        }
         void ApplyFlaps()
         {
             foreach (var cs in flaps)
             {
                 if (cs == null || !cs.ignorePitch) continue;   // NEVER deploy a pitch surface
                 FlapSnap o; if (!flapOrig.TryGetValue(cs, out o)) flapOrig[cs] = o = new FlapSnap { Deploy = cs.deploy, Invert = cs.deployInvert, Angle = cs.deployAngle };
-                float max = o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange;
-                cs.deployAngle = max * (float)FlapsPolicy.Fraction(flapSet); cs.deployInvert = o.Invert; cs.deploy = flapSet > 0;
-                recovery.AcceptSurface(cs);
+                float max = o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange; bool rf = rollFlaps.Contains(cs);
+                if (rf) max = Math.Min(max, (float)FlapsPolicy.RollFlapThrow * cs.ctrlSurfaceRange);   // GROK RF1: half the throw stays for roll
+                cs.deployAngle = max * (float)(FlapsPolicy.Fraction(flapSet) * (rf ? rfDroop : 1)); cs.deployInvert = o.Invert; cs.deploy = flapSet > 0;
+                try { recovery.AcceptSurface(cs); } catch (Exception) { }
             }
         }
         /// <summary>Restore every surface's original deploy / angle / direction.</summary>

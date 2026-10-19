@@ -8,7 +8,7 @@ namespace KSPChatBridge
     public class AicsSurfaceTag : PartModule
     {
         [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "AICS role")]
-        [UI_ChooseOption(scene = UI_Scene.All, affectSymCounterparts = UI_Scene.All, options = new[] { "auto", "flap", "slat", "spoiler", "brake", "aileron", "none" })]
+        [UI_ChooseOption(scene = UI_Scene.All, affectSymCounterparts = UI_Scene.All, options = new[] { "auto", "flap", "slat", "spoiler", "brake", "aileron", "roll/flaps", "none" }, display = new[] { "auto", "flap", "slat", "spoiler", "brake", "aileron", "ROLL / FLAPS", "none" })]   // GROK RF1: ROLL / FLAPS = aileron that droops as a flap
         public string role = "auto";
 
         /// <summary>Tag text for this part: the AICS role (unless auto), else a kOS name tag, else "".</summary>

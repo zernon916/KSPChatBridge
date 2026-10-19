@@ -1306,6 +1306,7 @@ namespace KSPChatBridge
             if (string.IsNullOrEmpty(tag)) return null; string t = tag.ToLowerInvariant();
             if (t.Contains("brake") || t.Contains("spoiler")) return SurfRole.Brake;
             if (t.Contains("slat")) return SurfRole.Slat;
+            if (t.Contains("flaperon") || t.Contains("roll") && t.Contains("flap")) return SurfRole.RollFlap;   // GROK RF1: "roll/flaps"
             if (t.Contains("flap")) return SurfRole.Flap;
             if (t.Contains("aileron")) return SurfRole.Aileron;
             if (t == "none") return SurfRole.Other;
@@ -1315,13 +1316,14 @@ namespace KSPChatBridge
         /// <summary>Geometry auto-detect (no tags on the craft). span01 = |lateral| / half-span (0 root .. 1 tip); chord +1 leading edge, -1 trailing,
         /// 0 unknown; vert +1 on the wing's top surface, -1 bottom, 0 in line; defl +1 deploy deflects down, -1 up, 0 unknown;
         /// brakeAg = deploy bound to the Brakes action group; aero = stock airbrake (ModuleAeroSurface).</summary>
-        internal static SurfRole Classify(bool pitch, bool yaw, bool roll, bool aero, bool brakeAg, double span01, int chord, int vert, int defl)
+        internal static SurfRole Classify(bool pitch, bool yaw, bool roll, bool aero, bool brakeAg, double span01, int chord, int vert, int defl, bool mainWingTe = false)
         {
             if (aero || brakeAg) return SurfRole.Brake;                        // stock airbrake / spoiler wired to Brakes
             if (vert > 0 && chord != 1) return SurfRole.Brake;                  // sits on top of the wing (ahead of the flaps): spoiler
             if (pitch) return SurfRole.Pitch;                                  // elevators / canards / elevons: never deployed
             if (yaw && !roll) return SurfRole.Yaw;
             if (yaw) return SurfRole.Other;
+            if (roll && mainWingTe) return SurfRole.RollFlap;                   // GROK RF1: horizontal roll surface on a main-wing trailing edge = ROLL / FLAPS (never tail/canard/vertical)
             if (chord == 1) return roll ? SurfRole.Aileron : SurfRole.Unknown;   // front edge: stock aero gives slats no real lift - left alone unless tagged "slat"
             if (chord == 0 && vert == 0 && defl < 0) return roll ? SurfRole.Aileron : SurfRole.Brake;   // unknown position, deploys upward
             if (!roll) return SurfRole.Flap;                                   // dedicated trailing-edge surface
@@ -1340,12 +1342,20 @@ namespace KSPChatBridge
             if (roll && !yaw) return FlapKind.RollFlap;
             return FlapKind.Other;
         }
+        /// <summary>GROK RF1: ROLL / FLAPS droop at most half the surface throw (the other half stays for roll).</summary>
+        internal const double RollFlapThrow = .5;
+        /// <summary>GROK RF1: droop factor 0..1 for ROLL / FLAPS - full droop with wings near level and small roll demand; none as soon as the roll
+        /// input, bank error or bank grows (roll first), linear in between.</summary>
+        internal static double RollFlapDroop(double rollInput, double bankErr, double bank)
+        { double dem = Math.Max(Math.Abs(rollInput) / .5, Math.Max(Math.Abs(bankErr) / 8, Math.Abs(bank) / 15)); return FlightPolicy.Clamp(2 - 2 * dem, 0, 1); }
+        /// <summary>GROK RF1: droop drops instantly, comes back at 0.5 per second.</summary>
+        internal static double DroopStep(double cur, double target, double dt) { return target <= cur ? target : Math.Min(target, cur + .5 * Math.Max(0, dt)); }
         internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
         internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }
         /// <summary>Flap speed limit: learned, else 1.6x clean stall.</summary>
         internal static double SpeedLimit(double cleanStall, double learned) { return !double.IsNaN(learned) && learned > 0 ? learned : 1.6 * (double.IsNaN(cleanStall) || cleanStall <= 0 ? 60 : cleanStall); }
         /// <summary>Highest setting allowed at this speed: 0 above the limit (5 m/s hysteresis to keep what is out), else full.</summary>
-        internal static int MaxAllowed(double ias, double limit, int current) { return ias <= limit || (current > 0 && ias <= limit + 5) ? 3 : 0; }
+        internal static int MaxAllowed(double ias, double limit, int current) { return ias <= (current > 0 ? limit : limit - 3) ? 3 : 0; }   // GROK RF1: never out above the limit (was +5: 139 vs 134); deploy only 3 m/s under it
         /// <summary>Approach schedule: up until short final; 1 inside 2x the short-final fix, 2 inside it, full inside half of it and in the flare/rollout.</summary>
         /// <summary>Oct 12 takeoff flaps: partial (2) for the roll; from 120 m AGL retract one step at a time, each only above 1.3x the stall of the next setting.</summary>
         internal const int TakeoffFlaps = 2; internal const double RetractAgl = 120, RetractMargin = 1.3;
