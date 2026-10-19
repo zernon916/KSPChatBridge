@@ -164,6 +164,16 @@ class Program
                 Check(TakeoffMission.ClimbPitch(60, 60, 30) == 5 && TakeoffMission.ClimbPitch(85, 60, 30) == 30 && TakeoffMission.ClimbPitch(120, 60, 15) == 15 && TakeoffMission.ClimbPitch(120, 60, 80) == 45, "GROK TO1: shallow at V2, up to max climb pitch (bounded)");
                 var e = new TakeoffMission(0); e.Step(1, 55, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout", "GROK TO1: no handoff above 100 m until V2");
                 e.Step(2, 62, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout complete", "GROK TO1: handoff at V2");
+                {   // GROK TO2: takeoff settings
+                    var ts = new TakeoffSettings(); Check(ts.ToJson() == "{\"altitude_m\":300,\"max_pitch\":30,\"use_flaps\":true}", "GROK TO2: defaults -> runway heading, auto climb (" + ts.ToJson() + ")");
+                    ts.Alt = "1500"; ts.Climb = "12"; ts.Hdg = "-90"; ts.MaxPitch = "20"; ts.Flaps = false; var back = TakeoffSettings.Parse(ts.Serialize());
+                    Check(back.Alt == "1500" && back.Climb == "12" && back.Hdg == "-90" && back.MaxPitch == "20" && !back.Flaps, "GROK TO2: settings round-trip");
+                    Check(back.ToJson() == "{\"altitude_m\":1500,\"climb_rate\":12,\"heading\":270,\"max_pitch\":20,\"use_flaps\":false}", "GROK TO2: JSON (" + back.ToJson() + ")");
+                    Check(TakeoffSettings.Parse("junk").Alt == "300", "GROK TO2: torn file -> defaults");
+                    Check(double.IsNaN(TakeoffMission.ClimbRateCap(double.NaN)) && TakeoffMission.ClimbRateCap(80) == 50 && TakeoffMission.ClimbRateCap(10) == 10, "GROK TO2: climb-rate cap");
+                    Check(TakeoffMission.HeadingAfter(double.NaN, 90) == 90 && TakeoffMission.HeadingAfter(370, 90) == 10 && TakeoffMission.HeadingAfter(-90, 90) == 270, "GROK TO2: heading after takeoff");
+                    Check(TakeoffMission.MaxPitchSetting(double.NaN) == 30 && TakeoffMission.MaxPitchSetting(60) == 45 && TakeoffMission.MaxPitchSetting(2) == 5, "GROK TO2: max climb pitch bounded, default 30");
+                }
                 Check(d1.Wheel < 0 && Math.Abs(d2.Wheel) < Math.Abs(d1.Wheel) && d2.Wheel > 0, "GROK TO1: heading-rate damping on the roll (no weave)");
             }
             double south = gr.CrossTrack(-0.0486 - 100 / (Math.PI / 180 * 600000), -74.7245, 600000);

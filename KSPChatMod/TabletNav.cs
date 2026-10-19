@@ -67,4 +67,29 @@ namespace KSPChatBridge
         { string j, s; JobLabel(mode, phase, ferryPending, out j, out s); return s.Length > 0 ? j + " - " + s : j; }
         internal static string LightAction(bool apActive, bool airborne, bool link) { return !link ? null : apActive ? "disengage" : airborne ? "engage" : null; }
     }
+    /// <summary>GROK TO2: TAKEOFF sub-page settings (persisted in PluginData/takeoff_settings.txt) and the takeoff tool JSON they send.
+    /// Blank climb rate = auto; blank heading = runway heading.</summary>
+    internal sealed class TakeoffSettings
+    {
+        internal string Alt = "300", Climb = "", Hdg = "", MaxPitch = "30"; internal bool Flaps = true;
+        static double N(string s) { double d; return double.TryParse((s ?? "").Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out d) ? d : double.NaN; }
+        static string J(double d) { return d.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture); }
+        internal string Serialize() { return string.Join("|", new[] { Alt, Climb, Hdg, MaxPitch, Flaps ? "1" : "0" }); }
+        internal static TakeoffSettings Parse(string t)
+        {
+            var s = new TakeoffSettings(); if (string.IsNullOrEmpty(t)) return s; var p = t.Trim().Split('|'); if (p.Length < 5) return s;
+            s.Alt = p[0]; s.Climb = p[1]; s.Hdg = p[2]; s.MaxPitch = p[3]; s.Flaps = p[4] != "0"; return s;
+        }
+        internal string ToJson()
+        {
+            double a = N(Alt), c = N(Climb), h = N(Hdg), m = N(MaxPitch);
+            var parts = new System.Collections.Generic.List<string>();
+            if (!double.IsNaN(a) && a > 0) parts.Add("\"altitude_m\":" + J(a));
+            if (!double.IsNaN(c) && c > 0) parts.Add("\"climb_rate\":" + J(c));
+            if (!double.IsNaN(h)) parts.Add("\"heading\":" + J(((h % 360) + 360) % 360));
+            if (!double.IsNaN(m) && m > 0) parts.Add("\"max_pitch\":" + J(m));
+            parts.Add("\"use_flaps\":" + (Flaps ? "true" : "false"));
+            return "{" + string.Join(",", parts.ToArray()) + "}";
+        }
+    }
 }

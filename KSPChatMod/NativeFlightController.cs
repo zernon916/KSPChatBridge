@@ -525,6 +525,7 @@ namespace KSPChatBridge
         double CpMax { get { return Math.Min(climbPitchMax, PilotPolicy.PitchEnvelope(CraftClass.Gentle(CraftCls))); } }   // heavy: 15 deg max climb pitch
         void BeginHold()
         {
+            climbVsCap = double.NaN;   // GROK TO2: the takeoff climb-rate cap ends with any new hold
             var savedTrim = craftNotes.Load(vessel.vesselName);
             foreach (string key in new[] { "pitch_trim", "roll_trim", "yaw_trim", "pitch_deploy_bias" }) Num(savedTrim, key, 0);
             Stop(false);
@@ -674,6 +675,12 @@ namespace KSPChatBridge
                     if (takeoff.Phase == "climbout complete")
                     {
                         mode = landingAfterTakeoff ? "landing" : "hold";
+                        if (mode == "hold")
+                        {   // GROK TO2: heading after liftoff + safe altitude; climb-rate cap until the target altitude
+                            if (!double.IsNaN(toHeading)) { heading = toHeading; ApFieldSync.Heading(heading); }
+                            climbVsCap = toClimbVs;
+                            ChatLog.Write("takeoff", "climbout complete at " + vessel.radarAltitude.ToString("0") + " m AGL, " + vessel.srfSpeed.ToString("0") + " m/s: heading " + heading.ToString("000") + ", climb " + (double.IsNaN(climbVsCap) ? "auto" : climbVsCap.ToString("0") + " m/s") + " to " + altitude.ToString("0") + " m");
+                        }
                         landingAfterTakeoff = false; directPitch = null; directBank = pendingCircle;
                         throttle = PilotPolicy.HandoffThrottle(throttle);
                         speed = ClimbSpeedTarget();   // LEARN Vy when known, else 1.8x stall (AUTOPILOT_REVIEW #3/#12)
@@ -849,7 +856,7 @@ namespace KSPChatBridge
                     }
                     return; // rotorcraft lift must never command main throttle
                 }
-                double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
+                double targetVs = directVs ?? FlightPolicy.VerticalSpeed(vessel.altitude, mode == "hold" ? PilotPolicy.EffectiveAltitude(altitude, terrainFloor) : altitude, mode == "hold" && !double.IsNaN(climbVsCap) ? climbVsCap : 25, 15, kin, band, ref capture);   // round 3: floor as target, not a fighting VS override (porpoise)
                 if (!directVs.HasValue) { targetVs *= CraftClass.VsScale(CraftCls); targetVs = CraftClass.SlewVs(ref vsSlew, targetVs, dt, CraftCls); } else vsSlew = targetVs;   // heavy: gentle altitude corrections, VS command slewed (porpoise, Oct 12)
                 if (runway != null) { double lr = profile != null ? profile.Perf.RollRate : double.NaN; runway.RollS = !double.IsNaN(lr) && lr > 5 ? 25 / FlightPolicy.Clamp(lr, 6, 60) : double.NaN; } if (runway != null) { runway.FlapStepsLeft = flaps.Count > 0 ? Math.Max(0, 3 - flapSet) : 0; runway.HasAirbrakes = brakeSurfs.Count > 0; }
                 ApproachProfile.Heavy = CraftClass.Gentle(CraftCls); ApproachProfile.CruiseSpeed = profile == null ? double.NaN : !double.IsNaN(profile.Perf.CruiseSpeed) && profile.Perf.CruiseSpeed > 0 ? profile.Perf.CruiseSpeed : profile.EconSpeed; ApproachProfile.HasFlaps = flaps.Count > 0; ApproachProfile.FlapRatio = profile != null && !double.IsNaN(profile.FlapStall) && profile.Stall > 0 ? profile.FlapStall / profile.Stall : double.NaN;
@@ -1380,7 +1387,14 @@ namespace KSPChatBridge
                 case "takeoff":
                     altitude = vessel.altitude + Math.Max(100, Num(a, "altitude_m", 300)); heading = FlightGlobals.ship_heading;
                     if (!vessel.LandedOrSplashed) return "Already airborne.";
-                    BeginHold(); return StartTakeoff();
+                    BeginHold();
+                    {   // GROK TO2: takeoff settings (tablet TAKEOFF page / chat): climb rate, heading after the climbout, max climb pitch, flaps
+                        string tr = StartTakeoff(); if (mode != "takeoff" || takeoff == null) return tr;
+                        toClimbVs = TakeoffMission.ClimbRateCap(Num(a, "climb_rate", double.NaN)); toHeading = TakeoffMission.HeadingAfter(Num(a, "heading", double.NaN), double.NaN);
+                        takeoff.MaxPitch = TakeoffMission.MaxPitchSetting(Num(a, "max_pitch", double.NaN)); takeoffFlaps = Bool(a, "use_flaps", true);
+                        ChatLog.Write("takeoff", "settings: to " + (altitude - vessel.altitude).ToString("0") + " m above the runway, climb " + (double.IsNaN(toClimbVs) ? "auto" : toClimbVs.ToString("0") + " m/s") + ", heading " + (double.IsNaN(toHeading) ? "runway" : toHeading.ToString("000")) + " after the climbout, max pitch " + takeoff.MaxPitch.ToString("0") + ", flaps " + (takeoffFlaps ? "on" : "off"));
+                        return tr;
+                    }
                 case "land_here":
                     if (vessel.LandedOrSplashed) return "Already grounded.";
                     if (props.HasLift(vessel)) return "Use helicopter land for a rotorcraft.";
@@ -1611,9 +1625,10 @@ namespace KSPChatBridge
             }
             return PilotPolicy.VMax(drag, vessel.dynamicPressurekPa, vessel.atmDensity, thrust, vessel.srfSpeed);
         }
+        double toClimbVs = double.NaN, toHeading = double.NaN, climbVsCap = double.NaN;   // GROK TO2
         string StartTakeoff()
         {
-            takeoffFlaps = true;   // Oct 12: partial flaps for the roll (no-op without tagged flaps)
+            toClimbVs = toHeading = double.NaN; takeoffFlaps = true;   // Oct 12: partial flaps for the roll (no-op without tagged flaps)
             if (props.HasLift(vessel)) { Stop(); return "Use helicopter hover for a rotorcraft takeoff."; }
             bool wheels = false, wings = false;
             foreach (Part part in vessel.parts)

@@ -246,6 +246,10 @@ namespace KSPChatBridge
         /// <summary>GROK TO1: safe climb speed (V2) = 1.3 x the stall estimate (lift scan, else Vr/1.15).</summary>
         internal static double ClimbSpeed(double liftStall, double vr) { double s = !double.IsNaN(liftStall) && liftStall >= 15 && liftStall <= 200 ? liftStall : vr / 1.15; return 1.3 * s; }
         internal const double ShallowPitch = 5;
+        /// <summary>GROK TO2: takeoff settings - climb-rate cap (1..50 m/s, NaN = auto), heading after the climbout (NaN = runway heading), max climb pitch (5..45).</summary>
+        internal static double ClimbRateCap(double asked) { return double.IsNaN(asked) || asked <= 0 ? double.NaN : FlightPolicy.Clamp(asked, 1, 50); }
+        internal static double HeadingAfter(double asked, double runwayHdg) { return double.IsNaN(asked) || asked < -360 || asked > 720 ? runwayHdg : ((asked % 360) + 360) % 360; }
+        internal static double MaxPitchSetting(double asked) { return double.IsNaN(asked) || asked <= 0 ? 30 : FlightPolicy.Clamp(asked, ShallowPitch, 45); }
         /// <summary>GROK TO1: accelerate in a shallow climb to V2, then pitch up toward the max climb pitch (user setting, default 30) over the next
         /// 25 m/s; speed protection: below V2 the pitch comes down (0.5 deg per m/s short, never under 1 deg).</summary>
         internal static double ClimbPitch(double speed, double v2, double maxPitch)

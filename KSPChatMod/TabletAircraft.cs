@@ -65,13 +65,46 @@ namespace KSPChatBridge
         void TabletTakeoffSub(Rect area)
         {
             var v = FlightGlobals.ActiveVessel; float row = Mathf.Max(48, tabletFont * 2.6f);
-            var lines = new List<string>(NativeFlightController.ApSummary().Split('\n'));
-            if (v != null) lines.Add("Situation: " + v.situation + (v.LandedOrSplashed ? " (on the ground)" : " (airborne)"));
+            if (toSet == null) ToLoad();
+            var lines = new List<string>();
+            if (v != null) lines.Add("Situation: " + v.situation + (v.LandedOrSplashed ? " (on the ground)" : " (airborne)") + "   Runway heading " + (v.LandedOrSplashed ? FlightGlobals.ship_heading.ToString("000") : "-"));
+            lines.Add(FuelReadout(v) + "   Flaps: " + (NativeFlightController.HasFlapsNow ? "available" : "none found"));
             float y = area.y + TextCard(area, "Takeoff", lines) + 10;
             bool can = TabletLink && v != null && v.LandedOrSplashed;
+            {   // GROK TO2: takeoff settings (persisted; sent with ENGAGE TAKEOFF)
+                float lh = Mathf.Max(30, tabletFont * 1.7f), lw = Mathf.Min(260, area.width * .45f), fw = Mathf.Min(160, area.width - lw - 10);
+                string[] caps = { "Altitude above runway (m)", "Climb rate (m/s, blank = auto)", "Heading after takeoff (blank = runway)", "Max climb pitch (deg)" };
+                string[] vals = { toSet.Alt, toSet.Climb, toSet.Hdg, toSet.MaxPitch };
+                for (int i = 0; i < 4; i++)
+                {
+                    TabletUi.Label(new Rect(area.x, y, lw, lh), caps[i]); vals[i] = TabletUi.Field(new Rect(area.x + lw + 10, y, fw, lh - 4), vals[i], TabletLink); y += lh;
+                }
+                toSet.Alt = vals[0]; toSet.Climb = vals[1]; toSet.Hdg = vals[2]; toSet.MaxPitch = vals[3];
+                toSet.Flaps = TabletUi.Toggle(new Rect(area.x, y, area.width, lh), "USE FLAPS" + (NativeFlightController.HasFlapsNow ? "" : " (no flaps found)"), toSet.Flaps, TabletLink && NativeFlightController.HasFlapsNow); y += lh + 8;
+                ToSave();
+            }
             if (NativeFlightController.Phase == "takeoff") { ActiveJobRow(new Rect(area.x, y, area.width, row), "TAKEOFF ACTIVE"); return; }   // GROK TAB2: repeat presses impossible while active
-            if (TabletUi.ActionButton(new Rect(area.x, y, area.width, row), "ENGAGE TAKEOFF", can)) { ChatLog.Write("tablet", "ENGAGE TAKEOFF"); OnKey("aircraft", "TAKEOFF"); }
+            if (TabletUi.ActionButton(new Rect(area.x, y, area.width, row), "ENGAGE TAKEOFF", can)) { ChatLog.Write("tablet", "ENGAGE TAKEOFF"); ChatWindow.ToolFromMenu("takeoff", toSet.ToJson()); }
             if (!can) TabletUi.Label(new Rect(area.x, y + row + 6, area.width, row), !TabletLink ? "INFO ONLY - turn LIVE LINK on to use the controls" : "Takeoff needs the craft on the ground.", true);
+        }
+        static TakeoffSettings toSet; static string toSaved; static double fuelPrev = double.NaN, fuelRate = double.NaN; static float fuelT;
+        static string ToPath { get { return System.IO.Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/takeoff_settings.txt"); } }
+        static void ToLoad()
+        {
+            toSet = new TakeoffSettings();
+            try { if (System.IO.File.Exists(ToPath)) { string t = System.IO.File.ReadAllText(ToPath); if (!AtomicFile.Torn(t)) { toSet = TakeoffSettings.Parse(t); toSaved = t.Trim(); } } } catch (Exception) { }
+        }
+        static void ToSave() { string t = toSet.Serialize(); if (t == toSaved) return; try { AtomicFile.Write(ToPath, t); toSaved = t; } catch (Exception) { } }
+        /// <summary>GROK TO2: fuel % (engine propellants) and time left at the current burn rate (sampled every 2 s).</summary>
+        static string FuelReadout(Vessel v)
+        {
+            if (v == null) return "Fuel -";
+            double amt = 0, max = 0;
+            foreach (Part p in v.parts) foreach (PartResource r in p.Resources)
+                    if (r.resourceName != "ElectricCharge" && r.resourceName != "IntakeAir" && r.resourceName != "Ablator" && r.resourceName != "Ore") { amt += r.amount; max += r.maxAmount; }
+            if (Time.realtimeSinceStartup - fuelT > 2) { if (!double.IsNaN(fuelPrev)) fuelRate = (fuelPrev - amt) / Math.Max(.5, Time.realtimeSinceStartup - fuelT); fuelPrev = amt; fuelT = Time.realtimeSinceStartup; }
+            string time = !double.IsNaN(fuelRate) && fuelRate > 1e-4 ? TimeSpan.FromSeconds(Math.Min(359999, amt / fuelRate)).ToString(@"hh\:mm\:ss") : "-";
+            return "Fuel " + (max > 0 ? (100 * amt / max).ToString("0") + "%" : "-") + "   Time " + time;
         }
         /// <summary>GROK TAB2: running job = status text + a DISENGAGE action (stop_current), instead of the ENGAGE button.</summary>
         void ActiveJobRow(Rect r, string what)
