@@ -43,7 +43,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        string loggedLock = "", loggedFollow = ""; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = ""; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -793,7 +793,7 @@ namespace KSPChatBridge
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
                         landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && RunwayMission.BelowGsM(runway.Ils) > RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
                         if (landFloor && Time.realtimeSinceStartup >= gTraceNext) { gTraceNext = Time.realtimeSinceStartup + 1; ChatLog.Write("g", "approach floor: agl=" + vessel.radarAltitude.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " belowGS=" + (double.IsNaN(RunwayMission.BelowGsM(runway.Ils)) ? "n/a" : RunwayMission.BelowGsM(runway.Ils).ToString("0")) + " spd=" + vessel.srfSpeed.ToString("0") + " pit=" + pitch.ToString("0")); }   // AGL floor: never sink into a hill on approach
-                        if (runway.Phase == "entry" || runway.Phase == "intercept") landingGearDown = false; else if (runway.Gear && !landingGearDown) { SetGroup(vessel, KSPActionGroup.Gear, true); landingGearDown = true; ChatLog.Write("approach", "gear down on final"); }   // never fight the player on the outbound leg
+                        if (runway.Phase == "entry" || runway.Phase == "intercept") landingGearDown = false; else if (runway.Gear && !landingGearDown) { SetGroup(vessel, KSPActionGroup.Gear, true); landingGearDown = true; configChangedAt = Time.realtimeSinceStartup; ChatLog.Write("approach", "gear down on final (" + Math.Round(runway.Distance / 100) / 10 + " km)"); }   // never fight the player on the outbound leg
                         if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
                         {
@@ -897,7 +897,10 @@ namespace KSPChatBridge
                     if (rudderOn) { rudderSince = Time.realtimeSinceStartup; rudderHdg0 = hdgErr; ChatLog.Write("att", "heading hold: rudder takes the last " + PilotPolicy.RudderErrDeg.ToString("0.#") + " deg (err " + hdgErr.ToString("0.0") + " deg at " + vessel.srfSpeed.ToString("0") + " m/s) - wings level, no bank ask"); }
                     else ChatLog.Write("att", "heading hold: bank flies the heading again (err " + hdgErr.ToString("0.0") + " deg) - rudder released" + (Time.realtimeSinceStartup < rudderOffUntil ? "; no progress on the rudder, off for " + (rudderOffUntil - Time.realtimeSinceStartup).ToString("0") + " s" : ""));
                 }
-                double bank = directBank ?? (latBank.HasValue ? FlightPolicy.Clamp(latBank.Value, -blim, blim) : FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn), -blim, blim));
+                if (mode == "landing" && runway != null && !double.IsNaN(runway.BankCap)) blim = Math.Min(blim, runway.BankCap);   // GROK LAND5b: <= 20 deg below 500 m after a go-around
+            double hdgRateL = double.IsNaN(prevHdgL) || dt <= 0 ? 0 : FlightPolicy.Wrap(FlightGlobals.ship_heading - prevHdgL) / dt; prevHdgL = FlightGlobals.ship_heading;
+            double locDamp = mode == "landing" && runway != null && runway.Phase == "final" ? FlightPolicy.Clamp(1.5 * hdgRateL, -5, 5) : 0;   // GROK LAND5b: track-rate damping on the final capture (16 km wobble)
+            double bank = directBank ?? (latBank.HasValue ? FlightPolicy.Clamp(latBank.Value, -blim, blim) : FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn) - locDamp, -blim, blim));
                 bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight
@@ -947,7 +950,7 @@ namespace KSPChatBridge
                 {   // GROK LAND4: ONE pitch law for every landing phase but flare/rollout (LAND3 blended two laws at 5-10 deg bank -> they fought: +27/-23 m/s):
                     // nose attitude = learned level trim + desired flight-path angle + 0.3x filtered vs correction, nose command slewed <= 2 deg/s;
                     // the bank's extra lift is the elevator feed-forward. Outside landing: the same law blended in by bank (turns only).
-                    bool landLaw = mode == "landing" && runway != null && runway.Phase != "flare" && runway.Phase != "rollout";
+                    bool landLaw = mode == "landing" && runway != null && runway.Phase != "flare" && runway.Phase != "rollout" && !runway.MissedClimb;   // GROK LAND5b: the go-around flies its own climb law
                     double vsPrev = vsFilt; vsFilt = PitchAttitude.VsStep(vsFilt, vessel.verticalSpeed, dt); vsSlow = PitchAttitude.OuterStep(vsSlow, vessel.verticalSpeed, dt);
                     bool steady = PitchAttitude.Steady(vsPrev, vsFilt, dt);   // trim learned only in quasi-steady flight (vs not changing): no feedback from the pull-ups
                     aoaTrim = PitchAttitude.TrimStep(aoaTrim, pitch, PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed), roll, steady ? dt : 0);
@@ -956,9 +959,10 @@ namespace KSPChatBridge
                     if (attOk && aw > 0)
                     {
                         double att = landLaw   // GROK LAND4g: landing = pilot law (nose held, slow outer vs loop, 0.5 deg/s in banks)
-                            ? FlightPolicy.Clamp(PitchAttitude.OuterTarget(aoaTrim, targetVs, vsSlow, vessel.srfSpeed) - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax)
+                            ? FlightPolicy.Clamp(PitchAttitude.FinalTarget(aoaTrim, targetVs, vsSlow, vsFilt, vessel.srfSpeed, Math.Max(Math.Abs(bankCmd), Math.Abs(roll))) - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax)
                             : FlightPolicy.Clamp(PitchAttitude.Target(aoaTrim, targetVs, vsFilt, vessel.srfSpeed, PitchAttitude.LandGain) + .3 * vsIntegral - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax);
-                        attCmd = landLaw ? PitchAttitude.BankSlew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt, Math.Max(Math.Abs(bankCmd), Math.Abs(roll))) : PitchAttitude.Slew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt);
+                        attCmd = landLaw ? PitchAttitude.BankSlew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt, Math.Max(Math.Abs(bankCmd), Math.Abs(roll)), pitch - att) : PitchAttitude.Slew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt);
+                        if (landLaw && runway.Phase == "final" && (runway.Distance < 5000 || vessel.radarAltitude < 500)) attCmd = PitchAttitude.SinkGuard(attCmd, pitch, vessel.verticalSpeed, targetVs, vessel.srfSpeed);   // GROK LAND5b: sink guard, no slew
                         desiredPitch = (1 - aw) * desiredPitch + aw * attCmd;
                         if (Time.realtimeSinceStartup >= turnPitchTraceNext) { turnPitchTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("att", "nose tgt " + attCmd.ToString("0.0") + " act " + pitch.ToString("0.0") + " ff " + loadFf.ToString("0.00") + " deg | pitch law (attitude" + (landLaw ? ", landing" : ", turn x" + aw.ToString("0.0")) + "): bank " + roll.ToString("0") + " trim " + aoaTrim.ToString("0.0") + " path " + (Math.Atan2(targetVs, Math.Max(30, vessel.srfSpeed)) * 180 / Math.PI).ToString("0.0") + " -> nose " + attCmd.ToString("0.0") + " deg (vs " + vsFilt.ToString("0.0") + " filtered, want " + targetVs.ToString("0.0") + ")"); }
                     }
@@ -971,7 +975,9 @@ namespace KSPChatBridge
                     if (!double.IsNaN(flarePitch)) desiredPitch = FlightPolicy.Clamp(flarePitch, descentPitchMin, CpMax);
                 }
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
-                if (targetVs > 3 && !directPitch.HasValue)
+                bool missedClimb = mode == "landing" && runway != null && runway.MissedClimb && !vessel.LandedOrSplashed;
+                if (missedClimb && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(PitchAttitude.GoAroundPitch(vessel.srfSpeed, stall), 0, CpMax);   // GROK LAND5b: tracked go-around nose (was 15-17 vs tgt 0-3)
+                if (targetVs > 3 && !directPitch.HasValue && !missedClimb)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
                     desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, CpMax), CpMax);
                     if (profile != null) { double vy = profile.BestClimbSpeed(stall, vessel.totalMass); if (!double.IsNaN(vy) && vy > 0) desiredPitch = FlightPolicy.Clamp(desiredPitch + .35 * (vessel.srfSpeed - vy), Math.Min(5, CpMax), CpMax); }
@@ -985,8 +991,13 @@ namespace KSPChatBridge
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
-                pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * (landLawOn ? .08 : .04) * dt * kin, -.3, .3);   // GROK LAND4g: tighter inner attitude loop on the landing law
-                double kp = .022 * pitchGain * kin * (landLawOn ? 1.3 : 1); loadFf = landLawOn ? PitchAttitude.LoadFF(aoaTrim, roll) : 0;
+                {   // GROK LAND5b: learned elevator trim per flap/gear configuration; pre-load the delta when the configuration changes
+                    int ck = ConfigTrim.Key(flapSet, landingGearDown);
+                    if (ck != cfgKey) { double dl = cfgKey < 0 ? 0 : cfgTrim.Delta(cfgKey, ck); if (dl != 0) { pitchIntegral += dl; ChatLog.Write("att", "config " + cfgKey + " -> " + ck + ": elevator trim pre-load " + dl.ToString("+0.000;-0.000")); } cfgKey = ck; }
+                    cfgTrim.Learn(ck, elevator, dt, landLawOn && Math.Abs(roll) < 5 && Math.Abs(desiredPitch - pitch) < 1 && Math.Abs(q) < 1);
+                }
+                pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * (landLawOn ? .08 : .04) * dt * kin, -.5, .5);   // GROK LAND4g: tighter inner attitude loop on the landing law
+                double kp = .022 * pitchGain * kin * (landLawOn ? PitchAttitude.InnerGain(desiredPitch - pitch, roll) : 1); loadFf = landLawOn ? PitchAttitude.LoadFF(aoaTrim, roll) : 0;
                 double pitchOut = FlightPolicy.Clamp(AuthorityScale(true) * (kp * (desiredPitch - pitch + loadFf) - .016 * q + pitchIntegral) + (landLawOn ? 0 : PitchShaper.ElevatorFF(bankCmd)), -1, 1);   // GROK LAND4g: load-factor FF (trim AoA x (n-1)) replaces the bank-step FF on the landing law   // g feed-forward + more pitch-rate damping; LEARN pitch-rate scale (#7)
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
@@ -1012,18 +1023,27 @@ namespace KSPChatBridge
                 if (mode == "takeoff" && vessel.indicatedAirSpeed < 200) targetThrottle = 1;
                 if (mode == "takeoff" || vessel.LandedOrSplashed || mode != shapedSpeedMode) { shold.Reset(); shapedSpeedMode = mode; }
                 if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = FlightPolicy.Throttle(throttle, FlightPolicy.Clamp(targetThrottle, .05, 1), !vessel.LandedOrSplashed, Planetarium.GetUniversalTime(), ref lastThrottle);
-                else throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle);
+                else if (mode == "landing" && runway != null && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final") && !runway.MissedClimb)
+                {   // GROK LAND5b (Luke): step-and-wait approach throttle (hold -5/+15 m/s, 4% steps 3 s apart, lead step before flap/gear)
+                    if (double.IsNaN(stepThr.Thr) || stepMode != runway.Phase && runway.Phase == "entry") { stepThr.Reset(throttle); stepMode = runway.Phase; }
+                    double faf = runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance, nd = runway.Phase == "final" ? FlapsPolicy.NextConfigDistance(runway.Distance, faf, flapSet, landingGearDown) : double.NaN;
+                    throttle = stepThr.Update(Time.realtimeSinceStartup, vessel.srfSpeed, runway.DesiredSpeed, dt, double.IsNaN(nd) ? double.NaN : (runway.Distance - nd) / Math.Max(30, vessel.srfSpeed) - 4);
+                    if (stepThr.Why.Length > 0) ChatLog.Write("throttle", "approach step: " + stepThr.Why + " -> " + Math.Round(100 * throttle) + "% (" + Math.Round(vessel.srfSpeed) + " vs plan " + Math.Round(runway.DesiredSpeed) + ", trend " + stepThr.Accel.ToString("0.0") + " m/s2)");
+                }
+                else { throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle); stepThr.Thr = double.NaN; }
                 if (mode == "landing" && runway != null && directVs.HasValue && !vessel.LandedOrSplashed && (runway.Phase == "final" || runway.Phase == "flare"))
                 {   // learned sink map: throttle for the target sink rate (flare: map only; final: blended with the speed hold)
                     double st = SinkThrottle(directVs.Value);
-                    if (!double.IsNaN(st)) throttle = runway.Phase == "flare" ? st : .5 * throttle + .5 * st;
+                    if (!double.IsNaN(st) && runway.Phase == "flare") throttle = st;   // GROK LAND5b: final = step-and-wait only (no continuous sink-map chasing)
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
-                if (mode == "landing" && runway != null && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
+                if (mode == "landing" && runway != null && StepThrottle.Emergency(vessel.srfSpeed, runway.DesiredSpeed) && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
                 { throttle = 0; throttleWhy = "approach high/fast: idle"; }   // Oct 12 (A300 03:29): sink-map blend held 46-69% while 800 m high and 20+ m/s fast
             if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
                 { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; powerFloor = true; }   // arrest the sink with power, not only pitch
             else powerFloor = false;
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
+            if (mode == "landing" && throttleKind != "emergency") { throttle = StepThrottle.ConfigLimit(prevThrCfg, throttle, dt, Time.realtimeSinceStartup - configChangedAt); }   // GROK LAND5b: 10%/s during + 5 s after a config change
+            prevThrCfg = throttle;
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
             if (speedLock && !vessel.LandedOrSplashed) { speed = runway.DesiredSpeed; }   // FORCED approach speed: no 3 s/5% stepping, idle when fast, never a climb-first throttle

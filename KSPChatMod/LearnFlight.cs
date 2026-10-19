@@ -1373,6 +1373,28 @@ namespace KSPChatBridge
         /// <summary>Luke Oct 12: flaps EARLY - each step as soon as EAS is under that step's limit (1 = limit, 2 = 0.93x, full = 0.86x; +5 m/s to keep), any airborne approach phase.</summary>
         internal static double StepLimit(int k, double limit) { return limit * (1 - .07 * (Math.Max(1, Math.Min(3, k)) - 1)); }
         internal static int EarlySetting(double eas, double limit, int current) { int w = 0; for (int k = 1; k <= 3; k++) if (eas <= StepLimit(k, limit) + (current >= k ? 5 : 0)) w = k; return w; }
+        /// <summary>GROK LAND5b (Luke): settle the configuration early - step 1 from FAF + 4 km, 2 at the FAF, FULL by 5 km; nothing changes
+        /// inside 4 km / 300 m AGL (current kept). Gear at or before the FAF (8 km at the latest).</summary>
+        internal const double FreezeM = 4000, FreezeAgl = 300, FullByM = 5000;
+        internal static bool Frozen(double distM, double agl) { return distM < FreezeM || agl < FreezeAgl; }
+        internal static int ApproachSchedule(string phase, double distM, double faf, int current, double agl)
+        {
+            if (phase != "final" && phase != "intercept" && phase != "flare" && phase != "rollout" && phase != "stopped") return 0;
+            if (Frozen(distM, agl)) return current;
+            double f = Math.Max(faf, FullByM + 1000);
+            return distM <= FullByM ? 3 : distM <= f ? 2 : distM <= f + 4000 ? 1 : 0;
+        }
+        internal static double GearDistance(double faf) { return Math.Max(faf, 8000); }
+        /// <summary>Distance of the next config step ahead (flaps/gear), NaN when none.</summary>
+        internal static double NextConfigDistance(double distM, double faf, int flaps, bool gear)
+        {
+            double f = Math.Max(faf, FullByM + 1000), best = double.NaN;
+            foreach (var d in new[] { flaps < 1 ? f + 4000 : double.NaN, flaps < 2 ? f : double.NaN, flaps < 3 ? FullByM : double.NaN, gear ? double.NaN : GearDistance(faf) })
+                if (!double.IsNaN(d) && d < distM && d >= FreezeM && (double.IsNaN(best) || d > best)) best = d;
+            return best;
+        }
+        /// <summary>GROK LAND5b: on final inside the FAF, deployed flaps stay (latched) unless speed > limit + 15 - airbrakes/idle take the overspeed.</summary>
+        internal static bool FinalLatch(bool onFinal, double distM, double faf, int flapSet, double eas, double limit) { return onFinal && distM <= Math.Max(faf, FullByM + 1000) && flapSet > 0 && eas <= limit + 15; }
         internal static int ApproachSetting(string phase, double distM, double shortFix)
         {
             if (phase == "flare" || phase == "rollout" || phase == "stopped") return 3;

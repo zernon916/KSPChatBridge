@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using KSPChatBridge;
@@ -129,6 +129,39 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5b: short-final pitch / flap latch / sink guard / go-around / schedule / step throttle
+            // sim: wings-level final, 143 m/s, path vs -7.5; a flap step at t=10 s adds a nose-down moment; config trimB pre-load from learned deltas
+            var ct = new ConfigTrim(); for (int i = 0; i < 600; i++) { ct.Learn(ConfigTrim.Key(1, true), .05, .05, true); ct.Learn(ConfigTrim.Key(2, true), .15, .05, true); }
+            double pt = -2, q2 = 0, integ = .05, slow = -7.5, fast = -7.5, cmd = -2, vsS = -7.5, worstNose = 0, worstVs = 0, trimB = 1, pathVs = -7.5; int key = ConfigTrim.Key(1, true);
+            for (int i = 0; i < 1200; i++)
+            {
+                double tS = i * .025; int nk = tS >= 10 ? ConfigTrim.Key(2, true) : ConfigTrim.Key(1, true);
+                if (nk != key) { integ += ct.Delta(key, nk); key = nk; }
+                double flapMoment = tS >= 10 ? -.10 : 0;   // elevator-equivalent nose-down of the extra flap step
+                slow = PitchAttitude.OuterStep(slow, vsS, .025); fast = PitchAttitude.VsStep(fast, vsS, .025);
+                double att = PitchAttitude.FinalTarget(trimB, pathVs, slow, fast, 143, 0);
+                cmd = PitchAttitude.BankSlew(cmd, att, .025, 0, pt - att); cmd = PitchAttitude.SinkGuard(cmd, pt, vsS, pathVs, 143);
+                double err = cmd - pt; integ = FlightPolicy.Clamp(integ + err * .08 * .025, -.5, .5);
+                double elevB = .022 * PitchAttitude.InnerGain(err, 0) * err - .016 * q2 + integ;
+                double qd = 40 * (elevB + flapMoment - .05 - .03 * (pt + 2)) - 3 * q2; q2 += qd * .025; pt += q2 * .025;   // crude short-period
+                vsS += ((143 * Math.Sin((pt - trimB) * Math.PI / 180)) - vsS) * Math.Min(1, .025 / 2);   // vs follows the flight-path angle (~2 s lag)
+                if (tS > 10) { worstNose = Math.Min(worstNose, pt - cmd); worstVs = Math.Min(worstVs, vsS - pathVs); }
+            }
+            Check(worstNose > -2, "LAND5b: flap step on short final - nose stays within 2 deg below target (" + worstNose.ToString("0.0") + ")");
+            Check(worstVs > -3, "LAND5b: flap step - vs never more than 3 m/s beyond the path sink (" + worstVs.ToString("0.0") + ")");
+            Check(PitchAttitude.FinalTarget(1, -7, -7, -19.6, 143, 0) > PitchAttitude.FinalTarget(1, -7, -7, -7, 143, 0) + 3, "LAND5b: wings level, vs 12 m/s past the path = fast nose-up correction");
+            Check(PitchAttitude.SinkGuard(-3, -7, -20, -7, 143) > -7 && PitchAttitude.SinkGuard(-3, -3, -8, -7, 143) == -3, "LAND5b: sink guard caps sink at path + 3 m/s");
+            Check(PitchAttitude.BankSlew(-6.8, -1.4, 1, 0, -5.4) == -2.8 && PitchAttitude.InnerGain(-5, 0) == 2 && PitchAttitude.InnerGain(-5, 20) == 1.3, "LAND5b: nose 5 deg low wings level = 4 deg/s slew + x2 inner gain");
+            Check(FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 160, 160) && FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 174, 160) && !FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 176, 160) && !FlapsPolicy.FinalLatch(false, 3000, 9400, 2, 160, 160), "LAND5b: flaps latched on final unless > limit + 15");
+            Check(Math.Abs(PitchAttitude.GoAroundPitch(245, 46) - 12) < 1e-9 && PitchAttitude.GoAroundPitch(60, 46) >= 4 && PitchAttitude.GoAroundPitch(60, 46) <= 8, "LAND5b: go-around climb nose 4-12 deg");
+            Check(FlapsPolicy.ApproachSchedule("final", 13000, 9400, 0, 900) == 1 && FlapsPolicy.ApproachSchedule("final", 14000, 9400, 0, 900) == 0 && FlapsPolicy.ApproachSchedule("final", 9000, 9400, 1, 700) == 2 && FlapsPolicy.ApproachSchedule("final", 4900, 9400, 2, 500) == 3
+                && FlapsPolicy.ApproachSchedule("final", 3500, 9400, 2, 400) == 2 && FlapsPolicy.ApproachSchedule("final", 4500, 9400, 1, 250) == 1 && FlapsPolicy.GearDistance(9400) == 9400 && FlapsPolicy.GearDistance(5000) == 8000, "LAND5b: flaps 1 from FAF+4 km, 2 at FAF, FULL by 5 km, frozen inside 4 km / 300 m; gear by FAF / 8 km");
+            Check(Math.Abs(FlapsPolicy.NextConfigDistance(12000, 9400, 1, false) - 9400) < 1 && double.IsNaN(FlapsPolicy.NextConfigDistance(4500, 9400, 2, true)), "LAND5b: next config step lookahead (lead), none inside the freeze");
+            var stp = new StepThrottle(); stp.Reset(.30); double th0 = stp.Update(0, 165, 165, .02, double.NaN), th1 = stp.Update(.02, 178, 165, .02, double.NaN), th2 = stp.Update(.04, 155, 165, .02, double.NaN), th3 = stp.Update(3.1, 155, 165, .02, double.NaN), th4 = stp.Update(3.2, 150, 165, .02, double.NaN);
+            Check(th0 == .30 && th1 == .30 && Math.Abs(th2 - .34) < 1e-9 && Math.Abs(th3 - .38) < 1e-9 && th4 == th3, "LAND5b: step-and-wait throttle - hold in -5/+15, 4% step, wait 3 s");
+            var stl = new StepThrottle(); stl.Reset(.30); Check(Math.Abs(stl.Update(0, 165, 165, .02, 3) - .33) < 1e-9 && StepThrottle.Emergency(200, 165) && !StepThrottle.Emergency(185, 165), "LAND5b: config lead = one small step; bang-bang only > 30 m/s off");
+            Check(Math.Abs(StepThrottle.ConfigLimit(.3, .9, 1, 2) - .4) < 1e-9 && StepThrottle.ConfigLimit(.3, .9, 1, 6) == .9, "LAND5b: throttle 10%/s during + 5 s after a config change");
+        }
         {   // GROK LAND5: lock the 14:22 LSR (r 7655) to the 41.5 km join; start 5 km off with a 9 deg heading error; follow, no replan
             double rL = 7655; DubinsPath dpL; DubinsPath.JoinSteer(0, 0, 90, 41500 - 27500, 0, 270, rL, null, out dpL);
             var lk = LockedPath.From(dpL, 27500, 0); bool noUnlock = true, sawSeg2 = false, finalOk = false; double turnR = 0, hdL = 99, xL = 27500, yL = -5000, bkL = 0, maxSeg = 0; string lkd = lk == null ? "null" : lk.Describe();
@@ -1885,12 +1918,12 @@ class Program
         {
             double R = 600000; var g = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
             double c = NavigationMath.Bearing(g.Lat, g.Lon, g.EndLat, g.EndLon), la, lo;
-            NavigationMath.Offset(g.Lat, g.Lon, c + 180, 6000, R, out la, out lo); g.Step(la, lo, 400, 330, 70, false, R, 45, c);
+            NavigationMath.Offset(g.Lat, g.Lon, c + 180, 12000, R, out la, out lo); g.Step(la, lo, 700, 630, 70, false, R, 45, c);
             bool far = g.Gear;
             NavigationMath.Offset(g.Lat, g.Lon, c + 180, 2000, R, out la, out lo); g.Step(la, lo, 180, 110, 60, false, R, 45, c);
             var o = new RunwayMission { Lat = g.Lat, Lon = g.Lon, EndLat = g.EndLat, EndLon = g.EndLon, Elevation = 70 };
             NavigationMath.Offset(g.Lat, g.Lon, c + 180, 3000, R, out la, out lo); o.Step(la, lo, 600, 530, 120, false, R, 45, c + 180);
-            Check(!far && g.Gear && !o.Gear && o.Phase == "entry", "gear only on an aligned final inside 3 km, never on the outbound leg");
+            Check(!far && g.Gear && !o.Gear && o.Phase == "entry", "gear on final by the FAF / 8 km (LAND5b), not at 12 km, never on the outbound leg");
         }
         Console.WriteLine("Round-3 plan parser / speed cap / porpoise / telemetry / approach: 16 behavior checks passed.");
         // ---- Round 3 (end of session): eject confirm, chatter/alerts, "we passed KSP", status honesty ----

@@ -12,7 +12,7 @@ namespace KSPChatBridge
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
         readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 1, rfApplied = -1; float rfLast;   // GROK RF1
-        int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
+        float configChangedAt = -100; int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
         internal static int FlapSetting { get { return instance == null ? 0 : instance.flapSet; } }
         internal static bool HasFlapsNow { get { return instance != null && instance.flaps.Count > 0; } }
         /// <summary>"FLAPS UP" / "FLAPS 2" / "FLAPS FULL" (+ limit); "" when the craft has no usable flaps.</summary>
@@ -119,7 +119,7 @@ namespace KSPChatBridge
                 if (climbSince >= 0 && Time.realtimeSinceStartup - climbSince > 3) { goAroundFlaps = false; return 0; }
                 return flapSet;
             }
-            if (mode == "landing" && runway != null) { int sch = FlapsPolicy.ApproachSetting(runway.Phase, runway.Distance, ApproachChart.ShortFix); bool air = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"; return air ? Math.Max(sch, FlapsPolicy.EarlySetting(Eas(), FlapLimit(), flapSet)) : sch; }   // Luke Oct 12: early flaps by speed
+            if (mode == "landing" && runway != null) { double faf = runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance; int sch = FlapsPolicy.ApproachSchedule(runway.Phase, runway.Distance, faf, flapSet, vessel.radarAltitude); if (FlapsPolicy.Frozen(runway.Distance, vessel.radarAltitude) && (runway.Phase == "final" || runway.Phase == "flare")) return flapSet; bool air = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"; return air && runway.Distance > Math.Max(faf, FlapsPolicy.FullByM + 1000) ? Math.Max(sch, FlapsPolicy.EarlySetting(Eas(), FlapLimit(), flapSet)) : sch; }   // GROK LAND5b: early, stepped, frozen inside 4 km / 300 m
             return 0;
         }
         void FlapsTick()
@@ -130,18 +130,19 @@ namespace KSPChatBridge
             if (flaps.Count == 0) return;
             RollFlapTick();
             int want = FlapsPolicy.GroundZero(vessel.LandedOrSplashed, mode, takeoffFlaps) ? 0 : FlapsWanted();   // Oct 12: the ground gate zeroed takeoff flaps
-            want = Math.Min(want, FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet));   // flap limit is a stall multiple: EAS (dfbcd0b)
+            bool latch = mode == "landing" && runway != null && FlapsPolicy.FinalLatch(runway.Phase == "final" || runway.Phase == "flare", runway.Distance, runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance, flapSet, Eas(), FlapLimit());
+            if (!latch) want = Math.Min(want, FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet)); else want = Math.Max(want, flapSet);   // GROK LAND5b: latched on final   // flap limit is a stall multiple: EAS (dfbcd0b)
             if (want == 0 && flapSet > 0 && learn != null && !learn.Done)
             {   // Learn flaps test ended / aborted / skipped / climbing back: all the way up at once, not a notch per 2 s
                 flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; ChatLog.Write("flaps", "UP (Learn flaps test over / climb-back)"); return;
             }
             if (want == 0 && flapSet > 0 && FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet) == 0)
             {   // GROK TO3: over the flap limit = all the way up now, not a notch per 2 s (live: still at 1 at 139/134)
-                flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; ChatLog.Write("flaps", "UP (over limit " + FlapLimit().ToString("0") + " at " + Eas().ToString("0") + " m/s)"); return;
+                flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; configChangedAt = Time.realtimeSinceStartup; ChatLog.Write("flaps", "UP (over limit " + FlapLimit().ToString("0") + " at " + Eas().ToString("0") + " m/s)"); return;
             }
             if (want != flapSet && Time.realtimeSinceStartup >= flapNextStep)
             {   // one notch at a time, 2 s apart
-                flapSet += Math.Sign(want - flapSet); flapNextStep = Time.realtimeSinceStartup + 2;
+                flapSet += Math.Sign(want - flapSet); flapNextStep = Time.realtimeSinceStartup + 2; configChangedAt = Time.realtimeSinceStartup;
                 if (flapSet == 0 && !goAroundFlaps) RestoreFlaps(); else ApplyFlaps();
                 ChatLog.Write("flaps", (takeoffFlaps ? (want >= flapSet ? "takeoff deploy " : "takeoff retract step ") : "") + FlapsPolicy.Name(flapSet) + " at " + vessel.radarAltitude.ToString("0") + " m AGL, " + Eas().ToString("0") + " m/s (limit " + FlapLimit().ToString("0") + ", " + flaps.Count + " surfaces, " + rollFlapCount + " roll-only)");
             }
