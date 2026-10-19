@@ -19,7 +19,7 @@ namespace KSPChatBridge
             string[] lines = (NativeFlightController.ApSummary() + "\n" +
                 (landing.Length > 0 ? landing : "No active landing / ETA")).Split('\n');
             float lh = Mathf.Max(26, tabletFont * 1.5f);
-            Rect c = TabletUi.CardPanel(new Rect(0, y, width, pad + lines.Length * lh), "Approach status");
+            Rect c = TabletUi.CardPanel(new Rect(0, y, width, pad + lines.Length * lh), "Landing status");
             for (int i = 0; i < lines.Length; i++)
                 TabletUi.Label(new Rect(c.x, c.y + i * lh, c.width, lh), lines[i]);
             y += pad + lines.Length * lh + gap;
@@ -53,7 +53,8 @@ namespace KSPChatBridge
             // Stack touch keys so they remain reachable at the minimum window size and largest font.
             {   // GROK TAB1: LANDING sub-page = one action button (GO AROUND / ABORT moved off; ABORT is a top tab)
                 bool enabled = TabletLink && rwySel >= 0 && rwySel < rw.Count;
-                if (TabletUi.ActionButton(new Rect(12, y, width - 24, row), "ENGAGE LANDING", enabled)) { ChatLog.Write("g", "tablet approach: LAND"); OnKey("approach", "LAND"); }
+                if (NativeFlightController.LandingJob) { ActiveJobRow(new Rect(12, y, width - 24, row), "LANDING ACTIVE"); enabled = true; }   // GROK TAB2: no restart on repeat presses
+                else if (TabletUi.ActionButton(new Rect(12, y, width - 24, row), "ENGAGE LANDING", enabled)) { ChatLog.Write("g", "tablet approach: LAND"); OnKey("approach", "LAND"); }
                 y += row + gap;
                 if (!enabled && TabletLink) { TabletUi.Label(new Rect(12, y, width - 24, row), "Pick a runway above first.", true); y += row + gap; }
             }

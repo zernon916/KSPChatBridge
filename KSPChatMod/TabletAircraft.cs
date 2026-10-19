@@ -69,8 +69,16 @@ namespace KSPChatBridge
             if (v != null) lines.Add("Situation: " + v.situation + (v.LandedOrSplashed ? " (on the ground)" : " (airborne)"));
             float y = area.y + TextCard(area, "Takeoff", lines) + 10;
             bool can = TabletLink && v != null && v.LandedOrSplashed;
+            if (NativeFlightController.Phase == "takeoff") { ActiveJobRow(new Rect(area.x, y, area.width, row), "TAKEOFF ACTIVE"); return; }   // GROK TAB2: repeat presses impossible while active
             if (TabletUi.ActionButton(new Rect(area.x, y, area.width, row), "ENGAGE TAKEOFF", can)) { ChatLog.Write("tablet", "ENGAGE TAKEOFF"); OnKey("aircraft", "TAKEOFF"); }
             if (!can) TabletUi.Label(new Rect(area.x, y + row + 6, area.width, row), !TabletLink ? "INFO ONLY - turn LIVE LINK on to use the controls" : "Takeoff needs the craft on the ground.", true);
+        }
+        /// <summary>GROK TAB2: running job = status text + a DISENGAGE action (stop_current), instead of the ENGAGE button.</summary>
+        void ActiveJobRow(Rect r, string what)
+        {
+            float bw = Mathf.Max(160, r.width * .35f);
+            TabletUi.Status(new Rect(r.x, r.y, r.width - bw - 10, r.height), what + "  (" + NativeFlightController.JobText + ")", TabletUi.Good);
+            if (TabletUi.ActionButton(new Rect(r.xMax - bw, r.y, bw, r.height), "DISENGAGE", TabletLink)) { ChatLog.Write("tablet", what + ": DISENGAGE"); OnKey("aircraft", "STOP"); }
         }
         /// <summary>STATUS sub-page (phase 1): the autopilot summary / status lines + posting the full status to the chat.</summary>
         void TabletStatusSub(Rect area)
@@ -114,8 +122,8 @@ namespace KSPChatBridge
             for (int i = 0; i < sum.Length; i++) TabletUi.Label(new Rect(c.x, c.y + i * lh, c.width, lh), sum[i].Trim(), !sum[i].StartsWith("Target"));
             float cy = c.y + sum.Length * lh + 6, cw = (c.width - gap) / 2;
             TabletUi.Status(new Rect(c.x, cy, cw, ch), apEngaged ? "HOLDS ENGAGED" : "HOLDS OFF", apEngaged ? TabletUi.Good : TabletUi.Dim);   // GROK TAB1: status text, not a button look
-            string job = NativeFlightController.Phase;
-            TabletUi.Status(new Rect(c.x + cw + gap, cy, cw, ch), "JOB " + job.ToUpperInvariant(), job == "idle" ? TabletUi.Dim : TabletUi.Accent);
+            string job = NativeFlightController.JobText;   // GROK TAB2: plain words, LANDING never shows as "hold"
+            TabletUi.Status(new Rect(c.x + cw + gap, cy, cw, ch), job, job == "IDLE" ? TabletUi.Dim : TabletUi.Accent);
             return h + gap;
         }
 

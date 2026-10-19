@@ -1745,6 +1745,8 @@ class Program
             Check(TabletNav.DeviationText(false, true, -2199, "#,0", "m") == "-" && TabletNav.DeviationText(true, false, -250, "0.0", "m/s") == "-" && TabletNav.DeviationText(true, true, -12.5, "0.0", "m/s") == "-12.5 m/s", "live vs target shows '-' unless holds engaged and that hold on");
             Check(TabletNav.LightAction(true, false, true) == "disengage" && TabletNav.LightAction(false, true, true) == "engage" && TabletNav.LightAction(false, false, true) == null && TabletNav.LightAction(true, true, false) == null, "AP light: toggle from real state, airborne engage only, dead without LIVE LINK");
             Console.WriteLine("Flight tablet nav model: 10 behavior checks passed.");
+            Check(TabletNav.JobText("hold", null, true) == "LANDING - CRUISE TO RUNWAY" && TabletNav.JobText("landing", "entry", false) == "LANDING - APPROACH (join)" && TabletNav.JobText("landing", "final", false) == "LANDING - FINAL"
+                && TabletNav.JobText("landing", "flare", false) == "LANDING - TOUCHDOWN" && TabletNav.JobText("landing", "rollout", false) == "LANDING - ROLLOUT" && TabletNav.JobText("hold", null, false) == "HOLDS" && TabletNav.JobText("idle", null, false) == "IDLE", "GROK TAB2: plain-words job / stage; landing never reads 'hold'");
         }
             }
             Console.WriteLine("Approach charts + morning bugs: 18 behavior checks passed.");

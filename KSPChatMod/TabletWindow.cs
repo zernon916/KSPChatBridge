@@ -420,7 +420,7 @@ namespace KSPChatBridge
             TabletUi.Bar(new Rect(c2.x, c2.y + bh + 6, c2.width, bh), "Mach", (float)(v.mach / 3), v.mach.ToString("0.00"), TabletUi.Series[2]);
             {   // GROK TAB1: tappable AP light from the real autopilot state: tap = disengage, or engage holds at the current alt / heading / speed
                 bool real = NativeFlightController.Active; string act = TabletNav.LightAction(real, !v.LandedOrSplashed, TabletLink);
-                if (TabletUi.Light(new Rect(c2.x, c2.y + 2 * bh + 12, c2.width, apHeight), (real ? "AP ON  " : "AP OFF  ") + ap + (act == null ? "" : real ? "  (tap: off)" : "  (tap: hold current)"), real, act != null)) ToggleHoldsFromLight(v, hdg, act);
+                if (TabletUi.Light(new Rect(c2.x, c2.y + 2 * bh + 12, c2.width, apHeight), (real ? "AP ON  " + NativeFlightController.JobText : "AP OFF") + (act == null ? "" : real ? "  (tap: off)" : "  (tap: hold current)"), real, act != null)) ToggleHoldsFromLight(v, hdg, act);
             }
             // row 3: live graph
             float y3 = y2 + dh + gap; if (area.yMax - y3 < 80) return;

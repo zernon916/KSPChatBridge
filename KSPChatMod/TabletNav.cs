@@ -44,6 +44,27 @@ namespace KSPChatBridge
         { return !ShowDeviation(holdsEngaged, holdOn) || double.IsNaN(err) ? "-" : (err < 0 ? "-" : "+") + Math.Abs(err).ToString(fmt, System.Globalization.CultureInfo.InvariantCulture) + " " + unit; }
         /// <summary>FLIGHT page light: tapping it disengages when the autopilot is on, else engages holds at the current values
         /// (only airborne). Returns "disengage" | "engage" | null (not allowed).</summary>
+        /// <summary>GROK TAB2: plain-words job + stage. A landing job is LANDING from the ferry on (never "hold"):
+        /// CRUISE TO RUNWAY / APPROACH (join / intercept) / FINAL / TOUCHDOWN / ROLLOUT / GO AROUND.</summary>
+        internal static void JobLabel(string mode, string phase, bool ferryPending, out string job, out string stage)
+        {
+            stage = "";
+            if (ferryPending) { job = "LANDING"; stage = "CRUISE TO RUNWAY"; return; }
+            switch (mode ?? "idle")
+            {
+                case "landing":
+                    job = "LANDING";
+                    stage = phase == "entry" ? "APPROACH (join)" : phase == "intercept" ? "APPROACH (intercept)" : phase == "final" ? "FINAL"
+                        : phase == "flare" ? "TOUCHDOWN" : phase == "rollout" ? "ROLLOUT" : phase == "go around" ? "GO AROUND" : (phase ?? "").ToUpperInvariant();
+                    return;
+                case "takeoff": job = "TAKEOFF"; stage = (phase ?? "").ToUpperInvariant(); return;
+                case "hold": job = "HOLDS"; return;
+                case "idle": job = "IDLE"; return;
+                default: job = mode.ToUpperInvariant(); return;
+            }
+        }
+        internal static string JobText(string mode, string phase, bool ferryPending)
+        { string j, s; JobLabel(mode, phase, ferryPending, out j, out s); return s.Length > 0 ? j + " - " + s : j; }
         internal static string LightAction(bool apActive, bool airborne, bool link) { return !link ? null : apActive ? "disengage" : airborne ? "engage" : null; }
     }
 }

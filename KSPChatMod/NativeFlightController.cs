@@ -298,7 +298,13 @@ namespace KSPChatBridge
             return false;
         }
         /// <summary>GROK FIX1: real hold state for the tablet / control-box HOLDS chip (was a UI-only flag).</summary>
-        internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold"; } }
+        internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold" && instance.pendingLand == null; } }   // ferry = landing job, not holds
+        internal static bool FerryPending { get { return instance != null && instance.mode == "hold" && instance.pendingLand != null; } }
+        internal static string RunwayPhase { get { return instance == null || instance.runway == null ? null : instance.runway.Phase; } }
+        internal static string TakeoffPhase { get { return instance == null || instance.takeoff == null ? null : instance.takeoff.Phase; } }
+        /// <summary>GROK TAB2: plain-words job for the tablet ("LANDING - FINAL").</summary>
+        internal static string JobText { get { return instance == null ? "IDLE" : TabletNav.JobText(instance.mode, instance.mode == "takeoff" ? TakeoffPhase : RunwayPhase, FerryPending); } }
+        internal static bool LandingJob { get { return FerryPending || Phase == "landing"; } }
         float nextChartPoll;
         static DecelLearner decelStore; double decelPrevV = -1; float decelSaveAt;
         static string DecelPath { get { return System.IO.Path.Combine(AicsCore.PluginDataDirectory, "decel_profiles.json"); } }
