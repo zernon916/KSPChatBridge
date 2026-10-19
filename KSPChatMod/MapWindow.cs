@@ -245,7 +245,7 @@ namespace KSPChatBridge
             {   // GROK MAP1: predicted path to the current fix at the bank the controller will fly (amber)
                 double pb = act.TurnBank > 0 ? act.TurnBank : 25; var tw = act.Route[act.RouteIndex]; var amber = new Color(1f, .78f, .15f);
                 Vector3d sv = v.srf_velocity; double trk = sv.magnitude > 5 ? (Math.Atan2(Vector3d.Dot(sv, Vector3d.Cross(v.upAxis, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)), Vector3d.Dot(sv, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)) * 180 / Math.PI + 360) % 360 : FlightGlobals.ship_heading;
-                var pp = PredictedPath.Points(v.latitude, v.longitude, trk, v.srfSpeed, pb, tw.Lat, tw.Lon, body.Radius);
+                var pp = act.DubinsPts != null && act.DubinsPts.Count > 1 ? act.DubinsPts : PredictedPath.Points(v.latitude, v.longitude, trk, v.srfSpeed, pb, tw.Lat, tw.Lon, body.Radius);   // GROK JOIN1: the planned Dubins path, aligned at the fix
                 for (int i = 1; i < pp.Count; i++) MfdInk.Line(c, Proj(pp[i - 1][0], pp[i - 1][1]), Proj(pp[i][0], pp[i][1]), amber, 2);
                 var lp = Proj(pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][0], pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][1]);
                 Tag(c, new Rect(lp.x + 6, lp.y + 4, 150, 18), "predicted (bank " + Math.Round(pb) + ")");

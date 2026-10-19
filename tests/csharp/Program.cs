@@ -164,6 +164,31 @@ class Program
                 Check(TakeoffMission.ClimbPitch(60, 60, 30) == 5 && TakeoffMission.ClimbPitch(85, 60, 30) == 30 && TakeoffMission.ClimbPitch(120, 60, 15) == 15 && TakeoffMission.ClimbPitch(120, 60, 80) == 45, "GROK TO1: shallow at V2, up to max climb pitch (bounded)");
                 var e = new TakeoffMission(0); e.Step(1, 55, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout", "GROK TO1: no handoff above 100 m until V2");
                 e.Step(2, 62, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout complete", "GROK TO1: handoff at V2");
+                {   // GROK JOIN1: Dubins join path geometry + join rejection
+                    Check(Math.Abs(PredictedPath.Radius(100, 30) - 10000 / (9.81 * Math.Tan(Math.PI / 6))) < 1e-6, "GROK JOIN1: radius = v^2/(g tan bank)");
+                    double[][] cases = { new double[] { 3000, 8000, 270 }, new double[] { -2000, 9000, 90 }, new double[] { 500, -6000, 0 }, new double[] { 1000, 2500, 180 }, new double[] { -9000, -3000, 45 } };
+                    int good = 0; string worst = "";
+                    foreach (var cs in cases)
+                    {
+                        const double r = 1500, v = 100, dt = .05; var dp0 = DubinsPath.Plan(0, 0, 0, cs[0], cs[1], cs[2], r);
+                        Check(dp0 != null && Math.Abs(dp0.Length - ApproachChart.Dubins(0, 0, 0, cs[0], cs[1], cs[2], r)) < 1, "GROK JOIN1: CSC length matches the planner (" + (dp0 == null ? "null" : dp0.Type + " " + Math.Round(dp0.Length) + " vs " + Math.Round(ApproachChart.Dubins(0, 0, 0, cs[0], cs[1], cs[2], r))) + ")");
+                        Check(dp0 != null && Math.Abs(Math.Sqrt(Math.Pow(dp0.T1[0] - dp0.C1[0], 2) + Math.Pow(dp0.T1[1] - dp0.C1[1], 2)) - r) < 1 && Math.Abs(Math.Sqrt(Math.Pow(dp0.T2[0] - dp0.C2[0], 2) + Math.Pow(dp0.T2[1] - dp0.C2[1], 2)) - r) < 1, "GROK JOIN1: tangent points on the turn circles");
+                        double x = 0, y = 0, h = 0, best = 1e9, errAt = 999, maxRate = v / r * 180 / Math.PI; string typ = null;
+                        for (int i = 0; i < 20000; i++)
+                        {
+                            DubinsPath dp; double cmd = DubinsPath.JoinSteer(x, y, h, cs[0], cs[1], cs[2], r * 1.05, typ, out dp); typ = dp.Type;
+                            double err = FlightPolicy.Wrap(cmd - h); h = DubinsPath.Norm(h + FlightPolicy.Clamp(err * .5, -maxRate, maxRate) * dt);
+                            x += v * dt * Math.Sin(h * Math.PI / 180); y += v * dt * Math.Cos(h * Math.PI / 180);
+                            double d = Math.Sqrt((x - cs[0]) * (x - cs[0]) + (y - cs[1]) * (y - cs[1])); if (d < best) { best = d; errAt = Math.Abs(FlightPolicy.Wrap(h - cs[2])); }
+                            if (d < 100) break;
+                        }
+                        if (best < 300 && errAt < 5) good++; else worst += " [" + cs[0] + "," + cs[1] + "," + cs[2] + ": miss " + Math.Round(best) + " m, course err " + errAt.ToString("0.0") + "]";
+                    }
+                    Check(good == cases.Length, "GROK JOIN1: flown Dubins path arrives at the fix on its course (<5 deg)" + worst);
+                    string fw; var tight = new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 4400 }, new double[] { 300, 4400 }, new double[] { 300, 0 } };
+                    Check(!DubinsPath.Flyable(tight, 16000, out fw) && fw.Contains("needs") && DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 20000 }, new double[] { 20000, 20000 }, new double[] { 20000, 0 } }, 3000, out fw), "GROK JOIN1: joins needing more turn room than they have are rejected (" + fw + ")");
+                    Check(DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 6000 } }, 16000, out fw), "GROK JOIN1: a straight-in final is always flyable");
+                }
                 {   // GROK TO2: takeoff settings
                     var ts = new TakeoffSettings(); Check(ts.ToJson() == "{\"altitude_m\":300,\"max_pitch\":30,\"use_flaps\":true}", "GROK TO2: defaults -> runway heading, auto climb (" + ts.ToJson() + ")");
                     ts.Alt = "1500"; ts.Climb = "12"; ts.Hdg = "-90"; ts.MaxPitch = "20"; ts.Flaps = false; var back = TakeoffSettings.Parse(ts.Serialize());
