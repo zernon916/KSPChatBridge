@@ -280,6 +280,9 @@ namespace KSPChatBridge
         }
         /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
         internal static bool AirbrakesByAutopilot;
+        bool recoveryWasActive;
+        /// <summary>GROK FIX1: real hold state for the tablet / control-box HOLDS chip (was a UI-only flag).</summary>
+        internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold"; } }
         float nextChartPoll;
         static DecelLearner decelStore; double decelPrevV = -1; float decelSaveAt;
         static string DecelPath { get { return System.IO.Path.Combine(AicsCore.PluginDataDirectory, "decel_profiles.json"); } }
@@ -419,6 +422,8 @@ namespace KSPChatBridge
             catch (Exception ex) { ChatWindow.Notice("Local engine restart failed: " + ex.Message); }
             try
             {
+                if (NativeSafety.RebaselineOnEngage(Active, recoveryWasActive)) { recovery = new NativeRecovery(vessel); ChatLog.Write("ap", "recovery baseline re-snapshotted at engage (" + mode + ")"); }   // GROK FIX1
+                recoveryWasActive = Active;
                 bool revert = NativeSafety.ShouldRevert(Active, flying);
                 int restored = recovery.Tick(vessel, now, revert);
                 restored += reversers.Recover(vessel, now, revert);

@@ -16,6 +16,9 @@ namespace KSPChatBridge
         internal static bool ParkingIdle(string mode, bool commandActive) { return mode == "idle" && !commandActive; }
         /// <summary>Sabotage revert runs in flight while the native controller is flying.</summary>
         internal static bool ShouldRevert(bool nativeActive, bool flying) { return flying && nativeActive; }
+        /// <summary>GROK FIX1: the tamper baseline is re-taken whenever the autopilot engages (holds or any job), so a load-time
+        /// snapshot (parking brake, pilot changes since) is never replayed in flight.</summary>
+        internal static bool RebaselineOnEngage(bool active, bool wasActive) { return active && !wasActive; }
 
         /// <summary>Parking brake for wheeled grounded craft:
         /// re-arm after landing from flight; set once on the ground when idle; a player brake-off releases

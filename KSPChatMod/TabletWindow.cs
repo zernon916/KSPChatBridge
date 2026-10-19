@@ -72,7 +72,7 @@ namespace KSPChatBridge
             tabletRect = GUI.Window(TabletId, tabletRect, DrawTablet, "", GUIStyle.none);
         }
 
-        float tabletErrorNext;
+        float tabletErrorNext, linkNoteUntil;
         void DrawTablet(int id)
         {
             float W = tabletRect.width, H = tabletRect.height, b = TabletBezel;
@@ -91,6 +91,10 @@ namespace KSPChatBridge
             Rect scr = new Rect(b, TabletHead, W - 2 * b, H - TabletHead - TabletTabH - b);
             GUI.Box(scr, "", tabletScreen);
             Rect area = new Rect(scr.x + 10, scr.y + 8, scr.width - 20, scr.height - 16);
+            // GROK FIX1: a press on a page control while LIVE LINK is off is dropped - say so (log + short note) instead of silence
+            if (!TabletLink && !homeVisible && Event.current.type == EventType.MouseDown && scr.Contains(Event.current.mousePosition) && Time.realtimeSinceStartup > linkNoteUntil - 2.5f)
+            { linkNoteUntil = Time.realtimeSinceStartup + 3; ChatLog.Write("tablet", "press ignored on " + TabletTabs[tabletTab] + " page: LIVE LINK off - command not sent"); }
+            if (!TabletLink && Time.realtimeSinceStartup < linkNoteUntil) GUI.Label(new Rect(scr.x + 10, scr.yMax - tabletFont * 3.4f, scr.width - 20, tabletFont * 1.6f), "LIVE LINK off - command not sent", tabletText);
             var saved = GUI.skin; GUI.skin = mfdSkin;
             try
             {

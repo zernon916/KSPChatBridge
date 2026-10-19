@@ -759,6 +759,19 @@ class Program
         resource.flowState = false; safeguards.Tick(vessel, 8, true); part.vessel = null;
         Check(safeguards.Tick(vessel, 12, true) == 0 && !resource.flowState, "lost resource owner excluded");
         Console.WriteLine("Action groups and resource recovery: 4 behavior checks passed.");
+        {   // GROK FIX1: Oct 19 nose dive - parking brake snapshot replayed in flight
+            var bv = new Vessel(); var bp = new Part { vessel = bv }; bv.parts.Add(bp); var elevon = new ModuleControlSurface { part = bp, deploy = true }; bp.Modules.Add(elevon);
+            bv.ActionGroups.SetGroup(KSPActionGroup.Brakes, true);
+            var br = new NativeRecovery(bv);
+            bv.ActionGroups.SetGroup(KSPActionGroup.Brakes, false); elevon.deploy = false;   // pilot releases brakes by hand
+            br.Tick(bv, 0, true);
+            Check(br.Tick(bv, 5, true) == 0 && !bv.ActionGroups[KSPActionGroup.Brakes] && !elevon.deploy, "brakes released by the pilot are never re-applied in flight");
+            br.AcceptGroup(bv, KSPActionGroup.Brakes, true); bv.ActionGroups.SetGroup(KSPActionGroup.Brakes, false); br.Tick(bv, 10, true);
+            Check(br.Tick(bv, 15, true) == 0 && !bv.ActionGroups[KSPActionGroup.Brakes], "own Brakes command is not a tamper baseline either");
+            Check(!NativeRecovery.Tracked(KSPActionGroup.Brakes) && NativeRecovery.Tracked(KSPActionGroup.Light), "only Brakes is exempt");
+            Check(NativeSafety.RebaselineOnEngage(true, false) && !NativeSafety.RebaselineOnEngage(true, true) && !NativeSafety.RebaselineOnEngage(false, true), "baseline re-taken on every engage edge");
+            Console.WriteLine("Brakes never restored in flight: 4 behavior checks passed.");
+        }
         Check(FlightPolicy.Trim(.1, .01) == .1, "neutral trim deadband");
         Check(Math.Abs(FlightPolicy.Trim(.1, .3) - .115) < 1e-9, "trim toward neutral stick");
         Check(FlightPolicy.Trim(1, 1) == 1 && FlightPolicy.Trim(-1, -1) == -1, "trim bounded");

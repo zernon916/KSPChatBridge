@@ -65,6 +65,7 @@ namespace KSPChatBridge
         /// <summary>Card 1: the panel's own summary lines (job / plan / target) + holds state and the live job.</summary>
         float AircraftSummaryCard(Rect r0, float gap)
         {
+            apEngaged = NativeFlightController.HoldsEngaged;   // GROK FIX1: chip follows the real autopilot, not the last button press
             var sum = NativeFlightController.ApSummary().Split('\n');
             float lh = Mathf.Max(22, tabletFont * 1.45f), ch = Mathf.Max(30, tabletFont * 1.9f);
             float h = 12 + lh * sum.Length + 6 + ch + 10;

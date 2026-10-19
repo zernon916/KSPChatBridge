@@ -21,8 +21,8 @@ namespace KSPChatBridge
         internal NativeRecovery(Vessel vessel)
         {
             foreach (KSPActionGroup group in Enum.GetValues(typeof(KSPActionGroup)))
-                if (group == KSPActionGroup.Light || group == KSPActionGroup.Brakes
-                    || group == KSPActionGroup.SAS || group == KSPActionGroup.RCS || group.ToString().StartsWith("Custom"))
+                if (Tracked(group) && (group == KSPActionGroup.Light
+                    || group == KSPActionGroup.SAS || group == KSPActionGroup.RCS || group.ToString().StartsWith("Custom")))
                     AcceptGroup(vessel, group, vessel.ActionGroups[group]);
             foreach (Part part in vessel.parts) foreach (PartResource resource in part.Resources)
             {
@@ -65,9 +65,14 @@ namespace KSPChatBridge
         // control surface is re-snapshotted as ours instead of being flagged as tampering.
         bool ownPending; double ownAt = double.NegativeInfinity; internal const double OwnGraceS = 3;
         internal static bool InOwnGrace(double now, double ownAt) { return now - ownAt >= 0 && now - ownAt < OwnGraceS; }
+        // GROK FIX1 (Oct 19 flight): a Brakes snapshot taken at load (parking brake ON) was "restored" in flight on hold engage;
+        // on that plane Brakes also deploys elevons/winglets -> pitch -23 deg into the water. The Brakes group is owned by the
+        // approach / parking logic and is never tamper-reverted.
+        internal static bool Tracked(KSPActionGroup group) { return group != KSPActionGroup.Brakes; }
         internal void AcceptGroup(Vessel vessel, KSPActionGroup group, bool value)
         {
             ownPending = true;
+            if (!Tracked(group)) return;
             Entry existing; if (entries.TryGetValue(group, out existing) && existing.Desired == value) return;
             entries[group] = new Entry { Desired = value, Alive = () => true, Changed = () => vessel.ActionGroups[group] != value,
                 Restore = () => vessel.ActionGroups.SetGroup(group, value) };
@@ -76,13 +81,13 @@ namespace KSPChatBridge
         {
             ownPending = true;
             float angle = surface.deployAngle, authority = surface.authorityLimiter;
-            bool deploy = surface.deploy, invert = surface.deployInvert, partInvert = surface.partDeployInvert,
+            bool invert = surface.deployInvert, partInvert = surface.partDeployInvert,
                 pitch = surface.ignorePitch, roll = surface.ignoreRoll, yaw = surface.ignoreYaw;
             entries[surface] = new Entry { Module = surface,
                 Changed = () => Math.Abs(surface.deployAngle - angle) > .01 || Math.Abs(surface.authorityLimiter - authority) > .01
-                    || surface.deploy != deploy || surface.deployInvert != invert || surface.partDeployInvert != partInvert
+                    || surface.deployInvert != invert || surface.partDeployInvert != partInvert
                     || surface.ignorePitch != pitch || surface.ignoreRoll != roll || surface.ignoreYaw != yaw,
-                Restore = () => { surface.deployAngle = angle; surface.authorityLimiter = authority; surface.deploy = deploy;
+                Restore = () => { surface.deployAngle = angle; surface.authorityLimiter = authority;   // deploy is left alone: it follows Brakes (GROK FIX1)
                     surface.deployInvert = invert; surface.partDeployInvert = partInvert;
                     surface.ignorePitch = pitch; surface.ignoreRoll = roll; surface.ignoreYaw = yaw; } };
         }
