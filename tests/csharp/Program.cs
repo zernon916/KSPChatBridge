@@ -129,6 +129,22 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND4e regression (live 04:06:39): on extended final 35 km east of KSC 27, heading 090 (outbound), speed 189 - was LSL 240/300 figure-8 to the FAF
+            double bank = DubinsPath.MedianBank(30), planSpd = DubinsPath.JoinPlanSpeed(150, 189), r = PredictedPath.Radius(planSpd, bank);
+            Check(bank >= 20 && planSpd <= 150 && r < 9000 && r > 4000, "LAND4e: plan radius at entry speed / median bank 20+ (was r 12.4 km at 189/16)");
+            double fd, ft; var fj = DubinsPath.FinalJoin(0, 0, 90, -35000, 0, 270, r, 9400, 40000, null, out fd, out ft);
+            Check(fj != null, "LAND4e: FinalJoin finds a path for outbound-on-final 35 km");
+            Check(fj != null && !DubinsPath.FigureEight(fj) && DubinsPath.TurnDeg(fj) <= 270, "LAND4e: teardrop turnaround, total turn <= 270 (was LSL 240/300 = 540)");
+            Check(fj != null && fj.A1 >= 30 && fj.A1 <= 270, "LAND4e: first turn is a real turnaround (not a tiny wiggle)");
+            // same geometry at 150 m/s and at the live 189/16 inflated radius - still no figure-8 once Plan prefers low turn
+            double r2 = PredictedPath.Radius(150, bank); double fd2, ft2; var fj2 = DubinsPath.FinalJoin(0, 0, 90, -35000, 0, 270, r2, 9400, 40000, null, out fd2, out ft2);
+            Check(fj2 != null && !DubinsPath.FigureEight(fj2) && DubinsPath.TurnDeg(fj2) <= 270, "LAND4e: same teardrop at 150 m/s");
+            // at the live inflated r, opposite-turn (LSR/RSL) paths to the FAF are geometrically impossible (need centres >= 2r apart) - so FinalJoin must extend past the plane where a teardrop fits
+            double rOld = PredictedPath.Radius(189, 16); double fdOld, ftOld; var fjOld = DubinsPath.FinalJoin(0, 0, 90, -35000, 0, 270, rOld, 9400, 40000, null, out fdOld, out ftOld);
+            Check(fjOld != null && !DubinsPath.FigureEight(fjOld) && DubinsPath.TurnDeg(fjOld) <= 270 && fdOld > 35000, "LAND4e: at live r 12 km, FinalJoin picks a <=270 deg teardrop past the plane");
+            Check(fd >= 9400 && !DubinsPath.FigureEight(fj) && DubinsPath.TurnDeg(fj) <= 270, "LAND4e: chosen join is no figure-8");
+            if (fj != null) Console.WriteLine("LAND4e path: " + fj.Type + " " + Math.Round(fj.A1) + "/" + Math.Round(fj.A2) + " r=" + Math.Round(r) + " d=" + Math.Round(fd) + " len=" + Math.Round(ft) + " turn=" + Math.Round(DubinsPath.TurnDeg(fj)) + " bank=" + bank.ToString("0.0") + " spd=" + planSpd.ToString("0"));
+        }
         {   // GROK LAND4d regression (live 03:46-03:48): join to D9.4KSC flip-flopped LSL/LSR/RSL every 10-30 s with r 8.3-10.7 km; replay with track/speed noise
             var rnd = new Random(7); int worst = 0; bool arrivedAll = true; double rLock = PredictedPath.Radius(230, DubinsPath.MedianBank(30));
             foreach (var st4 in new[] { new[] { 20000.0, -18000, 0 }, new[] { 30000.0, 9000, 200 }, new[] { -5000.0, -25000, 90 }, new[] { 15000.0, 12000, 150 } })
@@ -152,7 +168,7 @@ class Program
             }
             Check(worst == 0, "LAND4d: no first-turn reversal once established in the committed join turn (track/speed noise)");
             Check(arrivedAll, "LAND4d: locked median-bk4 joins still arrive on the final course");
-            Check(Math.Abs(DubinsPath.MedianBank(30) - 16.5) < .01 && DubinsPath.MedianBank(12) >= 10 && DubinsPath.MedianBank(8) <= 8, "LAND4d: plan bank = 55% of the safe bank (min 10)");
+            Check(Math.Abs(DubinsPath.MedianBank(30) - 20) < .01 && DubinsPath.MedianBank(40) >= 20 && Math.Abs(DubinsPath.MedianBank(50) - 27.5) < .01, "LAND4d/e: plan bank = 55% of the safe bank (min 20)");
             Check(Math.Abs(DubinsPath.ArcBank(1, 5000, 5000, 16, 30) - 16) < .01 && Math.Abs(DubinsPath.ArcBank(-1, 5600, 5000, 16, 30) + 30) < .01 && DubinsPath.ArcBank(1, 4500, 5000, 16, 30) < 16 && DubinsPath.ArcBank(1, 4000, 5000, 16, 30) >= 0, "LAND4d: circle bank = plan bank + reserve to pull back");
         }
         {   // GROK RF1: ROLL / FLAPS role
