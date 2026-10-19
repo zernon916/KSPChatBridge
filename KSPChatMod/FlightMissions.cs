@@ -481,6 +481,24 @@ namespace KSPChatBridge
     }
 
     /// <summary>Per-craft deceleration at idle (and idle + airbrakes) vs speed, learned in flight, persisted (Luke). Pure; tested.</summary>
+    /// <summary>GROK FIX3 (Oct 19 airbrake chatter on approach): stateful airbrake hysteresis - out above plan + 8 m/s, in below
+    /// plan + 2, at least DwellS between changes. Not allowed (ground / below 30 m) retracts at once. A pilot toggle is adopted
+    /// as the current state. Step returns true when the airbrakes should change; Why says why (for the [brakes] log).</summary>
+    internal sealed class AirbrakeGate
+    {
+        internal const double OnAbove = 8, OffBelow = 2, DwellS = 3;
+        internal bool On; internal string Why = ""; double changedAt = double.NegativeInfinity;
+        internal bool Step(double now, bool actual, double speed, double plan, bool allowed)
+        {
+            On = actual;
+            bool want = allowed && (On ? speed > plan + OffBelow : speed > plan + OnAbove);
+            if (want == On) return false;
+            if (allowed && now - changedAt < DwellS) return false;
+            Why = string.Format(System.Globalization.CultureInfo.InvariantCulture, "airbrakes {0}: {1:0} m/s vs plan {2:0} ({3})", want ? "OUT" : "IN", speed, plan,
+                !allowed ? "not allowed here" : want ? "> plan + " + OnAbove : "< plan + " + OffBelow);
+            On = want; changedAt = now; return true;
+        }
+    }
     internal sealed class DecelLearner
     {
         internal const double Bin = 20; const int Bins = 16;

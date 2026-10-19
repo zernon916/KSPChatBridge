@@ -23,6 +23,19 @@ internal static class ThrottleLearnTests
         Check(ApproachProfile.RecoverSink(156, .052, 800, 28) > 2 * 156 * .052 && ApproachProfile.RecoverSink(156, .052, 800, 28) <= 28 && ApproachProfile.RecoverSink(156, .052, 0, 28) < 9, "high on final: steeper descent, within learned sink");
         // Oct 12 19:12-19:15 A300: entry planned 700 m to 24 km, intercept planned 1325 -> 564 m low; brakes out at 145 vs plan 171
         Check(ApproachProfile.EntryAlt(700, 1325, 3640) == 1325 && ApproachProfile.EntryAlt(700, 1325, 761) == 761 && ApproachProfile.EntryAlt(1500, 1325, 761) == 1500 && ApproachProfile.EntryAlt(700, double.NaN, 3000) == 700, "entry alt: never below the next leg's plan; low -> hold, never descend");
+        {   // GROK FIX3: airbrake hysteresis + dwell (Oct 19 chatter)
+            var g = new AirbrakeGate();
+            Check(!g.Step(0, false, 177, 171, true) && g.Step(1, false, 180, 171, true) && g.On, "airbrakes out only above plan + 8");
+            Check(!g.Step(2, true, 172, 171, true) && g.On, "no retract inside the 3 s dwell");
+            Check(!g.Step(4.5, true, 174, 171, true) && g.On, "stays out between plan + 2 and plan + 8 (hysteresis)");
+            Check(g.Step(5, true, 173.5, 171, true) == false && g.Step(5.1, true, 173.1, 171, true) == false && g.On, "still above plan + 2: out");
+            Check(g.Step(6, true, 172.9 - 1, 171, true) && !g.On, "in below plan + 2 after the dwell");
+            Check(!g.Step(7, false, 185, 171, true) && g.Step(9.1, false, 185, 171, true), "next change waits 3 s again");
+            Check(g.Step(9.2, true, 185, 171, false) && !g.On, "not allowed (ground / low / elevon brakes) retracts at once");
+            int flips = 0; bool st = false; for (int k = 0; k < 600; k++) { double v = 171 + 5 + 4 * Math.Sin(k * .3); if (g.Step(20 + k * .02, st, v, 171, true)) { st = g.On; flips++; } }
+            Check(flips <= 4, "speed oscillating +1..+9 over plan for 12 s: <= 4 airbrake changes (was every frame), got " + flips);
+            Console.WriteLine("Airbrake hysteresis: 8 behavior checks passed.");
+        }
         Check(!ApproachProfile.BrakesWanted(true, true, 145, 171) && !ApproachProfile.BrakesWanted(false, true, 170, 171) && ApproachProfile.BrakesWanted(false, true, 180, 171) && ApproachProfile.BrakesWanted(true, false, 185, 171), "speedbrakes only above plan speed (HIGH alone below plan: retracted)");
         Check(MfdNav.LearnKeyAction("aircraft", "LEARN") == "open" && MfdNav.LearnKeyAction("about", "LEARN") == "open" && MfdNav.LearnKeyAction("learn", "START LEARN") == "start" && MfdNav.LearnKeyAction("aircraft", "TAKEOFF") == null && MfdNav.Right("learn")[0] == "START LEARN" && MfdNav.Right("aircraft")[5] == "LEARN", "LEARN key only opens the page; START LEARN starts");        Check(FlapsPolicy.EarlySetting(130, 120, 0) == 0 && FlapsPolicy.EarlySetting(119, 120, 0) == 1 && FlapsPolicy.EarlySetting(111, 120, 0) == 2 && FlapsPolicy.EarlySetting(100, 120, 0) == 3 && FlapsPolicy.EarlySetting(124, 120, 1) == 1 && ApproachProfile.BrakesWanted(false, false, 175, 171) && ApproachProfile.IdleWanted(false, 190, 171, true) && !ApproachProfile.IdleWanted(false, 180, 171, true) && !ApproachProfile.IdleWanted(false, 190, 171, false), "early flaps per step limit; brakes above plan; idle when well fast near short final");        Check(!ApproachProfile.IdleWanted(true, 150, 171) && ApproachProfile.IdleWanted(true, 168, 171) && !ApproachProfile.IdleWanted(false, 200, 171), "high: idle unless slower than plan - 5 (then the speed hold flies the throttle)");        Check(ApproachProfile.PlanDecel(.5, true) > .5 && double.IsNaN(ApproachProfile.PlanDecel(double.NaN, true)), "plan decel: learned decel boosted by speedbrakes");
         var rm = new RunwayMission(); rm.GoAroundReset();

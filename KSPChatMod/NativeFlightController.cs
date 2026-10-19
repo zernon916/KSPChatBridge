@@ -277,10 +277,25 @@ namespace KSPChatBridge
               ChatLog.Write("vessel", "class " + CraftClass.Label(CraftCls, craftOverride) + " span " + (hi - lo).ToString("0") + " m"); }
             foreach (Part p in vessel.parts) foreach (PartModule m in p.Modules)
             { var s = m as ModuleControlSurface; if (s != null) originals[s] = new SurfaceState(s); }
+            { string bw; brakesMoveControls = BrakesMoveControls(vessel, out bw); if (brakesMoveControls) ChatLog.Write("brakes", "Brakes group moves a pitch/roll surface (" + bw + "): approach airbrakes disabled for this craft (idle + flaps only)"); }   // GROK FIX3
         }
         /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
         internal static bool AirbrakesByAutopilot;
         bool recoveryWasActive;
+        readonly AirbrakeGate airGate = new AirbrakeGate();
+        /// <summary>GROK FIX3: a Brakes-bound control surface that also moves pitch/roll (elevons, tail winglets): the approach never uses airbrakes.</summary>
+        bool brakesMoveControls;
+        static bool BrakesMoveControls(Vessel v, out string which)
+        {
+            which = "";
+            foreach (Part p in v.parts) foreach (PartModule m in p.Modules)
+            {
+                var s = m as ModuleControlSurface; if (s == null || (s.ignorePitch && s.ignoreRoll)) continue;
+                BaseAction a = null; try { a = s.Actions["ActionToggle"]; } catch (Exception) { }
+                if (a != null && (a.actionGroup & KSPActionGroup.Brakes) != 0) { which = p.partInfo != null ? p.partInfo.title : p.name; return true; }
+            }
+            return false;
+        }
         /// <summary>GROK FIX1: real hold state for the tablet / control-box HOLDS chip (was a UI-only flag).</summary>
         internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold"; } }
         float nextChartPoll;
@@ -741,7 +756,8 @@ namespace KSPChatBridge
                         if (runway.EnergyLog.Length > 0) { ChatLog.Write("approach", runway.EnergyLog); runway.EnergyLog = ""; }
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
-                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool want = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && ApproachProfile.BrakesWanted(SpeedHold.Airbrakes(on, vessel.srfSpeed, runway.DesiredSpeed), runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed); if (airPhase && want != on) { SetGroup(vessel, KSPActionGroup.Brakes, want); AirbrakesByAutopilot = want; } }   // airbrakes/spoilers (Brakes group) when fast, +8/+2 m/s hysteresis
+                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && !brakesMoveControls;
+                          if (airPhase && airGate.Step(Time.time, on, vessel.srfSpeed, runway.DesiredSpeed, allowed)) { SetGroup(vessel, KSPActionGroup.Brakes, airGate.On); AirbrakesByAutopilot = airGate.On; ChatLog.Write("brakes", airGate.Why + ", phase " + runway.Phase); } }   // GROK FIX3: +8/+2 m/s hysteresis, 3 s dwell
                         runway.Heavy = CraftClass.Gentle(CraftCls);
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
                         landFloor = directVs.Value > vsBefore + .5 || (runway.Phase == "final" && RunwayMission.BelowGsM(runway.Ils) > RunwayMission.GsMargin && runway.Distance > ApproachChart.ShortFix && vessel.verticalSpeed < -3);
