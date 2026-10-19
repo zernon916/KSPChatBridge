@@ -224,6 +224,16 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND2c: re-join from 2 km out is not flyable -> fly-out teardrop that is
+                    double R0 = 600000, deg = R0 * Math.PI / 180, thLat = 0, thLon = -74.7, fr = 1500;
+                    var lf = new ApproachChart.Wp { Name = "long final 6 km", Lat = 0, Lon = thLon + 6000 / deg, Alt = 400 }; string fw;
+                    Check(!RunwayMission.RouteFlyable(0, thLon + 2000 / deg, new List<ApproachChart.Wp> { lf }, thLat, thLon, fr, R0, out fw), "GROK LAND2: 2 km-out re-join to the 6 km long final rejected (" + fw + ")");
+                    Check(RunwayMission.RouteFlyable(0.3, thLon + 30000 / deg, new List<ApproachChart.Wp> { lf }, thLat, thLon, fr, R0, out fw), "GROK LAND2: a normal join to the long final still flyable (" + fw + ")");
+                    var fol = RunwayMission.FlyOut(thLat, thLon, 270, lf, 0.001, thLon + 2000 / deg, fr, R0, 700); var fo = fol[fol.Count - 1];
+                    double foD = NavigationMath.Distance(thLat, thLon, fo.Lat, fo.Lon, R0); var foR = new List<ApproachChart.Wp>(fol); foR.Add(lf);
+                    Check(fol.Count == 2 && RunwayMission.RouteFlyable(0.001, thLon + 2000 / deg, foR, thLat, thLon, fr, R0, out fw) && fo.Lat > 0 && fol[0].Lat > 0 && foD > 10000 && fo.Alt == 700, "GROK LAND2: fly-out racetrack flyable, on the plane's side, beyond the long final (" + fw + ", " + Math.Round(foD) + " m)");
+                    var folS = RunwayMission.FlyOut(thLat, thLon, 270, lf, -0.001, thLon + 2000 / deg, fr, R0, 700); Check(folS[0].Lat < 0 && folS[1].Lat < 0, "GROK LAND2: fly-out on the south side for a plane south of the line");
+                }
                 {   // GROK LAND2b: energy - path feed-forward, bounded sink, speed protection, stall-based speeds
                     double slope = Math.Tan(3.06 * Math.PI / 180), oldVs = Math.Max(-15, -200 * .05 + 0);
                     double onPath = ApproachProfile.PathVs(-30, 100, slope, 15, 15, 0), high = ApproachProfile.PathVs(-200, 100, slope, 15, 15, 0), fastHigh = ApproachProfile.PathVs(-200, 130, slope, 15, 15, 30);

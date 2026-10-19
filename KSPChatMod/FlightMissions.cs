@@ -1281,7 +1281,31 @@ namespace KSPChatBridge
         internal Ils.Reading Ils; internal bool LocCoupled, GsCoupled; internal const double LocRange = 18000;
         internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
-        internal void GoAroundReset() { GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
+        internal bool MissedClimb; internal const double MissedAgl = 300;
+        /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
+        /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
+        internal static bool RouteFlyable(double lat, double lon, List<ApproachChart.Wp> route, double thrLat, double thrLon, double r, double radius, out string why)
+        {
+            double k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180); var xy = new List<double[]> { new[] { 0.0, 0.0 } };
+            foreach (var w in route) xy.Add(new[] { (w.Lon - lon) * k * cl, (w.Lat - lat) * k });
+            xy.Add(new[] { (thrLon - lon) * k * cl, (thrLat - lat) * k });
+            return DubinsPath.Flyable(xy, r, out why);
+        }
+        /// <summary>GROK LAND2: fly-out for a re-join (a racetrack on the plane's side, 2.5 turn radii off the centreline): abeam the plane, outbound
+        /// parallel to the final to 3 r beyond the last fix, turn back ~140 deg, ~40 deg onto the final. At or above the glidepath / 500 m above the field.</summary>
+        internal static List<ApproachChart.Wp> FlyOut(double thrLat, double thrLon, double course, ApproachChart.Wp last, double lat, double lon, double r, double radius, double alt)
+        {
+            double d = NavigationMath.Distance(thrLat, thrLon, last.Lat, last.Lon, radius) + 3 * r;
+            double dp = NavigationMath.Distance(thrLat, thrLon, lat, lon, radius), th = FlightPolicy.Wrap(NavigationMath.Bearing(thrLat, thrLon, lat, lon) - (course + 180)) * Math.PI / 180;
+            double behind = dp * Math.Cos(th), side = dp * Math.Sin(th) >= 0 ? 90 : -90;   // + = right of the outbound line
+            Func<double, string, ApproachChart.Wp> at = (dist, name) => { double ca, co, la, lo; NavigationMath.Offset(thrLat, thrLon, course + 180, dist, radius, out ca, out co); NavigationMath.Offset(ca, co, course + 180 + side, 2.5 * r, radius, out la, out lo); return new ApproachChart.Wp { Name = name, Lat = la, Lon = lo, Alt = alt }; };
+            var o = new List<ApproachChart.Wp>();
+            if (behind < d - 3 * r) o.Add(at(Math.Max(0, behind), "fly-out abeam"));
+            o.Add(at(d, "fly-out " + Math.Round(d / 1000) + " km (rejoin)"));
+            return o;
+        }
+        internal void GoAroundReset() { MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanBankRaw, RouteToGo = double.NaN; double wpFromLat = double.NaN, wpFromLon;
         /// <summary>GROK FIX2: distance shown to the pilot - along the route to touchdown during entry, else to the threshold.</summary>
         internal double ToGo { get { return Phase == "entry" && !double.IsNaN(RouteToGo) ? RouteToGo : Distance; } }
@@ -1414,6 +1438,21 @@ namespace KSPChatBridge
                         }
                     }
                     else JoinLog = "short final (head-on)";
+                    if (Route != null && Route.Count > 0)
+                    {   // GROK LAND2: tight-join rejection on EVERY (re)join - from the plane's own position, as the smoother will fly it
+                        double fr = PredictedPath.Radius(Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), TurnBank > 0 ? TurnBank : 25); string fw, fw2;
+                        if (!RouteFlyable(lat, lon, Route, Lat, Lon, fr, radius, out fw))
+                        {
+                            var proc = Kind == "short" ? null : Chart.Route(lat, lon, track, "long", radius, altitude);
+                            if (proc != null && proc.Count > 0 && RouteFlyable(lat, lon, proc, Lat, Lon, fr, radius, out fw2) && proc[0].Name != Route[0].Name) { Route = proc; JoinLog += "; join not flyable from here (" + fw + ") - chart procedure from " + proc[0].Name; }
+                            else
+                            {
+                                var last = Route[Route.Count - 1]; double dOut = NavigationMath.Distance(Lat, Lon, last.Lat, last.Lon, radius) + 3 * fr;
+                                var fo = FlyOut(Lat, Lon, course, last, lat, lon, fr, radius, Math.Max(Math.Max(last.Alt, Chart.GlideAlt(dOut)), Elevation + 500));
+                                Route = new List<ApproachChart.Wp>(fo); Route.Add(last); JoinLog += "; join not flyable from here (" + fw + ") - flying out to " + fo[fo.Count - 1].Name + ", then " + last.Name;
+                            }
+                        }
+                    }
                     RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, lat, lon);
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
@@ -1476,6 +1515,11 @@ namespace KSPChatBridge
                     }
                     else if (dubAligned && AdvanceWaypoint(leadTurn, dw, Chart.TurnRadius, RouteIndex > 0 ? NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) : double.NaN, behindUs, NavigationMath.Distance(wpFromLat, wpFromLon, lat, lon, radius))) { RouteIndex++; wpFromLat = lat; wpFromLon = lon; }   // GROK FIX2: one fix per update
                 }
+                if (MissedClimb)
+                {   // GROK LAND2: missed approach - straight ahead on the runway heading, climbing, no turns until MissedAgl; then re-join from there
+                    if (altitude - Elevation >= MissedAgl) { MissedClimb = false; Route = null; Why = "missed approach climb done; re-joining"; }
+                    else { DesiredHeading = course; ArcBank = 0; DesiredAltitude = Math.Max(DesiredAltitude, Elevation + MissedAgl + 100); DesiredVs = 10; DesiredSpeed = Math.Max(DesiredSpeed, ApproachProfile.Speed(stall)); }
+                }
                 if (Route != null && RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }   // Route == null: replan requested (GROK FIX6), rebuilt next step
             }
             if (Phase == "intercept")
@@ -1489,7 +1533,7 @@ namespace KSPChatBridge
                 DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 10, speed - DesiredSpeed);   // GROK LAND2
                 EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
-                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; if (RebuildDue(stepsSinceRebuild) || Route == null || Route.Count == 0) Route = null; else { holdLast = true; RouteIndex = Route.Count - 1; } }   // never descend unaligned
+                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "go around"; Why = "not aligned " + (-along / 1000).ToString("0.0") + " km out (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg off)"; }   // GROK LAND2: close-in failed intercept = go around (climb, fly out, re-join), never a tight re-join   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {
