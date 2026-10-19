@@ -129,6 +129,20 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND4g: nose target held within 0.5 deg through a 30 deg banked turn with noisy vs (-3.3..+4.3 m/s swings + jitter)
+            var rg = new Random(11); double slow = double.NaN, cmdG = double.NaN, lo = double.MaxValue, hi = double.MinValue, trimG = 2.5;
+            for (int i = 0; i < 1200; i++)
+            {   // 30 s at 0.025 s; first 3 s settle
+                double tG = i * .025, vsN = .5 + 3.8 * Math.Sin(tG * 2 * Math.PI / 6) + (rg.NextDouble() - .5) * 2;
+                slow = PitchAttitude.OuterStep(slow, vsN, .025);
+                double att = PitchAttitude.OuterTarget(trimG, 0, slow, 150) - PitchShaper.BackPressure(30);
+                cmdG = PitchAttitude.BankSlew(double.IsNaN(cmdG) ? att : cmdG, att, .025, 30);
+                if (tG > 3) { lo = Math.Min(lo, cmdG); hi = Math.Max(hi, cmdG); }
+            }
+            Check(hi - lo < .5, "LAND4g: nose target varies " + (hi - lo).ToString("0.00") + " deg (< 0.5) over a 30 deg turn with noisy vs");
+            Check(PitchAttitude.Deadband(1, 1.5) == 0 && Math.Abs(PitchAttitude.Deadband(-3, 1.5) + 1.5) < 1e-9 && Math.Abs(PitchAttitude.BankSlew(0, 5, 1, 30) - .5) < 1e-9 && Math.Abs(PitchAttitude.BankSlew(0, 5, 1, 0) - 2) < 1e-9, "LAND4g: deadband +-1.5 m/s, slew 0.5 deg/s in banks");
+            Check(PitchAttitude.LoadFF(3, 0) == 0 && Math.Abs(PitchAttitude.LoadFF(3, 30) - 3 * (1 / Math.Cos(Math.PI / 6) - 1)) < 1e-9 && PitchAttitude.LoadFF(3, 45) > PitchAttitude.LoadFF(3, 30), "LAND4g: load-factor feed-forward = trim AoA x (n-1)");
+        }
         {   // GROK LAND4f regression (live 14:05-14:07): LSR 44/225 committed; mid-straight speed change (r 4773) + position jump must keep LSR, remaining turn <= 270
             double rC = 7583, jx = 41000 + rC; string ty = "LSR"; bool allOk = true; string seen = "";
             double px5 = 27200, py5 = 0, hd5 = 90 - 44;   // after the left 44 deg turn, on the straight

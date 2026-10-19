@@ -43,7 +43,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        double aoaTrim = double.NaN, vsFilt = double.NaN, attCmd = double.NaN; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -946,19 +946,22 @@ namespace KSPChatBridge
                     // nose attitude = learned level trim + desired flight-path angle + 0.3x filtered vs correction, nose command slewed <= 2 deg/s;
                     // the bank's extra lift is the elevator feed-forward. Outside landing: the same law blended in by bank (turns only).
                     bool landLaw = mode == "landing" && runway != null && runway.Phase != "flare" && runway.Phase != "rollout";
-                    double vsPrev = vsFilt; vsFilt = PitchAttitude.VsStep(vsFilt, vessel.verticalSpeed, dt);
+                    double vsPrev = vsFilt; vsFilt = PitchAttitude.VsStep(vsFilt, vessel.verticalSpeed, dt); vsSlow = PitchAttitude.OuterStep(vsSlow, vessel.verticalSpeed, dt);
                     bool steady = PitchAttitude.Steady(vsPrev, vsFilt, dt);   // trim learned only in quasi-steady flight (vs not changing): no feedback from the pull-ups
                     aoaTrim = PitchAttitude.TrimStep(aoaTrim, pitch, PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed), roll, steady ? dt : 0);
                     double aw = landLaw ? 1 : PitchAttitude.Weight(Math.Max(Math.Abs(bankCmd), Math.Abs(roll)));
                     bool attOk = !directPitch.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !double.IsNaN(aoaTrim) && !learnTurnLe && !learnSinkLe && !(learn != null && !learn.Done) && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"));
                     if (attOk && aw > 0)
                     {
-                        double att = FlightPolicy.Clamp(PitchAttitude.Target(aoaTrim, targetVs, vsFilt, vessel.srfSpeed, PitchAttitude.LandGain) + .3 * vsIntegral - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax);
-                        attCmd = PitchAttitude.Slew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt);
+                        double att = landLaw   // GROK LAND4g: landing = pilot law (nose held, slow outer vs loop, 0.5 deg/s in banks)
+                            ? FlightPolicy.Clamp(PitchAttitude.OuterTarget(aoaTrim, targetVs, vsSlow, vessel.srfSpeed) - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax)
+                            : FlightPolicy.Clamp(PitchAttitude.Target(aoaTrim, targetVs, vsFilt, vessel.srfSpeed, PitchAttitude.LandGain) + .3 * vsIntegral - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax);
+                        attCmd = landLaw ? PitchAttitude.BankSlew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt, Math.Max(Math.Abs(bankCmd), Math.Abs(roll))) : PitchAttitude.Slew(double.IsNaN(attCmd) ? pitch : attCmd, att, dt);
                         desiredPitch = (1 - aw) * desiredPitch + aw * attCmd;
-                        if (Time.realtimeSinceStartup >= turnPitchTraceNext) { turnPitchTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("att", "pitch law (attitude" + (landLaw ? ", landing" : ", turn x" + aw.ToString("0.0")) + "): bank " + roll.ToString("0") + " trim " + aoaTrim.ToString("0.0") + " path " + (Math.Atan2(targetVs, Math.Max(30, vessel.srfSpeed)) * 180 / Math.PI).ToString("0.0") + " -> nose " + attCmd.ToString("0.0") + " deg (vs " + vsFilt.ToString("0.0") + " filtered, want " + targetVs.ToString("0.0") + ")"); }
+                        if (Time.realtimeSinceStartup >= turnPitchTraceNext) { turnPitchTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("att", "nose tgt " + attCmd.ToString("0.0") + " act " + pitch.ToString("0.0") + " ff " + loadFf.ToString("0.00") + " deg | pitch law (attitude" + (landLaw ? ", landing" : ", turn x" + aw.ToString("0.0")) + "): bank " + roll.ToString("0") + " trim " + aoaTrim.ToString("0.0") + " path " + (Math.Atan2(targetVs, Math.Max(30, vessel.srfSpeed)) * 180 / Math.PI).ToString("0.0") + " -> nose " + attCmd.ToString("0.0") + " deg (vs " + vsFilt.ToString("0.0") + " filtered, want " + targetVs.ToString("0.0") + ")"); }
                     }
                     else attCmd = double.NaN;
+                    landLawOn = attOk && landLaw;
                 }   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
                 if (mode == "landing" && runway != null && runway.Phase == "flare" && !vessel.LandedOrSplashed && profileTrusted && profile != null)
                 {
@@ -980,8 +983,9 @@ namespace KSPChatBridge
             if (vessel.LandedOrSplashed) lastDesiredPitch = desiredPitch; else { desiredPitch = pitchShape.Step(desiredPitch, pitch, vessel.srfSpeed, gLim, bankCmd, dt); lastDesiredPitch = desiredPitch; }
                 if (desiredPitch < pitch - 5 && pitchIntegral > 0) pitchIntegral = 0;   // anti-windup: dump nose-up integral when pushing over
                 if (targetVs < vessel.verticalSpeed - 5 && vsIntegral > 0) vsIntegral = 0;
-                pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * .04 * dt * kin, -.3, .3);
-                double pitchOut = FlightPolicy.Clamp(AuthorityScale(true) * (.022 * pitchGain * kin * (desiredPitch - pitch) - .016 * q + pitchIntegral) + PitchShaper.ElevatorFF(bankCmd), -1, 1);   // g feed-forward + more pitch-rate damping; LEARN pitch-rate scale (#7)
+                pitchIntegral = FlightPolicy.Clamp(pitchIntegral + (desiredPitch - pitch) * (landLawOn ? .08 : .04) * dt * kin, -.3, .3);   // GROK LAND4g: tighter inner attitude loop on the landing law
+                double kp = .022 * pitchGain * kin * (landLawOn ? 1.3 : 1); loadFf = landLawOn ? PitchAttitude.LoadFF(aoaTrim, roll) : 0;
+                double pitchOut = FlightPolicy.Clamp(AuthorityScale(true) * (kp * (desiredPitch - pitch + loadFf) - .016 * q + pitchIntegral) + (landLawOn ? 0 : PitchShaper.ElevatorFF(bankCmd)), -1, 1);   // GROK LAND4g: load-factor FF (trim AoA x (n-1)) replaces the bank-step FF on the landing law   // g feed-forward + more pitch-rate damping; LEARN pitch-rate scale (#7)
                 pitchOut *= PilotPolicy.GScale(vessel.geeForce, Math.Max(gLim, 3));
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));

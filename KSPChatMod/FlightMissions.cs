@@ -857,6 +857,19 @@ namespace KSPChatBridge
             double v = Math.Max(30, tas), g = double.IsNaN(gainScale) ? 1 : gainScale;
             return trim + Math.Atan2(targetVs, v) * 180 / Math.PI + VsGain * g * Math.Atan2(targetVs - vsFilt, v) * 180 / Math.PI;
         }
+        /// <summary>GROK LAND4g (Luke: pitch bobs 1-3 deg in banks, nose target 6.9/0.7/0.3/2.3/1.0 while vs swung -3.3..+4.3): pilot law -
+        /// nose = trim + path angle, held through the turn; vs is only a SLOW outer loop (4 s filter, +-1.5 m/s deadband, x0.08), nose slew 0.5 deg/s in banks.</summary>
+        internal const double OuterTau = 4, OuterGain = .08, OuterDeadband = 1.5, BankSlewDegS = .5;
+        internal static double OuterStep(double slow, double vs, double dt) { return double.IsNaN(slow) ? vs : slow + (vs - slow) * Math.Min(1, Math.Max(0, dt) / OuterTau); }
+        internal static double Deadband(double e, double db) { return Math.Abs(e) <= db ? 0 : e - Math.Sign(e) * db; }
+        internal static double OuterTarget(double trim, double targetVs, double vsSlow, double tas)
+        {
+            double v = Math.Max(30, tas);
+            return trim + Math.Atan2(targetVs, v) * 180 / Math.PI + OuterGain * Math.Atan2(Deadband(targetVs - vsSlow, OuterDeadband), v) * 180 / Math.PI;   // x0.08 (was x0.3 on a 1.5 s filter)
+        }
+        internal static double BankSlew(double cur, double target, double dt, double bankDeg) { double r = Math.Abs(bankDeg) > BankOn ? BankSlewDegS : SlewDegS, s = r * Math.Max(0, dt); return FlightPolicy.Clamp(target, cur - s, cur + s); }
+        /// <summary>GROK LAND4g: load-factor feed-forward (deg of extra AoA): the 1 g trim AoA x (n - 1), n = 1/cos(bank) - applied as the bank builds.</summary>
+        internal static double LoadFF(double trimAoa, double bankDeg) { double a = double.IsNaN(trimAoa) ? 2 : FlightPolicy.Clamp(trimAoa, 0, 8), b = Math.Min(60, Math.Abs(bankDeg)) * Math.PI / 180; return a * (1 / Math.Cos(b) - 1); }
         /// <summary>Blend weight of the attitude hold: 0 wings level, 1 from BankFull deg of bank (no switch jump).</summary>
         internal static double Weight(double bankDeg) { return FlightPolicy.Clamp((Math.Abs(bankDeg) - BankOn) / (BankFull - BankOn), 0, 1); }
     }
