@@ -556,7 +556,7 @@ namespace KSPChatBridge
         static double Brg(double dx, double dy) { return Norm(Math.Atan2(dx, dy) * 180 / Math.PI); }
         internal static DubinsPath Plan(double x0, double y0, double h0, double x1, double y1, double h1, double r, string prefer = null, double hysteresis = 0)
         {
-            DubinsPath best = null, pref = null; var r0 = Right(h0); var r1 = Right(h1);
+            DubinsPath best = null, pref = null, same = null; var r0 = Right(h0); var r1 = Right(h1);   // GROK LAND3: same = same first turn as the committed plan
             foreach (int d1 in new[] { -1, 1 })
                 foreach (int d2 in new[] { -1, 1 })
                 {
@@ -579,8 +579,10 @@ namespace KSPChatBridge
                     p.Length = r * (a1 + a2) * Math.PI / 180 + s;
                     if (best == null || p.Length < best.Length) best = p;
                     if (prefer != null && p.Type == prefer) pref = p;
+                    if (prefer != null && prefer.Length == 3 && prefer != "LINE" && p.Type[0] == prefer[0] && (same == null || p.Length < same.Length)) same = p;
                 }
-            return pref != null && best != null && pref.Length <= best.Length + hysteresis ? pref : best;
+            if (pref != null && best != null && pref.Length <= best.Length + hysteresis) return pref;
+            return same != null && best != null && same.Length <= best.Length + hysteresis ? same : best;   // GROK LAND3: keep the turn direction unless clearly worse
         }
         /// <summary>Heading to fly now: keep turning on the first circle (up to 60 deg ahead, the bank saturates at the planned bank),
         /// then the tangent line toward T2, then the final circle onto the required course.</summary>
@@ -597,16 +599,23 @@ namespace KSPChatBridge
         {
             double ux = Math.Sin(crs * Math.PI / 180), uy = Math.Cos(crs * Math.PI / 180), dx = x - fx, dy = y - fy;
             double along = dx * ux + dy * uy, cross = dx * uy - dy * ux, ext = r;
-            if (along > -1.3 * ext && along < ext && Math.Abs(cross) < .35 * r && Math.Abs(FlightPolicy.Wrap(h - crs)) < 35)
+            bool wasLine = prefer == "LINE";   // GROK LAND3: hysteresis on the line capture (enter .35 r / 35 deg, leave .5 r / 45 deg)
+            if (along > -1.3 * ext && along < ext && Math.Abs(cross) < (wasLine ? .5 : .35) * r && Math.Abs(FlightPolicy.Wrap(h - crs)) < (wasLine ? 45 : 35))
             {   // on the course line before the fix: track it
                 plan = new DubinsPath { Type = "LINE", R = r, X0 = x, Y0 = y, H0 = h, X1 = fx, Y1 = fy, H1 = crs, T1 = new[] { x, y }, T2 = new[] { x, y }, C1 = new[] { x, y }, C2 = new[] { x, y }, Hu = crs, Length = -along };
                 return Norm(crs - FlightPolicy.Clamp(cross / (.35 * r) * 30, -30, 30));
             }
-            plan = Plan(x, y, h, fx - ext * ux, fy - ext * uy, crs, r, prefer, .1 * r);
+            plan = Plan(x, y, h, fx - ext * ux, fy - ext * uy, crs, r, prefer, CommitHysteresis(r));
             if (plan == null) return h;
             plan.X1 = fx; plan.Y1 = fy; plan.Stub = new[] { fx - ext * ux, fy - ext * uy };
             return plan.Command();
         }
+        /// <summary>GROK LAND3: a committed join path is only swapped when another is shorter by half a turn radius (min 1 km) -
+        /// was 0.1 r, so 1-3 deg of pitch-bob heading/speed noise flipped RSR/LSL/LSR/RSL every 1-15 s (03:08:31-03:09:22).</summary>
+        internal static double CommitHysteresis(double r) { return Math.Max(.5 * r, 1000); }
+        /// <summary>GROK LAND3: planning state filters - radius only re-sized on a real (12%) speed change; track low-passed (angle-safe).</summary>
+        internal static double CommitRadius(double committed, double now) { return double.IsNaN(committed) || Math.Abs(now - committed) > .12 * committed ? now : committed; }
+        internal static double FilterTrack(double filt, double track, double k) { if (double.IsNaN(track)) return filt; if (double.IsNaN(filt)) return track; return Norm(filt + FlightPolicy.Wrap(track - filt) * k); }
         internal double[] Stub;
         /// <summary>Points along the path (5 deg arc steps), start ... fix.</summary>
         internal List<double[]> Points()
@@ -1360,7 +1369,7 @@ namespace KSPChatBridge
         internal const int RebuildCooldownSteps = 1000;
         internal static bool RebuildDue(int stepsSinceRebuild) { return stepsSinceRebuild >= RebuildCooldownSteps; }
         int stepsSinceRebuild = RebuildCooldownSteps; bool holdLast; internal int Rebuilds;
-        string dubType; internal List<double[]> DubinsPts; internal double DubinsR; internal string DubinsLog = "";   // GROK JOIN1
+        string dubType, dubFix; double dubR = double.NaN, dubTrk = double.NaN; internal List<double[]> DubinsPts; internal double DubinsR; internal string DubinsLog = "";   // GROK JOIN1
         /// <summary>Distance flown since the fix became current before an 'overflown' skip (frame-rate independent): half the spacing, >= 150 m.</summary>
         internal static double BehindMinMove(double spacing) { return Math.Max(150, double.IsNaN(spacing) ? 300 : .5 * spacing); }
         /// <summary>GROK FIX2 (Oct 19: legs 1-12 of a 593 m-spaced arc consumed in 0.23 s): capture radius max(700, .3 r) but never more
@@ -1513,9 +1522,11 @@ namespace KSPChatBridge
                     bool dubLeg = (RouteIndex == 0 || holdLast && last) && !double.IsNaN(track), dubAligned = true;
                     if (dubLeg)
                     {   // GROK JOIN1: fly a Dubins turn-tangent-turn path that ARRIVES at the fix on its required course (the next leg / the final)
-                        double r = PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25), k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180);
+                        dubR = DubinsPath.CommitRadius(dubR, PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25)); dubTrk = DubinsPath.FilterTrack(dubTrk, track, .03);   // GROK LAND3: plan from filtered state
+                        double r = dubR, k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180);
                         double x1 = (wp.Lon - lon) * k * cl, y1 = (wp.Lat - lat) * k;
-                        DubinsPath dp; double cmd = DubinsPath.JoinSteer(0, 0, track, x1, y1, nextBrg, r, dubType, out dp);
+                        if (wp.Name != dubFix) { dubFix = wp.Name; dubType = null; }   // a new fix = a fresh choice
+                        DubinsPath dp; double cmd = DubinsPath.JoinSteer(0, 0, dubTrk, x1, y1, nextBrg, r, dubType, out dp);
                         if (dp != null)
                         {
                             if (dp.Type != dubType) { dubType = dp.Type; DubinsLog = "join path to " + wp.Name + ": " + dp.Type + " " + Math.Round(dp.A1) + "/" + Math.Round(dp.A2) + " deg, straight " + (dp.S / 1000).ToString("0.0") + " km, r " + Math.Round(r) + " m at bank " + Math.Round(TurnBank) + ", arrives on " + Math.Round((nextBrg + 360) % 360) + " deg"; }
@@ -1525,7 +1536,7 @@ namespace KSPChatBridge
                         }
                         dubAligned = Math.Abs(FlightPolicy.Wrap(track - nextBrg)) < 30;   // never "capture" the join while crossing it on the wrong course
                     }
-                    else { DubinsPts = null; dubType = null; }
+                    else { DubinsPts = null; dubType = null; dubR = dubTrk = double.NaN; dubFix = null; }
                     bool behindUs = !dubLeg && !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     if (holdLast && last)
                     {   // fly all the way out to the join point

@@ -224,6 +224,21 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND3b: committed join - noise of a few deg / m/s never flips the Dubins type
+                    double fx = 3000, fy = 25000; DubinsPath dq; DubinsPath.JoinSteer(0, 0, 90, fx, fy, 270, 4600, null, out dq); string t0 = dq.Type; int flips = 0; var rnd = new Random(7); string cur = t0;
+                    double rc = double.NaN, tf = double.NaN;
+                    for (int i = 0; i < 400; i++)
+                    {
+                        double trkN = 90 + (rnd.NextDouble() - .5) * 6, rN = 4600 * (1 + (rnd.NextDouble() - .5) * .1);
+                        rc = DubinsPath.CommitRadius(rc, rN); tf = DubinsPath.FilterTrack(tf, trkN, .03);
+                        DubinsPath.JoinSteer(0, 0, tf, fx, fy, 270, rc, cur, out dq); if (dq.Type != cur) { flips++; cur = dq.Type; }
+                    }
+                    Check(flips == 0 && Math.Abs(rc - 4600) < 300 && Math.Abs(FlightPolicy.Wrap(tf - 90)) < 3, "GROK LAND3: join plan committed under heading/speed noise (" + flips + " flips, " + t0 + ")");
+                    Check(DubinsPath.CommitRadius(4600, 5300) == 5300 && DubinsPath.CommitRadius(4600, 4900) == 4600 && Math.Abs(DubinsPath.FilterTrack(359, 1, .5) - 0) < 1e-9, "GROK LAND3: radius re-sized only on a real speed change; track filter wraps 360");
+                    // a plan that becomes clearly worse is still swapped
+                    DubinsPath dw; DubinsPath.JoinSteer(0, 0, 90, fx, fy, 270, 4600, "RSR", out dw); var dbest = DubinsPath.Plan(0, 0, 90, fx + 4600, fy, 270, 4600);
+                    Check(dw != null && (dw.Type == "RSR" || dw.Length <= dbest.Length + DubinsPath.CommitHysteresis(4600) + 1), "GROK LAND3: committed type kept only within the hysteresis");
+                }
                 {   // GROK LAND3a: centreline capture from 1.5 km parallel offset converges (roll lag 1 s, bank 25, 150 m/s)
                     foreach (double x0 in new[] { 1500.0, -1500.0, 4000.0 })
                     {
