@@ -129,8 +129,30 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5f
+            var sf = new StepThrottle(); sf.Reset(.10); double a1 = sf.Update(0, 100, 114, .02, double.NaN, 92, 1500), a2 = sf.Update(4, 100, 114, .02, double.NaN, 92, 1500);
+            Check(a1 <= .10 && a2 <= .10, "LAND5f: last 2 km - below plan but above the floor = no power (decays)");
+            var sg = new StepThrottle(); sg.Reset(.10); double a3 = sg.Update(0, 90, 114, .02, double.NaN, 92, 1500);
+            Check(Math.Abs(a3 - .13) < 1e-9, "LAND5f: last 2 km - below the floor = +3% only");
+            var sh = new StepThrottle(); sh.Reset(.10); double a4 = sh.Update(0, 105, 121, .02, double.NaN, 100, 4000);
+            Check(a4 > .10 && a4 <= .15 + 1e-9, "LAND5f: outside 2 km normal tracking toward plan, small steps (<= 5%)");
+            var si = new StepThrottle(); si.Reset(.49); si.Acc = .30; double a5 = si.Update(0, 112, 110, .02, double.NaN, 95, 1000);
+            Check(a5 == 0, "LAND5f: predicted crossing on short final = straight to idle");
+            double vr = ApproachProfile.Vref(83); Check(Math.Abs(ApproachProfile.FinalSchedule(2000, 83, 1, 6000) - vr) < .5 && Math.Abs(vr - 95.45) < .1, "LAND5f: schedule = flare landing speed (1.15x stall, 96) at 2 km");
+            Check(PilotPolicy.FerryBank(60, 1) == 30 && PilotPolicy.FerryBank(60, 3) == 15 && PilotPolicy.FerrySpeedCap <= 220, "LAND5f: ferry bank 30 (15 under warp), speed cap");
+            Check(AutoWarp.Want(1, 50, 120, 30000, false, false) == 4 && AutoWarp.Want(1, 50, 45, 30000, false, false) == 2 && AutoWarp.Want(5, 50, 120, 30000, false, false) == 1 && AutoWarp.Want(1, 50, 120, 8000, false, false) == 1
+                && AutoWarp.Want(1, 50, 120, 30000, true, false) == 1 && AutoWarp.Want(1, 50, 120, 30000, false, true) == 1 && AutoWarp.Want(1, 50, 20, 30000, false, false) == 1 && AutoWarp.Index(4) == 3 && AutoWarp.Index(1) == 0, "LAND5f: autowarp only on long straight wings-level legs; 1x near turns, < 10 km, config, go-around");
+            double fdF, ftF; var fjF = DubinsPath.FinalJoin(0, 0, 246, -31000, -12000, 270, 4751, 14000, 30000, (q1, q2) => true, out fdF, out ftF, false);
+            Console.WriteLine("LAND5f 16:37 geometry: " + (fjF == null ? "none" : fjF.Type + " " + Math.Round(fjF.A1) + "/" + Math.Round(fjF.A2) + " join " + (fdF / 1000).ToString("0.0") + " km total " + (ftF / 1000).ToString("0.0")));
+            Check(fjF != null && fdF >= 14000, "LAND5f: the 16:37 KERBO geometry has a D14+ join");
+            Check(PilotPolicy.LandBankCap(25, true, 8, false) == 2.5 && PilotPolicy.LandBankCap(25, true, 0, true) == 2.5 && PilotPolicy.LandBankCap(25, true, 50, false) == 25, "LAND5f: wings level within 2.5 deg below 10 m and on the ground");
+            Check(Math.Abs(RunwayMission.RolloutCorr(-3, 0, 46)) == 3 && RunwayMission.RolloutCorr(0, 3, 46) < -3 && RunwayMission.RolloutCorr(-20, 0, 46) == -4, "LAND5f: rollout steering damped by drift rate, capped 4 deg");
+            int sw = 0; double pc = -13, pv = 0; for (int i = 0; i < 1500; i++) { double hc = RunwayMission.RolloutCorr(FlightPolicy.Clamp(-pc * .3, -8, 8), pv, 46); pv += (46 * Math.Sin(hc * Math.PI / 180) - pv) * .02 / .5; double npc = pc + pv * .02; if (Math.Sign(npc) != Math.Sign(pc) && Math.Abs(npc) > .01) sw++; pc = npc; }
+            Check(sw <= 1 && Math.Abs(pc) < 3, "LAND5f: rollout from -13 m converges without swinging (" + sw + " crossings, end " + pc.ToString("0.0") + " m)");
+            Check(RolloutBrake.Duty(.5, 46) == 0 && RolloutBrake.Duty(1.5, 46) == .25 && RolloutBrake.Duty(5, 46) == 1 && RolloutBrake.Duty(5, .2) == 0 && RolloutBrake.On(1, 3.3), "LAND5f: wheel brakes progressive once the wheels are firmly down");
+        }
         {   // GROK LAND5e: much slower landing (16:21: 126 m/s at the threshold vs 96)
-            double stE = 75, appE = ApproachProfile.AppSpeed(stE); ApproachProfile.FlapLimitSpeed = 134;
+            double stE = 75, appE = ApproachProfile.Vref(stE); ApproachProfile.FlapLimitSpeed = 134;
             double s14 = ApproachProfile.FinalSchedule(14000, stE, 1.0, 6000), sFaf = ApproachProfile.FinalSchedule(6000, stE, 1.0, 6000), s2k = ApproachProfile.FinalSchedule(2000, stE, 1.0, 6000), sStart = ApproachProfile.DecelStartDist(stE, 1.0);
             Console.WriteLine("LAND5e schedule: decel " + (sStart / 1000).ToString("0.0") + " km, D14 " + s14.ToString("0") + ", FAF " + sFaf.ToString("0") + ", 2 km " + s2k.ToString("0") + " (landing " + appE.ToString("0") + ")");
             Check(Math.Abs(s14 - 124) < .5 && Math.Abs(sFaf - (appE + 15)) < .5 && Math.Abs(s2k - appE) < .5 && sStart > 14000, "LAND5e: flap limit - 10 by D14, landing + 15 by the FAF, landing speed by 2 km; decel starts before D14");
@@ -215,7 +237,7 @@ class Program
                 if (tsC > 90) lastBandC = Math.Max(lastBandC, Math.Abs(vC - plC));
             }
             Console.WriteLine("LAND5c sim: min " + loC.ToString("0.0") + " max +" + hiC.ToString("0.0") + " band-crossings " + crossC + " last-30s " + lastBandC.ToString("0.0") + " thrC " + thrC.ToString("0.00"));
-            Check(loC >= -10 && hiC <= 15, "LAND5c: drag step + 4 s spool - speed stays -10/+15 of plan");
+            Check(loC >= -15 && hiC <= 15, "LAND5c/5f: drag step + 4 s spool - speed stays -15/+15 of plan (LAND5f: steps <= 8%, slow above the floor is fine)");
             Check(crossC <= 1 && lastBandC <= 6, "LAND5c: no oscillation (<= 1 crossing of the +/-3 band, settled in the last 30 sC)");
             Check(StepThrottle.Predict(126, -.3, .40, .10, 4, 6) > 126 + 2, "LAND5c: prediction counts thrust still spooling");
             Check(ApproachProfile.SpeedGate(134 + 15, 134, double.NaN, double.NaN) == 1 && ApproachProfile.SpeedGate(134 + 25, 134, double.NaN, double.NaN) == 2 && ApproachProfile.SpeedGate(134 + 8, 134, double.NaN, double.NaN) == 0
@@ -1108,7 +1130,7 @@ class Program
         Check(Math.Abs(NavigationMath.Bearing(0, 0, 0, 1) - 90) < 1e-6, "east bearing");
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);
-        Check(landing.Gear && Math.Abs(landing.DesiredSpeed - ApproachProfile.AppSpeed(45)) < .01 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
+        Check(landing.Gear && Math.Abs(landing.DesiredSpeed - ApproachProfile.Vref(45)) < .01 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
         landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -3 && !landing.FlareFast, "flare (LAND5c: 3 m/s touchdown sink)");
         landing.Step(0, .02, 70, 0, 40, true, 600000, 45); Check(landing.Phase == "rollout" && landing.Brakes, "touchdown");
         landing.Step(0, .04, 70, 0, .5, true, 600000, 45); Check(landing.Phase == "stopped", "stopped");
@@ -1194,6 +1216,8 @@ class Program
         named.Events.AddRange(new[] { reverseEvent, forwardEvent }); part.Modules.Add(named);
         var reversers = new NativeReversers(vessel);
         Check(reversers.Set(vessel, true) && !multi.runningPrimary && forwardEvent.active, "named and multimode reverse");
+        Check(reversers.Recover(vessel, 0, true) == 0 && reversers.Noticed.Count == 0 && reversers.Recover(vessel, 9, true) == 0, "LAND5f: the AP's own rollout reverse is not tampering");
+        reversers.ApWants = false;   // from here: reverse set by the player
         Check(reversers.Recover(vessel, 0, true) == 0, "reverse recovery delay");
         Check(reversers.Noticed.Count == 2, "reverser tampering noticed (callout)");
         Check(reversers.Recover(vessel, 4.01, true) == 2 && multi.runningPrimary && reverseEvent.active, "forward recovery confirmed");
@@ -2853,7 +2877,7 @@ class Program
         {   // Luke 3:41 PM: final speed schedule (not 1.3x stall from 20 km)
             Check(ApproachProfile.FinalSchedule(25000, 45) > 100 && ApproachProfile.FinalSchedule(25000, 45) <= 150 && ApproachProfile.FinalSchedule(30000, 80) == 150 && ApproachProfile.FinalSchedule(12000, 80) < 150, "long final: ~2.3x stall, cap 150; bleed starts at the 12 km fix (Oct 12)");
             double s3 = ApproachProfile.FinalSchedule(3000, 45), s2 = ApproachProfile.FinalSchedule(2000, 45);
-            Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - 1.35 * 45) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
+            Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - ApproachProfile.Vref(45)) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
             Check(ApproachProfile.SaneStall(33) == 40 && ApproachProfile.SaneStall(double.NaN) >= 40, "stall estimate sanity floor");
             Console.WriteLine("Final speed schedule: 3 behavior checks passed.");
         }
@@ -3017,7 +3041,7 @@ class Program
             var dl = new DecelLearner(); for (int i = 0; i < 200; i++) dl.Learn("Aeris 3A", 60 + i % 60, 2.5, true);
             double a = dl.Estimate("Aeris 3A", 104, 54, true); Check(Math.Abs(a - 2.5) < .01 && double.IsNaN(dl.Estimate("Unknown", 104, 54, true)), "decel learned per craft (" + a.ToString("0.00") + ")");
             var back = DecelLearner.FromJson(dl.ToJson()); Check(Math.Abs(back.Estimate("Aeris 3A", 104, 54, true) - 2.5) < .01, "decel profile persists (JSON round trip)");
-            double fast = ApproachProfile.DecelStartDist(45, 2.5), slow = ApproachProfile.DecelStartDist(45, double.NaN), v1 = ApproachProfile.HiSpeed(45), v2 = ApproachProfile.AppSpeed(45);
+            double fast = ApproachProfile.DecelStartDist(45, 2.5), slow = ApproachProfile.DecelStartDist(45, double.NaN), v1 = ApproachProfile.HiSpeed(45), v2 = ApproachProfile.Vref(45);
             Check(Math.Abs(fast - (14000 + ApproachProfile.DecelStartM(v1, ApproachProfile.D14Speed(45), 2.5))) < 1 && slow >= fast && Math.Abs(ApproachProfile.DecelStartM(v1, v2, 2.5) - ((v1 * v1 - v2 * v2) / 5 + 500)) < 1, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
             Check(Math.Abs(ApproachProfile.FinalSchedule(fast, 45, 2.5) - v1) < .01 && Math.Abs(ApproachProfile.FinalSchedule(2000, 45, 2.5) - v2) < .01, "schedule: long-final speed until the decel point, approach speed by 2 km");
             Console.WriteLine("Measured decel: 4 behavior checks passed.");

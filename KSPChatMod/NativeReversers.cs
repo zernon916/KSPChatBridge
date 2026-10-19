@@ -63,12 +63,13 @@ namespace KSPChatBridge
                 foreach (PartModule module in part.Modules) { var engine = module as ModuleEngines; if (engine != null && engine.EngineIgnited) activeEngine = true; }
                 if (activeEngine && !items.Exists(item => item.Module != null && item.Module.part == part)) return false;
             }
-            bool any = false, all = true;
+            bool any = false, all = true; ApWants = reverse;   // GROK LAND5f: the AP's own reverser use is not tampering
             foreach (var item in items) if (item.Module != null && item.Module.part.vessel == vessel)
             { bool changed = item.Set(reverse); any |= changed; all &= changed; item.Gate.Reset(); }
             if (reverse && !all) Set(vessel, false);
             return any && (!reverse || all);
         }
+        internal bool ApWants;
         internal readonly List<string> Noticed = new List<string>();
         internal int Recover(Vessel vessel, double now, bool enabled)
         {
@@ -76,7 +77,7 @@ namespace KSPChatBridge
             foreach (var item in items)
             {
                 if (item.Module == null || item.Module.part.vessel != vessel) continue;
-                if (!enabled) { item.Gate.Reset(); continue; }
+                if (!enabled || ApWants) { item.Gate.Reset(); continue; }
                 bool due = item.Gate.Tick(item.Read() == true, now);
                 if (item.Gate.JustNoticed) Noticed.Add(item.Module.part.partInfo != null ? item.Module.part.partInfo.title + " thrust reverser" : "thrust reverser");
                 if (due && item.Set(false)) { count++; item.Gate.Reset(); }

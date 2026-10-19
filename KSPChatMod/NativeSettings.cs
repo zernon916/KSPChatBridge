@@ -11,7 +11,7 @@ namespace KSPChatBridge
             var result = new Dictionary<string, object>(current);
             object version;
             if (result.TryGetValue("migration_version", out version) && Convert.ToInt32(version) >= 1) return result;
-            foreach (string key in new[] { "altitude_band_m", "autoland_reversers", "rotor_brake_park", "mayday_lights", "landing_spots", "stall_speeds" })
+            foreach (string key in new[] { "altitude_band_m", "autoland_reversers", "autoland_autowarp", "rotor_brake_park", "mayday_lights", "landing_spots", "stall_speeds" })
                 if (!result.ContainsKey(key) && legacy.ContainsKey(key)) result[key] = legacy[key];
             object auto;
             if (legacy.TryGetValue("auto_trim_enabled", out auto))

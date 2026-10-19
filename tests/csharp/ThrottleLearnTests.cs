@@ -361,7 +361,7 @@ internal static class ThrottleLearnTests
         Check(maxOver < 40 && crossings <= 2, "heavy hold settles at 5.2 km without porpoising (dev " + maxOver.ToString("0") + " m, crossings " + crossings + ")");
         // speed plan: cruise until the long-final fix, landing speed by 2 km; flaps-down stall; no flaps = faster clean speed
         double st = 79, hi = ApproachProfile.HiSpeed(st);
-        Check(ApproachProfile.FinalSchedule(30000, st, .8) == hi && ApproachProfile.FinalSchedule(2000, st, .8) == ApproachProfile.AppSpeed(st) && ApproachProfile.FinalSchedule(7000, st, .8) < hi && ApproachProfile.FinalSchedule(7000, st, .8) > ApproachProfile.AppSpeed(st), "speed held to long final, bled gradually, landing speed at 2 km");
+        Check(ApproachProfile.FinalSchedule(30000, st, .8) == hi && ApproachProfile.FinalSchedule(2000, st, .8) == ApproachProfile.Vref(st) && ApproachProfile.FinalSchedule(7000, st, .8) < hi && ApproachProfile.FinalSchedule(7000, st, .8) > ApproachProfile.Vref(st), "speed held to long final, bled gradually, landing speed at 2 km");
         Check(ApproachProfile.DecelStartDist(st, 3) >= ApproachChart.LongFix, "no bleed before the long-final fix with a strong decel");
         Check(Near(ApproachProfile.AppSpeed(st), 1.35 * st), "default landing speed 1.35x stall");
         ApproachProfile.FlapRatio = .8; Check(Near(ApproachProfile.AppSpeed(st), 1.35 * st * .8), "flaps out: 1.35x the flaps-down stall");

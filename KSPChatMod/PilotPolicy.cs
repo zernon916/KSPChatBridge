@@ -284,6 +284,10 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5c: on final the speed part uses the shrinking floor k x stall (enter below k, clear at 1.08k), sink parts unchanged.</summary>
         /// <summary>GROK LAND5d: stick keys during an autoland = temporary override (resume 3 s after hands off); held > 15 s = a real disengage.</summary>
         internal const double OverrideResumeS = 3, OverrideMaxS = 15;
+        /// <summary>GROK LAND5f: bank caps - wings level within 2.5 deg below 10 m AGL and on the ground; ferry turns 30 deg (15 under warp); ferry speed cap.</summary>
+        internal const double TouchdownBankCap = 2.5, TouchdownAgl = 10, FerryBankCap = 30, FerryWarpBankCap = 15, FerrySpeedCap = 200;
+        internal static double LandBankCap(double blim, bool landing, double agl, bool landed) { return landing && (landed || agl < TouchdownAgl) ? Math.Min(blim, TouchdownBankCap) : blim; }
+        internal static double FerryBank(double blim, double warp) { return Math.Min(blim, warp > 1 ? FerryWarpBankCap : FerryBankCap); }
         /// <summary>GROK LAND5d: final lateral - a gentle but real bank toward the centreline aim point (1.5 deg bank per deg of track error, max 15);
         /// wings level only once the track error (i.e. the cross-track via the aim point) is inside ~0.3 deg.</summary>
         internal const double FinalLatGain = 2.2, FinalLatMaxBank = 20, FinalLatNearBank = 7, FinalLatFarM = 2000, FinalLatNearM = 100, FinalLatDeadDeg = .3, FinalLatDamp = 1.2;
