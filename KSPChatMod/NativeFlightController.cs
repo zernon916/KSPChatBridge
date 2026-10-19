@@ -285,14 +285,15 @@ namespace KSPChatBridge
         readonly AirbrakeGate airGate = new AirbrakeGate();
         /// <summary>GROK FIX3: a Brakes-bound control surface that also moves pitch/roll (elevons, tail winglets): the approach never uses airbrakes.</summary>
         bool brakesMoveControls;
+        static bool BrakesBound(ModuleControlSurface s)
+        { BaseAction a = null; try { a = s.Actions["ActionToggle"]; } catch (Exception) { } return a != null && (a.actionGroup & KSPActionGroup.Brakes) != 0; }
         static bool BrakesMoveControls(Vessel v, out string which)
         {
             which = "";
             foreach (Part p in v.parts) foreach (PartModule m in p.Modules)
             {
                 var s = m as ModuleControlSurface; if (s == null || (s.ignorePitch && s.ignoreRoll)) continue;
-                BaseAction a = null; try { a = s.Actions["ActionToggle"]; } catch (Exception) { }
-                if (a != null && (a.actionGroup & KSPActionGroup.Brakes) != 0) { which = p.partInfo != null ? p.partInfo.title : p.name; return true; }
+                if (BrakesBound(s)) { which = p.partInfo != null ? p.partInfo.title : p.name; return true; }
             }
             return false;
         }
@@ -1103,7 +1104,8 @@ namespace KSPChatBridge
                 if (!recovery.CanTrim(s)) continue; // do not adopt a pending sabotage change as a trim baseline
                 double forward = Vector3.Dot(s.part.transform.position - vessel.CoM, vessel.ReferenceTransform.up);
                 double sign = FlightPolicy.SurfaceSign(forward, s.partDeployInvert, s.deployInvert);
-                if (input > 0 && Pitch() > 8) continue;   // anti-windup: no nose-up surface trim while nose-high
+                if (!PilotPolicy.SurfaceTrimAllowed(input, Pitch())) continue;   // anti-windup both ways (GROK FIX5)
+                if (BrakesBound(s)) continue;   // GROK FIX5: deploy/deployAngle of a Brakes-bound surface IS the airbrake - trim never writes it
                 s.deployAngle = (float)FlightPolicy.Clamp(s.deployAngle + Math.Sign(input) * sign * Math.Min(.2, Math.Abs(input) * 2), -PilotPolicy.TrimSurfaceMax, PilotPolicy.TrimSurfaceMax);
                 s.deploy = Math.Abs(s.deployAngle) > .05;
                 recovery.AcceptSurface(s);

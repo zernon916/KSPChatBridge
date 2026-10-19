@@ -133,6 +133,8 @@ class Program
             Check(!PilotPolicy.TrimAllowed(true, 0, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 80, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 500, 5, 0, 0) && PilotPolicy.TrimAllowed(false, 500, 30, .5, 1), "auto-trim never on ground / rotation / just after takeoff");
             double tr = 0; for (int i = 0; i < 200; i++) tr = PilotPolicy.TrimStep(tr, .8, 3); Check(Math.Abs(tr - PilotPolicy.TrimPitchMax) < 1e-9, "trim bounded");
             Check(PilotPolicy.TrimStep(.05, .8, 12) == .05, "anti-windup: no nose-up trim while nose-high");
+        Check(PilotPolicy.TrimStep(-.05, -.8, -4) == -.05 && PilotPolicy.TrimStep(0, -.8, 2) < 0 && !PilotPolicy.SurfaceTrimAllowed(-.5, -3) && PilotPolicy.SurfaceTrimAllowed(.5, -3), "GROK FIX5: no nose-down trim while nose-low (symmetric anti-windup)");
+        { double tw = 0; for (int i = 0; i < 200; i++) tw = PilotPolicy.TrimStep(tw, -.8, -3); Check(tw == 0, "GROK FIX5: a nose-low plane is never trimmed further nose-down"); }
             // level-off sim: nose-up trim + climb; hold pushes the elevator, trim bleeds, pitch comes down
             double trim = .15, pitch = 15, elev = 0; for (int i = 0; i < 100; i++) { double want = -2; elev = Math.Max(-1, Math.Min(1, .05 * (want - pitch))); trim = PilotPolicy.TrimBleed(trim, elev, .1); pitch += (elev * 6 + trim * 10) * .1; }
             Check(trim < .12 && pitch < 2, "altitude hold levels off despite nose-up trim (pitch " + pitch.ToString("0.0") + ")");

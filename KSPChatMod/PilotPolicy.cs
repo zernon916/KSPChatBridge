@@ -286,9 +286,14 @@ namespace KSPChatBridge
         internal const double TrimPitchMax = .15, TrimSurfaceMax = 5;
         /// <summary>Auto-trim only in steady level flight well after takeoff: never on the ground / rotation / climb-out.</summary>
         internal static bool TrimAllowed(bool landed, double agl, double sinceHandoff, double vs, double roll) { return !landed && agl > 150 && sinceHandoff > 20 && Math.Abs(vs) < 1 && Math.Abs(roll) < 5; }
+        /// <summary>GROK FIX5 (Luke: "trims me into the ground"): the anti-windup was nose-up only. Symmetric now: no nose-up trim
+        /// while nose-high (> 8 deg), no nose-down trim while nose-low (below TrimNoseLowDeg).</summary>
+        internal const double TrimNoseLowDeg = -1;
+        internal static bool SurfaceTrimAllowed(double input, double pitchDeg) { return !(input > 0 && pitchDeg > 8) && !(input < 0 && pitchDeg < TrimNoseLowDeg); }
         /// <summary>Bounded, rate-limited pitch-trim step with anti-windup: no nose-up trim while nose-high or at the bound.</summary>
         internal static double TrimStep(double trim, double input, double pitchDeg)
         {
+            if (!SurfaceTrimAllowed(input, pitchDeg)) return trim;
             if (input > 0 && pitchDeg > 8) return trim;
             return Math.Max(-TrimPitchMax, Math.Min(TrimPitchMax, trim + Math.Sign(input) * Math.Min(.01, Math.Abs(input) * .05)));
         }
