@@ -120,6 +120,15 @@ namespace KSPChatBridge
         internal const double MaxIntercept = 30, TrackTau = 5, LookFrac = .4, MinLook = 600;
         internal static double Look(double speed, double maxBank) { return Math.Max(MinLook, LookFrac * speed * speed / (9.81 * Math.Tan(Math.Max(5, maxBank) * Math.PI / 180))); }
         internal static double TrackOffset(double xte, double look) { return -FlightPolicy.Clamp(Math.Atan(xte / Math.Max(1, look)) * 180 / Math.PI, -MaxIntercept, MaxIntercept); }
+        /// <summary>GROK LAND4: hand over to the course capture (any phase) once the line is within the roll-out lead: converging at up to 100 deg
+        /// and |xte| <= r (1 - cos angle) + 300 m, or within 30 deg and inside the look-ahead. (03:31 crossed the final at 90 deg in entry.)</summary>
+        internal static bool ShouldCapture(double xte, double trackErr, double r, double speed, double maxBank)
+        {
+            if (double.IsNaN(trackErr)) return false; double th = Math.Abs(FlightPolicy.Wrap(trackErr));
+            bool toward = xte * Math.Sin(FlightPolicy.Wrap(trackErr) * Math.PI / 180) < 0 || Math.Abs(xte) < 300;
+            if (th < 30 && Math.Abs(xte) < Look(speed, maxBank)) return true;
+            return toward && th <= 100 && Math.Abs(xte) <= r * (1 - Math.Cos(Math.Min(90, th) * Math.PI / 180)) + 300;
+        }
         internal static double Bank(double course, double xte, double track, double speed, double maxBank, out double heading)
         {
             double h = (course + TrackOffset(xte, Look(speed, maxBank))) % 360; heading = h < 0 ? h + 360 : h;
@@ -623,6 +632,19 @@ namespace KSPChatBridge
         }
         /// <summary>GROK LAND3: a committed join path is only swapped when another is shorter by half a turn radius (min 1 km) -
         /// was 0.1 r, so 1-3 deg of pitch-bob heading/speed noise flipped RSR/LSL/LSR/RSL every 1-15 s (03:08:31-03:09:22).</summary>
+        /// <summary>GROK LAND4: shortest Dubins join onto the extended final - a point P at d (dMin..dMax) before the threshold, arriving on
+        /// the course one turn radius before P (as JoinSteer flies it). total = path + r + d to the threshold. ok(d, pathLen) = feasibility (descent).</summary>
+        internal static DubinsPath FinalJoin(double x, double y, double h, double tx, double ty, double course, double r, double dMin, double dMax, Func<double, double, bool> ok, out double bestD, out double total)
+        {
+            double ux = Math.Sin(course * Math.PI / 180), uy = Math.Cos(course * Math.PI / 180); DubinsPath best = null; bestD = double.NaN; total = double.PositiveInfinity;
+            for (double d = dMin; d <= dMax + 1; d += 500)
+            {
+                double px = tx - d * ux, py = ty - d * uy; var p = Plan(x, y, h, px - r * ux, py - r * uy, course, r); if (p == null) continue;
+                if (ok != null && !ok(d, p.Length + r)) continue;
+                double len = p.Length + r + d; if (len < total) { total = len; best = p; bestD = d; }
+            }
+            return best;
+        }
         internal static double CommitHysteresis(double r) { return Math.Max(.5 * r, 1000); }
         /// <summary>GROK LAND3: planning state filters - radius only re-sized on a real (12%) speed change; track low-passed (angle-safe).</summary>
         internal static double CommitRadius(double committed, double now) { return double.IsNaN(committed) || Math.Abs(now - committed) > .12 * committed ? now : committed; }
@@ -1349,6 +1371,7 @@ namespace KSPChatBridge
         internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
+        bool finalJoinRoute;   // GROK LAND4
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
         /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
@@ -1469,7 +1492,7 @@ namespace KSPChatBridge
                 if (Route != null && seenUserWp >= 0 && seenUserWp != UserWaypoints.Version) Route = null;   // user waypoints changed: replan the join (logged via JoinLog)
                 if (Route == null)
                 {
-                    stepsSinceRebuild = 0; holdLast = false; Rebuilds++;
+                    stepsSinceRebuild = 0; holdLast = false; Rebuilds++; finalJoinRoute = false;
                     Chart = ApproachChart.Build(Lat, Lon, course, Elevation, speed, BankDeg, radius, Terrain, LongAgl, ShortAgl); if (Override != null) Chart.Apply(Override);
                     Route = Chart.Route(lat, lon, track, Kind, radius, altitude); RouteIndex = 0; RouteStartLat = lat; RouteStartLon = lon; Chart.RouteFixD = Kind == "short" ? ApproachChart.ShortFix : Chart.FafD;
                     if (Kind != "short")
@@ -1491,7 +1514,7 @@ namespace KSPChatBridge
                         jw = jw + " [" + EntryLog + "; localizer prediction uses roll-in lag only]";
                         if (join != null) { Route = join; Chart.RouteFixAlt = Chart.LongAlt; }
                         JoinLog = join != null ? jw : jw + "; long final entry";
-                        var uw = UserWaypoints.Get(Key); seenUserWp = UserWaypoints.Version;
+                        bool userFirst = false; var uw = UserWaypoints.Get(Key); seenUserWp = UserWaypoints.Version;
                         if (uw.Count > 0)
                         {   // Oct 12 (2nd attempt): a WP Luke placed ahead on the MAP/CHART is flown first, then the chart join from there
                             string uwhy; var u = UserWaypoints.Pick(uw, lat, lon, track, Lat, Lon, radius, Math.Max(1500, .5 * jr), out uwhy);
@@ -1499,14 +1522,29 @@ namespace KSPChatBridge
                             {
                                 if (double.IsNaN(u.Alt) || u.Alt <= 0) u.Alt = Math.Max(Chart.LongAlt, Math.Min(altitude, Chart.LongAlt + 3000));
                                 string jw2; var j2 = Chart.BestJoin(u.Lat, u.Lon, NavigationMath.Bearing(lat, lon, u.Lat, u.Lon), u.Alt, jv, jr, radius, out jw2, EntryChart);
-                                Route = new List<ApproachChart.Wp> { u }; Route.AddRange(j2 ?? new List<ApproachChart.Wp> { Chart.Long }); Chart.RouteFixAlt = Chart.LongAlt;
+                                Route = new List<ApproachChart.Wp> { u }; Route.AddRange(j2 ?? new List<ApproachChart.Wp> { Chart.Long }); Chart.RouteFixAlt = Chart.LongAlt; userFirst = true;
                                 JoinLog = uwhy + ", then " + jw2;
                             }
                             else JoinLog = jw + "; " + uwhy;
                         }
+                        if (!userFirst && !double.IsNaN(track))
+                        {   // GROK LAND4: the shortest Dubins join onto the extended final (>= FAF) wins unless the chart route is about as short (03:28: 86.8 km vs 20.7 direct)
+                            double k0 = Math.PI / 180 * radius, cl0 = Math.Cos(lat * Math.PI / 180), tx = (Lon - lon) * k0 * cl0, ty = (Lat - lat) * k0;
+                            double fjR = PredictedPath.Radius(Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), TurnBank > 0 ? TurnBank : 25), sinkOk = .7 * ApproachProfile.SinkLimit(LearnedSink, 15) / Math.Max(50, speed), fd, ft;
+                            var fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, Math.Max(Chart.FafD, FafDistance + 2000), 40000, (fdd, pl) => altitude - Chart.GlideAlt(fdd) <= pl * sinkOk, out fd, out ft);
+                            double cur = 0, pla = lat, plo = lon; if (Route != null) foreach (var w in Route) { cur += NavigationMath.Distance(pla, plo, w.Lat, w.Lon, radius); pla = w.Lat; plo = w.Lon; }
+                            cur += NavigationMath.Distance(pla, plo, Lat, Lon, radius);
+                            if (fj != null && (Route == null || Route.Count == 0 || ft < .9 * cur))
+                            {
+                                double pLa, pLo; NavigationMath.Offset(Lat, Lon, course + 180, fd, radius, out pLa, out pLo);
+                                Route = new List<ApproachChart.Wp> { new ApproachChart.Wp { Name = "final join " + (fd / 1000).ToString("0.0") + " km", Lat = pLa, Lon = pLo, Alt = Math.Max(Chart.GlideAlt(fd), Elevation + 300) } };
+                                Chart.RouteFixAlt = Chart.LongAlt; finalJoinRoute = true;
+                                JoinLog = "DUBINS FINAL JOIN: " + fj.Type + " onto the final at " + (fd / 1000).ToString("0.0") + " km, total " + (ft / 1000).ToString("0.0") + " km (chart route " + (cur / 1000).ToString("0.0") + " km, r " + Math.Round(fjR) + " m)";
+                            }
+                        }
                     }
                     else JoinLog = "short final (head-on)";
-                    if (Route != null && Route.Count > 0)
+                    if (!finalJoinRoute && Route != null && Route.Count > 0)
                     {   // GROK LAND2: tight-join rejection on EVERY (re)join - from the plane's own position, as the smoother will fly it
                         double fr = PredictedPath.Radius(Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), TurnBank > 0 ? TurnBank : 25); string fw, fw2;
                         if (!RouteFlyable(lat, lon, Route, Lat, Lon, fr, radius, out fw))
@@ -1521,7 +1559,7 @@ namespace KSPChatBridge
                             }
                         }
                     }
-                    RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, lat, lon);
+                    RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, finalJoinRoute ? double.NaN : lat, finalJoinRoute ? double.NaN : lon);   // GROK LAND4: a Dubins final join is flown by the Dubins guidance alone (no smoother arc from here)
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
                 // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
@@ -1586,6 +1624,9 @@ namespace KSPChatBridge
                     }
                     else if (dubAligned && AdvanceWaypoint(leadTurn, dw, Chart.TurnRadius, RouteIndex > 0 ? NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) : double.NaN, behindUs, NavigationMath.Distance(wpFromLat, wpFromLon, lat, lon, radius))) { RouteIndex++; wpFromLat = lat; wpFromLon = lon; }   // GROK FIX2: one fix per update
                 }
+                if (Math.Abs(LegXte) > 500 || (!double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 30)) ArcBank = 0;   // GROK LAND4: arc feed-forward only ON the arc (kept banking right past the ask at 03:30)
+                if (!MissedClimb && Route != null && -along > FafDistance + 1000 && LateralCapture.ShouldCapture(cross, double.IsNaN(track) ? double.NaN : FlightPolicy.Wrap(track - course), PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25), speed, TurnBank > 0 ? TurnBank : 25))
+                { Phase = "intercept"; ArcBank = 0; Why = "course capture " + (-along / 1000).ToString("0.0") + " km out (" + Math.Round(cross) + " m, " + Math.Round(trackErr) + " deg)"; EnergyLog = "lateral: " + Why; }   // GROK LAND4: hand over to the LAND3a capture in any phase
                 if (MissedClimb)
                 {   // GROK LAND2: missed approach - straight ahead on the runway heading, climbing, no turns until MissedAgl; then re-join from there
                     if (altitude - Elevation >= MissedAgl) { MissedClimb = false; Route = null; Why = "missed approach climb done; re-joining"; }

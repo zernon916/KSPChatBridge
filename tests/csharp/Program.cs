@@ -224,6 +224,29 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND4c: 9 km south of the final heading 123 at 150 m/s -> shortest Dubins final join, flown with the real guidance, arrives aligned
+                    double rj = PredictedPath.Radius(150, 25), fd, ft;
+                    foreach (var start in new[] { new[] { 15000.0, -9000, 123 }, new[] { 25000.0, 9000, 340 }, new[] { 12000.0, -9800, 340 } })
+                    {
+                        var fj = DubinsPath.FinalJoin(start[0], start[1], start[2], 0, 0, 270, rj, 9400, 40000, null, out fd, out ft);
+                        double px = start[0], py = start[1], trk = start[2], bk = 0, flown = 0, hh; string pref = null; bool cap = false;
+                        for (int i = 0; i < 20000 && px > 5000; i++)
+                        {
+                            double want;
+                            if (!cap && LateralCapture.ShouldCapture(py, FlightPolicy.Wrap(trk - 270), rj, 150, 25)) cap = true;
+                            if (cap || px < fd) want = LateralCapture.Bank(270, py, trk, 150, 25, out hh);
+                            else
+                            {
+                                DubinsPath dp; double cmd = DubinsPath.JoinSteer(px, py, trk, fd, 0, 270, rj, pref, out dp); pref = dp != null ? dp.Type : null;
+                                want = dp != null && dp.Type == "LINE" ? LateralCapture.Bank(270, py, trk, 150, 25, out hh) : FlightPolicy.Clamp(.5 * FlightPolicy.Wrap(cmd - trk), -25, 25);
+                            }
+                            bk += (want - bk) * .1; trk = (trk + 9.81 * Math.Tan(bk * Math.PI / 180) / 150 * 180 / Math.PI * .1 + 360) % 360;
+                            px += 15 * Math.Sin(trk * Math.PI / 180); py += 15 * Math.Cos(trk * Math.PI / 180); flown += 15;
+                        }
+                        Check(fj != null && ft < 60000 && flown < 60000 && Math.Abs(py) < 50 && Math.Abs(FlightPolicy.Wrap(trk - 270)) < 3, "GROK LAND4: final join from (" + start[0] / 1000 + "," + start[1] / 1000 + " km, hdg " + start[2] + "): " + (fj != null ? fj.Type : "-") + " at " + (fd / 1000).ToString("0.0") + " km, plan " + (ft / 1000).ToString("0.0") + " km, flown " + (flown / 1000).ToString("0.0") + " km, at 5 km " + Math.Round(py) + " m / " + FlightPolicy.Wrap(trk - 270).ToString("0.0") + " deg");
+                    }
+                    Check(LateralCapture.ShouldCapture(-2900, 70, 4900, 150, 25) && !LateralCapture.ShouldCapture(-9000, 70, 4900, 150, 25) && !LateralCapture.ShouldCapture(-2000, -70, 4900, 150, 25), "GROK LAND4: capture handover inside the roll-out lead, converging only");
+                }
                 {   // GROK LAND4a: the ONE landing pitch law in a lagged model incl. a bank (lift loss) - no sustained oscillation, vs error decays
                     double ptA = 0, gmA = Math.Asin(-23 / 160.0) * 180 / Math.PI, trueTrim = 2.5, vfA = double.NaN, trmA = double.NaN, cmdA = double.NaN, lastA = 0, maxRate = 0; var late = new List<double>();
                     for (int i = 0; i < 2400; i++)
@@ -1912,7 +1935,7 @@ class Program
                 var abeam = fly(0, 180, null);   // from the north, 90 deg to the runway
                 Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> nearest safe join, rolls out on centerline: " + abeam.JoinLog + " / " + abeam.Why);
                 var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
-                Check(behind.Why.StartsWith("ok") && behind.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> nearest safe join, long final (no circles): " + behind.Why);
+                Check(behind.Why.StartsWith("ok") && (behind.JoinLog.StartsWith("joined") || behind.JoinLog.StartsWith("DUBINS FINAL JOIN")) && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> nearest safe join, long final (no circles): " + behind.Why);
                 var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
                 Check(Math.Abs(ch.LongAlt - (134.6 + 629)) < 2 && Math.Abs(ch.ShortAlt - (134.6 + 210)) < 2, "continuous 3 deg glideslope: ~630 m at 12 km, ~210 m at 4 km");
                 Check(Math.Abs(ApproachChart.Radius(130, 20) - 1.3 * 130 * 130 / (9.81 * Math.Tan(20 * Math.PI / 180))) < 1, "join spacing from r = v^2/(g tan 20) + 30% margin");
