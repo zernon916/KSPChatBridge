@@ -224,6 +224,19 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND2b: energy - path feed-forward, bounded sink, speed protection, stall-based speeds
+                    double slope = Math.Tan(3.06 * Math.PI / 180), oldVs = Math.Max(-15, -200 * .05 + 0);
+                    double onPath = ApproachProfile.PathVs(-30, 100, slope, 15, 15, 0), high = ApproachProfile.PathVs(-200, 100, slope, 15, 15, 0), fastHigh = ApproachProfile.PathVs(-200, 130, slope, 15, 15, 30);
+                    Check(Math.Abs(onPath - (-100 * slope - 1.5)) < .01 && high <= -14.9 && fastHigh > high && Math.Abs(fastHigh - (-130 * slope)) < .01 && ApproachProfile.PathVs(-2000, 100, slope, 8, 15, 0) == -8 && ApproachProfile.PathVs(50, 100, slope, 15, 10, 0) == 2.5, "GROK LAND2: PathVs tracks the glidepath, bounded, cut when fast");
+                    // steady-state lag on a 3.06 deg path at 100 m/s: ~200 m before (P-only), < 30 m now
+                    double lag = 0; for (int i = 0; i < 4000; i++) { double vs = ApproachProfile.PathVs(-lag, 100, slope, 15, 15, 0); lag += (vs + 100 * slope) * .05; }
+                    Check(Math.Abs(lag) < 30, "GROK LAND2: glidepath lag " + lag.ToString("0") + " m (< 30)");
+                    double oc = ApproachProfile.CruiseSpeed; ApproachProfile.CruiseSpeed = 200;
+                    Check(ApproachProfile.EntrySpeed(60) <= 138.01 && ApproachProfile.EntrySpeed(60) >= ApproachProfile.Speed(60) && ApproachProfile.HiSpeed(60) <= 138.01 && ApproachProfile.EntrySpeed(70) <= 150, "GROK LAND2: entry/approach speed stall-based (<= 2.3x stall, cap 150), not cruise 200");
+                    ApproachProfile.CruiseSpeed = 100; Check(Math.Abs(ApproachProfile.EntrySpeed(60) - 100) < .01, "GROK LAND2: a slower cruise still lowers the join speed");
+                    ApproachProfile.CruiseSpeed = oc;
+                    var dao = new ApproachOverride { AltRef = "msl", DaM = 170 }; Check(Math.Abs(dao.DaHat(70) - 100) < 1e-9 && double.IsNaN(new ApproachOverride().DaHat(70)), "GROK LAND2: plate DA as height above the field");
+                }
                 {   // GROK LAND2: the picked chart + final always win
                     Check(LandingPick.Json("KSC", "27", 0, false, "", "KSC_27_NDB_KERBO").EndsWith(",\"final\":\"long\",\"chart\":\"KSC_27_NDB_KERBO\"}") && !LandingPick.Json("KSC", "27", 0, true, "", "AUTO").Contains("chart"), "GROK LAND2: engage sends the picked chart and final");
                     Check(RunwayMission.PickedKind("long", "") == "long" && RunwayMission.PickedKind("SHORT", "x") == "short" && RunwayMission.PickedKind("", "KSC_27_NDB_KERBO") == "long" && RunwayMission.PickedKind("", "") == "", "GROK LAND2: picked final kind (picked chart -> long)");

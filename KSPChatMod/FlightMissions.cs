@@ -283,7 +283,9 @@ namespace KSPChatBridge
         internal sealed class Fix { internal string Role, Name, Side; internal double Lat, Lon, Alt, Agl = double.NaN; internal string AltRef = "agl"; }
         internal string AltRef = "msl";
         internal readonly List<Fix> Fixes = new List<Fix>();
-        internal double FlareStartM = 15, FlareSinkMs = 1, TouchdownM = 350, TchM = 15;
+        internal double FlareStartM = 15, FlareSinkMs = 1, TouchdownM = 350, TchM = 15, DaM = double.NaN;   // GROK LAND2: plate DA (da_m, in alt_ref)
+        /// <summary>GROK LAND2: decision altitude as height above the threshold (NaN = none on the chart).</summary>
+        internal double DaHat(double elevation) { return double.IsNaN(DaM) ? double.NaN : AltRef == "msl" ? DaM - elevation : DaM; }
         internal static readonly string[] Roles = { "faf", "sf", "dw_left", "dwend_left", "base_left", "dw_right", "dwend_right", "base_right", "td_left", "tdend_left", "td_right", "tdend_right", "wp" };
         internal const int MaxFixes = 16;
         static double N(Dictionary<string, object> d, string k, double def) { object v; return d != null && d.TryGetValue(k, out v) && v != null ? Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture) : def; }
@@ -298,7 +300,7 @@ namespace KSPChatBridge
                 if (o.FlareStartM < 3 || o.FlareStartM > 60 || o.FlareSinkMs < .2 || o.FlareSinkMs > 5 || o.TouchdownM < 0 || o.TouchdownM > 1500 || o.TchM < 0 || o.TchM > 100) { why = "flare/touchdown/TCH out of range"; return null; }
                 object ar; string altRef = d.TryGetValue("alt_ref", out ar) && ar != null ? Convert.ToString(ar) : "agl";
                 if (altRef != "agl" && altRef != "msl") { why = "alt_ref must be agl or msl"; return null; }
-                o.AltRef = altRef;
+                o.AltRef = altRef; o.DaM = N(d, "da_m", double.NaN);
                 object fl; if (d.TryGetValue("fixes", out fl) && fl is System.Collections.IList)
                     foreach (object x in (System.Collections.IList)fl)
                     {
@@ -407,7 +409,23 @@ namespace KSPChatBridge
         internal const double AggressiveFastM = 15;
         internal static bool NearShort(string phase, double distM) { return (phase == "final" || phase == "intercept") && distM < 2 * ApproachChart.ShortFix; }
         internal static double MaxJoinPath(double direct) { return 3 * direct + 30000; }
-        internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed); }
+        internal static double EntrySpeed(double stall) { double j = Speed(stall); return double.IsNaN(CruiseSpeed) || CruiseSpeed <= 0 ? j : Math.Min(FlightPolicy.Clamp(CruiseSpeed, j, MaxSpeed), StallCap(stall)); }
+        /// <summary>GROK LAND2: approach speeds are stall-based - cruise may only LOWER them, never lift the join above the
+        /// stall schedule's top (2.3x stall, cap 150 / LEARN'd 1.1x join): cruise 200 m/s kept the plane fast + high all approach.</summary>
+        internal static double StallCap(double stall)
+        {
+            double s = SaneStall(stall), cap = TrustedStall ? Math.Max(150, Math.Min(MaxSpeed, 1.1 * JoinFactor * s)) : 150;
+            return Math.Max(Math.Max(Speed(stall), AppSpeed(stall)), Math.Min(cap, 2.3 * s));
+        }
+        /// <summary>GROK LAND2: vertical speed that TRACKS a descending path instead of lagging ~sink/0.05 = 200 m behind it:
+        /// feed-forward of the path sink (speed x slope, phased in over the first 30 m high) + 0.05/s height correction,
+        /// bounded by maxSink; when fast (> plan + 10, gone by + 25) the extra dive beyond the path rate is cut (speed protection).</summary>
+        internal static double PathVs(double altErr, double speed, double slope, double maxSink, double maxClimb, double overSpeed)
+        {
+            double ff = altErr < 0 && slope > 0 ? -Math.Max(0, speed) * slope * Math.Min(1, -altErr / 30) : 0, vs = ff + altErr * .05;
+            if (vs < ff && overSpeed > 10) vs = ff + (vs - ff) * Math.Max(0, 1 - (overSpeed - 10) / 15);
+            return FlightPolicy.Clamp(vs, -Math.Max(1, maxSink), maxClimb);
+        }
         /// <summary>Oct 12: badly off the line -> hold altitude (no glidepath descent) until re-established. Final: > 400 m or > 30 deg; legs: > 1.5 km or > 60 deg.</summary>
         internal static bool BadlyOff(double xteM, double hdgErrDeg, bool onFinal) { double x = Math.Abs(xteM), h = Math.Abs(hdgErrDeg); return onFinal ? x > 400 || h > 30 : x > 1500 || h > 60; }
         internal static double AppSpeed(double stall)
@@ -419,10 +437,11 @@ namespace KSPChatBridge
         /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150, or 1.1x join when LEARN'd fast), linear decel to 1.35x stall by 2 km.</summary>
         internal static double HiSpeed(double stall)
         {
-            if (!double.IsNaN(CruiseSpeed) && CruiseSpeed > 0) return Math.Max(AppSpeed(stall), Math.Min(MaxSpeed, CruiseSpeed));   // Oct 12: cruise to long final
             double s = SaneStall(stall), app = AppSpeed(stall), hi = 2.3 * s;
             double cap = TrustedStall ? Math.Max(150, Math.Min(MaxSpeed, 1.1 * JoinFactor * s)) : 150;
-            return Math.Max(app, Math.Min(cap, hi));
+            double stallHi = Math.Max(app, Math.Min(cap, hi));   // GROK LAND2: stall-based top; cruise below it only
+            if (!double.IsNaN(CruiseSpeed) && CruiseSpeed > 0) return Math.Max(app, Math.Min(stallHi, CruiseSpeed));   // Oct 12: cruise to long final (now only ever lowers it)
+            return stallHi;
         }
         internal const double DefaultDecel = 1.0, DecelMargin = 500, DecelEnd = 2000;
         /// <summary>Distance needed to slow from v1 to v2 at a m/s^2: (v1^2 - v2^2) / 2a, plus margin.</summary>
@@ -1427,7 +1446,7 @@ namespace KSPChatBridge
                     }
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = Chart != null ? ApproachProfile.EntryAlt(wp.Alt, Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)), altitude) : wp.Alt;   // Oct 12: consistent with the intercept plan
-                    DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 15), 15);   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
+                    DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 15, speed - DesiredSpeed);   // GROK LAND2: path feed-forward (was P-only: +200 m lag)   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
                     EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
                     OffLine = ApproachProfile.BadlyOff(LegXte, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), false);
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
@@ -1467,7 +1486,7 @@ namespace KSPChatBridge
                 DesiredHeading = merging ? LocalizerCourse.Heading(course, cross, icR, icTrk, speed, RollS) : LocalizerCourse.Heading(course, cross, icR);   // shared localizer capture law (legs + LOC)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, EffDecel));   // intercept: join speed, never above the final schedule
-                DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) * .05, -ApproachProfile.SinkLimit(LearnedSink, 15), 10);
+                DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 10, speed - DesiredSpeed);   // GROK LAND2
                 EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Why = "not aligned before the FAF; repositioning"; if (RebuildDue(stepsSinceRebuild) || Route == null || Route.Count == 0) Route = null; else { holdLast = true; RouteIndex = Route.Count - 1; } }   // never descend unaligned
@@ -1506,6 +1525,8 @@ namespace KSPChatBridge
                 PredictedNow = predSpd; AppNow = ApproachProfile.AppSpeed(stall);
                 if (GateCooldown <= 0 && Phase == "final" && Distance < ApproachChart.ShortFix && Distance > 100 && predFast) { Phase = "go around"; Why = "too fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ")"; }
                 if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && Distance < GateDistance && Distance > 0 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
+                double daHat = Override != null ? Override.DaHat(Elevation) : double.NaN;   // GROK LAND2: plate DA - still well high there = go around
+                if (Phase == "final" && GateCooldown <= 0 && daHat > 20 && hat < daHat && hat > daHat - 40 && above > 60) { Phase = "go around"; Why = "high at DA " + daHat.ToString("0") + " m (" + above.ToString("0") + " m above the glidepath)"; }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
                 if (!grounded && along > length - 200 && hat > 3) { Phase = "go around"; Why = "overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"; }
