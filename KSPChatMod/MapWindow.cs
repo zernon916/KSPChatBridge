@@ -406,6 +406,18 @@ namespace KSPChatBridge
 
         /// <summary>Instrument-style ILS: needles box (left) + data block (right), through the shared canvas, so the outside MFD and
         /// every IVA screen render the same instrument. Single source of truth with the autopilot.</summary>
+        /// <summary>GROK TAB-ILS1: one narrow vertical deviation bar (label on top, centre line = target, marker = actual, arrow when clamped).</summary>
+        static void DevBar(IMfdCanvas cv, Rect r, string label, double dev, double scale, Color c, int px)
+        {
+            int lp = Mathf.Max(8, px - 3); float top = r.y + lp + 4, bot = r.yMax - lp - 6, mid = (top + bot) / 2, half = (bot - top) / 2 - 4;
+            cv.Text(new Rect(r.x - 4, r.y + 1, r.width + 8, lp + 3), label, lp, Color.white, TextAnchor.UpperCenter, false);
+            cv.Fill(new Rect(r.x + r.width / 2 - 1, top, 2, bot - top), new Color(.35f, .35f, .35f));
+            cv.Fill(new Rect(r.x, mid - 1, r.width, 2), Color.white);
+            bool clamped; float y = mid - (float)Ils.BarOffset(dev, scale, half, out clamped);
+            cv.Fill(new Rect(r.x + 1, y - 3, r.width - 2, 6), c);
+            if (clamped) cv.Text(new Rect(r.x - 4, dev > 0 ? top - 2 : bot - lp, r.width + 8, lp + 2), dev > 0 ? "^" : "v", lp, c, TextAnchor.MiddleCenter, false);
+            cv.Text(new Rect(r.x - 6, bot + 1, r.width + 12, lp + 4), dev.ToString("+0;-0"), lp, c, TextAnchor.UpperCenter, false);
+        }
         void DrawIls(IMfdCanvas cv, Rect area)
         {
             var v = FlightGlobals.ActiveVessel; var act = NativeFlightController.ActiveRunway; var rw = Rw();
@@ -417,7 +429,8 @@ namespace KSPChatBridge
             var r = act != null && act.Coupled && act.Ils != null ? act.Ils : Ils.Compute(v.latitude, v.longitude, v.altitude, tla, tlo, ela, elo, elev, v.mainBody.Radius, act != null ? act.TouchdownM : 350, act != null ? act.FinalSlope : double.NaN);
             // the instrument fills the page; the data block overlays the right side on a dark box
             float dw = Mathf.Clamp(area.width * .44f, Mathf.Min(170, area.width * .6f), area.width * .6f);
-            float Sx = Mathf.Max(60, area.width - dw), Sy = Mathf.Max(60, area.height); Rect box = new Rect(0, 0, Sx, Sy);
+            bool bars = act != null && act.Phase != "rollout" && act.Phase != "stopped"; float barsW = bars ? 46 : 0;   // GROK TAB-ILS1: SPD + VS bars between the instrument and the text
+            float Sx = Mathf.Max(60, area.width - dw - barsW), Sy = Mathf.Max(60, area.height); Rect box = new Rect(0, 0, Sx, Sy);
             cv.Fill(area, new Color(.02f, .05f, .03f));
             Vector2 ctr = box.center;
             for (int i = -2; i <= 2; i++) { if (i == 0) continue; cv.Dot(new Vector2(ctr.x + i * Sx * .2f, ctr.y), 5, Color.white); cv.Dot(new Vector2(ctr.x, ctr.y + i * Sy * .2f), 5, Color.white); }
@@ -430,6 +443,13 @@ namespace KSPChatBridge
             bool gear = v.ActionGroups[KSPActionGroup.Gear], brk = v.ActionGroups[KSPActionGroup.Brakes]; double hat = v.altitude - elev, ias = v.indicatedAirSpeed, gs = v.horizontalSrfSpeed;
             double tgt = act != null && act.DesiredSpeed > 0 ? act.DesiredSpeed : 1.3 * Math.Max(30, NativeFlightController.MapStall);
             cv.Fill(new Rect(area.width - dw, 0, dw, area.height), Back);
+            if (bars)
+            {
+                string sb = Ils.SpdBarBand(ias, tgt, act.SpeedFloor); Color amber = new Color(1, .7f, 0);
+                DevBar(cv, new Rect(Sx + 3, 0, 18, Sy), "SPD", ias - tgt, Ils.SpdBarScale, sb == "green" ? Color.green : sb == "amber" ? amber : Color.red, IlsPx(area));
+                double dv = v.verticalSpeed - act.DesiredVs;   // + = shallower than the want (above), - = steeper
+                DevBar(cv, new Rect(Sx + 25, 0, 18, Sy), "VS", dv, Ils.VsBarScale, Math.Abs(dv) <= 2 ? Color.green : Math.Abs(dv) <= 5 ? amber : Color.red, IlsPx(area));
+            }
             var rows = new List<KeyValuePair<string, Color>>();   // the data block: text rows on a dark box, wrapped by the canvas
             rows.Add(new KeyValuePair<string, Color>("ILS " + label, Text));
             rows.Add(new KeyValuePair<string, Color>(act == null ? "AP OFF  raw ILS" : act.Coupled ? (act.GsCoupled ? "COUPLED LOC+GS" : "COUPLED LOC") : act.Phase == "entry" || act.Phase == "intercept" ? "LOC ARMED" : "NOT COUPLED", Text));

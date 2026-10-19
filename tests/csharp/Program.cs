@@ -129,6 +129,11 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK TAB-ILS1: deviation bars
+            bool cl1, cl2, cl3, cl4; double o1 = Ils.BarOffset(15, 30, 100, out cl1), o2 = Ils.BarOffset(-45, 30, 100, out cl2), o3 = Ils.BarOffset(-5, 10, 80, out cl3), o4 = Ils.BarOffset(double.NaN, 10, 80, out cl4);
+            Check(o1 == 50 && !cl1 && o2 == -100 && cl2 && o3 == -40 && !cl3 && o4 == 0 && !cl4, "TAB-ILS1: deviation -> pixel offset, clamped at the end with an arrow");
+            Check(Ils.SpdBarBand(150, 140, double.NaN) == "green" && Ils.SpdBarBand(156, 140, double.NaN) == "amber" && Ils.SpdBarBand(134, 140, double.NaN) == "amber" && Ils.SpdBarBand(136, 140, double.NaN) == "green" && Ils.SpdBarBand(60, 140, 62) == "red", "TAB-ILS1: SPD colour green -5/+15, amber outside, red below the floor");
+        }
         {   // GROK LAND5c items 5-8
             Check(ApproachProfile.FloorK(12000, 9400) == 1.30 && ApproachProfile.FloorK(9400, 9400) == 1.30 && Math.Abs(ApproachProfile.FloorK(2000, 9400) - 1.15) < 1e-9 && Math.Abs(ApproachProfile.FloorK(0, 9400) - 1.04) < 1e-9
                 && Math.Abs(ApproachProfile.FloorK(5700, 9400) - 1.225) < 1e-9 && Math.Abs(ApproachProfile.FloorK(1000, 9400) - 1.095) < 1e-9, "LAND5c: speed floor 1.30 at FAF -> 1.15 at 2 km -> 1.04 at the threshold");

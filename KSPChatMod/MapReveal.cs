@@ -140,6 +140,19 @@ namespace KSPChatBridge
             if (double.IsNaN(predicted) || double.IsNaN(app)) return SpeedBand(ias, target);
             double d = Math.Max(predicted - app, target - ias); return d <= 5 ? "green" : d <= 10 ? "amber" : "red";
         }
+        /// <summary>GROK TAB-ILS1: deviation bar - pixel offset of the marker from the centre line (+ = up), clamped to +/-halfPx; clamped = arrow.</summary>
+        internal const double SpdBarScale = 30, VsBarScale = 10;
+        internal static double BarOffset(double dev, double scale, double halfPx, out bool clamped)
+        {
+            if (double.IsNaN(dev) || scale <= 0) { clamped = false; return 0; }
+            double p = dev / scale * halfPx; clamped = Math.Abs(p) > halfPx; return Math.Max(-halfPx, Math.Min(halfPx, p));
+        }
+        /// <summary>GROK TAB-ILS1: speed bar colour - green within -5/+15 of target, amber outside, red below the speed floor (NaN = none).</summary>
+        internal static string SpdBarBand(double ias, double target, double floor)
+        {
+            if (!double.IsNaN(floor) && ias < floor) return "red";
+            double d = ias - target; return d >= -5 && d <= 15 ? "green" : "amber";
+        }
         internal static string SpeedBand(double ias, double target) { double d = Math.Abs(ias - target); return d <= 5 ? "green" : d <= 10 ? "amber" : "red"; }
         /// <summary>Text callouts (no audio): GEAR inside 3 km gear up, TOO FAST/SLOW, GLIDESLOPE off the path, MINIMUMS at 60 m above the threshold.</summary>
         internal static List<string> Callouts(Reading r, double hat, bool gearDown, double ias, double target, double predicted = double.NaN, double app = double.NaN)
