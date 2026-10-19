@@ -224,6 +224,11 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND3c: low is never HIGH/FAST
+                    Check(!ApproachProfile.EnergyHigh(-309, 158, 147) && ApproachProfile.EnergyLow(-309) && ApproachProfile.EnergyLabel(-309, 158, 147).Contains("LOW") && !ApproachProfile.EnergyLabel(-309, 158, 147).Contains("idle"), "GROK LAND3: 309 m low + 11 m/s fast -> LOW/FAST, no idle/speedbrakes/steeper");
+                    Check(!ApproachProfile.IdleWanted(ApproachProfile.EnergyHigh(-309, 158, 147), 158, 147), "GROK LAND3: no idle while low");
+                    Check(ApproachProfile.EnergyLabel(120, 150, 150).StartsWith(" -> HIGH:") && ApproachProfile.EnergyLabel(0, 171, 150).StartsWith(" -> FAST") && ApproachProfile.EnergyLabel(0, 150, 150) == "" && ApproachProfile.EnergyHigh(-40, 171, 150), "GROK LAND3: HIGH / FAST / on-path labels; slightly low + fast still slows");
+                }
                 {   // GROK LAND3b: committed join - noise of a few deg / m/s never flips the Dubins type
                     double fx = 3000, fy = 25000; DubinsPath dq; DubinsPath.JoinSteer(0, 0, 90, fx, fy, 270, 4600, null, out dq); string t0 = dq.Type; int flips = 0; var rnd = new Random(7); string cur = t0;
                     double rc = double.NaN, tf = double.NaN;

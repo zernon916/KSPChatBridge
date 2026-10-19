@@ -402,7 +402,18 @@ namespace KSPChatBridge
         internal static double SinkLimit(double learnedSink, double fallback) { return double.IsNaN(learnedSink) || learnedSink <= 1 ? fallback : learnedSink; }
         internal const double HighM = 50, FastMs = 10;
         /// <summary>High (above the planned path) or fast (over the planned speed): idle + speedbrakes, steeper descent.</summary>
-        internal static bool EnergyHigh(double aboveM, double speed, double plannedSpeed) { return aboveM > HighM || speed > plannedSpeed + FastMs; }
+        /// <summary>GROK LAND3: LOW (> LowM below the path) is never HIGH/FAST - 309 m low and 11 m/s fast got idle + speedbrakes + steeper (03:09:47).</summary>
+        internal static bool EnergyHigh(double aboveM, double speed, double plannedSpeed) { return !EnergyLow(aboveM) && (aboveM > HighM || speed > plannedSpeed + FastMs); }
+        internal const double LowM = 50;
+        internal static bool EnergyLow(double aboveM) { return aboveM < -LowM; }
+        /// <summary>GROK LAND3: what the energy state commands, for the log (matches EnergyHigh / EnergyLow).</summary>
+        internal static string EnergyLabel(double aboveM, double speed, double plannedSpeed)
+        {
+            bool fast = speed > plannedSpeed + FastMs;
+            if (EnergyLow(aboveM)) return fast ? " -> LOW/FAST: power on, no speedbrakes, trade speed for height" : " -> LOW: power on, no descent until back on the path";
+            if (aboveM > HighM) return " -> HIGH" + (fast ? "/FAST" : "") + ": idle + speedbrakes, steeper";
+            return fast ? " -> FAST: idle + speedbrakes" : "";
+        }
         /// <summary>High on final: sink to rejoin the path - path sink plus 5% of the height excess per s, at most the learned sink (fallback 15).</summary>
         internal static double RecoverSink(double speed, double slope, double aboveM, double learnedSink)
         {
@@ -1272,14 +1283,14 @@ namespace KSPChatBridge
         /// <summary>Oct 12: speed-gate inputs (set by the controller): learned decel (NaN = none -> no speed go-around), flap steps still to come, airbrakes.</summary>
         internal double LearnedDecel = double.NaN; internal int FlapStepsLeft; internal bool HasAirbrakes;
         /// <summary>Oct 12: learned descent sink (m/s, from LEARN idle dives; NaN = fixed fallbacks), energy state and the per-leg energy log line.</summary>
-        internal double LearnedSink = double.NaN; internal bool EnergyHigh; internal string EnergyLog = ""; double energyBucket = double.NaN; string energyKey = "";
+        internal double LearnedSink = double.NaN; internal bool EnergyHigh; internal bool EnergyLow; internal string EnergyLog = ""; double energyBucket = double.NaN; string energyKey = "";
         double EffDecel { get { return ApproachProfile.PlanDecel(DecelA, HasAirbrakes); } }
         void EnergyNote(double altitude, double speed, double plannedAlt, int leg)
         {   // one line per leg / phase and every 2 km: planned vs actual altitude and speed, distance to the threshold
             double b = Math.Floor(Distance / 2000); string key = Phase + "/" + leg;
             if (key == energyKey && b == energyBucket) return; energyKey = key; energyBucket = b;
             EnergyLog = "energy " + Phase + " leg " + leg + ": " + (Distance / 1000).ToString("0.0") + " km to thr, alt plan " + plannedAlt.ToString("0") + " act " + altitude.ToString("0") + " (" + (altitude - plannedAlt).ToString("+0;-0") + " m), spd plan " + DesiredSpeed.ToString("0") + " act " + speed.ToString("0")
-                + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + (EnergyHigh ? " -> HIGH/FAST: idle + speedbrakes, steeper" : "")
+                + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + ApproachProfile.EnergyLabel(altitude - plannedAlt, speed, DesiredSpeed)
                 + (Phase == "final" ? "; steering to moving centerline point 1500 m ahead on 3 deg glide path" + (OffLine ? "; off line: descent held" : "") : "");
         }
         /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
@@ -1515,7 +1526,7 @@ namespace KSPChatBridge
                     if (NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) < 300) leadTurn = false;
                     DesiredAltitude = Chart != null ? ApproachProfile.EntryAlt(wp.Alt, Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)), altitude) : wp.Alt;   // Oct 12: consistent with the intercept plan
                     DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 15, speed - DesiredSpeed);   // GROK LAND2: path feed-forward (was P-only: +200 m lag)   // Oct 12: learned sink, not a fixed -10 (A300 600 m high at 10 km)
-                    EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
+                    EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyLow = ApproachProfile.EnergyLow(altitude - DesiredAltitude); EnergyNote(altitude, speed, DesiredAltitude, RouteIndex);
                     OffLine = ApproachProfile.BadlyOff(LegXte, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), false);
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
                     bool last = RouteIndex == Route.Count - 1;
@@ -1563,7 +1574,7 @@ namespace KSPChatBridge
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, EffDecel));   // intercept: join speed, never above the final schedule
                 DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 10, speed - DesiredSpeed);   // GROK LAND2
-                EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -1);
+                EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyLow = ApproachProfile.EnergyLow(altitude - DesiredAltitude); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
                 else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "go around"; Why = "not aligned " + (-along / 1000).ToString("0.0") + " km out (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg off)"; }   // GROK LAND2: close-in failed intercept = go around (climb, fly out, re-join), never a tight re-join   // never descend unaligned
             }
@@ -1587,7 +1598,7 @@ namespace KSPChatBridge
                 if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
                 double above = altitude - DesiredAltitude;
                 if (above > 30 && hat > 60) maxSink = Math.Max(maxSink, ApproachProfile.SinkLimit(LearnedSink, 15));   // Luke Oct 12: ALTITUDE over speed - high = full learned sink even if fast (idle+brakes/flaps bleed speed; overspeed protection unchanged)   // Oct 12: high on final -> steeper within the learned sink (was capped at the path rate while fast: never got down)
-                EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyNote(altitude, speed, DesiredAltitude, -2);
+                EnergyHigh = hat > 60 && ApproachProfile.EnergyHigh(above, speed, DesiredSpeed); EnergyLow = ApproachProfile.EnergyLow(above); EnergyNote(altitude, speed, DesiredAltitude, -2);
                 bool belowGs = Ils.AboveGsM < -GsMargin && Distance > ApproachChart.ShortFix;   // never below the GS minus a margin before short final
                 double targetAlt = FinalApproachPolicy.TargetAltitude(Elevation, along, TouchdownM, FinalSlope);
                 double pointVs = FinalApproachPolicy.VerticalSpeed(targetAlt, altitude, speed, latDev);
