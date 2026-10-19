@@ -133,10 +133,11 @@ namespace KSPChatBridge
         }
         /// <summary>Chart variant for active.json from an approach item ("" = the end's default file; null = AUTO, leave as is).</summary>
         internal static string Variant(string approach) { if (approach == Auto || string.IsNullOrEmpty(approach)) return null; string v; ChartStore.KeyOf(approach + ".json", out v); return v; }
-        internal static string Json(string airport, string end, int touchAndGo, bool shortFinal, string approachHeading)
+        internal static string Json(string airport, string end, int touchAndGo, bool shortFinal, string approachHeading, string approach = null)
         {
+            string chart = approach == null || approach == Auto || airport == Auto || end == Auto ? "" : ",\"chart\":\"" + approach.Replace("\"", "") + "\"";
             string name = airport == Auto || string.IsNullOrEmpty(airport) ? "nearest" : airport, rw = end == Auto || string.IsNullOrEmpty(end) ? "" : end;
-            return "{\"name\":\"" + name.Replace("\\", "").Replace("\"", "") + "\",\"runway\":\"" + rw + "\",\"touch_and_go\":" + touchAndGo + ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + (string.IsNullOrEmpty(approachHeading) ? "-1" : approachHeading) + "}";
+            return "{\"name\":\"" + name.Replace("\\", "").Replace("\"", "") + "\",\"runway\":\"" + rw + "\",\"touch_and_go\":" + touchAndGo + ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + (string.IsNullOrEmpty(approachHeading) ? "-1" : approachHeading) + ",\"final\":\"" + (shortFinal ? "short" : "long") + "\"" + chart + "}";
         }
         internal static string Label(string airport, string end, string approach)
         {

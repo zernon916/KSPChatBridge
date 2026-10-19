@@ -337,6 +337,7 @@ namespace KSPChatBridge
                 foreach (var key in ChartStore.Changed())
                 {
                     var rw = runway != null && runway.Key == key ? runway : null;
+                    if (rw != null && rw.ChartPin.Length > 0) { ChatLog.Write("approach", "chart " + key + " changed on disk - keeping the picked " + rw.ChartPin); continue; }   // GROK LAND2
                     string why; object end = ChartStore.Read(key, out why); ApproachOverride ov = null;
                     if (end != null && rw != null && FlightGlobals.ActiveVessel != null) ov = ApproachOverride.Parse(end, rw.Lat, rw.Lon, rw.Elevation, FlightGlobals.ActiveVessel.mainBody.Radius, out why, rw.Terrain);
                     if (rw == null) { if (why.Length == 0) { ChatWindow.Notice("[SYSTEM] chart " + key + " reloaded"); ChatLog.Write("approach", "chart " + key + " reloaded (" + System.IO.Path.GetFileName(ChartStore.PathFor(key)) + ")"); } else ChatLog.Write("approach", "chart " + key + " reload rejected (" + why + "); keeping the old chart"); continue; }
@@ -1500,18 +1501,24 @@ namespace KSPChatBridge
                         try
                         {
                             EnsureCharts(); GenerateCharts(vessel.mainBody); string why; object end = ChartStore.Read(selectedRunway.Key, out why);
+                            string pin = Str(a, "chart", "").Trim(); string pinWhy;   // GROK LAND2: the chart picked on the tablet is flown, whatever active.json says later
+                            object pinned = ChartStore.ReadPinned(selectedRunway.Key, pin, out pinWhy);
+                            if (pinned != null) { end = pinned; why = ""; selectedRunway.ChartPin = pin; }
+                            else if (pin.Length > 0) ChatLog.Write("approach", "picked chart " + pin + " not used (" + pinWhy + "); active chart instead");
                             if (why.Length > 0) ChatLog.Write("approach", "chart " + selectedRunway.Key + ": " + why + "; computed chart");
                             {
                                 if (end != null)
                                 {
                                     selectedRunway.Override = ApproachOverride.Parse(end, selectedRunway.Lat, selectedRunway.Lon, selectedRunway.Elevation, vessel.mainBody.Radius, out why, selectedRunway.Terrain);
-                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using " + System.IO.Path.GetFileName(ChartStore.PathFor(selectedRunway.Key)) + " for " + selectedRunway.Key + "; profile " + (profileTrusted && profile != null ? vessel.vesselName + "|" + profile.Date : "untrusted/default") : "chart " + selectedRunway.Key + " invalid (" + why + "); computed chart");
+                                    ChatLog.Write("approach", selectedRunway.Override != null ? "using " + (selectedRunway.ChartPin.Length > 0 ? selectedRunway.ChartPin + ".json (picked)" : System.IO.Path.GetFileName(ChartStore.PathFor(selectedRunway.Key))) + " for " + selectedRunway.Key + "; profile " + (profileTrusted && profile != null ? vessel.vesselName + "|" + profile.Date : "untrusted/default") : "chart " + selectedRunway.Key + " invalid (" + why + "); computed chart");
                                 }
                             }
                         }
                         catch (Exception ex) { ChatLog.Write("approach", "chart unreadable (" + ex.Message + "); computed chart"); }
                     }
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
+                    selectedRunway.ForceKind = RunwayMission.PickedKind(Str(a, "final", ""), selectedRunway.ChartPin);   // GROK LAND2: LONG/SHORT as picked (a picked chart = its own long-final join)
+                    ChatLog.Write("approach", "engage: " + selectedRunway.Key + ", chart " + (selectedRunway.ChartPin.Length > 0 ? selectedRunway.ChartPin + " (picked)" : selectedRunway.Override != null ? System.IO.Path.GetFileNameWithoutExtension(ChartStore.PathFor(selectedRunway.Key)) + " (active)" : "computed") + ", final " + (selectedRunway.ForceKind.Length > 0 ? selectedRunway.ForceKind + " (picked)" : "auto"));
                 goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); derot.Reset(); landingAoa = double.NaN; holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));

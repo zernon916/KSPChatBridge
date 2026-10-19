@@ -1331,6 +1331,9 @@ namespace KSPChatBridge
         internal bool OffLine;
         internal static double BelowGsM(Ils.Reading r) { return r == null ? double.NaN : -r.AboveGsM; }
         internal double ArcBank; internal bool Heavy; internal const double GsMargin = 30;   // feed-forward bank on chart arcs (deg, + right)
+        internal string ChartPin = "", ForceKind = "";   // GROK LAND2: picked chart file / picked final ("" = auto)
+        /// <summary>GROK LAND2: final kind to fly: the picked LONG/SHORT; a picked chart without a final pick = long (its own join fixes).</summary>
+        internal static string PickedKind(string final, string chartPin) { final = (final ?? "").Trim().ToLowerInvariant(); return final == "long" || final == "short" ? final : !string.IsNullOrEmpty(chartPin) ? "long" : ""; }
         internal bool WantShort; internal string Kind = ""; internal double FixDistance = IfDistance;
         /// <summary>Round 3 approach: fly to an intercept fix 20 km out on the extended centerline, turn onto the centerline holding
         /// altitude, only descend on the glideslope once aligned (cross &lt; 150 m, track within 8 deg) before the 6 km FAF,
@@ -1351,7 +1354,7 @@ namespace KSPChatBridge
             if (Phase == "entry")
             {
                 if (Route != null && holdLast && RouteIndex >= Route.Count) RouteIndex = Route.Count - 1;
-                if (Kind.Length == 0) { Kind = PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
+                if (Kind.Length == 0) { Kind = ForceKind.Length > 0 ? ForceKind : PilotPolicy.ApproachKind(track, course, -along, WantShort); FixDistance = Kind == "short" ? PilotPolicy.ShortFix : IfDistance; }
                 if (Route != null && seenUserWp >= 0 && seenUserWp != UserWaypoints.Version) Route = null;   // user waypoints changed: replan the join (logged via JoinLog)
                 if (Route == null)
                 {

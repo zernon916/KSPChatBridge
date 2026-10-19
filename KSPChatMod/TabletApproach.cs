@@ -96,7 +96,7 @@ namespace KSPChatBridge
             string ah = apprHdgT.Trim().Length > 0 ? Num(apprHdgT, "-1") : "-1";
             if (vertical && lpAirport != LandingPick.Auto && lpAirport != "KSC" && lpAirport != "Island")
                 ChatWindow.ToolFromMenu("land_at_spot", "{\"name\":" + ChatWindow.Json(lpAirport) + ",\"mode\":\"V\",\"chute_check\":" + (chuteCheck ? "true" : "false") + "}");
-            else ChatWindow.ToolFromMenu("land_plane", LandingPick.Json(lpAirport, lpEnd, tg, shortFinal, ah));
+            else ChatWindow.ToolFromMenu("land_plane", LandingPick.Json(lpAirport, lpEnd, tg, shortFinal, ah, lpApp));
         }
         static void ApproachToggle(Rect r, string label, ref bool value)
         {

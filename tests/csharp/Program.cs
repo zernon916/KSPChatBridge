@@ -224,6 +224,14 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND2: the picked chart + final always win
+                    Check(LandingPick.Json("KSC", "27", 0, false, "", "KSC_27_NDB_KERBO").EndsWith(",\"final\":\"long\",\"chart\":\"KSC_27_NDB_KERBO\"}") && !LandingPick.Json("KSC", "27", 0, true, "", "AUTO").Contains("chart"), "GROK LAND2: engage sends the picked chart and final");
+                    Check(RunwayMission.PickedKind("long", "") == "long" && RunwayMission.PickedKind("SHORT", "x") == "short" && RunwayMission.PickedKind("", "KSC_27_NDB_KERBO") == "long" && RunwayMission.PickedKind("", "") == "", "GROK LAND2: picked final kind (picked chart -> long)");
+                    string od = ChartStore.Dir; string pinDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_pin_test"); System.IO.Directory.CreateDirectory(pinDir); ChartStore.Dir = pinDir;
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(pinDir, "KSC_27_NDB_KERBO.json"), "{\"alt_ref\":\"msl\",\"fixes\":[]}"); ChartStore.SetActive("KSC 27", "generated"); string pw;
+                    Check(ChartStore.ReadPinned("KSC 27", "KSC_27_NDB_KERBO", out pw) != null && ChartStore.ReadPinned("KSC 09", "KSC_27_NDB_KERBO", out pw) == null && ChartStore.ReadPinned("KSC 27", "KSC_27_nope", out pw) == null, "GROK LAND2: pinned chart read ignores active.json; wrong end / missing refused");
+                    ChartStore.Dir = od;
+                }
                 {   // GROK LAND1: landing pickers
                     var files = new[] { "active.json", "Island_09.json", "Island_09_generated.json", "KSC_27.json", "KSC_27_generated.json", "KSC_27_tight.json", "Dessert_18.json", "TAXI_hangar.json" };
                     var ap = LandingPick.Airports(files, new[] { "Runway 09", "Moon Strip" });
@@ -231,7 +239,7 @@ class Program
                     Check(string.Join(",", LandingPick.Ends("KSC", files)) == "AUTO,09,27" && string.Join(",", LandingPick.Ends("Dessert", files)) == "AUTO,18" && string.Join(",", LandingPick.Ends("AUTO", files)) == "AUTO", "GROK LAND1: runway ends");
                     Check(string.Join(",", LandingPick.Approaches("KSC", "27", files)) == "AUTO,KSC_27,KSC_27_generated,KSC_27_tight" && LandingPick.Approaches("KSC", "AUTO", files).Count == 1, "GROK LAND1: approaches per end");
                     Check(LandingPick.Variant("KSC_27_tight") == "tight" && LandingPick.Variant("KSC_27") == "" && LandingPick.Variant("AUTO") == null, "GROK LAND1: approach -> active.json variant");
-                    Check(LandingPick.Json("AUTO", "AUTO", 0, false, "") == "{\"name\":\"nearest\",\"runway\":\"\",\"touch_and_go\":0,\"final_km\":0,\"approach_heading\":-1}" && LandingPick.Json("KSC", "27", 2, true, "270").Contains("\"name\":\"KSC\",\"runway\":\"27\",\"touch_and_go\":2,\"final_km\":5"), "GROK LAND1: land_plane JSON");
+                    Check(LandingPick.Json("AUTO", "AUTO", 0, false, "") == "{\"name\":\"nearest\",\"runway\":\"\",\"touch_and_go\":0,\"final_km\":0,\"approach_heading\":-1,\"final\":\"long\"}" && LandingPick.Json("KSC", "27", 2, true, "270").Contains("\"name\":\"KSC\",\"runway\":\"27\",\"touch_and_go\":2,\"final_km\":5"), "GROK LAND1: land_plane JSON");
                     var bt = FlightResidualPolicy.BuiltInRunway("Island", "09"); Check(bt != null && bt.Item1 == "island" && bt.Item2 == "09" && FlightResidualPolicy.BuiltInRunway("nearest", "").Item1 == "nearest", "GROK LAND1: picker names resolve to the built-in runways");
                 }
                 {   // GROK TO2: takeoff settings

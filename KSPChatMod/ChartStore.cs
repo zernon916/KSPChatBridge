@@ -52,6 +52,16 @@ namespace KSPChatBridge
             var d = MiniJson.Deserialize(txt); if (d == null) { why = Path.GetFileName(p) + " is not valid JSON"; return null; }
             return d;
         }
+        /// <summary>GROK LAND2: a picked chart file (name without .json) for this runway end; null + why when missing/invalid/other end.</summary>
+        internal static object ReadPinned(string key, string file, out string why)
+        {
+            why = ""; if (string.IsNullOrEmpty(file)) { why = "none picked"; return null; }
+            string v; if (KeyOf(file + ".json", out v) != key) { why = file + " is not a " + key + " chart"; return null; }
+            if (Dir == null) { why = "no chart folder"; return null; }
+            string p = Path.Combine(Dir, Path.GetFileName(file) + ".json"); if (!File.Exists(p)) { why = file + ".json missing"; return null; }
+            string txt = File.ReadAllText(p); if (AtomicFile.Torn(txt)) { why = file + " empty"; return null; }
+            var d = MiniJson.Deserialize(txt); if (d == null) why = file + " is not valid JSON"; return d;
+        }
         internal static void Write(string key, string variant, string json) { Directory.CreateDirectory(Dir); AtomicFile.Write(Path.Combine(Dir, FileName(key, variant)), json); }
         /// <summary>One-time split of the old approaches.json into per-end files (backup kept as approaches.json.premigrate.bak). Returns files written.</summary>
         internal static int Migrate(string approachesPath)
