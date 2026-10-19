@@ -780,11 +780,16 @@ namespace KSPChatBridge
     /// is only a gentle (x0.4) correction on a filtered vs, and the altitude error stays the slow outer loop (the mission's target vs).</summary>
     internal static class PitchAttitude
     {
-        internal const double TrimTau = 8, VsTau = 1.5, VsGain = .4, BankOn = 5, BankFull = 10;
+        internal const double TrimTau = 12, VsTau = 1.5, VsGain = .4, BankOn = 5, BankFull = 10, LandGain = .75, SlewDegS = 2, SteadyVs = 3;   // LandGain x VsGain = 0.3
+        /// <summary>GROK LAND4: nose command slew, at most SlewDegS deg/s.</summary>
+        internal static bool Steady(double vsPrev, double vsNow, double dt) { return !double.IsNaN(vsPrev) && dt > 0 && Math.Abs(vsNow - vsPrev) / dt < SteadyRate; }
+        internal const double SteadyRate = .5;   // m/s per s
+        internal static double Slew(double cur, double target, double dt) { double s = SlewDegS * Math.Max(0, dt); return FlightPolicy.Clamp(target, cur - s, cur + s); }
         internal static double TrimStep(double trim, double pitch, double fpa, double rollDeg, double dt)
         {
             double a = pitch - fpa; if (double.IsNaN(a) || double.IsInfinity(a) || Math.Abs(rollDeg) > 45) return trim;
-            a = FlightPolicy.Clamp(a, -5, 15); if (double.IsNaN(trim)) return a;
+            if (double.IsNaN(trim)) return FlightPolicy.Clamp(a, 0, 6);   // GROK LAND4: a sane seed, then learned in steady flight only
+            a = FlightPolicy.Clamp(a, -5, 15);
             return trim + (a - trim) * Math.Min(1, Math.Max(0, dt) / TrimTau);
         }
         internal static double VsStep(double filt, double vs, double dt) { return double.IsNaN(filt) ? vs : filt + (vs - filt) * Math.Min(1, Math.Max(0, dt) / VsTau); }

@@ -224,6 +224,24 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND4a: the ONE landing pitch law in a lagged model incl. a bank (lift loss) - no sustained oscillation, vs error decays
+                    double ptA = 0, gmA = Math.Asin(-23 / 160.0) * 180 / Math.PI, trueTrim = 2.5, vfA = double.NaN, trmA = double.NaN, cmdA = double.NaN, lastA = 0, maxRate = 0; var late = new List<double>();
+                    for (int i = 0; i < 2400; i++)
+                    {
+                        double bankA = 20 * Math.Sin(i * .05 / 15 * 2 * Math.PI);   // weaving 0..20 deg bank, 15 s period (the 03:31 entry)
+                        double vsN = 160 * Math.Sin(gmA * Math.PI / 180), vfPrev = vfA; vfA = PitchAttitude.VsStep(vfA, vsN, .05);
+                        trmA = PitchAttitude.TrimStep(trmA, ptA, gmA, bankA, PitchAttitude.Steady(vfPrev, vfA, .05) ? .05 : 0);
+                        double ask = PitchAttitude.Target(trmA, 0, vfA, 160, PitchAttitude.LandGain); cmdA = PitchAttitude.Slew(double.IsNaN(cmdA) ? ptA : cmdA, ask, .05);
+                        maxRate = Math.Max(maxRate, Math.Abs(cmdA - lastA) / .05); lastA = cmdA;
+                        ptA += (cmdA - ptA) * .05 / 1.0;
+                        double liftLoss = 0.6 * (1 / Math.Cos(bankA * Math.PI / 180) - 1) * 10;   // un-fed-forward part of the bank lift loss, deg of path
+                        gmA += ((ptA - trueTrim - liftLoss) - gmA) * .05 / 2.0;
+                        if (i > 1800) late.Add(160 * Math.Sin(gmA * Math.PI / 180));
+                    }
+                    double amp = System.Linq.Enumerable.Max(late) - System.Linq.Enumerable.Min(late), mean = System.Linq.Enumerable.Average(late);
+                    Check(maxRate <= 2.01 && amp < 4 && Math.Abs(mean) < 2, "GROK LAND4: one pitch law, weaving bank: vs swing " + amp.ToString("0.0") + " m/s (was ~50), mean " + mean.ToString("0.0") + ", nose cmd <= " + maxRate.ToString("0.0") + " deg/s");
+                    Check(PitchAttitude.Slew(0, 10, .5) == 1 && PitchAttitude.Slew(5, 4, 1) == 4, "GROK LAND4: nose command slew 2 deg/s");
+                }
                 {   // GROK LAND3d: banked-turn pitch attitude hold - nose on the trim line, no porpoise
                     Check(Math.Abs(PitchAttitude.Target(2.5, 0, 0, 150, 1.28) - 2.5) < 1e-9 && PitchAttitude.Weight(0) == 0 && PitchAttitude.Weight(20) == 1 && PitchAttitude.Weight(7.5) == .5, "GROK LAND3: level turn = trim attitude (nose on the horizon line), blended in from 5-10 deg bank");
                     double tr = double.NaN; for (int i = 0; i < 600; i++) tr = PitchAttitude.TrimStep(tr, 3 + (i % 2 == 0 ? .5 : -.5), 0, 25, .05); Check(Math.Abs(tr - 3) < .6 && PitchAttitude.TrimStep(3, 20, 0, 60, .05) == 3, "GROK LAND3: trim low-passed in the bank, ignored past 45 deg");
