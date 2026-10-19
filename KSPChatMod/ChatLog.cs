@@ -172,9 +172,10 @@ namespace KSPChatBridge
             if ((mode == "hold" || mode == "landing" || mode == "circle") && agl > 150) return false;
             return null;
         }
-        internal static bool Violation(bool? intentDown, bool actualDown, bool playerSaid)
+        internal static bool Violation(bool? intentDown, bool actualDown, bool playerSaid, bool? apLast = null)
         {
             if (playerSaid || intentDown == null) return false;
+            if (apLast.HasValue && apLast.Value == actualDown) return false;   // GROK LAND5g: the AP's own last gear command (go-around) is not tampering
             return intentDown.Value != actualDown;
         }
     }
