@@ -189,6 +189,16 @@ class Program
                     Check(!DubinsPath.Flyable(tight, 16000, out fw) && fw.Contains("needs") && DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 20000 }, new double[] { 20000, 20000 }, new double[] { 20000, 0 } }, 3000, out fw), "GROK JOIN1: joins needing more turn room than they have are rejected (" + fw + ")");
                     Check(DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 6000 } }, 16000, out fw), "GROK JOIN1: a straight-in final is always flyable");
                 }
+                {   // GROK LAND1: landing pickers
+                    var files = new[] { "active.json", "Island_09.json", "Island_09_generated.json", "KSC_27.json", "KSC_27_generated.json", "KSC_27_tight.json", "Dessert_18.json", "TAXI_hangar.json" };
+                    var ap = LandingPick.Airports(files, new[] { "Runway 09", "Moon Strip" });
+                    Check(string.Join(",", ap) == "AUTO,KSC,Island,Dessert,Moon Strip", "GROK LAND1: airports (" + string.Join(",", ap) + ")");
+                    Check(string.Join(",", LandingPick.Ends("KSC", files)) == "AUTO,09,27" && string.Join(",", LandingPick.Ends("Dessert", files)) == "AUTO,18" && string.Join(",", LandingPick.Ends("AUTO", files)) == "AUTO", "GROK LAND1: runway ends");
+                    Check(string.Join(",", LandingPick.Approaches("KSC", "27", files)) == "AUTO,KSC_27,KSC_27_generated,KSC_27_tight" && LandingPick.Approaches("KSC", "AUTO", files).Count == 1, "GROK LAND1: approaches per end");
+                    Check(LandingPick.Variant("KSC_27_tight") == "tight" && LandingPick.Variant("KSC_27") == "" && LandingPick.Variant("AUTO") == null, "GROK LAND1: approach -> active.json variant");
+                    Check(LandingPick.Json("AUTO", "AUTO", 0, false, "") == "{\"name\":\"nearest\",\"runway\":\"\",\"touch_and_go\":0,\"final_km\":0,\"approach_heading\":-1}" && LandingPick.Json("KSC", "27", 2, true, "270").Contains("\"name\":\"KSC\",\"runway\":\"27\",\"touch_and_go\":2,\"final_km\":5"), "GROK LAND1: land_plane JSON");
+                    var bt = FlightResidualPolicy.BuiltInRunway("Island", "09"); Check(bt != null && bt.Item1 == "island" && bt.Item2 == "09" && FlightResidualPolicy.BuiltInRunway("nearest", "").Item1 == "nearest", "GROK LAND1: picker names resolve to the built-in runways");
+                }
                 {   // GROK TO2: takeoff settings
                     var ts = new TakeoffSettings(); Check(ts.ToJson() == "{\"altitude_m\":300,\"max_pitch\":30,\"use_flaps\":true}", "GROK TO2: defaults -> runway heading, auto climb (" + ts.ToJson() + ")");
                     ts.Alt = "1500"; ts.Climb = "12"; ts.Hdg = "-90"; ts.MaxPitch = "20"; ts.Flaps = false; var back = TakeoffSettings.Parse(ts.Serialize());

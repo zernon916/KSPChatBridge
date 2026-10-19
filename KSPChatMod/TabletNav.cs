@@ -1,6 +1,7 @@
 // GROK TAB1: Flight tablet navigation model (pure; tested offline). Top tabs FLIGHT / AUTOPILOT / ABORT / CRAFT; TAKEOFF,
 // LANDING, STATUS, TAXI and TRIM are AUTOPILOT sub-pages opened by the page's bottom nav buttons (navigation, never actions).
 using System;
+using System.Collections.Generic;
 
 namespace KSPChatBridge
 {
@@ -90,6 +91,56 @@ namespace KSPChatBridge
             if (!double.IsNaN(m) && m > 0) parts.Add("\"max_pitch\":" + J(m));
             parts.Add("\"use_flaps\":" + (Flaps ? "true" : "false"));
             return "{" + string.Join(",", parts.ToArray()) + "}";
+        }
+    }
+    /// <summary>GROK LAND1: LANDING sub-page pickers - airport (AUTO = nearest, KSC, Island, other chart prefixes, saved runway spots),
+    /// runway end (AUTO = best aligned, else from the built-ins + chart files), approach chart variant (AUTO = keep the active one).</summary>
+    internal static class LandingPick
+    {
+        internal const string Auto = "AUTO";
+        static IEnumerable<string> Keys(IEnumerable<string> files)
+        {
+            foreach (var f in files ?? new string[0])
+            {
+                string n = System.IO.Path.GetFileName(f ?? ""); if (!n.EndsWith(".json") || n == "active.json" || n.StartsWith("TAXI")) continue;
+                string v; string k = ChartStore.KeyOf(n, out v); if (k.Split(' ').Length == 2) yield return k;
+            }
+        }
+        internal static List<string> Airports(IEnumerable<string> files, IEnumerable<string> spots)
+        {
+            var l = new List<string> { Auto, "KSC", "Island" };
+            foreach (var k in Keys(files)) { string a = k.Split(' ')[0]; if (!l.Contains(a)) l.Add(a); }
+            foreach (var s in spots ?? new string[0]) if (!string.IsNullOrEmpty(s) && !l.Contains(s) && !s.StartsWith("Runway")) l.Add(s);
+            return l;
+        }
+        internal static List<string> Ends(string airport, IEnumerable<string> files)
+        {
+            var l = new List<string> { Auto }; if (airport == Auto || string.IsNullOrEmpty(airport)) return l;
+            if (airport == "KSC" || airport == "Island") { l.Add("09"); l.Add("27"); }
+            foreach (var k in Keys(files)) { var p = k.Split(' '); if (p[0] == airport && !l.Contains(p[1])) l.Add(p[1]); }
+            var e = l.GetRange(1, l.Count - 1); e.Sort(); l.RemoveRange(1, l.Count - 1); l.AddRange(e); return l;
+        }
+        /// <summary>Approach charts for one end: AUTO + file names without .json (KSC_27, KSC_27_generated, KSC_27_tight ...).</summary>
+        internal static List<string> Approaches(string airport, string end, IEnumerable<string> files)
+        {
+            var l = new List<string> { Auto }; if (airport == Auto || end == Auto) return l; string key = airport + " " + end; var found = new List<string>();
+            foreach (var f in files ?? new string[0])
+            {
+                string n = System.IO.Path.GetFileName(f ?? ""); if (!n.EndsWith(".json") || n == "active.json") continue;
+                string v; if (ChartStore.KeyOf(n, out v) == key) found.Add(n.Substring(0, n.Length - 5));
+            }
+            found.Sort(); l.AddRange(found); return l;
+        }
+        /// <summary>Chart variant for active.json from an approach item ("" = the end's default file; null = AUTO, leave as is).</summary>
+        internal static string Variant(string approach) { if (approach == Auto || string.IsNullOrEmpty(approach)) return null; string v; ChartStore.KeyOf(approach + ".json", out v); return v; }
+        internal static string Json(string airport, string end, int touchAndGo, bool shortFinal, string approachHeading)
+        {
+            string name = airport == Auto || string.IsNullOrEmpty(airport) ? "nearest" : airport, rw = end == Auto || string.IsNullOrEmpty(end) ? "" : end;
+            return "{\"name\":\"" + name.Replace("\\", "").Replace("\"", "") + "\",\"runway\":\"" + rw + "\",\"touch_and_go\":" + touchAndGo + ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + (string.IsNullOrEmpty(approachHeading) ? "-1" : approachHeading) + "}";
+        }
+        internal static string Label(string airport, string end, string approach)
+        {
+            return (airport == Auto ? "nearest airfield" : airport) + " " + (end == Auto ? "(best-aligned end)" : end) + ", approach " + (approach == Auto ? "AUTO (active chart)" : approach);
         }
     }
 }
