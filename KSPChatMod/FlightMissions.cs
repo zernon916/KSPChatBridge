@@ -197,11 +197,13 @@ namespace KSPChatBridge
         }
         /// <summary>Heading error (deg, + = turn right) toward the takeoff line.</summary>
         internal double HeadingError(double hdg, double xte) { return FlightPolicy.Wrap(Hdg0 - hdg) - FlightPolicy.Clamp(.3 * xte, -5, 5); }
-        internal void Steer(double err, double v, double dt)
+        /// <summary>GROK TO1: rate is the heading rate (deg/s, + = turning right); it damps the correction so the roll doesn't weave.</summary>
+        internal void Steer(double err, double v, double dt, double rate = 0)
         {
-            double gain = .04 * FlightPolicy.Clamp(v / 15, .25, 1), lim = FlightPolicy.Clamp(.5 * 25 / Math.Max(v, 25), .1, .5);
-            Wheel = MoveTowards(Wheel, FlightPolicy.Clamp(-gain * err, -lim, lim), 1 * dt);
-            Yaw = MoveTowards(Yaw, FlightPolicy.Clamp(.02 * err * FlightPolicy.Clamp(v / 40, 0, 1), -.3, .3), .5 * dt);
+            double e = err - .6 * FlightPolicy.Clamp(rate, -20, 20);
+            double gain = .05 * FlightPolicy.Clamp(v / 15, .25, 1), lim = FlightPolicy.Clamp(.5 * 25 / Math.Max(v, 25), .12, .5);
+            Wheel = MoveTowards(Wheel, FlightPolicy.Clamp(-gain * e, -lim, lim), 1 * dt);
+            Yaw = MoveTowards(Yaw, FlightPolicy.Clamp(.03 * e * FlightPolicy.Clamp(v / 30, 0, 1), -.3, .3), .5 * dt);
         }
         static double MoveTowards(double a, double b, double d) { return Math.Abs(b - a) <= d ? b : a + Math.Sign(b - a) * d; }
     }
@@ -236,16 +238,35 @@ namespace KSPChatBridge
             double lead = !double.IsNaN(pitchRate) && pitchRate > .5 && !double.IsNaN(accel) && accel > 0 ? FlightPolicy.Clamp(accel, 0, 15) * FlightPolicy.Clamp(RotPitch / pitchRate, .5, 6) : 0;
             return FlightPolicy.Clamp(.97 * liftoff - lead, .8 * vr, 1.2 * vr);
         }
-        internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN, double pitchRate = double.NaN, double accel = double.NaN)
+        /// <summary>GROK TO1 (Luke): minimum safe rotation speed = the lift-scan stall estimate (mass, wing area, CLmax) + 12% margin.
+        /// Rotating as soon as this is reached keeps the ground roll short and slow - high runway speed is what made the roll wobbly.</summary>
+        internal const double VrMargin = 1.12;
+        internal static double MinRotateSpeed(double liftStall) { return !double.IsNaN(liftStall) && liftStall >= 15 && liftStall <= 200 ? VrMargin * liftStall : double.NaN; }
+        internal double RotStart, V2, MaxPitch = 30; internal string VrSource = "";
+        /// <summary>GROK TO1: safe climb speed (V2) = 1.3 x the stall estimate (lift scan, else Vr/1.15).</summary>
+        internal static double ClimbSpeed(double liftStall, double vr) { double s = !double.IsNaN(liftStall) && liftStall >= 15 && liftStall <= 200 ? liftStall : vr / 1.15; return 1.3 * s; }
+        internal const double ShallowPitch = 5;
+        /// <summary>GROK TO1: accelerate in a shallow climb to V2, then pitch up toward the max climb pitch (user setting, default 30) over the next
+        /// 25 m/s; speed protection: below V2 the pitch comes down (0.5 deg per m/s short, never under 1 deg).</summary>
+        internal static double ClimbPitch(double speed, double v2, double maxPitch)
         {
-            Vr = RotateSpeed(stall, liftoff, pitchRate, accel);
+            double mp = FlightPolicy.Clamp(double.IsNaN(maxPitch) ? 30 : maxPitch, ShallowPitch, 45);
+            if (speed < v2) return FlightPolicy.Clamp(ShallowPitch - .5 * (v2 - speed), 1, ShallowPitch);
+            return ShallowPitch + (mp - ShallowPitch) * FlightPolicy.Clamp((speed - v2) / 25, 0, 1);
+        }
+        internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN, double pitchRate = double.NaN, double accel = double.NaN, double liftStall = double.NaN)
+        {
+            double vmin = MinRotateSpeed(liftStall);
+            if (!double.IsNaN(vmin)) { Vr = vmin; RotStart = Vr; VrSource = "lift scan +12%"; }
+            else { Vr = RotateSpeed(stall, liftoff, pitchRate, accel); RotStart = .85 * Vr; VrSource = "stall/liftoff fallback"; }
+            V2 = ClimbSpeed(liftStall, Vr);
             if (!grounded && double.IsNaN(LiftoffSpeed) && agl > 3) LiftoffSpeed = speed;
-            if (agl >= 100 && !grounded) { Phase = "climbout complete"; return 9; }
+            if (!grounded && (agl >= 100 && speed >= V2 || agl >= 400)) { Phase = "climbout complete"; return ClimbPitch(speed, V2, MaxPitch); }
             if (grounded && now - start > 120) { Phase = "takeoff timeout"; return 0; }
-            if (grounded && speed < .85 * Vr) { Phase = "roll"; return 0; }
-            if (grounded) { Phase = "rotate"; return speed > 1.3 * Vr ? 12 : 2 + 7 * FlightPolicy.Clamp((speed - .85 * Vr) / (.15 * Vr), 0, 1); }
+            if (grounded && speed < RotStart) { Phase = "roll"; return 0; }
+            if (grounded) { Phase = "rotate"; double span = Math.Max(1, Vr - RotStart) > 1 ? Vr - RotStart : .1 * Vr; return speed > 1.3 * Vr ? 12 : 2 + 7 * FlightPolicy.Clamp((speed - RotStart) / span, 0, 1); }
             Phase = "climbout";
-            return speed < Vr ? 1 : 9;
+            return ClimbPitch(speed, V2, MaxPitch);
         }
     }
 

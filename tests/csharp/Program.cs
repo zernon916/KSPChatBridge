@@ -151,6 +151,21 @@ class Program
             var g2 = new TakeoffGround(0, 0, 90); g2.Release(0); for (int i = 0; i < 500; i++) g2.Steer(18, 5, .02);
             var g3 = new TakeoffGround(0, 0, 90); g3.Release(0); for (int i = 0; i < 500; i++) g3.Steer(18, 15, .02);
             Check(Math.Abs(g2.Wheel) < Math.Abs(g3.Wheel) && Math.Abs(g2.Yaw) < Math.Abs(g3.Yaw), "low-speed steering gains scaled down");
+            {   // GROK TO1: Vr from the lift scan (+12%), rotation starts at Vr (Aeris: lift-scan stall 45.7, learned stall 77, learned liftoff 164)
+                Check(Math.Abs(TakeoffMission.MinRotateSpeed(45.7) - 51.18) < .01 && double.IsNaN(TakeoffMission.MinRotateSpeed(double.NaN)) && double.IsNaN(TakeoffMission.MinRotateSpeed(5)), "GROK TO1: minimum Vr = lift-scan stall x1.12");
+                var a = new TakeoffMission(0); Check(a.Step(1, 50, 0, true, 77, 164, 3, 3.5, 45.7) == 0 && a.Phase == "roll", "GROK TO1: roll below Vr");
+                Check(a.Step(2, 52, 0, true, 77, 164, 3, 3.5, 45.7) > 0 && a.Phase == "rotate" && a.VrSource.StartsWith("lift"), "GROK TO1: rotates at 52 m/s, not at the learned 106+");
+                Check(a.Step(3, 57, 0, true, 77, 164, 3, 3.5, 45.7) == 9, "GROK TO1: full rotation by 1.1 Vr");
+                Check(double.IsNaN(TakeoffGround.Elevator(a.RotStart, a.RotStart / .85)) && TakeoffGround.Elevator(a.RotStart - 1, a.RotStart / .85) == -.05, "GROK TO1: nose-down hold ends at Vr");
+                var b = new TakeoffMission(0); b.Step(1, 60, 0, true, 70); Check(b.VrSource.StartsWith("stall") && Math.Abs(b.Vr - 80.5) < .01, "GROK TO1: no lift scan -> old stall/liftoff Vr");
+                var d1 = new TakeoffGround(0, 0, 90); var d2 = new TakeoffGround(0, 0, 90); for (int i = 0; i < 200; i++) { d1.Steer(3, 60, .02, 0); d2.Steer(3, 60, .02, 7); }
+                Check(Math.Abs(TakeoffMission.ClimbSpeed(45.7, 51) - 59.41) < .01 && Math.Abs(TakeoffMission.ClimbSpeed(double.NaN, 115) - 130) < 1e-9, "GROK TO1: V2 = 1.3 x stall est");
+                Check(TakeoffMission.ClimbPitch(50, 60, 30) < TakeoffMission.ClimbPitch(58, 60, 30) && TakeoffMission.ClimbPitch(58, 60, 30) < TakeoffMission.ShallowPitch && TakeoffMission.ClimbPitch(40, 60, 30) == 1, "GROK TO1: speed protection - pitch comes down below V2");
+                Check(TakeoffMission.ClimbPitch(60, 60, 30) == 5 && TakeoffMission.ClimbPitch(85, 60, 30) == 30 && TakeoffMission.ClimbPitch(120, 60, 15) == 15 && TakeoffMission.ClimbPitch(120, 60, 80) == 45, "GROK TO1: shallow at V2, up to max climb pitch (bounded)");
+                var e = new TakeoffMission(0); e.Step(1, 55, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout", "GROK TO1: no handoff above 100 m until V2");
+                e.Step(2, 62, 150, false, 77, 164, 3, 3.5, 45.7); Check(e.Phase == "climbout complete", "GROK TO1: handoff at V2");
+                Check(d1.Wheel < 0 && Math.Abs(d2.Wheel) < Math.Abs(d1.Wheel) && d2.Wheel > 0, "GROK TO1: heading-rate damping on the roll (no weave)");
+            }
             double south = gr.CrossTrack(-0.0486 - 100 / (Math.PI / 180 * 600000), -74.7245, 600000);
             Check(Math.Abs(south - 100) < 1 && Math.Abs(gr.HeadingError(90, 100) + 5) < 1e-9 && Math.Abs(gr.HeadingError(90, 2) + .6) < 1e-9, "gentle bounded centerline correction (" + south.ToString("0.0") + ")");
             Check(!SciencePolicy.CanRun(4, 1, 0, false, true, false, true) && SciencePolicy.CanRun(4, 1, 1, false, true, false, true) && !SciencePolicy.CanRun(0, 1, 1, false, true, true, false), "science: skip crew-in-part / atmosphere experiments that can't run");

@@ -167,7 +167,7 @@ namespace KSPChatBridge
         string roverDestination;
         bool roverNavigating;
         bool roverHeadingEnabled, roverSafetySlow, roverSafetyBrake;
-        double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
+        double tgHdgPrev = double.NaN; double stall = 45, liftoffSpeed = double.NaN; float trimHandoffAt = -1000;
         void RememberLiftoff(double v)
         {
             object o; var cache = settingsData.TryGetValue("liftoff_speeds", out o) ? o as Dictionary<string, object> : null;
@@ -662,10 +662,13 @@ namespace KSPChatBridge
                     double nowT = Planetarium.GetUniversalTime();
                     if (tground != null && !vessel.ActionGroups[KSPActionGroup.Brakes] && tground.Release(nowT))
                     { pitchIntegral = vsIntegral = 0; elevator = 0; bankCmd = 0; pitchShape.Reset(pitch); ChatLog.Write("g", "takeoff brake release: thr ramp 25%/s"); }
-                    if (tground != null && tground.Released && tground.Since(nowT) < 5 && Time.realtimeSinceStartup >= gTraceNext)
-                    { gTraceNext = Time.realtimeSinceStartup + .25f; ChatLog.Write("g", "release+" + tground.Since(nowT).ToString("0.00") + "s spd=" + vessel.srfSpeed.ToString("0.0") + " hdg=" + FlightGlobals.ship_heading.ToString("0.0") + " pit=" + pitch.ToString("0.0") + " q=" + q.ToString("0.0") + " thr=" + c.mainThrottle.ToString("0.00") + " wheel=" + tground.Wheel.ToString("0.00") + " yaw=" + tground.Yaw.ToString("0.00") + " elev=" + c.pitch.ToString("0.00") + " g=" + vessel.geeForce.ToString("0.0")); }
+                    if (tground != null && tground.Released && takeoff.Phase != "climbout complete" && Time.realtimeSinceStartup >= gTraceNext)   // GROK TO1: trace through rotation + liftoff (4 Hz first 5 s, then 1 Hz)
+                    { gTraceNext = Time.realtimeSinceStartup + (tground.Since(nowT) < 5 ? .25f : 1f); ChatLog.Write("g", "ph=" + takeoff.Phase + " vr=" + takeoff.Vr.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0") + " release+" + tground.Since(nowT).ToString("0.00") + "s spd=" + vessel.srfSpeed.ToString("0.0") + " hdg=" + FlightGlobals.ship_heading.ToString("0.0") + " pit=" + pitch.ToString("0.0") + " q=" + q.ToString("0.0") + " thr=" + c.mainThrottle.ToString("0.00") + " wheel=" + tground.Wheel.ToString("0.00") + " yaw=" + tground.Yaw.ToString("0.00") + " elev=" + c.pitch.ToString("0.00") + " g=" + vessel.geeForce.ToString("0.0")); }
                     double rotPr = profile != null ? profile.Perf.PitchRate : double.NaN, rotA = profile != null ? profile.AccelAt(vessel.totalMass) : double.NaN;
-                directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed, rotPr, rotA);
+                string phBefore = takeoff.Phase; bool airBefore = !double.IsNaN(takeoff.LiftoffSpeed);
+                directPitch = takeoff.Step(Planetarium.GetUniversalTime(), vessel.srfSpeed, vessel.radarAltitude, vessel.LandedOrSplashed, stall, liftoffSpeed, rotPr, rotA, stallEstimate);
+                if (phBefore == "roll" && takeoff.Phase == "rotate") ChatLog.Write("takeoff", "Vr=" + takeoff.Vr.ToString("0") + " (stall est " + (double.IsNaN(stallEstimate) ? "-" : stallEstimate.ToString("0")) + ", " + takeoff.VrSource + ") rotating at " + vessel.srfSpeed.ToString("0") + " m/s");
+                if (!airBefore && !double.IsNaN(takeoff.LiftoffSpeed)) ChatLog.Write("takeoff", "wheels up at " + takeoff.LiftoffSpeed.ToString("0") + " m/s (Vr " + takeoff.Vr.ToString("0") + "); climb speed=" + takeoff.V2.ToString("0") + " pitch=" + TakeoffMission.ShallowPitch.ToString("0") + "->" + takeoff.MaxPitch.ToString("0") + " (shallow until V2, max pitch setting)");
                 DecisionLog.Use("rotate Vr", double.IsNaN(liftoffSpeed) ? "default 1.15x stall" : !double.IsNaN(rotPr) && !double.IsNaN(rotA) ? "learned liftoff - pitch-rate lead" : "learned liftoff", takeoff.Vr);
                     if (takeoff.Phase == "takeoff timeout") { c.mainThrottle = 0; gate.Seed(0, "takeoff timeout on the ground"); SetGroup(vessel, KSPActionGroup.Brakes, true); Stop(); ChatWindow.Notice("Takeoff timed out on the ground."); return; }
                     if (takeoff.Phase == "climbout complete")
@@ -688,7 +691,8 @@ namespace KSPChatBridge
                         if (tground != null && vessel.LandedOrSplashed)
                         {   // gentle ground roll: rate-limited, speed-scaled steering + rudder toward the takeoff line
                             double err = tground.HeadingError(FlightGlobals.ship_heading, tground.CrossTrack(vessel.latitude, vessel.longitude, vessel.mainBody.Radius));
-                            tground.Steer(err, vessel.srfSpeed, dt); c.wheelSteer = (float)tground.Wheel; c.yaw = (float)tground.Yaw;
+                            double gRate = double.IsNaN(tgHdgPrev) ? 0 : FlightPolicy.Wrap(FlightGlobals.ship_heading - tgHdgPrev) / dt; tgHdgPrev = FlightGlobals.ship_heading;
+                            tground.Steer(err, vessel.srfSpeed, dt, gRate); c.wheelSteer = (float)tground.Wheel; c.yaw = (float)tground.Yaw;
                         }
                         else c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .5);
                     }
@@ -945,7 +949,7 @@ namespace KSPChatBridge
                 float eCmd = (float)PilotPolicy.PitchCommand(pitchOut, roll);
                 elevator = Mathf.MoveTowards(elevator, eCmd, (float)(PitchShaper.ElevatorRate(vessel.geeForce, Math.Max(gLim, 3), eCmd, elevator) * dt));
                 bool pitchOwned = PilotPolicy.TakePitch(holdAltitude, directVs.HasValue || directPitch.HasValue, lowEnergy && !vessel.LandedOrSplashed, pitch, CraftClass.Gentle(CraftCls)); if (pitchOwned) c.pitch = elevator;   // T5: the owned flags mark the axes the hold drives this tick - only those get the takeover blend
-                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.Vr > 0 ? takeoff.Vr : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
+                if (mode == "takeoff" && vessel.LandedOrSplashed && takeoff != null && !double.IsNaN(TakeoffGround.Elevator(vessel.srfSpeed, takeoff.RotStart > 0 ? takeoff.RotStart / .85 : TakeoffMission.RotateSpeed(stall, liftoffSpeed)))) { c.pitch = elevator = (float)TakeoffGround.Elevator(vessel.srfSpeed, takeoff.RotStart > 0 ? takeoff.RotStart / .85 : TakeoffMission.RotateSpeed(stall, liftoffSpeed)); pitchIntegral = vsIntegral = 0; pitchOwned = true; }   // below rotate: elevator slightly nose-down, no integrator wind-up
                 if (mode == "hold" && holdAltitude) c.pitchTrim = vessel.ctrlState.pitchTrim = (float)PilotPolicy.TrimBleed(vessel.ctrlState.pitchTrim, elevator, dt);   // level-off beats trim
                 lateralBankAsk = bank;
                 bool rollOwned = holdHeading || directBank.HasValue; if (rollOwned) c.roll = (float)FlightPolicy.Clamp(AuthorityScale(false) * (.014 * rollGain * (bank - roll) - .01 * p), -1, 1);
@@ -1622,7 +1626,7 @@ namespace KSPChatBridge
             parkingReleased = true; SetGroup(vessel, KSPActionGroup.Brakes, false);   // release the parking brake at roll start
             holdAltitude = holdHeading = holdSpeed = true; directVs = directPitch = directBank = null;
             vessel.ctrlState.pitchTrim = 0; SyncTrim();   // no leftover nose-up trim on the roll
-            takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); tground = new TakeoffGround(vessel.latitude, vessel.longitude, FlightGlobals.ship_heading); return StartRotorMode("takeoff");
+            takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); tground = new TakeoffGround(vessel.latitude, vessel.longitude, FlightGlobals.ship_heading); tgHdgPrev = double.NaN; return StartRotorMode("takeoff");
         }
         void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
     }
