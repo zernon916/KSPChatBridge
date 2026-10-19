@@ -1,0 +1,60 @@
+{
+ "_comment": "NDB RWY 27 (KERBO) - data from a community-made approach plate by u/Griffin5000 (r/KerbalSpaceProgram, Feb 2025); our own rendering. Outbound 101 from KSC NDB to KERBO (D18.7), right teardrop turn, inbound final course 270, glidepath 3.06 deg, field elev 70 m, DA 170 m. Missed approach: climb straight ahead to D5.0 KSC (050), turn right direct NDB climbing to 1000 m. Altitudes MSL = 70 m + glidepath (DEST KSC 4.0k 213, 6.0k 320, 8.0k 427, 10.0k 533, 12.0k 640, 14.0k 747, 16.0k 854, 18.0k 960 m above the field).",
+ "title": "NDB RWY 27 (KERBO)",
+ "ndb": {
+  "lat": -0.049555,
+  "lon": -74.6073375
+ },
+ "glidepath_deg": 3.06,
+ "field_elev_m": 70,
+ "final_course": 270,
+ "da_m": 170,
+ "missed": "climb straight ahead to D5.0 KSC, then right turn direct NDB climbing to 1000 m",
+ "alt_ref": "msl",
+ "fixes": [
+  {
+   "role": "wp",
+   "side": "both",
+   "name": "KERBO (IAF D18.7 KSC, R-101)",
+   "lat": -0.39021,
+   "lon": -72.854397,
+   "alt": 1070,
+   "dme_km": 18.7,
+   "radial": 101
+  },
+  {
+   "role": "wp",
+   "side": "both",
+   "name": "D14.0KSC",
+   "lat": -0.049541,
+   "lon": -73.270435,
+   "alt": 818,
+   "dme_km": 14.0,
+   "radial": 90
+  },
+  {
+   "role": "faf",
+   "side": "both",
+   "name": "D9.4KSC (FAF)",
+   "lat": -0.049549,
+   "lon": -73.709703,
+   "alt": 573,
+   "dme_km": 9.4,
+   "radial": 90
+  },
+  {
+   "role": "sf",
+   "side": "both",
+   "name": "MAP M (D3.2K, DA 170 m)",
+   "lat": -0.049554,
+   "lon": -74.30176,
+   "alt": 241,
+   "dme_km": 3.2,
+   "radial": 90
+  }
+ ],
+ "flare_start_m": 15,
+ "flare_sink_ms": 1,
+ "touchdown_m": 350,
+ "tch_m": 15
+}

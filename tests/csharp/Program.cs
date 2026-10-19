@@ -189,6 +189,31 @@ class Program
                     Check(!DubinsPath.Flyable(tight, 16000, out fw) && fw.Contains("needs") && DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 20000 }, new double[] { 20000, 20000 }, new double[] { 20000, 0 } }, 3000, out fw), "GROK JOIN1: joins needing more turn room than they have are rejected (" + fw + ")");
                     Check(DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 6000 } }, 16000, out fw), "GROK JOIN1: a straight-in final is always flyable");
                 }
+                {   // GROK APP1: NDB RWY 27 (KERBO) chart (community plate by u/Griffin5000) - glidepath altitudes vs the plate's table
+                    string dir = AppDomain.CurrentDomain.BaseDirectory, path = null;
+                    for (int up = 0; up < 8 && dir != null && path == null; up++) { string p = System.IO.Path.Combine(dir, "tools", "charts", "KSC_27_NDB_KERBO.json"); if (System.IO.File.Exists(p)) path = p; dir = System.IO.Path.GetDirectoryName(dir.TrimEnd('\\', '/')); }
+                    Check(path != null, "GROK APP1: chart file shipped in tools/charts");
+                    if (path != null)
+                    {
+                        var doc = MiniJson.Deserialize(System.IO.File.ReadAllText(path)); string why;
+                        var ov = ApproachOverride.Parse(doc, KscRunway.Lat27, KscRunway.Lon27, 69.1, 600000, out why);
+                        Check(ov != null && ov.Fixes.Count == 4 && ov.Fixes[0].Name.StartsWith("KERBO") && ov.Fixes[2].Role == "faf", "GROK APP1: chart parses (" + why + ")");
+                        double gp = Math.Tan(3.06 * Math.PI / 180); var table = new Dictionary<double, double> { { 4, 213 }, { 6, 320 }, { 8, 427 }, { 10, 533 }, { 12, 640 }, { 14, 747 }, { 16, 854 }, { 18, 960 }, { 9.4, 500 }, { 3.2, 170 } };
+                        bool tbl = true; foreach (var kv in table) if (Math.Abs(gp * kv.Key * 1000 - kv.Value) > 10) tbl = false;
+                        Check(tbl, "GROK APP1: 3.06 deg glidepath reproduces the plate's altitude table within 10 m");
+                        bool fixOk = true; string badFix = ""; double nLat = (KscRunway.Lat09 + KscRunway.Lat27) / 2, nLon = (KscRunway.Lon09 + KscRunway.Lon27) / 2;
+                        foreach (var f in ov.Fixes)
+                        {
+                            double d = NavigationMath.Distance(nLat, nLon, f.Lat, f.Lon, 600000), want = f.Name.StartsWith("KERBO") ? 1000 : gp * d;
+                            if (Math.Abs(f.Alt - 70 - want) > 10) { fixOk = false; badFix += " " + f.Name + " " + Math.Round(f.Alt - 70) + " vs " + Math.Round(want); }
+                        }
+                        Check(fixOk, "GROK APP1: fix altitudes on the glidepath (D14.0 747, D9.4 500, MAP 170) within 10 m" + badFix);
+                        double kd = NavigationMath.Distance(nLat, nLon, ov.Fixes[0].Lat, ov.Fixes[0].Lon, 600000), kb = NavigationMath.Bearing(nLat, nLon, ov.Fixes[0].Lat, ov.Fixes[0].Lon);
+                        double req = NavigationMath.Bearing(ov.Fixes[0].Lat, ov.Fixes[0].Lon, ov.Fixes[1].Lat, ov.Fixes[1].Lon), fin = NavigationMath.Bearing(ov.Fixes[2].Lat, ov.Fixes[2].Lon, ov.Fixes[3].Lat, ov.Fixes[3].Lon);
+                        Check(Math.Abs(kd - 18700) < 50 && Math.Abs(FlightPolicy.Wrap(kb - 101)) < .5 && req > 290 && req < 330 && Math.Abs(FlightPolicy.Wrap(fin - 270)) < 1, "GROK APP1: KERBO at D18.7 on R-101; required course KERBO->D14 " + Math.Round(req) + ", final course 270");
+                        Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
+                    }
+                }
                 {   // GROK LAND1: landing pickers
                     var files = new[] { "active.json", "Island_09.json", "Island_09_generated.json", "KSC_27.json", "KSC_27_generated.json", "KSC_27_tight.json", "Dessert_18.json", "TAXI_hangar.json" };
                     var ap = LandingPick.Airports(files, new[] { "Runway 09", "Moon Strip" });
