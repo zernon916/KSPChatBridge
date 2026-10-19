@@ -161,6 +161,31 @@ namespace KSPChatBridge
                 st.normal.textColor = normal; st.hover.textColor = hover;
             }
         }
+        /// <summary>GROK TAB1: plain status text (no box, no button look): a coloured dot + the label.</summary>
+        internal static void Status(Rect r, string text, Color c)
+        {
+            float d = Mathf.Min(14, r.height * .45f); var o = GUI.color; GUI.color = c;
+            GUI.DrawTexture(new Rect(r.x + 2, r.y + (r.height - d) / 2, d, d), Texture2D.whiteTexture); GUI.color = o;
+            var oc = label.normal.textColor; label.normal.textColor = c; GUI.Label(new Rect(r.x + d + 10, r.y, r.width - d - 10, r.height), text, label); label.normal.textColor = oc;
+        }
+        /// <summary>GROK TAB1: action button (starts something on the craft) - green fill, bold ">> " prefix; nav buttons stay plain.</summary>
+        internal static bool ActionButton(Rect r, string text, bool enabled = true)
+        {
+            var oldBackground = GUI.backgroundColor; var normal = btnOn.normal.textColor; var hover = btnOn.hover.textColor; var fs = btnOn.fontStyle;
+            try
+            {
+                GUI.backgroundColor = enabled ? new Color(.20f, .62f, .32f) : new Color(.25f, .27f, .30f);
+                btnOn.fontStyle = FontStyle.Bold; if (!enabled) btnOn.normal.textColor = btnOn.hover.textColor = Dim;
+                return GUI.Button(r, ">> " + text, btnOn) && enabled;
+            }
+            finally { GUI.backgroundColor = oldBackground; btnOn.normal.textColor = normal; btnOn.hover.textColor = hover; btnOn.fontStyle = fs; }
+        }
+        /// <summary>GROK TAB1: tappable status light (dot + text); returns true on a tap when enabled.</summary>
+        internal static bool Light(Rect r, string text, bool on, bool enabled)
+        {
+            Status(r, text, on ? Good : Dim);
+            return enabled && GUI.Button(r, GUIContent.none, GUIStyle.none);
+        }
         /// <summary>Small coloured status chip ("DONE", "QUEUED", ...).</summary>
         internal static void Chip(Rect r, string text, Color c) { var o = GUI.color; GUI.color = c; GUI.Box(r, GUIContent.none, cardS); GUI.color = o; GUI.Label(r, text, chip); }
         internal static void Label(Rect r, string text, bool dim = false) { var o = label.normal.textColor; label.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, label); label.normal.textColor = o; }

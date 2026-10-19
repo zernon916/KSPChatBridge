@@ -612,7 +612,8 @@ namespace KSPChatBridge
         }
         internal static string ApLine(string job, string step, double alt, double spd, double hdg, double bankLim, bool active)
         {
-            return "Job: " + job + (active ? "" : " (autopilot off)") + "\nPlan: " + step + "\nTarget: alt " + alt.ToString("0", Inv) + " m, speed " + spd.ToString("0", Inv)
+            if (!active) return "Job: " + job + " (autopilot off)\nPlan: " + step + "\nTarget: -";   // GROK TAB1: no stale/default targets while off
+            return "Job: " + job + "\nPlan: " + step + "\nTarget: alt " + alt.ToString("0", Inv) + " m, speed " + spd.ToString("0", Inv)
                 + " m/s, heading " + ((hdg % 360 + 360) % 360).ToString("000", Inv) + ", bank limit " + bankLim.ToString("0", Inv) + " deg";
         }
         /// <summary>The model may not contradict tool results: a reply quoting numbers that appear in no tool result is replaced

@@ -51,16 +51,11 @@ namespace KSPChatBridge
             ApproachField(new Rect(c.x, cy, c.width, row), "Touch-and-go count", ref tgT, 3);
             y += pad + 5 * (row + gap) + gap;
             // Stack touch keys so they remain reachable at the minimum window size and largest font.
-            foreach (string key in MfdNav.Right("approach"))
-            {
-                if (string.IsNullOrEmpty(key)) continue;
-                bool enabled = TabletLink && (key != "LAND" || (rwySel >= 0 && rwySel < rw.Count));
-                if (TabletUi.Button(new Rect(12, y, width - 24, row), key, false, enabled))
-                {
-                    ChatLog.Write("g", "tablet approach: " + key);
-                    OnKey("approach", key);
-                }
+            {   // GROK TAB1: LANDING sub-page = one action button (GO AROUND / ABORT moved off; ABORT is a top tab)
+                bool enabled = TabletLink && rwySel >= 0 && rwySel < rw.Count;
+                if (TabletUi.ActionButton(new Rect(12, y, width - 24, row), "ENGAGE LANDING", enabled)) { ChatLog.Write("g", "tablet approach: LAND"); OnKey("approach", "LAND"); }
                 y += row + gap;
+                if (!enabled && TabletLink) { TabletUi.Label(new Rect(12, y, width - 24, row), "Pick a runway above first.", true); y += row + gap; }
             }
             GUILayout.Space(y);
             GUILayout.EndScrollView();

@@ -1729,6 +1729,20 @@ class Program
                 string tmpf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_atomic.json"); AtomicFile.Write(tmpf, "{\"a\":1}"); AtomicFile.Write(tmpf, "{\"a\":2}");
                 Check(System.IO.File.ReadAllText(tmpf) == "{\"a\":2}", "atomic write replaces");
                 Check(PilotPolicy.ApLine("landing (entry, 12.0 km)", "step 2/4: climb 1000 m", 1000, 150, 271, 20, true).Contains("bank limit 20") , "autopilot window summary");
+        {   // GROK TAB1: flight tablet nav model, parked speed, targets while off
+            Check(PilotPolicy.ApLine("idle", "no plan running", 0, 150, 0, 20, false).EndsWith("Target: -"), "no default target alt 0 / speed 150 while the autopilot is off");
+            Check(string.Join(",", TabletNav.TopTabs) == "FLIGHT,AUTOPILOT,ABORT,CRAFT" && string.Join(",", TabletNav.ApSubPages) == "TAKEOFF,LANDING,STATUS,TAXI,TRIM", "top tabs and AUTOPILOT sub-pages per spec");
+            int tt, ts; TabletNav.DecodeSaved(2, out tt, out ts); Check(tt == TabletNav.Autopilot && ts == TabletNav.SubLanding, "old APPROACH page -> AUTOPILOT / LANDING");
+            TabletNav.DecodeSaved(7, out tt, out ts); Check(tt == TabletNav.Craft && ts == -1, "old SHIP -> CRAFT");
+            TabletNav.DecodeSaved(5, out tt, out ts); Check(tt == TabletNav.Autopilot && ts == TabletNav.SubTrim, "old TRIM -> AUTOPILOT / TRIM");
+            TabletNav.DecodeSaved(4, out tt, out ts); Check(tt == TabletNav.Autopilot && ts == -1, "old ABOUT (removed) -> AUTOPILOT");
+            bool round = true; for (int a = 0; a < 4; a++) for (int b = -1; b < 5; b++) { TabletNav.DecodeSaved(TabletNav.EncodeSaved(a, b), out tt, out ts); round &= tt == a && ts == (a == TabletNav.Autopilot ? b : -1); }
+            Check(round, "saved page round-trips (sub-page only under AUTOPILOT)");
+            Check(TabletNav.DisplaySpeed(true, .3) == 0 && TabletNav.DisplaySpeed(true, 3) == 3 && TabletNav.DisplaySpeed(false, .3) == .3, "parked craft reads 0 m/s; moving / airborne untouched");
+            Check(TabletNav.DeviationText(false, true, -2199, "#,0", "m") == "-" && TabletNav.DeviationText(true, false, -250, "0.0", "m/s") == "-" && TabletNav.DeviationText(true, true, -12.5, "0.0", "m/s") == "-12.5 m/s", "live vs target shows '-' unless holds engaged and that hold on");
+            Check(TabletNav.LightAction(true, false, true) == "disengage" && TabletNav.LightAction(false, true, true) == "engage" && TabletNav.LightAction(false, false, true) == null && TabletNav.LightAction(true, true, false) == null, "AP light: toggle from real state, airborne engage only, dead without LIVE LINK");
+            Console.WriteLine("Flight tablet nav model: 10 behavior checks passed.");
+        }
             }
             Console.WriteLine("Approach charts + morning bugs: 18 behavior checks passed.");
             {

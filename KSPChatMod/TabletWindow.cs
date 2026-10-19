@@ -370,8 +370,10 @@ namespace KSPChatBridge
         {
             if (Time.realtimeSinceStartup < histNext) return; histNext = Time.realtimeSinceStartup + 1f;   // 1 Hz, last ~2 min
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
-            histAlt[histHead] = (float)v.altitude; histSpd[histHead] = (float)v.srfSpeed; histHead = (histHead + 1) % FlightHist; histN = Math.Min(FlightHist, histN + 1);
+            histAlt[histHead] = (float)v.altitude; histSpd[histHead] = (float)ParkedSpeed(v); histHead = (histHead + 1) % FlightHist; histN = Math.Min(FlightHist, histN + 1);
         }
+        /// <summary>GROK TAB1: 0 m/s while parked (landed / splashed / pre-launch and < 0.5 m/s): no tile or graph jitter.</summary>
+        static double ParkedSpeed(Vessel v) { return TabletNav.DisplaySpeed(v.LandedOrSplashed || v.situation == Vessel.Situations.PRELAUNCH, v.srfSpeed); }
         static void Attitude(Vessel v, out double hdg, out double pitch, out double roll, out double aoa)
         {
             hdg = pitch = roll = aoa = 0; var t = v.ReferenceTransform; if (t == null) return;
@@ -381,6 +383,17 @@ namespace KSPChatBridge
             roll = -Math.Atan2(Vector3d.Dot(t.right, up), Vector3d.Dot(-t.forward, up)) * 180 / Math.PI;
             Vector3d vel = v.srf_velocity; if (vel.magnitude > 1) aoa = Math.Atan2(Vector3d.Dot(vel, t.forward), Vector3d.Dot(vel, nose)) * 180 / Math.PI;
         }
+        void ToggleHoldsFromLight(Vessel v, double hdg, string act)
+        {
+            if (act == "disengage") { ChatLog.Write("tablet", "AP light: disengage"); ChatWindow.ToolFromMenu("plane_hold", "{\"engage\":false}"); apEngaged = false; return; }
+            if (act != "engage") return;
+            if (!apLoaded) { apLoaded = true; ApLoad(); }
+            var ic = CultureInfo.InvariantCulture;
+            apAlt = apHdg = apSpd = true; apVs = apRoll = false; apAgl = false;
+            apAltT = Math.Round(v.altitude).ToString(ic); apHdgT = Math.Round(hdg).ToString(ic); apSpdT = Math.Round(v.srfSpeed).ToString(ic);
+            ChatLog.Write("tablet", "AP light: engage holds at alt " + apAltT + " m MSL, heading " + apHdgT + ", speed " + apSpdT + " m/s");
+            EngageHolds(); apEngaged = true; ApSave();
+        }
         void TabletFlight(Rect area)
         {
             TabletUi.Ensure(tabletFont); var v = FlightGlobals.ActiveVessel;
@@ -388,7 +401,7 @@ namespace KSPChatBridge
             double hdg, pitch, roll, aoa; Attitude(v, out hdg, out pitch, out roll, out aoa);
             float gap = 10, th = Mathf.Max(80, tabletFont * 4.4f), tw = (area.width - 3 * gap) / 4;
             // row 1: big tiles
-            TabletUi.Tile(new Rect(area.x, area.y, tw, th), "SPEED (SRF)", v.srfSpeed.ToString("0"), "m/s", TabletUi.Series[1]);
+            TabletUi.Tile(new Rect(area.x, area.y, tw, th), "SPEED (SRF)", ParkedSpeed(v).ToString("0"), "m/s", TabletUi.Series[1]);
             TabletUi.Tile(new Rect(area.x + (tw + gap), area.y, tw, th), "ALTITUDE", v.altitude.ToString("#,0"), "m", TabletUi.Series[0]);
             TabletUi.Tile(new Rect(area.x + 2 * (tw + gap), area.y, tw, th), "VERT SPEED", v.verticalSpeed.ToString("+0.0;-0.0;0"), "m/s", v.verticalSpeed < -15 ? TabletUi.Warn : TabletUi.Good);
             TabletUi.Tile(new Rect(area.x + 3 * (tw + gap), area.y, tw, th), "HEADING", hdg.ToString("000"), "deg", TabletUi.Accent);
@@ -405,7 +418,10 @@ namespace KSPChatBridge
             float thr = v.ctrlState != null ? v.ctrlState.mainThrottle : 0, bh = barHeight;
             TabletUi.Bar(new Rect(c2.x, c2.y, c2.width, bh), "Throttle", thr, (thr * 100).ToString("0") + " %", TabletUi.Series[1]);
             TabletUi.Bar(new Rect(c2.x, c2.y + bh + 6, c2.width, bh), "Mach", (float)(v.mach / 3), v.mach.ToString("0.00"), TabletUi.Series[2]);
-            TabletUi.Chip(new Rect(c2.x, c2.y + 2 * bh + 12, c2.width, apHeight), ap, apOn ? TabletUi.Good : TabletUi.Warn);
+            {   // GROK TAB1: tappable AP light from the real autopilot state: tap = disengage, or engage holds at the current alt / heading / speed
+                bool real = NativeFlightController.Active; string act = TabletNav.LightAction(real, !v.LandedOrSplashed, TabletLink);
+                if (TabletUi.Light(new Rect(c2.x, c2.y + 2 * bh + 12, c2.width, apHeight), (real ? "AP ON  " : "AP OFF  ") + ap + (act == null ? "" : real ? "  (tap: off)" : "  (tap: hold current)"), real, act != null)) ToggleHoldsFromLight(v, hdg, act);
+            }
             // row 3: live graph
             float y3 = y2 + dh + gap; if (area.yMax - y3 < 80) return;
             Rect c3 = TabletUi.CardPanel(new Rect(area.x, y3, area.width, area.yMax - y3), "Last 2 minutes");
@@ -548,7 +564,7 @@ namespace KSPChatBridge
         static string TabletSave()
         {
             return string.Format(CultureInfo.InvariantCulture, "tx={0}\nty={1}\ntw={2}\nth={3}\ntvis={4}\nttab={5}\ntfont={6}\ntmap={7}\ntlink={8}\ntfl={9}\n",
-                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage, TabletLink ? 1 : 0, tabletFlightPage);
+                tabletRect.x, tabletRect.y, tabletRect.width, tabletRect.height, TabletVisible ? 1 : 0, tabletTab, tabletFont, tabletMapPage, TabletLink ? 1 : 0, TabletNav.EncodeSaved(tabletFlightPage, tabletApSub));
         }
         static bool TabletLoad(string key, string val)
         {
@@ -564,7 +580,7 @@ namespace KSPChatBridge
                 case "tfont": tabletFont = Mathf.Clamp((int)f, 12, 32); return true;
                 case "tlink": TabletLink = val.Trim() == "1"; return true;
                 case "tmap": tabletMapPage = Mathf.Clamp((int)f, 0, 2); return true;
-                case "tfl": tabletFlightPage = Mathf.Clamp((int)f, 0, TabletFlightPages.Length - 1); return true;
+                case "tfl": TabletNav.DecodeSaved((int)f, out tabletFlightPage, out tabletApSub); return true;   // GROK TAB1: old page indexes migrate
             }
             return false;
         }

@@ -2,6 +2,7 @@
 // statics + NativeFlightController.ApSummary) and the same handlers (OnKey("aircraft", key), EngageHolds) - no new
 // autopilot logic. LIVE LINK off = every control greyed and dead; the summary and the hold-error gauges stay visible.
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 
@@ -9,27 +10,76 @@ namespace KSPChatBridge
 {
     public partial class AicsMenu
     {
-        /// <summary>Flight tab pages (the suggested layout puts aircraft / approach / taxi / trim / abort / about here).</summary>
-        internal static readonly string[] TabletFlightPages = { "FLIGHT", "AIRCRAFT", "APPROACH", "TAXI", "ABOUT", "TRIM", "ABORT", "SHIP" };
-        static int tabletFlightPage; static Vector2 apScroll;
+        // GROK TAB1: top tabs FLIGHT / AUTOPILOT / ABORT / CRAFT (TabletNav); TAKEOFF / LANDING / STATUS / TAXI / TRIM are AUTOPILOT
+        // sub-pages. Tabs and sub-page buttons are navigation (work with LIVE LINK off); actions live inside the sub-pages.
+        static int tabletFlightPage, tabletApSub = -1; static Vector2 apScroll, apSubScroll;
 
-        /// <summary>Flight tab = a Segments sub-tab row + the page. Page switching is navigation, not a craft control
-        /// (same as the Map tab's MAP/CHART/ILS row), so it works with LIVE LINK off.</summary>
         void TabletFlightTab(Rect area)
         {
             TabletUi.Ensure(tabletFont);
             float sh = Mathf.Max(44, tabletFont * 2.4f);
-            int p = TabletUi.Segments(new Rect(area.x, area.y, area.width, sh), TabletFlightPages, tabletFlightPage);
-            if (p != tabletFlightPage) { tabletFlightPage = p; Save(); }
+            int p = TabletUi.Segments(new Rect(area.x, area.y, area.width, sh), TabletNav.TopTabs, tabletFlightPage);
+            if (p != tabletFlightPage) { tabletFlightPage = p; tabletApSub = -1; Save(); }
             Rect body = new Rect(area.x, area.y + sh + 8, area.width, Mathf.Max(60, area.height - sh - 8));
-            if (tabletFlightPage == 6) TabletAbort(body);
-            else if (tabletFlightPage == 5) TabletTrim(body);
-            else if (tabletFlightPage == 4) TabletAbout(body);
-            else if (tabletFlightPage == 3) TabletTaxi(body);
-            else if (tabletFlightPage == 2) TabletApproach(body);
-            else if (tabletFlightPage == 1) TabletAircraft(body);
-            else if (tabletFlightPage == 7) TabletShipInfo(body);
+            if (tabletFlightPage == TabletNav.Abort) TabletAbort(body);
+            else if (tabletFlightPage == TabletNav.Craft) TabletShipInfo(body);
+            else if (tabletFlightPage == TabletNav.Autopilot) TabletAutopilot(body);
             else TabletFlight(body);
+        }
+
+        /// <summary>AUTOPILOT: the holds page + a bottom row of sub-page buttons; a sub-page gets a "< AUTOPILOT" back button.</summary>
+        void TabletAutopilot(Rect area)
+        {
+            float kh = Mathf.Max(48, tabletFont * 2.6f);
+            if (tabletApSub >= 0 && tabletApSub < TabletNav.ApSubPages.Length)
+            {
+                float bw = Mathf.Max(150, tabletFont * 8.5f);
+                if (TabletUi.Button(new Rect(area.x, area.y, bw, kh), "< AUTOPILOT")) { tabletApSub = -1; Save(); return; }
+                TabletUi.Label(new Rect(area.x + bw + 14, area.y, area.width - bw - 14, kh), "AUTOPILOT / " + TabletNav.ApSubPages[tabletApSub]);
+                Rect sb = new Rect(area.x, area.y + kh + 8, area.width, Mathf.Max(60, area.height - kh - 8));
+                switch (tabletApSub)
+                {
+                    case TabletNav.SubTakeoff: TabletTakeoffSub(sb); break;
+                    case TabletNav.SubLanding: TabletApproach(sb); break;
+                    case TabletNav.SubStatus: TabletStatusSub(sb); break;
+                    case TabletNav.SubTaxi: TabletTaxi(sb); break;
+                    default: TabletTrim(sb); break;
+                }
+                return;
+            }
+            int n = TabletNav.ApSubPages.Length; float gap = 8, nw = (area.width - gap * (n - 1)) / n, ny = area.yMax - kh;
+            for (int i = 0; i < n; i++)
+                if (TabletUi.Button(new Rect(area.x + i * (nw + gap), ny, nw, kh), TabletNav.ApSubPages[i] + " >")) { tabletApSub = i; Save(); }
+            TabletAircraft(new Rect(area.x, area.y, area.width, Mathf.Max(60, area.height - kh - gap)));
+        }
+
+        /// <summary>Card helper for the simple phase-1 sub-pages: caption + text lines; returns the height used.</summary>
+        float TextCard(Rect r, string caption, IList<string> lines)
+        {
+            float lh = Mathf.Max(26, tabletFont * 1.5f), h = 16 + tabletFont * 1.6f + lines.Count * lh;
+            Rect c = TabletUi.CardPanel(new Rect(r.x, r.y, r.width, h), caption);
+            for (int i = 0; i < lines.Count; i++) TabletUi.Label(new Rect(c.x, c.y + i * lh, c.width, lh), lines[i]);
+            return h;
+        }
+        /// <summary>TAKEOFF sub-page (phase 1): current autopilot summary + ENGAGE TAKEOFF (on the ground only).</summary>
+        void TabletTakeoffSub(Rect area)
+        {
+            var v = FlightGlobals.ActiveVessel; float row = Mathf.Max(48, tabletFont * 2.6f);
+            var lines = new List<string>(NativeFlightController.ApSummary().Split('\n'));
+            if (v != null) lines.Add("Situation: " + v.situation + (v.LandedOrSplashed ? " (on the ground)" : " (airborne)"));
+            float y = area.y + TextCard(area, "Takeoff", lines) + 10;
+            bool can = TabletLink && v != null && v.LandedOrSplashed;
+            if (TabletUi.ActionButton(new Rect(area.x, y, area.width, row), "ENGAGE TAKEOFF", can)) { ChatLog.Write("tablet", "ENGAGE TAKEOFF"); OnKey("aircraft", "TAKEOFF"); }
+            if (!can) TabletUi.Label(new Rect(area.x, y + row + 6, area.width, row), !TabletLink ? "INFO ONLY - turn LIVE LINK on to use the controls" : "Takeoff needs the craft on the ground.", true);
+        }
+        /// <summary>STATUS sub-page (phase 1): the autopilot summary / status lines + posting the full status to the chat.</summary>
+        void TabletStatusSub(Rect area)
+        {
+            float row = Mathf.Max(48, tabletFont * 2.6f);
+            var lines = new List<string>(NativeFlightController.ApSummary().Split('\n')); lines.Add(NativeFlightController.ApLine);
+            if (landing.Length > 0) lines.AddRange(landing.Split('\n'));
+            float y = area.y + TextCard(area, "Autopilot status", lines) + 10;
+            if (TabletUi.ActionButton(new Rect(area.x, y, area.width, row), "POST STATUS TO CHAT", TabletLink)) OnKey("aircraft", "STATUS");
         }
 
         void TabletAircraft(Rect area)
@@ -37,19 +87,10 @@ namespace KSPChatBridge
             if (!apLoaded) { apLoaded = true; ApLoad(); }   // the same saved holds file the control box panel reads/writes
             string sh = ApFieldSync.Take(); if (sh != null) { apHdgT = sh; apHdg = true; }   // heading set from chat / Learn
             var v = FlightGlobals.ActiveVessel;
-            // key row: the MFD AIRCRAFT right column (MfdNav.Right), touch size, dead while LIVE LINK is off
-            var keys = MfdNav.Right("aircraft"); float kh = Mathf.Max(48, tabletFont * 2.6f), x = area.x, y = area.y;
-            GUI.enabled = TabletLink;
-            foreach (var k in keys)
-            {
-                if (string.IsNullOrEmpty(k)) continue; float kw = Mathf.Max(110, tabletFont * (k.Length * .7f + 2f));
-                if (x + kw > area.xMax) { x = area.x; y += kh + 6; }
-                if (TabletUi.Button(new Rect(x, y, kw, kh), k, false, TabletLink)) OnKey("aircraft", k);
-                x += kw + 8;
-            }
-            GUI.enabled = true;
-            if (!TabletLink) TabletUi.Label(new Rect(x + 4, y, Mathf.Max(80, area.xMax - x - 4), kh), "INFO ONLY - turn LIVE LINK on to use the controls", true);
-            float top = y + kh + 8; if (area.yMax - top < 100) return;
+            // GROK TAB1: no action key row here any more (TAKEOFF / LANDING / STATUS are sub-pages; GO AROUND / ABORT removed - ABORT is a top tab)
+            float top = area.y, lh0 = Mathf.Max(26, tabletFont * 1.5f);
+            if (!TabletLink) { TabletUi.Label(new Rect(area.x, top, area.width, lh0), "INFO ONLY - turn LIVE LINK on to use the controls", true); top += lh0 + 4; }
+            if (area.yMax - top < 100) return;
             // body: one column inside a scroll view, so the whole page is reachable in a small tablet window too
             GUILayout.BeginArea(new Rect(area.x, top, area.width, area.yMax - top));
             apScroll = GUILayout.BeginScrollView(apScroll);
@@ -72,9 +113,9 @@ namespace KSPChatBridge
             Rect c = TabletUi.CardPanel(new Rect(r0.x, r0.y, r0.width, h), "Autopilot");
             for (int i = 0; i < sum.Length; i++) TabletUi.Label(new Rect(c.x, c.y + i * lh, c.width, lh), sum[i].Trim(), !sum[i].StartsWith("Target"));
             float cy = c.y + sum.Length * lh + 6, cw = (c.width - gap) / 2;
-            TabletUi.Chip(new Rect(c.x, cy, cw, ch), apEngaged ? "HOLDS ENGAGED" : "HOLDS OFF", apEngaged ? TabletUi.Good : TabletUi.Dim);
+            TabletUi.Status(new Rect(c.x, cy, cw, ch), apEngaged ? "HOLDS ENGAGED" : "HOLDS OFF", apEngaged ? TabletUi.Good : TabletUi.Dim);   // GROK TAB1: status text, not a button look
             string job = NativeFlightController.Phase;
-            TabletUi.Chip(new Rect(c.x + cw + gap, cy, cw, ch), "JOB " + job.ToUpperInvariant(), job == "idle" ? TabletUi.Dim : TabletUi.Accent);
+            TabletUi.Status(new Rect(c.x + cw + gap, cy, cw, ch), "JOB " + job.ToUpperInvariant(), job == "idle" ? TabletUi.Dim : TabletUi.Accent);
             return h + gap;
         }
 
@@ -131,9 +172,9 @@ namespace KSPChatBridge
         /// <summary>One centre-zero deviation gauge: |err| within a quarter of the range = green, within the range = amber, else red.</summary>
         static float DevRow(Rect r, string caption, bool on, double err, double range, string unit, string fmt)
         {
-            double a = Math.Abs(err);
-            TabletUi.DevBar(r, caption, (float)(err / range), (err < 0 ? "-" : "+") + a.ToString(fmt, CultureInfo.InvariantCulture) + " " + unit,
-                a <= range * .25 ? TabletUi.Good : a <= range ? TabletUi.Warn : TabletUi.Bad, !on);
+            double a = Math.Abs(err); bool show = TabletNav.ShowDeviation(NativeFlightController.HoldsEngaged, on);   // GROK TAB1: '-' while holds are off
+            TabletUi.DevBar(r, caption, show ? (float)(err / range) : 0, TabletNav.DeviationText(NativeFlightController.HoldsEngaged, on, err, fmt, unit),
+                !show ? TabletUi.Dim : a <= range * .25 ? TabletUi.Good : a <= range ? TabletUi.Warn : TabletUi.Bad, !show);
             return r.y + r.height + 4;
         }
         static double TabletNum(string t, double fallback) { double d; return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d : fallback; }
