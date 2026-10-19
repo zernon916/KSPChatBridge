@@ -129,6 +129,12 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK TO3 regression (live 03:45): above Vr the rotate phase must ask nose-up, keep asking while the nose stays down, and a 190 m/s liftoff (Vr 51) must not poison the stall
+            var to3 = new TakeoffMission(0); bool upAll = true; for (double sp = 52; sp <= 190; sp += 2) { double tp = to3.Step(10, sp, 1, true, 41, double.NaN, double.NaN, double.NaN, 46); upAll &= to3.Phase == "rotate" && tp >= 2; }
+            Check(upAll && to3.Step(10, 120, 1, true, 41, double.NaN, double.NaN, double.NaN, 46) >= 10, "TO3: rotate phase commands nose-up above Vr (12 deg past 1.3 Vr)");
+            Check(TakeoffMission.RotationStalled(true, "rotate", 78, 51, 1.0) && !TakeoffMission.RotationStalled(true, "rotate", 60, 51, 1.0) && !TakeoffMission.RotationStalled(true, "rotate", 90, 51, 6) && !TakeoffMission.RotationStalled(false, "climbout", 120, 51, 1), "TO3: nose not coming up at 1.3 Vr detected (flaps up)");
+            Check(!TakeoffMission.LiftoffUsable(190, 51) && TakeoffMission.LiftoffUsable(70, 51) && TakeoffMission.LiftoffUsable(70, double.NaN), "TO3: rotation-limited liftoff not used for the stall estimate");
+        }
             var tk2 = new TakeoffMission(0); tk2.Step(1, 82, 5, false, 70); Check(Math.Abs(tk2.LiftoffSpeed - 82) < 1e-9, "liftoff speed is measured");
             Check(!PilotPolicy.TrimAllowed(true, 0, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 80, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 500, 5, 0, 0) && PilotPolicy.TrimAllowed(false, 500, 30, .5, 1), "auto-trim never on ground / rotation / just after takeoff");
             double tr = 0; for (int i = 0; i < 200; i++) tr = PilotPolicy.TrimStep(tr, .8, 3); Check(Math.Abs(tr - PilotPolicy.TrimPitchMax) < 1e-9, "trim bounded");

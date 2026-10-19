@@ -97,6 +97,7 @@ namespace KSPChatBridge
             if (!takeoffFlaps && learn != null && !learn.Done && vessel.LandedOrSplashed && FlapsPolicy.LearnTakeoffPhase(learn.Phase)) { takeoffFlaps = true; ChatLog.Write("flaps", "takeoff flaps armed (Learn takeoff, " + flaps.Count + " tagged surfaces)"); }
             if (takeoffFlaps && mode != "landing")
             {   // Oct 12: partial flaps for the roll, stepped retraction after 120 m AGL
+                if (rotateStalled) return 0;   // GROK TO3: nose won't come up - flaps behind the CoM push it down
                 int w = FlapsPolicy.TakeoffSetting(flapSet, vessel.LandedOrSplashed, vessel.radarAltitude, Eas(), stall, ApproachProfile.FlapRatio);
                 if (w == 0 && flapSet == 0 && !vessel.LandedOrSplashed) takeoffFlaps = false;
                 return w;
@@ -123,11 +124,15 @@ namespace KSPChatBridge
             {   // Learn flaps test ended / aborted / skipped / climbing back: all the way up at once, not a notch per 2 s
                 flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; ChatLog.Write("flaps", "UP (Learn flaps test over / climb-back)"); return;
             }
+            if (want == 0 && flapSet > 0 && FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet) == 0)
+            {   // GROK TO3: over the flap limit = all the way up now, not a notch per 2 s (live: still at 1 at 139/134)
+                flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; ChatLog.Write("flaps", "UP (over limit " + FlapLimit().ToString("0") + " at " + Eas().ToString("0") + " m/s)"); return;
+            }
             if (want != flapSet && Time.realtimeSinceStartup >= flapNextStep)
             {   // one notch at a time, 2 s apart
                 flapSet += Math.Sign(want - flapSet); flapNextStep = Time.realtimeSinceStartup + 2;
                 if (flapSet == 0 && !goAroundFlaps) RestoreFlaps(); else ApplyFlaps();
-                ChatLog.Write("flaps", (takeoffFlaps ? (want > flapSet || vessel.LandedOrSplashed ? "takeoff deploy " : "takeoff retract step ") : "") + FlapsPolicy.Name(flapSet) + " at " + vessel.radarAltitude.ToString("0") + " m AGL, " + Eas().ToString("0") + " m/s (limit " + FlapLimit().ToString("0") + ", " + flaps.Count + " surfaces, " + rollFlapCount + " roll-only)");
+                ChatLog.Write("flaps", (takeoffFlaps ? (want >= flapSet ? "takeoff deploy " : "takeoff retract step ") : "") + FlapsPolicy.Name(flapSet) + " at " + vessel.radarAltitude.ToString("0") + " m AGL, " + Eas().ToString("0") + " m/s (limit " + FlapLimit().ToString("0") + ", " + flaps.Count + " surfaces, " + rollFlapCount + " roll-only)");
             }
         }
         void ApplyFlaps()
