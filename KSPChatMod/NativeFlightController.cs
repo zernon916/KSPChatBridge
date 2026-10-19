@@ -298,6 +298,8 @@ namespace KSPChatBridge
             return false;
         }
         /// <summary>GROK FIX1: real hold state for the tablet / control-box HOLDS chip (was a UI-only flag).</summary>
+        /// <summary>GROK LAND2: FERRY (cruise to the runway) target for the map's predicted path; false when not ferrying.</summary>
+        internal static bool FerryTarget(out double lat, out double lon) { lat = lon = 0; if (instance == null || instance.pendingLand == null) return false; lat = instance.ferryLat; lon = instance.ferryLon; return true; }
         internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold" && instance.pendingLand == null; } }   // ferry = landing job, not holds
         internal static bool FerryPending { get { return instance != null && instance.mode == "hold" && instance.pendingLand != null; } }
         internal static string RunwayPhase { get { return instance == null || instance.runway == null ? null : instance.runway.Phase; } }

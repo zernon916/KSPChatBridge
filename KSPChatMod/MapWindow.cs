@@ -50,6 +50,9 @@ namespace KSPChatBridge
         internal static void ToggleDetails() { details = !details; }
         internal static void PanView(double bearing) { var m = Inst; if (m == null || m.body == null) return; if (follow) { fixLat = m.cLat; fixLon = m.cLon; follow = false; } MapReveal.Pan(ref fixLat, ref fixLon, bearing, m.span, m.body.Radius); }
         internal static void RunwayStep(int d) { var m = Inst; if (m == null || m.runways.Count == 0) return; rwIdx = (rwIdx + d + m.runways.Count) % m.runways.Count; m.fixesFor = ""; }
+        /// <summary>GROK LAND2: chart variants of the CHART page's runway end (drop-down) and the active one.</summary>
+        internal static List<string> VariantList(out string key, out string cur) { key = cur = ""; var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return new List<string>(); NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, ""); key = rw.Key; cur = ChartStore.Active(rw.Key); return vs; }
+        internal static void SetVariant(string variant) { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return; ChartStore.SetActive(rw.Key, variant ?? ""); m.fixesFor = ""; ChatLog.Write("approach", "chart page: " + rw.Key + " -> " + ChartStore.Label(rw.Key, variant)); }
         internal static void NextVariant() { var m = Inst; var rw = m == null ? null : m.Rw(); if (rw == null) return; NativeFlightController.EnsureCharts(); var vs = ChartStore.Variants(rw.Key); if (!vs.Contains("")) vs.Insert(0, ""); string cur = ChartStore.Active(rw.Key); ChartStore.SetActive(rw.Key, vs[(vs.IndexOf(cur) + 1 + vs.Count) % vs.Count]); m.fixesFor = ""; }
         internal static void AddWaypoint() { if (Inst != null) Inst.AddWp(); }
         internal static void RemoveWaypoint() { var m = Inst; if (m == null) return; if (m.sel >= 0 && m.sel < m.fixes.Count && m.fixes[m.sel].Role != "faf" && m.fixes[m.sel].Role != "sf") { if (m.added.Remove(m.fixes[m.sel])) { m.fixes.RemoveAt(m.sel); m.Publish(); } else m.fixes.RemoveAt(m.sel); m.sel = -1; } else m.note = "Select a waypoint (FAF/SF are locked)."; }
@@ -290,6 +293,16 @@ namespace KSPChatBridge
                 var lp = Proj(pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][0], pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][1]);
                 Tag(c, new Rect(lp.x + 6, lp.y + 4, 150, 18), "predicted (bank " + Math.Round(pb) + ")");
             }
+                double fLa, fLo;
+                if (act == null && v != null && NativeFlightController.FerryTarget(out fLa, out fLo))
+                {   // GROK LAND2: FERRY / cruise to the runway - the predicted path (amber) too
+                    double pb = 25; var amber = new Color(1f, .78f, .15f);
+                    Vector3d sv = v.srf_velocity; double trk = sv.magnitude > 5 ? (Math.Atan2(Vector3d.Dot(sv, Vector3d.Cross(v.upAxis, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)), Vector3d.Dot(sv, Vector3d.Exclude(v.upAxis, v.mainBody.transform.up).normalized)) * 180 / Math.PI + 360) % 360 : FlightGlobals.ship_heading;
+                    var pp = PredictedPath.Points(v.latitude, v.longitude, trk, v.srfSpeed, pb, fLa, fLo, body.Radius);
+                    for (int i = 1; i < pp.Count; i++) MfdInk.Line(c, Proj(pp[i - 1][0], pp[i - 1][1]), Proj(pp[i][0], pp[i][1]), amber, 2);
+                    var lp = Proj(pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][0], pp[Math.Min(pp.Count - 1, Math.Max(1, pp.Count / 2))][1]);
+                    Tag(c, new Rect(lp.x + 6, lp.y + 4, 170, 18), "predicted (cruise to runway)");
+                }
             if (act != null && act.Chart != null && act.Chart.JoinPoint != null && act.Phase == "entry") { var jp = Proj(act.Chart.JoinPoint.Lat, act.Chart.JoinPoint.Lon); c.Dot(jp, 11, Color.magenta); Tag(c, new Rect(jp.x + 7, jp.y + 4, 90, 18), "JOIN"); }   // where the line is intercepted
                 if (v != null) { var p = Proj(v.latitude, v.longitude); c.Dot(p, 8, kscRover ? Color.magenta : Color.red); double hd = FlightGlobals.ship_heading * Math.PI / 180; MfdInk.Line(c, p, p + new Vector2((float)Math.Sin(hd), -(float)Math.Cos(hd)) * 18, kscRover ? Color.magenta : Color.red, 2); if (kscRover) Tag(c, new Rect(p.x + 7, p.y + 5, 70, 18), "ROVER"); }
                 if (mapMouse != null) mapMouse();   // the outside window only: the IMGUI mouse is map-square relative inside the group
@@ -368,7 +381,8 @@ namespace KSPChatBridge
             o.Add("SPAN  " + (ViewSpan >= 10000 ? (ViewSpan / 1000).ToString("0") : (ViewSpan / 1000).ToString("0.0")) + " km  " + (follow ? (centerRunway ? "RWY CTR" : "FOLLOW") : "PANNED"));
             if (tab == 1 && rw != null)
             {
-                string cur = ChartStore.Active(rw.Key); o.Add("VAR   " + (cur.Length == 0 ? "default" : cur));
+                string cur = ChartStore.Active(rw.Key); o.Add("VAR   " + ChartStore.Label(rw.Key, cur));   // GROK LAND2: the chart's own title
+                if (act != null && act.Key == rw.Key && act.ChartPin.Length > 0) { string pv; ChartStore.KeyOf(act.ChartPin + ".json", out pv); o.Add("FLY   " + ChartStore.Label(rw.Key, pv) + " (picked)"); }
                 o.Add(NativeFlightController.ApLine);   // AP annunciator (+ LOC/GS on final)
                 o.Add(PlaneLine(rw, act));
                 if (sel >= 0 && sel < fixes.Count)

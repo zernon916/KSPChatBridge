@@ -52,6 +52,25 @@ namespace KSPChatBridge
             var d = MiniJson.Deserialize(txt); if (d == null) { why = Path.GetFileName(p) + " is not valid JSON"; return null; }
             return d;
         }
+        static readonly Dictionary<string, KeyValuePair<DateTime, string>> titles = new Dictionary<string, KeyValuePair<DateTime, string>>();
+        /// <summary>GROK LAND2: display label of a chart variant - its "title" (NDB RWY 27 (KERBO)), else default / generated (this plane) / the variant name.</summary>
+        internal static string Label(string key, string variant)
+        {
+            string t = Dir == null ? null : TitleOf(Path.Combine(Dir, FileName(key, variant)));
+            if (!string.IsNullOrEmpty(t)) return t;
+            return string.IsNullOrEmpty(variant) ? "default" : variant == "generated" ? "generated (this plane)" : variant;
+        }
+        internal static string TitleOf(string path)
+        {
+            try
+            {
+                if (path == null || !File.Exists(path)) return null; var mt = File.GetLastWriteTimeUtc(path); KeyValuePair<DateTime, string> c;
+                if (titles.TryGetValue(path, out c) && c.Key == mt) return c.Value;
+                var d = MiniJson.Deserialize(File.ReadAllText(path)) as Dictionary<string, object>; object t;
+                string s = d != null && d.TryGetValue("title", out t) && t != null ? Convert.ToString(t) : null; titles[path] = new KeyValuePair<DateTime, string>(mt, s); return s;
+            }
+            catch (Exception) { return null; }
+        }
         /// <summary>GROK LAND2: a picked chart file (name without .json) for this runway end; null + why when missing/invalid/other end.</summary>
         internal static object ReadPinned(string key, string file, out string why)
         {

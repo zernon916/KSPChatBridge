@@ -224,6 +224,14 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND2d: charts under their own titles; nothing deleted
+                    string od = ChartStore.Dir; string td = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_title_test"); System.IO.Directory.CreateDirectory(td); ChartStore.Dir = td;
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(td, "KSC_27_NDB_KERBO.json"), "{\"title\":\"NDB RWY 27 (KERBO)\",\"fixes\":[]}");
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(td, "KSC_27_generated.json"), "{\"variant\":\"generated\",\"fixes\":[]}");
+                    Check(LandingPick.AppLabel("KSC_27_NDB_KERBO") == "NDB RWY 27 (KERBO)" && LandingPick.AppLabel("KSC_27_generated") == "generated (this plane)" && LandingPick.AppLabel("KSC_27") == "default" && LandingPick.AppLabel(LandingPick.Auto).StartsWith("AUTO"), "GROK LAND2: KERBO listed under its own title, not generated");
+                    Check(ChartStore.Variants("KSC 27").Contains("NDB_KERBO") && ChartStore.Variants("KSC 27").Contains("generated"), "GROK LAND2: both charts kept side by side");
+                    ChartStore.Dir = od;
+                }
                 {   // GROK LAND2c: re-join from 2 km out is not flyable -> fly-out teardrop that is
                     double R0 = 600000, deg = R0 * Math.PI / 180, thLat = 0, thLon = -74.7, fr = 1500;
                     var lf = new ApproachChart.Wp { Name = "long final 6 km", Lat = 0, Lon = thLon + 6000 / deg, Alt = 400 }; string fw;

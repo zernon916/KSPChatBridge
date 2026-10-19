@@ -142,6 +142,15 @@ namespace KSPChatBridge
             for (int i = 0; i < items.Length; i++) if (Button(new Rect(r.x + i * w + 2, r.y, w - 4, r.height), items[i], i == sel, true)) sel = i;
             return sel;
         }
+        /// <summary>GROK LAND2: drop-down - a header button (current item + v); open = the items listed below it. Returns the picked index or -1.</summary>
+        internal static int Dropdown(Rect r, string[] labels, int sel, ref bool open, bool enabled = true)
+        {
+            if (Button(r, (sel >= 0 && sel < labels.Length ? labels[sel] : "-") + (open ? "   ^" : "   v"), open, enabled)) open = !open;
+            if (!open || !enabled) return -1;
+            for (int i = 0; i < labels.Length; i++) if (Button(new Rect(r.x + 12, r.yMax + 2 + i * (r.height + 2), r.width - 12, r.height), labels[i], i == sel, true)) { open = false; return i; }
+            return -1;
+        }
+        internal static float DropdownHeight(float rowH, int n, bool open) { return rowH + (open ? n * (rowH + 2) : 0); }
         /// <summary>Touch-size rounded button (min 44 px high recommended); disabled = greyed, never returns true.</summary>
         internal static bool Button(Rect r, string text, bool on = false, bool enabled = true)
         {

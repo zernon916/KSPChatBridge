@@ -155,7 +155,7 @@ namespace KSPChatBridge
         }
         static bool savePendingTablet;
 
-        static readonly string[] TabletMapPages = { "MAP", "CHART", "ILS" };
+        static readonly string[] TabletMapPages = { "MAP", "CHART", "ILS" }; static bool tabletVarDrop;
         void TabletMap(Rect area)
         {
             if (MapWindow.Inst == null) { GUI.Label(area, "Map, charts and ILS are available in flight.", tabletText); return; }
@@ -168,7 +168,14 @@ namespace KSPChatBridge
                 x += w + 4;
             }
             x += 12; var keys = tabletMapPage == 1 ? new[] { "RWY <", "RWY >", "VARIANT" } : tabletMapPage == 2 ? new[] { "RWY <", "RWY >" } : new[] { "ZOOM+", "ZOOM-", "CENTER", "CTR RWY" };
-            foreach (var k in keys) { float w = tabletFont * (k.Length * .65f + 1.2f); if (x + w > area.xMax) break; GUI.enabled = TabletLink; bool hit = GUI.Button(new Rect(x, area.y, w, kh), k, tabletKey); GUI.enabled = true; if (hit && TabletLink) OnKey(TabletMapPages[tabletMapPage].ToLowerInvariant(), k); x += w + 4; }
+            foreach (var k in keys) { float w = tabletFont * (k.Length * .65f + 1.2f); if (x + w > area.xMax) break; GUI.enabled = TabletLink; bool hit = GUI.Button(new Rect(x, area.y, w, kh), k == "VARIANT" ? (tabletVarDrop ? "VARIANT ^" : "VARIANT v") : k, tabletKey); GUI.enabled = true; if (hit && TabletLink) { if (k == "VARIANT") tabletVarDrop = !tabletVarDrop; else OnKey(TabletMapPages[tabletMapPage].ToLowerInvariant(), k); } x += w + 4; }
+            if (tabletMapPage == 1 && tabletVarDrop && TabletLink)
+            {   // GROK LAND2: chart variant drop-down (was a cycle key) - each chart under its own title
+                string vk, vc; var vs = MapWindow.VariantList(out vk, out vc); float ry = area.y + kh + 6, rh = tabletFont * 2.2f;
+                GUI.Label(new Rect(area.x, ry, area.width, rh), "Chart for " + (vk.Length > 0 ? vk : "-") + ":", tabletText); ry += rh;
+                foreach (var vv in vs) { if (TabletUi.Button(new Rect(area.x, ry, Mathf.Min(area.width, 520), rh), ChartStore.Label(vk, vv) + (vv.Length > 0 && ChartStore.Label(vk, vv) != vv ? "   [" + vv + "]" : ""), vv == vc, true)) { MapWindow.SetVariant(vv); tabletVarDrop = false; } ry += rh + 4; }
+                return;
+            }
             var et = Event.current.type;   // info-only: no map mouse (pan / waypoint drag / wheel) reaches MapWindow
             if (!TabletLink && (et == EventType.MouseDown || et == EventType.MouseDrag || et == EventType.MouseUp || et == EventType.ScrollWheel)) return;
             if (!TabletLink) GUI.Label(new Rect(area.x, area.yMax - tabletFont * 1.6f, area.width, tabletFont * 1.6f), "INFO ONLY - LIVE LINK off", tabletText);

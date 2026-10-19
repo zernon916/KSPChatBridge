@@ -139,6 +139,8 @@ namespace KSPChatBridge
             string name = airport == Auto || string.IsNullOrEmpty(airport) ? "nearest" : airport, rw = end == Auto || string.IsNullOrEmpty(end) ? "" : end;
             return "{\"name\":\"" + name.Replace("\\", "").Replace("\"", "") + "\",\"runway\":\"" + rw + "\",\"touch_and_go\":" + touchAndGo + ",\"final_km\":" + (shortFinal ? "5" : "0") + ",\"approach_heading\":" + (string.IsNullOrEmpty(approachHeading) ? "-1" : approachHeading) + ",\"final\":\"" + (shortFinal ? "short" : "long") + "\"" + chart + "}";
         }
+        /// <summary>GROK LAND2: drop-down label of an approach item (the chart's own title, e.g. NDB RWY 27 (KERBO)).</summary>
+        internal static string AppLabel(string approach) { if (approach == Auto || string.IsNullOrEmpty(approach)) return "AUTO (active chart)"; string v; string key = ChartStore.KeyOf(approach + ".json", out v); return ChartStore.Label(key, v); }
         internal static string Label(string airport, string end, string approach)
         {
             return (airport == Auto ? "nearest airfield" : airport) + " " + (end == Auto ? "(best-aligned end)" : end) + ", approach " + (approach == Auto ? "AUTO (active chart)" : approach);

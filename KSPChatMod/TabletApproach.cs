@@ -40,7 +40,7 @@ namespace KSPChatBridge
                 var ends = LandingPick.Ends(lpAirport, lpFiles); if (!ends.Contains(lpEnd)) lpEnd = LandingPick.Auto;
                 var apps = LandingPick.Approaches(lpAirport, lpEnd, lpFiles); if (!apps.Contains(lpApp)) lpApp = LandingPick.Auto;
                 float sh = row; int rowsA = Mathf.CeilToInt(airports.Count / 4f), rowsP = Mathf.CeilToInt(apps.Count / 2f);
-                float ch = pad + 3 * lh + (rowsA + 1 + rowsP) * (sh + gap) + gap;
+                float ch = pad + 3 * lh + (rowsA + 1) * (sh + gap) + TabletUi.DropdownHeight(sh, apps.Count, lpDrop) + 2 * gap;
                 c = TabletUi.CardPanel(new Rect(0, y, width, ch), "Runway / approach");
                 float py = c.y;
                 TabletUi.Label(new Rect(c.x, py, c.width, lh), "Airport" + (rw.Count == 0 ? "  (saved spots: LOAD below)" : "")); py += lh;
@@ -52,10 +52,10 @@ namespace KSPChatBridge
                 TabletUi.Label(new Rect(c.x, py, c.width, lh), "Runway end"); py += lh;
                 { var seg = ends.ToArray(); int cur = System.Array.IndexOf(seg, lpEnd); int s = TabletUi.Segments(new Rect(c.x, py, c.width, sh), seg, cur); if (TabletLink && s >= 0 && s != cur) { lpEnd = seg[s]; ChatLog.Write("g", "tablet approach: runway end " + lpEnd); } py += sh + gap; }
                 TabletUi.Label(new Rect(c.x, py, c.width, lh), "Approach chart"); py += lh;
-                for (int r0 = 0; r0 < rowsP; r0++)
-                {
-                    var seg = apps.Skip(r0 * 2).Take(2).ToArray(); int cur = System.Array.IndexOf(seg, lpApp);
-                    int s = TabletUi.Segments(new Rect(c.x, py, c.width, sh), seg, cur); if (TabletLink && s >= 0 && s != cur) { lpApp = seg[s]; ChatLog.Write("g", "tablet approach: approach " + lpApp); } py += sh + gap;
+                {   // GROK LAND2: drop-down, each chart under its own title
+                    var labels = apps.Select(LandingPick.AppLabel).ToArray(); int cur = apps.IndexOf(lpApp);
+                    int s = TabletUi.Dropdown(new Rect(c.x, py, c.width, sh), labels, cur, ref lpDrop, TabletLink); if (TabletLink && s >= 0 && s != cur) { lpApp = apps[s]; ChatLog.Write("g", "tablet approach: approach " + lpApp + " (" + labels[s] + ")"); }
+                    py += TabletUi.DropdownHeight(sh, apps.Count, lpDrop) + gap;
                 }
                 y += ch + gap;
                 if (rw.Count == 0 && TabletUi.Button(new Rect(12, y, width - 24, row), "LOAD SAVED RUNWAY SPOTS", false, TabletLink)) { ChatLog.Write("g", "tablet approach: load runways"); ChatWindow.RequestSpots(); }
@@ -82,7 +82,7 @@ namespace KSPChatBridge
             GUILayout.EndArea();
         }
 
-        static string lpAirport = LandingPick.Auto, lpEnd = LandingPick.Auto, lpApp = LandingPick.Auto; static string[] lpFiles; static float lpScanT = -100;
+        static string lpAirport = LandingPick.Auto, lpEnd = LandingPick.Auto, lpApp = LandingPick.Auto; static string[] lpFiles; static float lpScanT = -100; static bool lpDrop;
         /// <summary>GROK LAND1: ENGAGE LANDING with the picked airport / end / approach (the approach = active.json variant for that end).</summary>
         static void EngageSelectedLanding()
         {
