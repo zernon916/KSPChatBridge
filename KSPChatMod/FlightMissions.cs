@@ -111,6 +111,23 @@ namespace KSPChatBridge
         internal static double Heading(double course, double xte, double turnRadius) { double h = (course - Math.Sign(xte) * InterceptAngle(xte, turnRadius)) % 360; return h < 0 ? h + 360 : h; }
     }
 
+    /// <summary>GROK LAND3: centreline capture that actually closes the cross-track (the 03:09 intercept flew parallel 1.0-1.5 km off:
+    /// heading-only steering through a bank = 0.5 x heading-error hold turned ~1 deg/s, too late to roll out, then a ~15 deg cut that never closed).
+    /// Desired track = course - atan(xte / L) (L = LookFrac x the turn radius, capped MaxIntercept), and the BANK is commanded directly:
+    /// turn rate = track error / TrackTau, bank = atan(v x rate / g) - heading-rate damped, no overshoot. xte + = right of the course line.</summary>
+    internal static class LateralCapture
+    {
+        internal const double MaxIntercept = 30, TrackTau = 5, LookFrac = .4, MinLook = 600;
+        internal static double Look(double speed, double maxBank) { return Math.Max(MinLook, LookFrac * speed * speed / (9.81 * Math.Tan(Math.Max(5, maxBank) * Math.PI / 180))); }
+        internal static double TrackOffset(double xte, double look) { return -FlightPolicy.Clamp(Math.Atan(xte / Math.Max(1, look)) * 180 / Math.PI, -MaxIntercept, MaxIntercept); }
+        internal static double Bank(double course, double xte, double track, double speed, double maxBank, out double heading)
+        {
+            double h = (course + TrackOffset(xte, Look(speed, maxBank))) % 360; heading = h < 0 ? h + 360 : h;
+            if (double.IsNaN(track) || speed <= 1) return 0;
+            double rate = FlightPolicy.Wrap(heading - track) / TrackTau * Math.PI / 180;
+            return FlightPolicy.Clamp(Math.Atan(speed * rate / 9.81) * 180 / Math.PI, -Math.Max(5, maxBank), Math.Max(5, maxBank));
+        }
+    }
     /// <summary>Luke 5:46 PM: arcs were flown on the outside edge (pure cross-track law, no curvature). Feed-forward bank for the
     /// path curvature at the upcoming vertex: bank = atan(v^2 kappa / g), kappa = turn / mean segment length, sign = turn
     /// direction; looked up ~1.5 s ahead so the roll starts before arc entry. Cross-track / integral stay as trims. Pure; tested.</summary>
@@ -606,7 +623,9 @@ namespace KSPChatBridge
         /// The first point has no corner (the Dubins path arrives aligned). Slack: arcs shrunk up to Slack x tighter are still flown (as the
         /// chart smoother does); worse than that, or a corner over 150 deg, is rejected.</summary>
         internal const double Slack = 3;
-        internal static bool Flyable(IList<double[]> xy, double r, out string why)
+        internal static bool Flyable(IList<double[]> xy, double r, out string why) { return Flyable(xy, r, Slack, out why); }
+        /// <summary>GROK LAND3: slack &lt; 1 = margin (0.85: every corner needs 15% more straight than its arcs use - "needs 3972 m, has 3955 m" is NOT flyable).</summary>
+        internal static bool Flyable(IList<double[]> xy, double r, double slack, out string why)
         {
             why = ""; int n = xy.Count; if (n < 3) return true;
             var need = new double[n];
@@ -618,7 +637,7 @@ namespace KSPChatBridge
             for (int i = 0; i + 1 < n; i++)
             {
                 double dx = xy[i + 1][0] - xy[i][0], dy = xy[i + 1][1] - xy[i][1], len = Math.Sqrt(dx * dx + dy * dy);
-                if (need[i] + need[i + 1] > Slack * len + 1) { why = "leg " + (i + 1) + " needs " + (need[i] + need[i + 1] >= double.MaxValue / 8 ? "a U-turn" : Math.Round(need[i] + need[i + 1]) + " m") + ", has " + Math.Round(len) + " m at r " + Math.Round(r) + " m"; return false; }
+                if (need[i] + need[i + 1] > slack * len + 1) { why = "leg " + (i + 1) + " needs " + (need[i] + need[i + 1] >= double.MaxValue / 8 ? "a U-turn" : Math.Round(need[i] + need[i + 1]) + " m") + ", has " + Math.Round(len) + " m at r " + Math.Round(r) + " m"; return false; }
             }
             return true;
         }
@@ -1282,7 +1301,7 @@ namespace KSPChatBridge
         internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
-        internal bool MissedClimb; internal const double MissedAgl = 300;
+        internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
         /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
         internal static bool RouteFlyable(double lat, double lon, List<ApproachChart.Wp> route, double thrLat, double thrLon, double r, double radius, out string why)
@@ -1290,7 +1309,7 @@ namespace KSPChatBridge
             double k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180); var xy = new List<double[]> { new[] { 0.0, 0.0 } };
             foreach (var w in route) xy.Add(new[] { (w.Lon - lon) * k * cl, (w.Lat - lat) * k });
             xy.Add(new[] { (thrLon - lon) * k * cl, (thrLat - lat) * k });
-            return DubinsPath.Flyable(xy, r, out why);
+            return DubinsPath.Flyable(xy, r, RejoinSlack, out why);
         }
         /// <summary>GROK LAND2: fly-out for a re-join (a racetrack on the plane's side, 2.5 turn radii off the centreline): abeam the plane, outbound
         /// parallel to the final to 3 r beyond the last fix, turn back ~140 deg, ~40 deg onto the final. At or above the glidepath / 500 m above the field.</summary>
@@ -1298,8 +1317,8 @@ namespace KSPChatBridge
         {
             double d = NavigationMath.Distance(thrLat, thrLon, last.Lat, last.Lon, radius) + 3 * r;
             double dp = NavigationMath.Distance(thrLat, thrLon, lat, lon, radius), th = FlightPolicy.Wrap(NavigationMath.Bearing(thrLat, thrLon, lat, lon) - (course + 180)) * Math.PI / 180;
-            double behind = dp * Math.Cos(th), side = dp * Math.Sin(th) >= 0 ? 90 : -90;   // + = right of the outbound line
-            Func<double, string, ApproachChart.Wp> at = (dist, name) => { double ca, co, la, lo; NavigationMath.Offset(thrLat, thrLon, course + 180, dist, radius, out ca, out co); NavigationMath.Offset(ca, co, course + 180 + side, 2.5 * r, radius, out la, out lo); return new ApproachChart.Wp { Name = name, Lat = la, Lon = lo, Alt = alt }; };
+            double behind = dp * Math.Cos(th), side = dp * Math.Sin(th) >= 0 ? 90 : -90, off = Math.Max(2.5 * r, Math.Abs(dp * Math.Sin(th)) + 1.5 * r);   // + = right of the outbound line; GROK LAND3: abeam leg >= 1.5 r from the plane (was TIGHT 90 deg)
+            Func<double, string, ApproachChart.Wp> at = (dist, name) => { double ca, co, la, lo; NavigationMath.Offset(thrLat, thrLon, course + 180, dist, radius, out ca, out co); NavigationMath.Offset(ca, co, course + 180 + side, off, radius, out la, out lo); return new ApproachChart.Wp { Name = name, Lat = la, Lon = lo, Alt = alt }; };
             var o = new List<ApproachChart.Wp>();
             if (behind < d - 3 * r) o.Add(at(Math.Max(0, behind), "fly-out abeam"));
             o.Add(at(d, "fly-out " + Math.Round(d / 1000) + " km (rejoin)"));
@@ -1373,6 +1392,7 @@ namespace KSPChatBridge
         /// <summary>Metres below the glideslope; NaN before the ILS is computed (Ils is null outside final: the 6:09 PM NRE).</summary>
         internal bool OffLine;
         internal static double BelowGsM(Ils.Reading r) { return r == null ? double.NaN : -r.AboveGsM; }
+        internal double LatBank = double.NaN;   // GROK LAND3: direct bank command from the centreline capture (NaN = heading hold)
         internal double ArcBank; internal bool Heavy; internal const double GsMargin = 30;   // feed-forward bank on chart arcs (deg, + right)
         internal string ChartPin = "", ForceKind = "";   // GROK LAND2: picked chart file / picked final ("" = auto)
         /// <summary>GROK LAND2: final kind to fly: the picked LONG/SHORT; a picked chart without a final pick = long (its own join fixes).</summary>
@@ -1393,7 +1413,7 @@ namespace KSPChatBridge
             LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
             TurnBank = FinalApproachPolicy.PlanningBank(BankDeg > 20 ? BankDeg : ApproachProfile.PhaseBank(Phase, speed, stall));   // GROK FIX2: capped like the command
-            stepsSinceRebuild++; if (GateCooldown > 0) GateCooldown--;
+            stepsSinceRebuild++; if (GateCooldown > 0) GateCooldown--; LatBank = double.NaN;
             if (Phase == "entry")
             {
                 if (Route != null && holdLast && RouteIndex >= Route.Count) RouteIndex = Route.Count - 1;
@@ -1500,6 +1520,7 @@ namespace KSPChatBridge
                         {
                             if (dp.Type != dubType) { dubType = dp.Type; DubinsLog = "join path to " + wp.Name + ": " + dp.Type + " " + Math.Round(dp.A1) + "/" + Math.Round(dp.A2) + " deg, straight " + (dp.S / 1000).ToString("0.0") + " km, r " + Math.Round(r) + " m at bank " + Math.Round(TurnBank) + ", arrives on " + Math.Round((nextBrg + 360) % 360) + " deg"; }
                             DesiredHeading = cmd; ArcBank = 0; leadTurn = false; DubinsR = r;
+                            if (dp.Type == "LINE") { double ux = Math.Sin(nextBrg * Math.PI / 180), uy = Math.Cos(nextBrg * Math.PI / 180), lh; LatBank = LateralCapture.Bank(nextBrg, -x1 * uy + y1 * ux, track, speed, TurnBank > 0 ? TurnBank : 25, out lh); DesiredHeading = lh; }   // GROK LAND3: on the course line into the fix - same capture law (overshot 1 km at 03:09:30)
                             var pts = new List<double[]>(); foreach (var q in dp.Points()) pts.Add(new[] { lat + q[1] / k, lon + q[0] / (k * cl) }); DubinsPts = pts;
                         }
                         dubAligned = Math.Abs(FlightPolicy.Wrap(track - nextBrg)) < 30;   // never "capture" the join while crossing it on the wrong course
@@ -1527,7 +1548,7 @@ namespace KSPChatBridge
                 double lead = Math.Max(1500, .6 * Math.Min(speed, 150) * Math.Min(speed, 150) / (9.81 * Math.Tan(20 * Math.PI / 180)));   // ~1 turn radius lead: converges without overshoot
                 double icR = speed * speed / (9.81 * Math.Tan(Math.Max(5, TurnBank > 0 ? TurnBank : 25) * Math.PI / 180)), icTrk = double.IsNaN(track) ? heading : track;
                 bool merging = !double.IsNaN(icTrk) && Math.Abs(FlightPolicy.Wrap(icTrk - course)) < 45 && Math.Abs(cross) < 2 * icR;   // Oct 12: lead-turn merge (learned roll-in) once closing at an intercept angle; steep side entries keep the plain law (90 deg replay)
-                DesiredHeading = merging ? LocalizerCourse.Heading(course, cross, icR, icTrk, speed, RollS) : LocalizerCourse.Heading(course, cross, icR);   // shared localizer capture law (legs + LOC)
+                { double ch; LatBank = LateralCapture.Bank(course, cross, icTrk, speed, TurnBank > 0 ? TurnBank : 25, out ch); DesiredHeading = ch; }   // GROK LAND3: bank-commanded capture onto the runway centreline (was heading-only: flew parallel 1.4 km off)
                 DesiredAltitude = Chart != null ? Math.Max(double.IsNaN(Chart.RouteFixAlt) ? Chart.LongAlt : Chart.RouteFixAlt, Chart.GlideAlt(-along)) : Elevation + 800;   // hold the fix altitude until aligned
                 DesiredSpeed = Math.Min(ApproachProfile.EntrySpeed(stall), ApproachProfile.FinalSchedule(Distance, stall, EffDecel));   // intercept: join speed, never above the final schedule
                 DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 10, speed - DesiredSpeed);   // GROK LAND2

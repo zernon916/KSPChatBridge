@@ -877,9 +877,10 @@ namespace KSPChatBridge
                 }
                 else blim = CraftClass.MaxBank(CraftCls, landBank ? runway.TurnBank : FlightPolicy.BankLimit(vessel.srfSpeed));
                 double arcFf = mode == "landing" && runway != null && runway.Phase == "entry" ? runway.ArcBank : 0;   // curvature feed-forward; heading error is the trim
+                double? latBank = mode == "landing" && runway != null && (runway.Phase == "entry" || runway.Phase == "intercept") && !double.IsNaN(runway.LatBank) ? runway.LatBank : (double?)null;   // GROK LAND3: centreline capture commands the bank itself
                 double hdgErr = FlightPolicy.Wrap(heading - FlightGlobals.ship_heading);   // T6: one signed heading error feeds both the bank and the rudder asks
                 double hdgRate = dt > 0 && !double.IsNaN(lastRudderHdg) ? FlightPolicy.Wrap(FlightGlobals.ship_heading - lastRudderHdg) / dt : 0; lastRudderHdg = FlightGlobals.ship_heading;
-                bool wantRudder = !directBank.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !(Time.realtimeSinceStartup < rudderOffUntil) && PilotPolicy.RudderSteer(hdgErr, rudderOn, vessel.srfSpeed, mode == "landing");   // T6: an explicit bank ask (roll hold / plan circle) and the ground roll keep their own yaw
+                bool wantRudder = !directBank.HasValue && !latBank.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !(Time.realtimeSinceStartup < rudderOffUntil) && PilotPolicy.RudderSteer(hdgErr, rudderOn, vessel.srfSpeed, mode == "landing");   // T6: an explicit bank ask (roll hold / plan circle) and the ground roll keep their own yaw
                 if (wantRudder && rudderOn && PilotPolicy.RudderStuck(Time.realtimeSinceStartup - rudderSince, hdgErr, rudderHdg0)) { wantRudder = false; rudderOffUntil = Time.realtimeSinceStartup + PilotPolicy.RudderCoolOffS; }   // no progress on the rudder (no authority / a moving target): the bank takes the error back
                 if (wantRudder != rudderOn)
                 {   // T6 decision log: which axis is flying the heading, and why it handed back
@@ -887,7 +888,7 @@ namespace KSPChatBridge
                     if (rudderOn) { rudderSince = Time.realtimeSinceStartup; rudderHdg0 = hdgErr; ChatLog.Write("att", "heading hold: rudder takes the last " + PilotPolicy.RudderErrDeg.ToString("0.#") + " deg (err " + hdgErr.ToString("0.0") + " deg at " + vessel.srfSpeed.ToString("0") + " m/s) - wings level, no bank ask"); }
                     else ChatLog.Write("att", "heading hold: bank flies the heading again (err " + hdgErr.ToString("0.0") + " deg) - rudder released" + (Time.realtimeSinceStartup < rudderOffUntil ? "; no progress on the rudder, off for " + (rudderOffUntil - Time.realtimeSinceStartup).ToString("0") + " s" : ""));
                 }
-                double bank = directBank ?? FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn), -blim, blim);
+                double bank = directBank ?? (latBank.HasValue ? FlightPolicy.Clamp(latBank.Value, -blim, blim) : FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn), -blim, blim));
                 bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight

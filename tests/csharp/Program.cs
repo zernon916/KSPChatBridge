@@ -224,6 +224,23 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND3a: centreline capture from 1.5 km parallel offset converges (roll lag 1 s, bank 25, 150 m/s)
+                    foreach (double x0 in new[] { 1500.0, -1500.0, 4000.0 })
+                    {
+                        double xs = x0, trk = 270, bk = 0, flown = 0, worst = 0, conv = double.NaN, hh; bool crossed = false;
+                        for (int i = 0; i < 4000; i++)
+                        {
+                            double want = LateralCapture.Bank(270, xs, trk, 150, 25, out hh); bk += (want - bk) * Math.Min(1, .1 / 1.0);
+                            trk += 9.81 * Math.Tan(bk * Math.PI / 180) / 150 * 180 / Math.PI * .1; xs += 150 * Math.Sin((trk - 270) * Math.PI / 180) * .1; flown += 15;
+                            if (Math.Sign(xs) != Math.Sign(x0)) { crossed = true; worst = Math.Max(worst, Math.Abs(xs)); }
+                            if (double.IsNaN(conv) && Math.Abs(xs) < 50 && Math.Abs(trk - 270) < 3) conv = flown;
+                        }
+                        Check(!double.IsNaN(conv) && conv < (Math.Abs(x0) > 2000 ? 16000 : 11000) && worst < 60 && Math.Abs(xs) < 5, "GROK LAND3: capture from " + x0 + " m: on the line (<50 m, <3 deg) after " + Math.Round(conv) + " m, overshoot " + Math.Round(worst) + " m" + (crossed ? "" : " (none)"));
+                    }
+                    double h2; Check(LateralCapture.Bank(270, 1500, 270, 150, 25, out h2) < 0 && h2 < 270 && h2 >= 240 && LateralCapture.Bank(270, -1500, 270, 150, 25, out h2) > 0 && h2 > 270, "GROK LAND3: right of the line -> bank left toward it (sign), cut <= 30 deg");
+                    string fw3; var mg = new List<double[]> { new[] { 0.0, 0 }, new[] { 0.0, 5000 }, new[] { 2050.0, 5000 }, new[] { 2050.0, 20000 } };
+                    Check(!DubinsPath.Flyable(mg, 1000, RunwayMission.RejoinSlack, out fw3) && DubinsPath.Flyable(mg, 1000, 1.0, out fw3), "GROK LAND3: a marginal corner (needs 2000 m, has 2050 m) is NOT flyable for a rejoin (15% margin)");
+                }
                 {   // GROK LAND2d: charts under their own titles; nothing deleted
                     string od = ChartStore.Dir; string td = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "aics_title_test"); System.IO.Directory.CreateDirectory(td); ChartStore.Dir = td;
                     System.IO.File.WriteAllText(System.IO.Path.Combine(td, "KSC_27_NDB_KERBO.json"), "{\"title\":\"NDB RWY 27 (KERBO)\",\"fixes\":[]}");
