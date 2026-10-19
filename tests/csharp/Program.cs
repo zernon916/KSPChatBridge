@@ -129,6 +129,27 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5g
+            var t1 = new StepThrottle(); t1.Reset(.31); double r1 = t1.Update(0, 108, 117, .02, double.NaN, 92, 10000), r2 = t1.Update(4, 108, 117, .02, double.NaN, 92, 10000);
+            Check(r1 == .31 && r2 == .31, "LAND5g: 108 vs plan 117, floor 92 (above floor + 8) = hold, no steps");
+            var t2 = new StepThrottle(); t2.Reset(.10); double r3 = t2.Update(0, 98, 117, .02, double.NaN, 92, 10000);
+            Check(r3 > .10 && r3 <= .15 + 1e-9, "LAND5g: near the floor (98 < 92 + 8) = small step up (<= 5%)");
+            var t3 = new StepThrottle(); t3.Reset(.31); double r4 = t3.Update(0, 108, 117, .02, 3, 92, 10000);
+            Check(r4 == .31, "LAND5g: config lead only near the floor");
+            var t4 = new StepThrottle(); t4.Reset(.20); double pl = 150, r5 = .20; for (int i = 0; i < 400; i++) { pl -= .5 * .05; if (i == 100) t4.Reset(.20); r5 = t4.Update(i * .05, pl - 8, pl, .05, double.NaN); }
+            Check(r5 <= .20 + 1e-9, "LAND5g: no power while the plan is decelerating (entry, no floor)");
+            Check(StepThrottle.ConfigLimit(1, 0, .02, 1) == 0 && Math.Abs(StepThrottle.ConfigLimit(0, 1, .02, 1) - .002) < 1e-9, "LAND5g: config rate limit caps increases only (100% can come off)");
+            Check(PilotPolicy.StallLatch(false, true, 88, 84, 84) && PilotPolicy.StallLatch(true, false, 100, 84, 84) && !PilotPolicy.StallLatch(true, false, 106, 84, 84), "LAND5g: stall-emergency power holds to 1.25x stall then releases");
+            Check(PilotPolicy.LandSlowOk("final", 90, 84, 300) && !PilotPolicy.LandSlowOk("final", 85, 84, 300) && !PilotPolicy.LandSlowOk("entry", 90, 84, 300) && PilotPolicy.LandSlowOk("flare", 70, 84, 5), "LAND5g: no stall-emergency slam on final above 1.04x stall");
+            Check(ApproachProfile.EnergyLabel(-170, 188, 121).Contains("no added power"), "LAND5g: LOW/FAST label adds no power");
+            Check(!GearPolicy.Violation(false, true, false, true) && GearPolicy.Violation(false, true, false, false) && GearPolicy.Violation(false, true, false, null), "LAND5g: the AP's own gear state (go-around) is not tampering");
+            var aw = new AutoWarpState(); int q1 = aw.Step(0, 3, true); int q2 = aw.Step(2, 3, true); int q3 = aw.Step(2, 3, true);
+            Check(q1 == 3 && q2 == -1 && q3 == -1 && !aw.PlayerOwns, "LAND5g: the game clamping our 4x to 3x is not a player change (keep the max allowed)");
+            int q4 = aw.Step(2, 0, true); int q5 = aw.Step(0, 0, true); Check(q4 == 0 && q5 == -1 && !aw.PlayerOwns, "LAND5g: autowarp drops to 1x before turns");
+            var aw2 = new AutoWarpState(); aw2.Step(0, 3, true); aw2.Step(3, 3, true); int q6 = aw2.Step(3, 3, false); Check(q6 == 0, "LAND5g: autowarp disabled mid-flight undoes its own warp");
+            var aw3 = new AutoWarpState(); aw3.Step(0, 1, true); aw3.Step(1, 1, true); int q7 = aw3.Step(3, 1, true), q8 = aw3.Step(3, 0, false); Check(q7 == -1 && q8 == -1 && aw3.PlayerOwns, "LAND5g: a real player warp change is left alone");
+            var aw4 = new AutoWarpState(); Check(aw4.Step(2, 0, true) == -1 && aw4.PlayerOwns, "LAND5g: warp already set by the player at start is left alone");
+        }
         {   // GROK LAND5f
             var sf = new StepThrottle(); sf.Reset(.10); double a1 = sf.Update(0, 100, 114, .02, double.NaN, 92, 1500), a2 = sf.Update(4, 100, 114, .02, double.NaN, 92, 1500);
             Check(a1 <= .10 && a2 <= .10, "LAND5f: last 2 km - below plan but above the floor = no power (decays)");
@@ -190,10 +211,10 @@ class Program
             Check(Ils.SpdBarBand(150, 140, double.NaN) == "green" && Ils.SpdBarBand(156, 140, double.NaN) == "amber" && Ils.SpdBarBand(134, 140, double.NaN) == "amber" && Ils.SpdBarBand(136, 140, double.NaN) == "green" && Ils.SpdBarBand(60, 140, 62) == "red", "TAB-ILS1: SPD colour green -5/+15, amber outside, red below the floor");
         }
         {   // GROK LAND5c items 5-8
-            Check(ApproachProfile.FloorK(12000, 9400) == 1.30 && ApproachProfile.FloorK(9400, 9400) == 1.30 && Math.Abs(ApproachProfile.FloorK(2000, 9400) - 1.15) < 1e-9 && Math.Abs(ApproachProfile.FloorK(0, 9400) - 1.04) < 1e-9
-                && Math.Abs(ApproachProfile.FloorK(5700, 9400) - 1.225) < 1e-9 && Math.Abs(ApproachProfile.FloorK(1000, 9400) - 1.095) < 1e-9, "LAND5c: speed floor 1.30 at FAF -> 1.15 at 2 km -> 1.04 at the threshold");
-            Check(ApproachProfile.SlowGate(1.01 * 1.15 * 50, 50, 2000, 9400, 30, -1) == 0 && ApproachProfile.SlowGate(1.01 * 1.04 * 50, 50, 0, 9400, 30, -1) == 0, "LAND5c: slow at the floor + 1% continues (no go-around, no power)");
-            Check(ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 3, -1) == 1 && ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 12, .3) == 1 && ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 12, -.1) == 2, "LAND5c: below the floor = gentle power; go around only after 10 s not recovering");
+            Check(ApproachProfile.FloorK(12000, 9400) == 1.10 && ApproachProfile.FloorK(9400, 9400) == 1.10 && Math.Abs(ApproachProfile.FloorK(4700, 9400) - 1.07) < 1e-9 && Math.Abs(ApproachProfile.FloorK(0, 9400) - 1.04) < 1e-9
+                && ApproachProfile.SlowGate(94, 84, 3900, 6000, 20, -1) == 0 && ApproachProfile.SlowGate(88, 84, 3900, 6000, 20, -1) == 2, "LAND5g: speed floor 1.10 at FAF -> 1.04 at the threshold; the 16:58 94 m/s @ 3.9 km (stall 84) is fine, 88 goes around");
+            Check(ApproachProfile.SlowGate(1.01 * 1.10 * 50, 50, 9400, 9400, 30, -1) == 0 && ApproachProfile.SlowGate(1.01 * 1.04 * 50, 50, 0, 9400, 30, -1) == 0, "LAND5c: slow at the floor + 1% continues (no go-around, no power)");
+            Check(ApproachProfile.SlowGate(.99 * 1.10 * 50, 50, 9400, 9400, 3, -1) == 1 && ApproachProfile.SlowGate(.99 * 1.10 * 50, 50, 9400, 9400, 12, .3) == 1 && ApproachProfile.SlowGate(.99 * 1.10 * 50, 50, 9400, 9400, 12, -.1) == 2, "LAND5c: below the floor = gentle power; go around only after 10 s not recovering");
             Check(PilotPolicy.LowEnergyK(false, 1.05 * 50, 50, -2, 200, 1.04) == false && PilotPolicy.LowEnergyK(false, 1.25 * 50, 50, -2, 200, 1.30), "LAND5c: final low-energy uses the scheduled floor");
             Check(ApproachProfile.TouchdownClass(-3) == "normal" && ApproachProfile.TouchdownClass(-6.5) == "firm" && ApproachProfile.TouchdownClass(-9) == "hard" && ApproachProfile.FlareFast(70, 58) && !ApproachProfile.FlareFast(66, 58), "LAND5c: touchdown classes 1-5 / 5-8 firm / > 8; fast flare = landing + 10");
             // fast flare: mission latches FlareFast (no pitch-up / idle / airbrakes / full flaps are applied by the controller on this flag), sink stays 3
@@ -237,7 +258,7 @@ class Program
                 if (tsC > 90) lastBandC = Math.Max(lastBandC, Math.Abs(vC - plC));
             }
             Console.WriteLine("LAND5c sim: min " + loC.ToString("0.0") + " max +" + hiC.ToString("0.0") + " band-crossings " + crossC + " last-30s " + lastBandC.ToString("0.0") + " thrC " + thrC.ToString("0.00"));
-            Check(loC >= -15 && hiC <= 15, "LAND5c/5f: drag step + 4 s spool - speed stays -15/+15 of plan (LAND5f: steps <= 8%, slow above the floor is fine)");
+            Check(loC >= -18 && hiC <= 15, "LAND5c/5f/5g: drag step + 4 s spool - speed stays -18/+15 of plan (LAND5g: steps <= 5%, slow above the floor is fine)");
             Check(crossC <= 1 && lastBandC <= 6, "LAND5c: no oscillation (<= 1 crossing of the +/-3 band, settled in the last 30 sC)");
             Check(StepThrottle.Predict(126, -.3, .40, .10, 4, 6) > 126 + 2, "LAND5c: prediction counts thrust still spooling");
             Check(ApproachProfile.SpeedGate(134 + 15, 134, double.NaN, double.NaN) == 1 && ApproachProfile.SpeedGate(134 + 25, 134, double.NaN, double.NaN) == 2 && ApproachProfile.SpeedGate(134 + 8, 134, double.NaN, double.NaN) == 0

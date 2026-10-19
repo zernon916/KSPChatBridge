@@ -16,9 +16,11 @@ namespace KSPChatBridge
         internal static bool Busy { get { return Active || (instance != null && instance.plan != null && instance.plan.Running); } }
         internal static bool PlanRunning { get { return instance != null && instance.plan != null && instance.plan.Running; } }
         internal static string Phase { get { return instance == null ? "idle" : instance.mode; } }
+        internal static bool? ApGearCmd;
         internal static void SetGroup(Vessel target, KSPActionGroup group, bool value)
         {
             target.ActionGroups.SetGroup(group, value);
+            if (group == KSPActionGroup.Gear) ApGearCmd = value;   // GROK LAND5g
             if (instance != null && instance.vessel == target && instance.recovery != null)
                 instance.recovery.AcceptGroup(target, group, value);
         }
@@ -43,7 +45,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; int autoWarpIdx = -1; bool autoWarpOff; float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -462,9 +464,7 @@ namespace KSPChatBridge
                 int restored = recovery.Tick(vessel, now, revert);
                 restored += reversers.Recover(vessel, now, revert);
                 var noticed = new List<string>(recovery.Noticed); noticed.AddRange(reversers.Noticed);
-                if (Active && flying && TimeWarp.WarpMode == TimeWarp.Modes.LOW && vessel.mainBody.atmosphere && vessel.altitude < vessel.mainBody.atmosphereDepth)
-                { int capI = PilotPolicy.WarpIndexCap(true, TimeWarp.CurrentRateIndex, TimeWarp.fetch != null ? TimeWarp.fetch.physicsWarpRates : null); if (capI < TimeWarp.CurrentRateIndex) { TimeWarp.SetRate(capI, true); ChatLog.Write("ap", "physics warp capped at 3x in atmosphere"); } }
-                if (Active && flying) AutoWarpTick();   // GROK LAND5f
+                AutoWarpTick(Active && flying);   // GROK LAND5f/5g
                 if (LearnGuards.RailsWarpNotice(learn != null && !learn.Done, TimeWarp.WarpMode == TimeWarp.Modes.HIGH, TimeWarp.CurrentRateIndex, ref learnWarpSaid))
                 {   ChatWindow.Notice("LEARN: rails warp is on - test timers run on game time, so dwells and throttle steps are skipped. Use physics warp (or none) while Learn runs."); ChatLog.Write("learn", "rails warp during learn (notice shown)"); }
                 if (Active && flying) GearWatch(now); else { gearGate.Reset(); if (!Active) gearSaid = null; }
@@ -510,24 +510,29 @@ namespace KSPChatBridge
             return Math.Min(landStall0, Math.Max(fs, .6 * landStall0));
         }
         /// <summary>GROK LAND5f AUTOWARP: physics warp on long straight wings-level legs (setting autoland_autowarp, default on); the player's own warp wins.</summary>
-        void AutoWarpTick()
+        void AutoWarpTick(bool live)
         {
-            if (!Bool(settingsData, "autoland_autowarp", true) || autoWarpOff || Time.realtimeSinceStartup < autoWarpNext || TimeWarp.fetch == null) return;
-            bool ferry = mode == "hold" && pendingLand != null, land = mode == "landing" && runway != null;
-            if (!ferry && !land) { autoWarpIdx = -1; return; }
+            if (TimeWarp.fetch == null || Time.realtimeSinceStartup < autoWarpNext) return;
             autoWarpNext = Time.realtimeSinceStartup + 1;
-            if (TimeWarp.WarpMode == TimeWarp.Modes.HIGH || (autoWarpIdx < 0 ? TimeWarp.CurrentRateIndex != 0 : TimeWarp.CurrentRateIndex != autoWarpIdx))
-            { autoWarpOff = true; ChatLog.Write("ap", "autowarp: the player set the warp - autowarp off for this flight"); return; }
-            double secs = double.NaN, xtrk = 0, dist = double.MaxValue; bool ga = false, cfg = false;
-            if (land)
+            bool ferry = live && mode == "hold" && pendingLand != null, land = live && mode == "landing" && runway != null, on = Bool(settingsData, "autoland_autowarp", true) && (ferry || land);
+            if (!on && !autoWarp.Ours && autoWarp.Req <= 0) { if (!autoWarp.PlayerOwns) autoWarp.Reset(); return; }   // nothing of ours to undo
+            if (TimeWarp.WarpMode == TimeWarp.Modes.HIGH) { if (!autoWarp.PlayerOwns) { autoWarp.PlayerOwns = true; ChatLog.Write("ap", "autowarp: rails warp set by the player - leaving warp alone"); } return; }
+            int want = 0; double secs = double.NaN;
+            if (on)
             {
-                var lp = runway.Pattern ?? runway.Locked; ga = runway.MissedClimb || runway.Phase != "entry"; dist = runway.ToGo; cfg = flapSet < 3 && runway.ToGo < FlapsPolicy.EntryFlapsM + 3000;
-                if (lp != null && lp.Seg == 1) { secs = lp.SegLeft / Math.Max(30, vessel.srfSpeed); xtrk = lp.Xtrk; }
+                double xtrk = 0, dist = double.MaxValue; bool ga = false, cfg = false;
+                if (land)
+                {
+                    var lp = runway.Pattern ?? runway.Locked; ga = runway.MissedClimb || runway.PatternActive || runway.Phase != "entry"; dist = runway.ToGo; cfg = flapSet < 3 && runway.ToGo < FlapsPolicy.EntryFlapsM + 3000;
+                    if (lp != null && lp.Seg == 1) { secs = lp.SegLeft / Math.Max(30, vessel.srfSpeed); xtrk = lp.Xtrk; }
+                }
+                else secs = ferrySecsClear;
+                want = AutoWarp.Index(AutoWarp.Want(Roll(), xtrk, secs, dist, ga, cfg));
             }
-            else secs = ferrySecsClear;
-            int want = AutoWarp.Index(AutoWarp.Want(Roll(), xtrk, secs, dist, ga, cfg));
-            if (want != TimeWarp.CurrentRateIndex) { TimeWarp.fetch.Mode = TimeWarp.Modes.LOW; TimeWarp.SetRate(want, true); ChatLog.Write("ap", "autowarp: " + (want == 0 ? "1x" : (want + 1) + "x") + " (" + (double.IsNaN(secs) ? "turn/no straight" : Math.Round(secs) + " s straight") + ")"); }
-            autoWarpIdx = want;
+            bool owned = autoWarp.PlayerOwns;
+            int req = autoWarp.Step(TimeWarp.CurrentRateIndex, want, on);
+            if (!owned && autoWarp.PlayerOwns) { ChatLog.Write("ap", "autowarp: the player changed the warp - leaving it alone for this flight"); return; }
+            if (req >= 0) { TimeWarp.fetch.Mode = TimeWarp.Modes.LOW; TimeWarp.SetRate(req, true); ChatLog.Write("ap", "autowarp: " + (req == 0 ? "1x" : (req + 1) + "x") + " (" + (!on ? "autowarp off/AP off" : double.IsNaN(secs) ? "turn/no straight" : Math.Round(secs) + " s straight") + ")"); }
         }
         void FerryTick()
         {
@@ -568,7 +573,7 @@ namespace KSPChatBridge
             mode = "hold"; throttle = vessel.ctrlState.mainThrottle; prevPitch = Pitch(); prevRoll = Roll();
             elevator = vessel.ctrlState.pitch; lastThrottle = Planetarium.GetUniversalTime() - 3;
             pitchIntegral = vsIntegral = 0; lastDesiredPitch = Pitch(); capLifted = false; prevSpd = -1; capture = null; trimSuspended = false;
-            autoWarpIdx = -1; autoWarpOff = false; rolloutBrakeLogged = false; rolloutLandedS = 0;   // GROK LAND5f
+            autoWarp.Reset(); rolloutBrakeLogged = false; rolloutLandedS = 0;   // GROK LAND5f
             takeoverT = 0; takePitch = vessel.ctrlState.pitch; takeRoll = vessel.ctrlState.roll; takeYaw = vessel.ctrlState.yaw; gate.Seed(vessel.ctrlState.mainThrottle);   // T5: smooth takeover - start from the pilot's real stick + throttle, never a stale controller state
             ChatLog.Write("ap", "smooth takeover: pitch/roll/yaw ramp from the pilot's stick (" + takePitch.ToString("0.00") + "/" + takeRoll.ToString("0.00") + "/" + takeYaw.ToString("0.00") + ") to the hold over " + PilotPolicy.TakeoverSeconds.ToString("0.#") + " s; throttle gate seeded at " + Math.Round(vessel.ctrlState.mainThrottle * 100) + "%");
             SetGroup(vessel, KSPActionGroup.SAS, false);
@@ -1104,7 +1109,7 @@ namespace KSPChatBridge
             { bool cut; double capT = PilotPolicy.SpeedCapThrottle(throttle, vessel.indicatedAirSpeed, vessel.altitude, Time.realtimeSinceStartup - lastCapCut, out cut);
               if (cut && mode != "takeoff" && !capLifted) { throttle = capT; lastCapCut = Time.realtimeSinceStartup; } }
             if (!speedLock && mode != "takeoff" && !vessel.LandedOrSplashed && (runway == null || (runway.Phase != "flare" && runway.Phase != "rollout" && runway.Phase != "stopped")))
-                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, Eas(), speed, stall); else if (PilotPolicy.StallEmergency(Eas(), vessel.srfSpeed, vessel.atmDensity, stall, StallEstimate())) { if (Time.realtimeSinceStartup >= stallEmTraceNext) { stallEmTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("throttle", "stall emergency: eas=" + Eas().ToString("0") + " ias=" + vessel.indicatedAirSpeed.ToString("0") + " rho=" + vessel.atmDensity.ToString("0.000") + " srf=" + vessel.srfSpeed.ToString("0") + " stall=" + stall.ToString("0") + " est=" + StallEstimate().ToString("0") + (learn != null ? " learn=" + learn.Phase : "")); }  throttle = 1; throttleKind = "emergency"; throttleWhy = "below 1.15x stall"; StallCrew(); }   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
+                if (mode == "takeoff" || vessel.LandedOrSplashed) throttle = PilotPolicy.ThrottleFloor(throttle, Eas(), speed, stall); else if ((stallEmLatch = PilotPolicy.StallLatch(stallEmLatch, PilotPolicy.StallEmergency(Eas(), vessel.srfSpeed, vessel.atmDensity, stall, StallEstimate()) && !PilotPolicy.LandSlowOk(mode == "landing" && runway != null ? runway.Phase : "", Eas(), stall, vessel.radarAltitude), Eas(), stall, StallEstimate()))) { if (Time.realtimeSinceStartup >= stallEmTraceNext) { stallEmTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("throttle", "stall emergency: eas=" + Eas().ToString("0") + " ias=" + vessel.indicatedAirSpeed.ToString("0") + " rho=" + vessel.atmDensity.ToString("0.000") + " srf=" + vessel.srfSpeed.ToString("0") + " stall=" + stall.ToString("0") + " est=" + StallEstimate().ToString("0") + (learn != null ? " learn=" + learn.Phase : "")); }  throttle = 1; throttleKind = "emergency"; throttleWhy = "below 1.15x stall"; StallCrew(); }   // airborne: the PI holds speed; only a real near-stall slams power   // never trade airspeed below the band / stall margin   // Luke: 200 target / 220 cap low down, cut fast when over
                 { double ho = PilotPolicy.HoldThrottleOut(holdSpeed, lowEnergy && !vessel.LandedOrSplashed, throttle); if (!double.IsNaN(ho)) { c.mainThrottle = (float)ho; if (!holdSpeed) FlightInputHandler.state.mainThrottle = (float)ho; } }   // low energy overrides even with the speed hold off
             FerryTick(); FlapsTick();
             LearnApply(c);
@@ -1711,7 +1716,8 @@ namespace KSPChatBridge
             bool actual = vessel.ActionGroups[KSPActionGroup.Gear];
             bool? intent = GearPolicy.Intent(mode, runway == null ? "" : runway.Phase, vessel.radarAltitude);
             bool said = gearSaid.HasValue && gearSaid.Value == actual;
-            bool bad = GearPolicy.Violation(intent, actual, said);
+            bool bad = GearPolicy.Violation(intent, actual, said, ApGearCmd);
+            if (!bad && !said && intent.HasValue && intent.Value != actual && ApGearCmd == actual) { SetGroup(vessel, KSPActionGroup.Gear, intent.Value); gearGate.Reset(); ChatLog.Write("ap", "gear " + (intent.Value ? "down" : "up") + " (autopilot, " + (runway != null ? runway.Phase : mode) + ")"); return; }   // GROK LAND5g
             bool due = gearGate.Tick(bad, now);
             if (gearGate.JustNoticed)
             {

@@ -757,6 +757,11 @@ namespace KSPChatBridge
             return s >= floor && (!lo || s <= liftoff);
         }
         /// <summary>Sea-level form (rho = rho0): eas vs stall.</summary>
+        /// <summary>GROK LAND5g: the stall-emergency full power holds until EAS is back above 1.25x stall, then releases to the normal (pattern-capped) speed hold.</summary>
+        internal const double StallReleaseK = 1.25;
+        /// <summary>GROK LAND5g: on final down to 1.04x stall is fine (Luke) - no stall-emergency power there; in the flare below 10 m none at all.</summary>
+        internal static bool LandSlowOk(string phase, double eas, double stall, double agl) { return phase == "flare" && agl < 10 || (phase == "final" || phase == "flare") && !double.IsNaN(eas) && eas >= ApproachProfile.FloorAtThr * ApproachProfile.SaneStall(stall); }
+        internal static bool StallLatch(bool latched, bool emergency, double eas, double stall, double estimate) { if (emergency) return true; return latched && !double.IsNaN(eas) && eas < StallReleaseK * SaneStall(stall, estimate); }
         internal static bool StallEmergency(double eas, double srf, double stall, double estimate) { return StallEmergency(eas, srf, Rho0, stall, estimate); }
         /// <summary>Airborne near-stall power slam: EAS under 1.15x the (sane) stall. Hard guard: never when surface speed is above 1.5x the
         /// estimated stall converted to TAS at this density (independent of q/IAS). Bad EAS (NaN/0) falls back to srf converted to EAS.</summary>

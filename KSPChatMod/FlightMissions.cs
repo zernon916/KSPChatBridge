@@ -425,13 +425,13 @@ namespace KSPChatBridge
         }
         /// <summary>GROK LAND5c item 5: speed floor shrinks toward the threshold - 1.30x stall at/outside the FAF, 1.15x at 2 km, 1.04x at the
         /// threshold. Slow above it never goes around (path position first); below it a gentle power-up; go around only if it cannot recover.</summary>
-        internal const double FloorAtFaf = 1.30, FloorAt2k = 1.15, FloorAtThr = 1.04, Floor2kM = 2000, FloorRecoverS = 10;
+        /// GROK LAND5g (Luke: 4% over stall is fine; 94 = 1.12x went around at 4 km): 1.10x at/outside the FAF, linear to 1.04x at the threshold.
+        internal const double FloorAtFaf = 1.10, FloorAtThr = 1.04, FloorRecoverS = 10;
         internal static double FloorK(double distM, double faf)
         {
-            double f = Math.Max(faf, Floor2kM + 1);
+            double f = Math.Max(faf, 1000);
             if (distM >= f) return FloorAtFaf;
-            if (distM >= Floor2kM) return FloorAt2k + (FloorAtFaf - FloorAt2k) * (distM - Floor2kM) / (f - Floor2kM);
-            return FloorAtThr + (FloorAt2k - FloorAtThr) * Math.Max(0, distM) / Floor2kM;
+            return FloorAtThr + (FloorAtFaf - FloorAtThr) * Math.Max(0, distM) / f;
         }
         /// <summary>0 = fine, 1 = below the floor: gentle power, 2 = below the floor for FloorRecoverS and still not gaining = go around.</summary>
         internal static int SlowGate(double speed, double stall, double distM, double faf, double belowS, double accel)
@@ -455,7 +455,7 @@ namespace KSPChatBridge
         internal static string EnergyLabel(double aboveM, double speed, double plannedSpeed)
         {
             bool fast = speed > plannedSpeed + FastMs;
-            if (EnergyLow(aboveM)) return fast ? " -> LOW/FAST: power on, no speedbrakes, trade speed for height" : " -> LOW: power on, no descent until back on the path";
+            if (EnergyLow(aboveM)) return fast ? " -> LOW/FAST: no added power, no speedbrakes, trade speed for height" : " -> LOW: power on, no descent until back on the path";
             if (aboveM > HighM) return " -> HIGH" + (fast ? "/FAST" : "") + ": idle + speedbrakes, steeper";
             return fast ? " -> FAST: idle + speedbrakes" : "";
         }
@@ -1000,9 +1000,28 @@ namespace KSPChatBridge
         internal static double Duty(double landedS, double speed) { if (speed < .5 || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
         internal static bool On(double duty, double now) { return duty >= 1 || duty > 0 && (now * 2 - Math.Floor(now * 2)) < duty; }
     }
+    /// <summary>GROK LAND5g: autowarp ownership - a change is the player's only if the rate moved off what the game settled on after our last
+    /// request (the game's own clamp is not a player change); we only ever undo warp we set.</summary>
+    internal sealed class AutoWarpState
+    {
+        internal int Req = -1, Got = -1; internal bool Settling, PlayerOwns;
+        internal bool Ours { get { return !PlayerOwns && Req > 0; } }
+        /// <summary>Returns the index to request, or -1 for no change.</summary>
+        internal int Step(int cur, int want, bool enabled)
+        {
+            if (PlayerOwns) return -1;
+            if (Settling) { Got = cur; Settling = false; }
+            else if (Req < 0) { if (cur != 0) { PlayerOwns = true; return -1; } Req = Got = 0; }
+            else if (cur != Got) { PlayerOwns = true; return -1; }
+            if (!enabled) want = 0;
+            if (want == Req) return -1;
+            Req = want; Settling = true; return want;
+        }
+        internal void Reset() { Req = Got = -1; Settling = PlayerOwns = false; }
+    }
     internal sealed class StepThrottle
     {
-        internal const double IdleOver = 3, MaxStep = .08, Step = .04, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
+        internal const double IdleOver = 3, MaxStep = .05, Step = .04, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
         internal double Thr = double.NaN, Accel, Eff = double.NaN, Acc, Predicted = double.NaN;
         internal double SpoolS = 4, AccelPerThr = 6;   // spool lag (s) and m/s2 per unit throttle (defaults; LAND5c)
         double lastStep = double.NegativeInfinity, prevV = double.NaN, lastLead = double.NegativeInfinity, accelAtStep = double.NaN;
@@ -1012,12 +1031,14 @@ namespace KSPChatBridge
         internal static double Predict(double v, double accel, double thr, double eff, double spool, double perThr)
         { double tau = Math.Max(.1, spool); return v + accel * AheadS + perThr * (thr - eff) * (AheadS - tau * (1 - Math.Exp(-AheadS / tau))); }
         /// <summary>leadIn = seconds to the next flap/gear step (NaN = none).</summary>
-        internal const double LastM = 2000, ShortM = 6000, DecayPerS = .01;
+        internal const double LastM = 2000, ShortM = 6000, DecayPerS = .01, HoldOverFloor = 8;
+        internal double PlanRate; double prevPlan = double.NaN;
         internal double Update(double now, double speed, double plan, double dt, double leadIn, double floor = double.NaN, double distM = double.NaN)
         {
             if (double.IsNaN(Thr)) Thr = .3; if (double.IsNaN(Eff)) Eff = Thr;
             if (dt > 0) { if (!double.IsNaN(prevV)) Accel += ((speed - prevV) / dt - Accel) * Math.Min(1, dt / 1.5); Eff += (Thr - Eff) * Math.Min(1, dt / Math.Max(.1, SpoolS)); }
             prevV = speed;
+            if (dt > 0 && !double.IsNaN(prevPlan)) PlanRate += ((plan - prevPlan) / dt - PlanRate) * Math.Min(1, dt / 3); prevPlan = plan;
             Predicted = Predict(speed, Accel, Thr, Eff, SpoolS, AccelPerThr);
             double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
             if (speed > plan + IdleOver) { if (Thr > 0) { Why = "fast +" + Math.Round(speed - plan) + " m/s: idle"; lastStep = now; } Thr = 0; Acc = 0; accelAtStep = Accel; return Thr; }   // GROK LAND5e: > plan + 3 = idle
@@ -1036,7 +1057,11 @@ namespace KSPChatBridge
                 double back = Acc / 2; Thr = FlightPolicy.Clamp(Thr - back, 0, 1); Acc = 0; lastStep = now; accelAtStep = Accel;
                 Why = "predicted " + Math.Round(Predicted) + " crosses plan: back " + (back > 0 ? "-" : "+") + Math.Round(100 * Math.Abs(back)) + "%"; return Thr;
             }
-            if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS && speed <= plan) {   // GROK LAND5e: config lead only at/below plan
+            // GROK LAND5g (Luke: 'throttle increases even though it's supposed to be slowing down'): on final, power up only near the floor (floor + 8);
+            // elsewhere never while the plan itself is decelerating.
+            bool upOk = !double.IsNaN(distM) && !double.IsNaN(floor) ? Predicted < floor + HoldOverFloor || speed < floor + HoldOverFloor : PlanRate > -.05;
+            if (!upOk && e < 0) { Why = ""; return Thr; }   // hold
+            if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS && speed <= plan) {   // GROK LAND5e: config lead only at/below plan (LAND5g: and near the floor)
                  Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = lastStep = now; accelAtStep = Accel; Why = "config lead +3%"; return Thr; }
             if (now - lastStep < WaitS) return Thr;
             bool improving = !double.IsNaN(accelAtStep) && now - lastStep < 3 * WaitS;
@@ -1047,7 +1072,7 @@ namespace KSPChatBridge
         /// <summary>Bang-bang (idle / full) only for genuine emergencies: more than 30 m/s off the plan.</summary>
         internal static bool Emergency(double speed, double plan) { return Math.Abs(speed - plan) > 30; }
         /// <summary>During and 5 s after a config change the throttle moves at most 10%/s.</summary>
-        internal static double ConfigLimit(double prev, double want, double dt, double sinceConfig) { if (sinceConfig > PostConfigS || double.IsNaN(prev)) return want; double s = ConfigRate * Math.Max(0, dt); return FlightPolicy.Clamp(want, prev - s, prev + s); }
+        internal static double ConfigLimit(double prev, double want, double dt, double sinceConfig) { if (sinceConfig > PostConfigS || double.IsNaN(prev)) return want; double s = ConfigRate * Math.Max(0, dt); return Math.Min(want, prev + s); }   // GROK LAND5g: limits power INCREASES only (100% after the go-around could not come off while flaps retracted -> 188 m/s)
     }
     /// <summary>GROK LAND5b: learned elevator trim per configuration (flap setting + gear); on a config change the integrator is pre-loaded by the delta.</summary>
     internal sealed class ConfigTrim
