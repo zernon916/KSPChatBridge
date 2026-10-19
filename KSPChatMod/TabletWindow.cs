@@ -18,6 +18,7 @@ namespace KSPChatBridge
         internal static bool TabletLink;
         internal static bool TabletVisible;
         static Rect tabletRect = new Rect(-1, 120, 900, 680);
+        internal static Rect TabletScreenRect { get { return tabletRect; } }   // GROK TAB3: camera lock hit test
         static int tabletTab = 4, tabletFont = 18, tabletMapPage; static bool tabletResizing;
         static Texture2D tabletRound, tabletScreenRound; static GUIStyle tabletFrame, tabletScreen, tabletText, tabletHead, tabletKey, tabletTabOn, tabletTabOff;
         static int tabletStyledFont = -1;
