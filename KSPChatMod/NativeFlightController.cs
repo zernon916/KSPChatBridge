@@ -281,7 +281,7 @@ namespace KSPChatBridge
         }
         /// <summary>Brakes AG (stock airbrakes; wheel brakes in the air are harmless) set by the approach speed logic, not tampering.</summary>
         internal static bool AirbrakesByAutopilot;
-        bool recoveryWasActive;
+        bool recoveryWasActive, powerFloor;
         readonly AirbrakeGate airGate = new AirbrakeGate();
         /// <summary>GROK FIX3: a Brakes-bound control surface that also moves pitch/roll (elevons, tail winglets): the approach never uses airbrakes.</summary>
         bool brakesMoveControls;
@@ -757,7 +757,7 @@ namespace KSPChatBridge
                         if (runway.EnergyLog.Length > 0) { ChatLog.Write("approach", runway.EnergyLog); runway.EnergyLog = ""; }
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
-                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && !brakesMoveControls;
+                        { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && !brakesMoveControls && !powerFloor;   // GROK FIX6: never airbrakes against floor power
                           if (airPhase && airGate.Step(Time.time, on, vessel.srfSpeed, runway.DesiredSpeed, allowed)) { SetGroup(vessel, KSPActionGroup.Brakes, airGate.On); AirbrakesByAutopilot = airGate.On; ChatLog.Write("brakes", airGate.Why + ", phase " + runway.Phase); } }   // GROK FIX3: +8/+2 m/s hysteresis, 3 s dwell
                         runway.Heavy = CraftClass.Gentle(CraftCls);
                         double vsBefore = directVs.Value; directVs = PilotPolicy.ApproachFloorVs(runway.Phase, runway.Distance, vessel.radarAltitude, vessel.altitude, terrainFloor, directVs.Value, vessel.verticalSpeed, runway.Heavy);
@@ -968,7 +968,8 @@ namespace KSPChatBridge
                 if (mode == "landing" && runway != null && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
                 { throttle = 0; throttleWhy = "approach high/fast: idle"; }   // Oct 12 (A300 03:29): sink-map blend held 46-69% while 800 m high and 20+ m/s fast
             if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
-                { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; }   // arrest the sink with power, not only pitch
+                { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; powerFloor = true; }   // arrest the sink with power, not only pitch
+            else powerFloor = false;
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;
@@ -1380,6 +1381,7 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Gear, true); mode = "vertical landing";
                     return "Local powered descent engaged; upright near-vertical descent only.";
                 case "land_plane": case "land_at_spot":
+                    if (NativeSafety.RefuseRepeatLand(Bool(a, "_from_ferry", false), pendingLand != null, mode)) return "Landing already in progress (" + (pendingLand != null ? "cruise to runway" : runway != null ? runway.Phase : mode) + ") - disengage first to restart it.";   // GROK FIX6: 4 presses = 4 ferry restarts
                     if (Str(a, "mode", "H").ToUpperInvariant() == "V") return "Targeted vertical landing is not yet ported; use local powered descent here.";
                     if (Num(a, "touch_and_go", 0) != 0) return "Local runway landing does not yet support touch-and-go.";
                     if (Num(a, "final_km", 0) != 0 || Num(a, "approach_heading", -1) != -1) ChatLog.Write("ap", "land: ignoring final_km/approach_heading (chart decides)");
@@ -1451,7 +1453,7 @@ namespace KSPChatBridge
                         double falt = PilotPolicy.FerryAltitude(rwDist - handoff, vessel.altitude, ceil, cvs, cruise, dvs, vessel.mainBody.atmosphereDepth, jet), brg = NavigationMath.Bearing(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon);
                         string hr = Command("plane_hold", new Dictionary<string, object> { { "altitude_m", falt }, { "altitude_ref", "msl" }, { "heading", brg }, { "speed", cruise } });
                         if (mode != "hold") return hr;
-                        if (profile != null && !double.IsNaN(profile.EconThrottle) && profile.EconThrottle > 0) { throttle = FlightPolicy.Clamp(profile.EconThrottle, .05, 1); gate.Seed(throttle, "ferry econ throttle"); }   // AUTOPILOT_REVIEW #3
+                        if (profile != null && !double.IsNaN(profile.EconThrottle) && profile.EconThrottle > 0 && NativeSafety.SeedEconThrottle(vessel.srfSpeed, cruise)) { throttle = FlightPolicy.Clamp(profile.EconThrottle, .05, 1); gate.Seed(throttle, "ferry econ throttle"); }   // AUTOPILOT_REVIEW #3
                         pendingLand = keep; ferryLat = selectedRunway.Lat; ferryLon = selectedRunway.Lon; ferryNext = 0; ferryHandoff = handoff; ferryTod = PilotPolicy.TopOfDescentM(falt, cruise, dvs); ferryDescending = false; ferrySink = dvs;
                         string fuelNote = "";
                         if (profile != null && profile.Perf.HasCruise)

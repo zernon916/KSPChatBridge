@@ -18,6 +18,11 @@ namespace KSPChatBridge
         internal static bool ShouldRevert(bool nativeActive, bool flying) { return flying && nativeActive; }
         /// <summary>GROK FIX1: the tamper baseline is re-taken whenever the autopilot engages (holds or any job), so a load-time
         /// snapshot (parking brake, pilot changes since) is never replayed in flight.</summary>
+        /// <summary>GROK FIX6: a landing that is already running (ferry or approach) is not restarted by another LAND press.</summary>
+        internal static bool RefuseRepeatLand(bool fromFerry, bool ferryPending, string mode) { return !fromFerry && (ferryPending || mode == "landing"); }
+        /// <summary>GROK FIX6 (ferry engaged at 270 m/s for 183: the 80% econ seed took it to 330): seed the econ throttle only when
+        /// not already well over the cruise speed; otherwise the speed hold starts from its own (low) setting.</summary>
+        internal static bool SeedEconThrottle(double speed, double cruise) { return double.IsNaN(cruise) || speed < cruise + 10; }
         internal static bool RebaselineOnEngage(bool active, bool wasActive) { return active && !wasActive; }
 
         /// <summary>Parking brake for wheeled grounded craft:

@@ -1151,6 +1151,10 @@ namespace KSPChatBridge
         /// <summary>GROK FIX2 (Oct 19: legs 1-12 of a 593 m-spaced arc consumed in 0.23 s): capture radius max(700, .3 r) but never more
         /// than 75% of the spacing to the previous route point; the overflown ('behind') skip only within 1 turn radius of the tracked
         /// fix and only after flying BehindMinMove since it became current (no frame-by-frame cascade). The caller advances at most one fix per update.</summary>
+        /// <summary>GROK FIX6 (Oct 19 01:27-01:44: 17 min orbit 16 km west of KSC): after "not aligned before the FAF" the route
+        /// holds its LAST point and only a 700 m pass captures it; at bank 15 (r ~16 km at 205 m/s) a pursuit never gets that
+        /// close. Replan (fresh join from here) when the point is inside ~2 turn radii and more than 60 deg off our track.</summary>
+        internal static bool HoldLastReplan(double dw, double bearingErr, double turnRadius) { return dw < 2 * turnRadius && Math.Abs(bearingErr) > 60; }
         internal static bool AdvanceWaypoint(bool leadTurn, double dw, double turnRadius, double spacing, bool behindUs, double movedM)
         {
             double capture = Math.Max(700, .3 * turnRadius);
@@ -1271,10 +1275,16 @@ namespace KSPChatBridge
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     bool last = RouteIndex == Route.Count - 1;
-                    if (holdLast && last) { DesiredHeading = NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon); if (dw < 700) { holdLast = false; RouteIndex++; } }   // fly all the way out to the join point
+                    if (holdLast && last)
+                    {   // fly all the way out to the join point
+                        DesiredHeading = NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon);
+                        if (dw < 700) { holdLast = false; RouteIndex++; }
+                        else if (RebuildDue(stepsSinceRebuild) && HoldLastReplan(dw, double.IsNaN(track) ? 0 : FlightPolicy.Wrap(DesiredHeading - track), speed * speed / (9.81 * Math.Tan(Math.Max(5, TurnBank) * Math.PI / 180))))
+                        { Route = null; holdLast = false; Kind = ""; JoinLog = "join point " + Math.Round(dw) + " m away is inside our turn circle (bank " + Math.Round(TurnBank) + "): replanning the join from here"; }   // GROK FIX6
+                    }
                     else if (AdvanceWaypoint(leadTurn, dw, Chart.TurnRadius, RouteIndex > 0 ? NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) : double.NaN, behindUs, NavigationMath.Distance(wpFromLat, wpFromLon, lat, lon, radius))) { RouteIndex++; wpFromLat = lat; wpFromLon = lon; }   // GROK FIX2: one fix per update
                 }
-                if (RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }
+                if (Route != null && RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }   // Route == null: replan requested (GROK FIX6), rebuilt next step
             }
             if (Phase == "intercept")
             {

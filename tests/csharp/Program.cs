@@ -773,6 +773,9 @@ class Program
             Check(!NativeRecovery.Tracked(KSPActionGroup.Brakes) && NativeRecovery.Tracked(KSPActionGroup.Light), "only Brakes is exempt");
             Check(NativeSafety.RebaselineOnEngage(true, false) && !NativeSafety.RebaselineOnEngage(true, true) && !NativeSafety.RebaselineOnEngage(false, true), "baseline re-taken on every engage edge");
             Console.WriteLine("Brakes never restored in flight: 4 behavior checks passed.");
+            Check(NativeSafety.RefuseRepeatLand(false, true, "hold") && NativeSafety.RefuseRepeatLand(false, false, "landing") && !NativeSafety.RefuseRepeatLand(true, true, "hold") && !NativeSafety.RefuseRepeatLand(false, false, "hold"), "GROK FIX6: repeat LAND presses do not restart a running landing; ferry hand-off still does");
+            Check(!NativeSafety.SeedEconThrottle(270, 183) && NativeSafety.SeedEconThrottle(185, 183), "GROK FIX6: no 80% econ seed when 90 m/s over cruise");
+            Check(RunwayMission.HoldLastReplan(9000, 120, 16000) && !RunwayMission.HoldLastReplan(9000, 20, 16000) && !RunwayMission.HoldLastReplan(40000, 120, 16000), "GROK FIX6: hold-last point inside the turn circle -> replan, not orbit");
         }
         Check(FlightPolicy.Trim(.1, .01) == .1, "neutral trim deadband");
         Check(Math.Abs(FlightPolicy.Trim(.1, .3) - .115) < 1e-9, "trim toward neutral stick");
