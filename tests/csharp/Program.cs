@@ -133,7 +133,7 @@ class Program
             var to3 = new TakeoffMission(0); bool upAll = true; for (double sp = 52; sp <= 190; sp += 2) { double tp = to3.Step(10, sp, 1, true, 41, double.NaN, double.NaN, double.NaN, 46); upAll &= to3.Phase == "rotate" && tp >= 2; }
             Check(upAll && to3.Step(10, 120, 1, true, 41, double.NaN, double.NaN, double.NaN, 46) >= 10, "TO3: rotate phase commands nose-up above Vr (12 deg past 1.3 Vr)");
             Check(TakeoffMission.RotationStalled(true, "rotate", 78, 51, 1.0) && !TakeoffMission.RotationStalled(true, "rotate", 60, 51, 1.0) && !TakeoffMission.RotationStalled(true, "rotate", 90, 51, 6) && !TakeoffMission.RotationStalled(false, "climbout", 120, 51, 1), "TO3: nose not coming up at 1.3 Vr detected (flaps up)");
-            Check(!TakeoffMission.LiftoffUsable(190, 51) && TakeoffMission.LiftoffUsable(70, 51) && TakeoffMission.LiftoffUsable(70, double.NaN), "TO3: rotation-limited liftoff not used for the stall estimate");
+            Check(!TakeoffMission.LiftoffUsable(190, 51) && TakeoffMission.LiftoffUsable(105, 51) && TakeoffMission.LiftoffUsable(70, double.NaN), "TO3: rotation-limited liftoff not used for the stall estimate");
         }
             var tk2 = new TakeoffMission(0); tk2.Step(1, 82, 5, false, 70); Check(Math.Abs(tk2.LiftoffSpeed - 82) < 1e-9, "liftoff speed is measured");
             Check(!PilotPolicy.TrimAllowed(true, 0, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 80, 99, 0, 0) && !PilotPolicy.TrimAllowed(false, 500, 5, 0, 0) && PilotPolicy.TrimAllowed(false, 500, 30, .5, 1), "auto-trim never on ground / rotation / just after takeoff");

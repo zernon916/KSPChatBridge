@@ -274,8 +274,8 @@ namespace KSPChatBridge
         internal const double ShallowPitch = 5;
         /// <summary>GROK TO3 (live 03:45): the nose never came up (pitch < 3 deg) at 1.3x Vr on the ground = rotation is authority-limited (e.g. trailing-edge flaps behind the CoM, pitch surfaces re-roled).</summary>
         internal static bool RotationStalled(bool grounded, string phase, double speed, double vr, double pitch) { return grounded && phase == "rotate" && vr > 0 && speed > 1.3 * vr && pitch < 3; }
-        /// <summary>GROK TO3: a liftoff far above Vr (live 190 m/s vs Vr 51) was rotation-limited, not lift-limited - it must not raise the stall estimate (was 152).</summary>
-        internal static bool LiftoffUsable(double liftoff, double vr) { return !double.IsNaN(liftoff) && liftoff > 0 && (double.IsNaN(vr) || vr <= 0 || liftoff <= 1.5 * vr); }
+        /// <summary>GROK TO3: a liftoff over 2.5x Vr (live 190 m/s vs Vr 51; normal 105) was rotation-limited, not lift-limited - it must not raise the stall estimate (was 152).</summary>
+        internal static bool LiftoffUsable(double liftoff, double vr) { return !double.IsNaN(liftoff) && liftoff > 0 && (double.IsNaN(vr) || vr <= 0 || liftoff <= 2.5 * vr); }
         /// <summary>GROK TO2: takeoff settings - climb-rate cap (1..50 m/s, NaN = auto), heading after the climbout (NaN = runway heading), max climb pitch (5..45).</summary>
         internal static double ClimbRateCap(double asked) { return double.IsNaN(asked) || asked <= 0 ? double.NaN : FlightPolicy.Clamp(asked, 1, 50); }
         internal static double HeadingAfter(double asked, double runwayHdg) { return double.IsNaN(asked) || asked < -360 || asked > 720 ? runwayHdg : ((asked % 360) + 360) % 360; }

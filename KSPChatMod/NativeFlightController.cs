@@ -137,10 +137,12 @@ namespace KSPChatBridge
         }
         /// <summary>Equivalent airspeed (from dynamic pressure): the ONE speed every stall comparison uses.</summary>
         double Eas() { return vessel == null ? double.NaN : PilotPolicy.Eas(vessel.dynamicPressurekPa, vessel.srfSpeed); }
-        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, liftoffSpeed); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
+        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, UsableLiftoff); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
         double stallEstimate = double.NaN; bool rotateStalled;   // GROK TO3
         /// <summary>Lift-based stall estimate (liftoff/1.25 floor); the fallback whenever the learned/measured stall is missing or implausible.</summary>
-        double StallEstimate() { return PilotPolicy.StallEstimate(double.IsNaN(stallEstimate) ? stallGuess : stallEstimate, liftoffSpeed); }
+        double StallEstimate() { return PilotPolicy.StallEstimate(double.IsNaN(stallEstimate) ? stallGuess : stallEstimate, UsableLiftoff); }
+        /// <summary>GROK TO3: a stored rotation-limited liftoff (Aeris 3A saved 190.1 at 03:45) never feeds the stall estimate.</summary>
+        double UsableLiftoff { get { return TakeoffMission.LiftoffUsable(liftoffSpeed, TakeoffMission.MinRotateSpeed(stallEstimate)) ? liftoffSpeed : double.NaN; } }
         internal static string StallLabel { get { var i = instance; return i == null || i.learner == null || i.vessel == null ? "" : StallLearner.Label(i.stallGuess, i.learner.MeasuredStall(i.vessel.GetTotalMass() * 1000, i.liftArea), i.learner.Confidence); } }
         void SaveLearner()
         {
