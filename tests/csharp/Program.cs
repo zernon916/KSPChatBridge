@@ -129,6 +129,30 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND4f regression (live 14:05-14:07): LSR 44/225 committed; mid-straight speed change (r 4773) + position jump must keep LSR, remaining turn <= 270
+            double rC = 7583, jx = 41000 + rC; string ty = "LSR"; bool allOk = true; string seen = "";
+            double px5 = 27200, py5 = 0, hd5 = 90 - 44;   // after the left 44 deg turn, on the straight
+            // speed change: committed r stays flyable at 30 deg bank -> kept
+            Check(DubinsPath.KeepCommitted(true, rC, 164, 30) && !DubinsPath.KeepCommitted(true, 3000, 164, 30), "LAND4f: speed change keeps the committed join while its r is flyable at max bank");
+            Check(DubinsPath.Jumped(0, 164, 4) && DubinsPath.Jumped(600, 164, 1) && !DubinsPath.Jumped(3.3, 164, 1), "LAND4f: warp / position jump detected");
+            var rnd5 = new Random(3);
+            for (int k5 = 0; k5 < 400; k5++)
+            {
+                bool jump = k5 == 120; if (jump) { px5 += 2500 * Math.Sin(hd5 * Math.PI / 180); py5 += 2500 * Math.Cos(hd5 * Math.PI / 180); }   // physics-warp position jump mid-straight
+                double trk5 = hd5 + (rnd5.NextDouble() - .5) * 4; DubinsPath dp5;
+                double cm5 = DubinsPath.JoinSteer(px5, py5, trk5, 41000, 0, 270, rC, ty, out dp5, true, jump || k5 % 50 < 10);
+                if (dp5 == null) { allOk = false; break; }
+                if (dp5.Type != "LINE") { if (dp5.Type != "LSR" && dp5.Type[0] != 'L' || DubinsPath.TurnDeg(dp5) > 270) { allOk = false; seen = dp5.Type + " " + Math.Round(dp5.A1) + "/" + Math.Round(dp5.A2); break; } ty = dp5.Type; }
+                else break;
+                double er5 = FlightPolicy.Wrap(cm5 - hd5), arc5 = 164 / rC * 180 / Math.PI; bool onArc5 = dp5.A1 > 2 || dp5.S <= Math.Max(50, .05 * dp5.R) && dp5.A2 > 2;
+                hd5 += onArc5 ? (dp5.A1 > 2 ? dp5.D1 : dp5.D2) * Math.Min(arc5, Math.Abs(er5)) : FlightPolicy.Clamp(er5, -arc5, arc5);   // arcs flown at the committed radius (ArcBank), 1 s steps
+                px5 += 164 * Math.Sin(hd5 * Math.PI / 180); py5 += 164 * Math.Cos(hd5 * Math.PI / 180);
+            }
+            Check(allOk, "LAND4f: committed LSR survives speed change + position jump, remaining turns <= 270 " + seen);
+            // end of the straight: L = 2r within noise must still give LSR, not the 492 deg LSL
+            DubinsPath endP = DubinsPath.Plan(0, 0, 180 - .3, 2 * rC - 5, 0, 0, rC, "LSR", 1000);
+            Check(endP != null && DubinsPath.TurnDeg(endP) <= 270, "LAND4f: near-tangent opposite-turn path not lost to noise (no 492 deg loop)");
+        }
         {   // GROK LAND4e regression (live 04:06:39): on extended final 35 km east of KSC 27, heading 090 (outbound), speed 189 - was LSL 240/300 figure-8 to the FAF
             double bank = DubinsPath.MedianBank(30), planSpd = DubinsPath.JoinPlanSpeed(150, 189), r = PredictedPath.Radius(planSpd, bank);
             Check(bank >= 20 && planSpd <= 150 && r < 9000 && r > 4000, "LAND4e: plan radius at entry speed / median bank 20+ (was r 12.4 km at 189/16)");
