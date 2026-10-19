@@ -1355,7 +1355,8 @@ namespace KSPChatBridge
         /// <summary>Flap speed limit: learned, else 1.6x clean stall.</summary>
         internal static double SpeedLimit(double cleanStall, double learned) { return !double.IsNaN(learned) && learned > 0 ? learned : 1.6 * (double.IsNaN(cleanStall) || cleanStall <= 0 ? 60 : cleanStall); }
         /// <summary>Highest setting allowed at this speed: 0 above the limit (5 m/s hysteresis to keep what is out), else full.</summary>
-        internal static int MaxAllowed(double ias, double limit, int current) { return ias <= (current > 0 ? limit : limit - 3) ? 3 : 0; }   // GROK RF1: never out above the limit (was +5: 139 vs 134); deploy only 3 m/s under it
+        internal static int MaxAllowed(double ias, double limit, int current) { return ias <= (current > 0 ? limit + KeepOver : limit - 3) ? 3 : 0; }   // GROK LAND5e: deploy 3 under the limit, keep to limit + 2 (hysteresis; was retract at 134 vs 134)
+        internal const double KeepOver = 2;   // GROK RF1: never out above the limit (was +5: 139 vs 134); deploy only 3 m/s under it
         /// <summary>Approach schedule: up until short final; 1 inside 2x the short-final fix, 2 inside it, full inside half of it and in the flare/rollout.</summary>
         /// <summary>Oct 12 takeoff flaps: partial (2) for the roll; from 120 m AGL retract one step at a time, each only above 1.3x the stall of the next setting.</summary>
         internal const int TakeoffFlaps = 2; internal const double RetractAgl = 120, RetractMargin = 1.3;
@@ -1375,14 +1376,14 @@ namespace KSPChatBridge
         internal static int EarlySetting(double eas, double limit, int current) { int w = 0; for (int k = 1; k <= 3; k++) if (eas <= StepLimit(k, limit) + (current >= k ? 5 : 0)) w = k; return w; }
         /// <summary>GROK LAND5b (Luke): settle the configuration early - step 1 from FAF + 4 km, 2 at the FAF, FULL by 5 km; nothing changes
         /// inside 4 km / 300 m AGL (current kept). Gear at or before the FAF (8 km at the latest).</summary>
-        internal const double FreezeM = 4000, FreezeAgl = 300, FullByM = 5000;
+        internal const double EntryFlapsM = 20000, FreezeM = 4000, FreezeAgl = 300, FullByM = 5000;
         internal static bool Frozen(double distM, double agl) { return distM < FreezeM || agl < FreezeAgl; }
         internal static int ApproachSchedule(string phase, double distM, double faf, int current, double agl)
         {
+            if (phase == "entry" && distM <= EntryFlapsM) return 3;   // GROK LAND5e: each step as soon as the speed is under the limit (the early decel gets there before D14)
             if (phase != "final" && phase != "intercept" && phase != "flare" && phase != "rollout" && phase != "stopped") return 0;
             if (Frozen(distM, agl)) return current;
-            double f = Math.Max(faf, FullByM + 1000);
-            return distM <= FullByM ? 3 : distM <= f ? 2 : distM <= f + 4000 ? 1 : 0;
+            return 3;
         }
         internal static double GearDistance(double faf) { return Math.Max(faf, 8000); }
         /// <summary>Distance of the next config step ahead (flaps/gear), NaN when none.</summary>

@@ -445,8 +445,8 @@ namespace KSPChatBridge
             cv.Fill(new Rect(area.width - dw, 0, dw, area.height), Back);
             if (bars)
             {
-                string sb = Ils.SpdBarBand(ias, tgt, act.SpeedFloor); Color amber = new Color(1, .7f, 0);
-                DevBar(cv, new Rect(Sx + 3, 0, 18, Sy), "SPD", ias - tgt, Ils.SpdBarScale, sb == "green" ? Color.green : sb == "amber" ? amber : Color.red, IlsPx(area));
+                double apS = v.srfSpeed; string sb = Ils.SpdBarBand(apS, tgt, act.SpeedFloor); Color amber = new Color(1, .7f, 0);
+                DevBar(cv, new Rect(Sx + 3, 0, 18, Sy), "SPD", apS - tgt, Ils.SpdBarScale, sb == "green" ? Color.green : sb == "amber" ? amber : Color.red, IlsPx(area));
                 double dv = v.verticalSpeed - act.DesiredVs;   // + = shallower than the want (above), - = steeper
                 DevBar(cv, new Rect(Sx + 25, 0, 18, Sy), "VS", dv, Ils.VsBarScale, Math.Abs(dv) <= 2 ? Color.green : Math.Abs(dv) <= 5 ? amber : Color.red, IlsPx(area));
             }
@@ -457,8 +457,9 @@ namespace KSPChatBridge
             rows.Add(new KeyValuePair<string, Color>("LOC  " + r.LocDeg.ToString("+0.00;-0.00") + "  XTK " + Math.Abs(r.CrossM).ToString("0.0") + " m " + (r.CrossM > 0 ? "R" : "L"), Text));
             rows.Add(new KeyValuePair<string, Color>("G/S  " + r.GsDeg.ToString("+0.00;-0.00") + "  " + Math.Abs(r.AboveGsM).ToString("0") + " m " + (r.AboveGsM > 0 ? "HIGH" : "LOW"), Text));
             rows.Add(new KeyValuePair<string, Color>("CRS  " + Math.Round(r.Course).ToString("000") + "   HAT " + Math.Round(hat) + " m", Text));
-            string band = Ils.SpeedBand(ias, tgt, RunwayMission.PredictedNow, RunwayMission.AppNow);
-            rows.Add(new KeyValuePair<string, Color>("IAS  " + Math.Round(ias) + " / " + Math.Round(tgt), band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red));
+            double apSpd = v.srfSpeed;   // GROK LAND5e: the AP flies surface speed against the plan (IAS read 103-123 while it flew 150-161)
+            string band = Ils.SpeedBand(apSpd, tgt, RunwayMission.PredictedNow, RunwayMission.AppNow);
+            rows.Add(new KeyValuePair<string, Color>(Ils.SpdLine(apSpd, tgt, ias), band == "green" ? Color.green : band == "amber" ? new Color(1, .7f, 0) : Color.red));
             rows.Add(new KeyValuePair<string, Color>("VS   " + v.verticalSpeed.ToString("+0;-0") + " m/s", Text));
             { string fl = NativeFlightController.FlapLine; if (fl.Length > 0) rows.Add(new KeyValuePair<string, Color>(fl, Text)); }
             { var ar = NativeFlightController.ActiveRunway; if (ar != null && ar.EntryChart.Length > 0) rows.Add(new KeyValuePair<string, Color>("ENTRY " + EntryPolicy.Label(ar.EntryChart), Text)); }

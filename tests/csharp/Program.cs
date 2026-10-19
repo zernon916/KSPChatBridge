@@ -129,6 +129,26 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5e: much slower landing (16:21: 126 m/s at the threshold vs 96)
+            double stE = 75, appE = ApproachProfile.AppSpeed(stE); ApproachProfile.FlapLimitSpeed = 134;
+            double s14 = ApproachProfile.FinalSchedule(14000, stE, 1.0, 6000), sFaf = ApproachProfile.FinalSchedule(6000, stE, 1.0, 6000), s2k = ApproachProfile.FinalSchedule(2000, stE, 1.0, 6000), sStart = ApproachProfile.DecelStartDist(stE, 1.0);
+            Console.WriteLine("LAND5e schedule: decel " + (sStart / 1000).ToString("0.0") + " km, D14 " + s14.ToString("0") + ", FAF " + sFaf.ToString("0") + ", 2 km " + s2k.ToString("0") + " (landing " + appE.ToString("0") + ")");
+            Check(Math.Abs(s14 - 124) < .5 && Math.Abs(sFaf - (appE + 15)) < .5 && Math.Abs(s2k - appE) < .5 && sStart > 14000, "LAND5e: flap limit - 10 by D14, landing + 15 by the FAF, landing speed by 2 km; decel starts before D14");
+            ApproachProfile.FlapLimitSpeed = double.NaN;
+            var s5 = new StepThrottle(); s5.Reset(.15); double tA = s5.Update(0, 130, 96, .02, double.NaN);
+            var s6 = new StepThrottle(); s6.Reset(.10); double tB = s6.Update(0, 98, 96, .02, 3);
+            var s7 = new StepThrottle(); s7.Reset(.10); double tC = s7.Update(0, 95, 96, .02, 3);
+            Check(tA == 0 && tB == .10 && Math.Abs(tC - .13) < 1e-9, "LAND5e: idle when > plan + 3; config lead only at/below plan");
+            var s8 = new StepThrottle(); s8.Reset(.20); s8.Acc = -.1; double tD = s8.Update(0, 98, 96, .02, double.NaN);
+            Check(tD <= .20, "LAND5e: 'back' never adds power while over plan");
+            Check(AirbrakeGate.Allowed(false, 12, 126, 96, false, false) && !AirbrakeGate.Allowed(false, 12, 97, 96, false, false) && AirbrakeGate.Allowed(false, 200, 97, 96, false, false), "LAND5e: airbrakes allowed down to the flare whenever over plan");
+            var agE = new AirbrakeGate(); bool onE = false; int flips = 0;
+            for (int i = 0; i < 300; i++) { bool al = AirbrakeGate.Allowed(false, 25, 126, 96, false, false); if (agE.Step(i * .02, onE, 126, 96, al)) { onE = agE.On; flips++; } }
+            Check(flips == 1 && onE, "LAND5e: no per-tick airbrake toggle on short final (" + flips + " change)");
+            Check(ApproachProfile.SpeedGate(ApproachProfile.GateSpeed(110, 126, 1500), 96, double.NaN, double.NaN) == 2 && ApproachProfile.SpeedGate(ApproachProfile.GateSpeed(110, 126, 4000), 96, double.NaN, double.NaN) == 1, "LAND5e: +30 inside 2 km = go-around class (was +10..+20 from the prediction)");
+            Check(FlapsPolicy.MaxAllowed(131, 134, 0) == 3 && FlapsPolicy.MaxAllowed(132, 134, 0) == 0 && FlapsPolicy.MaxAllowed(135, 134, 1) == 3 && FlapsPolicy.MaxAllowed(137, 134, 1) == 0, "LAND5e: flaps out 3 under the limit, kept to limit + 2");
+            Check(Ils.SpdLine(152.4, 150, 118) == "SPD  152 / 150  ias 118", "LAND5e: tablet speed row = the AP's speed (IAS small)");
+        }
         {   // GROK LAND5d
             // KERBO near-miss: track 090 toward a leg start 2 km north of our line, leg course 110 (20 deg off) -> match
             Check(ApproachChart.LegMatch(0, 0, 90, 20000, 2000, 110, 15000), "LAND5d: path passes 2 km from the leg start, track 20 deg off -> join the published leg");
@@ -226,12 +246,12 @@ class Program
             Check(PitchAttitude.BankSlew(-6.8, -1.4, 1, 0, -5.4) == -2.8 && PitchAttitude.InnerGain(-5, 0) == 2 && PitchAttitude.InnerGain(-5, 20) == 1.3, "LAND5b: nose 5 deg low wings level = 4 deg/s slew + x2 inner gain");
             Check(FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 160, 160) && FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 174, 160) && !FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 176, 160) && !FlapsPolicy.FinalLatch(false, 3000, 9400, 2, 160, 160), "LAND5b: flaps latched on final unless > limit + 15");
             Check(Math.Abs(PitchAttitude.GoAroundPitch(245, 46, 160) - 15) < 1e-9 && PitchAttitude.GoAroundPitch(150, 46, 160) >= 4 && PitchAttitude.GoAroundPitch(150, 46, 160) <= 8 && PitchAttitude.GoAroundPitch(160, 46, 160) == 8, "LAND5b/5d: go-around climb nose 4-15 deg, tracks the pattern speed");
-            Check(FlapsPolicy.ApproachSchedule("final", 13000, 9400, 0, 900) == 1 && FlapsPolicy.ApproachSchedule("final", 14000, 9400, 0, 900) == 0 && FlapsPolicy.ApproachSchedule("final", 9000, 9400, 1, 700) == 2 && FlapsPolicy.ApproachSchedule("final", 4900, 9400, 2, 500) == 3
-                && FlapsPolicy.ApproachSchedule("final", 3500, 9400, 2, 400) == 2 && FlapsPolicy.ApproachSchedule("final", 4500, 9400, 1, 250) == 1 && FlapsPolicy.GearDistance(9400) == 9400 && FlapsPolicy.GearDistance(5000) == 8000, "LAND5b: flaps 1 from FAF+4 km, 2 at FAF, FULL by 5 km, frozen inside 4 km / 300 m; gear by FAF / 8 km");
+            Check(FlapsPolicy.ApproachSchedule("final", 13000, 9400, 0, 900) == 3 && FlapsPolicy.ApproachSchedule("entry", 25000, 9400, 0, 900) == 0 && FlapsPolicy.ApproachSchedule("entry", 15000, 9400, 0, 900) == 3 && FlapsPolicy.ApproachSchedule("final", 4900, 9400, 2, 500) == 3
+                && FlapsPolicy.ApproachSchedule("final", 3500, 9400, 2, 400) == 2 && FlapsPolicy.ApproachSchedule("final", 4500, 9400, 1, 250) == 1 && FlapsPolicy.GearDistance(9400) == 9400 && FlapsPolicy.GearDistance(5000) == 8000, "LAND5b/5e: flaps step in as soon as under the limit (from 20 km on entry), frozen inside 4 km / 300 m; gear by FAF / 8 km");
             Check(Math.Abs(FlapsPolicy.NextConfigDistance(12000, 9400, 1, false) - 9400) < 1 && double.IsNaN(FlapsPolicy.NextConfigDistance(4500, 9400, 2, true)), "LAND5b: next config step lookahead (lead), none inside the freeze");
             Func<double, double, double> one = (sv, pv) => { var x = new StepThrottle(); x.Reset(.30); for (int k = 0; k < 50; k++) x.Update(k * .02, sv, pv, .02, double.NaN); return x.Thr; };
             var stp = new StepThrottle(); stp.Reset(.30); for (int k = 0; k < 50; k++) stp.Update(k * .02, 155, 165, .02, double.NaN); double th3 = stp.Update(1.5, 155, 165, .02, double.NaN);
-            Check(one(165, 165) == .30 && one(178, 165) == .30 && Math.Abs(one(155, 165) - .33) < 1e-9 && Math.Abs(one(150, 165) - .34) < 1e-9 && Math.Abs(th3 - .33) < 1e-9, "LAND5b/c: step-and-wait - hold in -5/+15, 3% within 10 m/s, 4% beyond, then wait 3 s");
+            Check(one(165, 165) == .30 && one(168, 165) == .30 && one(178, 165) == 0 && Math.Abs(one(155, 165) - .33) < 1e-9 && Math.Abs(one(150, 165) - .34) < 1e-9 && Math.Abs(th3 - .33) < 1e-9, "LAND5b/c: step-and-wait - hold in -5/+15, 3% within 10 m/s, 4% beyond, then wait 3 s");
             var stl = new StepThrottle(); stl.Reset(.30); Check(Math.Abs(stl.Update(0, 165, 165, .02, 3) - .33) < 1e-9 && StepThrottle.Emergency(200, 165) && !StepThrottle.Emergency(185, 165), "LAND5b: config lead = one small step; bang-bang only > 30 m/s off");
             Check(Math.Abs(StepThrottle.ConfigLimit(.3, .9, 1, 2) - .4) < 1e-9 && StepThrottle.ConfigLimit(.3, .9, 1, 6) == .9, "LAND5b: throttle 10%/s during + 5 s after a config change");
         }
@@ -936,7 +956,7 @@ class Program
         {   // Luke 9:45 AM: flaps
             Check(FlapsPolicy.Classify(false, false, false) == FlapKind.Flap && FlapsPolicy.Classify(false, false, true) == FlapKind.RollFlap && FlapsPolicy.Classify(true, false, false) == FlapKind.Pitch && FlapsPolicy.Classify(true, true, true) == FlapKind.Pitch && FlapsPolicy.Classify(false, true, false) == FlapKind.Other, "flap classes: dedicated / roll-only / never pitch");
             Check(FlapsPolicy.Fraction(0) == 0 && Math.Abs(FlapsPolicy.Fraction(1) - 1 / 3.0) < 1e-9 && FlapsPolicy.Fraction(3) == 1 && FlapsPolicy.Name(3) == "FULL", "flap settings 0/1/2/full");
-            Check(FlapsPolicy.SpeedLimit(80, double.NaN) == 128 && FlapsPolicy.SpeedLimit(80, 140) == 140 && FlapsPolicy.MaxAllowed(130, 128, 0) == 0 && FlapsPolicy.MaxAllowed(128, 128, 2) == 3 && FlapsPolicy.MaxAllowed(130, 128, 2) == 0 && FlapsPolicy.MaxAllowed(140, 128, 2) == 0, "flap limit 1.6x clean stall (or learned), retract above it (5 m/s hysteresis)");
+            Check(FlapsPolicy.SpeedLimit(80, double.NaN) == 128 && FlapsPolicy.SpeedLimit(80, 140) == 140 && FlapsPolicy.MaxAllowed(130, 128, 0) == 0 && FlapsPolicy.MaxAllowed(128, 128, 2) == 3 && FlapsPolicy.MaxAllowed(130, 128, 2) == 3 && FlapsPolicy.MaxAllowed(131, 128, 2) == 0 && FlapsPolicy.MaxAllowed(140, 128, 2) == 0, "flap limit 1.6x clean stall (or learned), retract above it (5 m/s hysteresis)");
             Check(FlapsPolicy.ApproachSetting("entry", 20000, 3000) == 0 && FlapsPolicy.ApproachSetting("final", 5000, 3000) == 1 && FlapsPolicy.ApproachSetting("final", 2500, 3000) == 2 && FlapsPolicy.ApproachSetting("final", 1000, 3000) == 3 && FlapsPolicy.ApproachSetting("flare", 100, 3000) == 3 && FlapsPolicy.ApproachSetting("final", 9000, 3000) == 0, "flaps step in from short final, full in the flare");
             // LEARN: clean sink map, then flaps-full repeat (9b); toggled off -> skipped
             Func<bool, LearnFlight> sinkRun = sub => { var lf2 = new LearnFlight(); lf2.P.FlapSub = sub; var li = new LearnIn { T = 0, Speed = 76.8, Alt = 5000, FuelFrac = .9, GLimit = 8, G = 1, StallGuess = 64, Mass = 30, Pitch = 5, HasFlaps = true }; lf2.Step(li); lf2.Phase = "sinkprep";
@@ -2831,7 +2851,7 @@ class Program
             Console.WriteLine("Airbrakes/dedupe/ILS zone/MFD: 9 behavior checks passed.");
         }
         {   // Luke 3:41 PM: final speed schedule (not 1.3x stall from 20 km)
-            Check(ApproachProfile.FinalSchedule(12000, 45) > 100 && ApproachProfile.FinalSchedule(12000, 45) <= 150 && ApproachProfile.FinalSchedule(12000, 80) == 150 && ApproachProfile.FinalSchedule(8000, 80) < 150, "long final: ~2.3x stall, cap 150; bleed starts at the 12 km fix (Oct 12)");
+            Check(ApproachProfile.FinalSchedule(25000, 45) > 100 && ApproachProfile.FinalSchedule(25000, 45) <= 150 && ApproachProfile.FinalSchedule(30000, 80) == 150 && ApproachProfile.FinalSchedule(12000, 80) < 150, "long final: ~2.3x stall, cap 150; bleed starts at the 12 km fix (Oct 12)");
             double s3 = ApproachProfile.FinalSchedule(3000, 45), s2 = ApproachProfile.FinalSchedule(2000, 45);
             Check(s3 < ApproachProfile.FinalSchedule(4000, 45) && s3 > s2 && Math.Abs(s2 - 1.35 * 45) < .01 && ApproachProfile.FinalSchedule(500, 45) == s2, "smooth decel to 1.35x stall by 2 km, held to the flare");
             Check(ApproachProfile.SaneStall(33) == 40 && ApproachProfile.SaneStall(double.NaN) >= 40, "stall estimate sanity floor");
@@ -2998,7 +3018,7 @@ class Program
             double a = dl.Estimate("Aeris 3A", 104, 54, true); Check(Math.Abs(a - 2.5) < .01 && double.IsNaN(dl.Estimate("Unknown", 104, 54, true)), "decel learned per craft (" + a.ToString("0.00") + ")");
             var back = DecelLearner.FromJson(dl.ToJson()); Check(Math.Abs(back.Estimate("Aeris 3A", 104, 54, true) - 2.5) < .01, "decel profile persists (JSON round trip)");
             double fast = ApproachProfile.DecelStartDist(45, 2.5), slow = ApproachProfile.DecelStartDist(45, double.NaN), v1 = ApproachProfile.HiSpeed(45), v2 = ApproachProfile.AppSpeed(45);
-            Check(Math.Abs(fast - Math.Max(12000, 2000 + (v1 * v1 - v2 * v2) / 5 + 500)) < 1 && slow >= fast && Math.Abs(ApproachProfile.DecelStartM(v1, v2, 2.5) - ((v1 * v1 - v2 * v2) / 5 + 500)) < 1, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
+            Check(Math.Abs(fast - (14000 + ApproachProfile.DecelStartM(v1, ApproachProfile.D14Speed(45), 2.5))) < 1 && slow >= fast && Math.Abs(ApproachProfile.DecelStartM(v1, v2, 2.5) - ((v1 * v1 - v2 * v2) / 5 + 500)) < 1, "decel start = (v1^2-v2^2)/2a + margin before 2 km; unmeasured = conservative (" + Math.Round(fast) + " vs " + Math.Round(slow) + " m)");
             Check(Math.Abs(ApproachProfile.FinalSchedule(fast, 45, 2.5) - v1) < .01 && Math.Abs(ApproachProfile.FinalSchedule(2000, 45, 2.5) - v2) < .01, "schedule: long-final speed until the decel point, approach speed by 2 km");
             Console.WriteLine("Measured decel: 4 behavior checks passed.");
         }
