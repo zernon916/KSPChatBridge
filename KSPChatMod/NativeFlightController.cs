@@ -43,6 +43,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
+        double aoaTrim = double.NaN, vsFilt = double.NaN; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -934,7 +935,18 @@ namespace KSPChatBridge
                     if (Time.realtimeSinceStartup >= lowTraceNext) { lowTraceNext = Time.realtimeSinceStartup + 2; ChatLog.Write("g", "low energy: spd=" + vessel.srfSpeed.ToString("0") + " min=" + PilotPolicy.MinSafeSpeed(stall).ToString("0") + " stall=" + stall.ToString("0") + " vs=" + vessel.verticalSpeed.ToString("0") + " agl=" + vessel.radarAltitude.ToString("0") + " -> power 90%+, climb"); }
                 }
                 vsIntegral = FlightPolicy.Clamp(vsIntegral + (targetVs - vessel.verticalSpeed) * dt * .25 * kin, -5, 5);
-                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + PilotPolicy.VsPitchDeg(targetVs - vessel.verticalSpeed, vessel.srfSpeed, kinH) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
+                double desiredPitch = directPitch ?? FlightPolicy.Clamp(1 + PilotPolicy.VsPitchDeg(targetVs - vessel.verticalSpeed, vessel.srfSpeed, kinH) + vsIntegral + CraftClass.PitchLead(CraftCls, roll), targetVs < -1 ? descentPitchMin : -2, CpMax);
+                {   // GROK LAND3: banked turns hold a pitch attitude (trim + target path angle), gentle filtered vs correction - no porpoise
+                    aoaTrim = PitchAttitude.TrimStep(aoaTrim, pitch, PilotPolicy.FlightPathAngle(vessel.verticalSpeed, vessel.horizontalSrfSpeed), roll, dt); vsFilt = PitchAttitude.VsStep(vsFilt, vessel.verticalSpeed, dt);
+                    double aw = PitchAttitude.Weight(Math.Max(Math.Abs(bankCmd), Math.Abs(roll)));
+                    bool attOk = !directPitch.HasValue && !vessel.LandedOrSplashed && mode != "takeoff" && !double.IsNaN(aoaTrim) && !learnTurnLe && !learnSinkLe && !(learn != null && !learn.Done) && !(mode == "landing" && runway != null && (runway.Phase == "flare" || runway.Phase == "rollout"));
+                    if (attOk && aw > 0)
+                    {
+                        double att = FlightPolicy.Clamp(PitchAttitude.Target(aoaTrim, targetVs, vsFilt, vessel.srfSpeed, kinH) + .5 * vsIntegral - PitchShaper.BackPressure(bankCmd), targetVs < -1 ? descentPitchMin : -2, CpMax);   // nose pitch stays on the level-flight trim; the bank's extra AoA comes from the elevator feed-forward
+                        desiredPitch = (1 - aw) * desiredPitch + aw * att;
+                        if (Time.realtimeSinceStartup >= turnPitchTraceNext) { turnPitchTraceNext = Time.realtimeSinceStartup + 5; ChatLog.Write("att", "turn pitch hold: bank " + roll.ToString("0") + " trim " + aoaTrim.ToString("0.0") + " path " + (Math.Atan2(targetVs, Math.Max(30, vessel.srfSpeed)) * 180 / Math.PI).ToString("0.0") + " -> nose " + att.ToString("0.0") + " deg (vs " + vsFilt.ToString("0.0") + " filtered, want " + targetVs.ToString("0.0") + ")"); }
+                    }
+                }   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
                 if (mode == "landing" && runway != null && runway.Phase == "flare" && !vessel.LandedOrSplashed && profileTrusted && profile != null)
                 {
                     double flarePitch = FlarePolicy.Pitch(profile.TouchdownAoa, vessel.srfSpeed, vessel.verticalSpeed);

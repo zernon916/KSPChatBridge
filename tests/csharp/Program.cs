@@ -224,6 +224,20 @@ class Program
                         Check(LandingPick.Approaches("KSC", "27", new[] { "KSC_27.json", "KSC_27_NDB_KERBO.json" }).Contains("KSC_27_NDB_KERBO") && LandingPick.Variant("KSC_27_NDB_KERBO") == "NDB_KERBO", "GROK APP1: selectable in the KSC 27 approach picker");
                     }
                 }
+                {   // GROK LAND3d: banked-turn pitch attitude hold - nose on the trim line, no porpoise
+                    Check(Math.Abs(PitchAttitude.Target(2.5, 0, 0, 150, 1.28) - 2.5) < 1e-9 && PitchAttitude.Weight(0) == 0 && PitchAttitude.Weight(20) == 1 && PitchAttitude.Weight(7.5) == .5, "GROK LAND3: level turn = trim attitude (nose on the horizon line), blended in from 5-10 deg bank");
+                    double tr = double.NaN; for (int i = 0; i < 600; i++) tr = PitchAttitude.TrimStep(tr, 3 + (i % 2 == 0 ? .5 : -.5), 0, 25, .05); Check(Math.Abs(tr - 3) < .6 && PitchAttitude.TrimStep(3, 20, 0, 60, .05) == 3, "GROK LAND3: trim low-passed in the bank, ignored past 45 deg");
+                    // toy longitudinal model: nose follows the ask (1 s lag), flight path follows nose - trueTrim (2 s lag); start sinking 18 m/s
+                    double pt = 0, gm = Math.Asin(-18 / 150.0) * 180 / Math.PI, trueTrim = 2.5, vf = double.NaN, trm = 2.5, peak = 0, late = 0;
+                    for (int i = 0; i < 1200; i++)
+                    {
+                        double vsN = 150 * Math.Sin(gm * Math.PI / 180); vf = PitchAttitude.VsStep(vf, vsN, .05);
+                        double ask = PitchAttitude.Target(trm, 0, vf, 150, 1.28); pt += (ask - pt) * .05 / 1.0; gm += ((pt - trueTrim) - gm) * .05 / 2.0;
+                        double vs2 = 150 * Math.Sin(gm * Math.PI / 180); if (i > 100) peak = Math.Max(peak, vs2); if (i > 800) late = Math.Max(late, Math.Abs(vs2));
+                    }
+                    Check(peak < 3 && late < .5, "GROK LAND3: -18 m/s sink recovered without overshoot (peak +" + peak.ToString("0.0") + " m/s, last 20 s within " + late.ToString("0.00") + ")");
+                    Check(Math.Abs(PitchAttitude.Target(2.5, 0, 2, 150, 1) - PitchAttitude.Target(2.5, 0, 0, 150, 1)) < .4 * Math.Abs(PilotPolicy.VsPitchDeg(-2, 150, 1)) + .01, "GROK LAND3: vs noise moves the nose 0.4x as much as the old hold");
+                }
                 {   // GROK LAND3c: low is never HIGH/FAST
                     Check(!ApproachProfile.EnergyHigh(-309, 158, 147) && ApproachProfile.EnergyLow(-309) && ApproachProfile.EnergyLabel(-309, 158, 147).Contains("LOW") && !ApproachProfile.EnergyLabel(-309, 158, 147).Contains("idle"), "GROK LAND3: 309 m low + 11 m/s fast -> LOW/FAST, no idle/speedbrakes/steeper");
                     Check(!ApproachProfile.IdleWanted(ApproachProfile.EnergyHigh(-309, 158, 147), 158, 147), "GROK LAND3: no idle while low");

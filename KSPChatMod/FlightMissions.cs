@@ -774,6 +774,28 @@ namespace KSPChatBridge
         internal bool BrakesAllowed { get { return NoseDown; } }
     }
 
+    /// <summary>GROK LAND3 (Luke: in banked turns the nose porpoised above/below the level line; log 03:09:20-40 vs +13/-18 m/s, pitch -7/+8
+    /// at 11-17 deg bank): fly turns like a pilot - hold a pitch ATTITUDE = trim angle (nose pitch - flight-path angle, low-passed; in a bank the
+    /// extra AoA is the elevator feed-forward, its vertical projection stays ~ the level-flight trim) + the target flight-path angle; the vs error
+    /// is only a gentle (x0.4) correction on a filtered vs, and the altitude error stays the slow outer loop (the mission's target vs).</summary>
+    internal static class PitchAttitude
+    {
+        internal const double TrimTau = 8, VsTau = 1.5, VsGain = .4, BankOn = 5, BankFull = 10;
+        internal static double TrimStep(double trim, double pitch, double fpa, double rollDeg, double dt)
+        {
+            double a = pitch - fpa; if (double.IsNaN(a) || double.IsInfinity(a) || Math.Abs(rollDeg) > 45) return trim;
+            a = FlightPolicy.Clamp(a, -5, 15); if (double.IsNaN(trim)) return a;
+            return trim + (a - trim) * Math.Min(1, Math.Max(0, dt) / TrimTau);
+        }
+        internal static double VsStep(double filt, double vs, double dt) { return double.IsNaN(filt) ? vs : filt + (vs - filt) * Math.Min(1, Math.Max(0, dt) / VsTau); }
+        internal static double Target(double trim, double targetVs, double vsFilt, double tas, double gainScale)
+        {
+            double v = Math.Max(30, tas), g = double.IsNaN(gainScale) ? 1 : gainScale;
+            return trim + Math.Atan2(targetVs, v) * 180 / Math.PI + VsGain * g * Math.Atan2(targetVs - vsFilt, v) * 180 / Math.PI;
+        }
+        /// <summary>Blend weight of the attitude hold: 0 wings level, 1 from BankFull deg of bank (no switch jump).</summary>
+        internal static double Weight(double bankDeg) { return FlightPolicy.Clamp((Math.Abs(bankDeg) - BankOn) / (BankFull - BankOn), 0, 1); }
+    }
     /// <summary>Pitch-command shaping (crash 047208f: 9.5 g at the takeoff->climb handoff). S-curve + pitch-rate limit; high g only
     /// in commanded turns/joins (|bank| > 15), otherwise ClimbG; turn back-pressure only when banked; Reset() from the current
     /// state at every mode change so no stale filter/rate state produces a jump.</summary>
