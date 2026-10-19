@@ -129,6 +129,25 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5: lock the 14:22 LSR (r 7655) to the 41.5 km join; start 5 km off with a 9 deg heading error; follow, no replan
+            double rL = 7655; DubinsPath dpL; DubinsPath.JoinSteer(0, 0, 90, 41500 - 27500, 0, 270, rL, null, out dpL);
+            var lk = LockedPath.From(dpL, 27500, 0); bool noUnlock = true, sawSeg2 = false, finalOk = false; double turnR = 0, hdL = 99, xL = 27500, yL = -5000, bkL = 0, maxSeg = 0; string lkd = lk == null ? "null" : lk.Describe();
+            for (int s = 0; s < 3000 && lk != null; s++)
+            {
+                if (!lk.Step(xL, yL, hdL, 165, 20, 30)) { noUnlock = false; break; }
+                maxSeg = Math.Max(maxSeg, lk.Seg);
+                bkL += FlightPolicy.Clamp(lk.BankAsk - bkL, -10, 10);   // 10 deg/s roll rate
+                double dh = 9.81 * Math.Tan(bkL * Math.PI / 180) / 165 * 180 / Math.PI; hdL = DubinsPath.Norm(hdL + dh);
+                if (lk.Seg == 2) { sawSeg2 = true; turnR += dh; }
+                xL += 165 * Math.Sin(hdL * Math.PI / 180); yL += 165 * Math.Cos(hdL * Math.PI / 180);
+                if (lk.Seg >= 3 && Math.Abs(lk.Xtrk) < 300 && Math.Abs(FlightPolicy.Wrap(hdL - 270)) < 5) { finalOk = true; break; }
+            }
+            Check(lk != null && lk.Type == "LSR", "LAND5: 14:22 geometry locks as LSR (" + lkd + ")");
+            Check(noUnlock, "LAND5: no unlock/replan while 5 km off + 9 deg error");
+            Check(sawSeg2 && turnR > 180, "LAND5: flies the right turn (" + Math.Round(turnR) + " deg right on arc 2)");
+            Check(finalOk, "LAND5: joins final heading 270 within 300 m (seg " + maxSeg + ")");
+            var far = LockedPath.From(dpL, 27500, 0); Check(far != null && !far.Step(27500, -12000, 90, 165, 20, 30), "LAND5: > 10 km off the locked path = unlock");
+        }
         {   // GROK LAND4g: nose target held within 0.5 deg through a 30 deg banked turn with noisy vs (-3.3..+4.3 m/s swings + jitter)
             var rg = new Random(11); double slow = double.NaN, cmdG = double.NaN, lo = double.MaxValue, hi = double.MinValue, trimG = 2.5;
             for (int i = 0; i < 1200; i++)

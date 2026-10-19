@@ -43,7 +43,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        string loggedLock = "", loggedFollow = ""; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -782,7 +782,9 @@ namespace KSPChatBridge
                         descentPitchMin = ApproachProfile.LandingPitchMin(runway.DesiredVs);   // Oct 12: -5 deg floor capped recapture sink; allow -12 when a steep sink is asked
                         if (runway.EnergyLog.Length > 0) { ChatLog.Write("approach", runway.EnergyLog); runway.EnergyLog = ""; }
                         if (runway.RouteLog != loggedRoute) { loggedRoute = runway.RouteLog; ChatLog.Write("approach", "chart " + runway.Kind + " " + loggedRoute); }
-                    if (runway.DubinsLog != loggedDubins) { loggedDubins = runway.DubinsLog; if (loggedDubins.Length > 0) ChatLog.Write("approach", loggedDubins); }   // GROK JOIN1
+                    if (runway.LockLog != loggedLock) { loggedLock = runway.LockLog; if (loggedLock.Length > 0) ChatLog.Write("approach", loggedLock); }   // GROK LAND5
+            if (runway.FollowLog != loggedFollow) { loggedFollow = runway.FollowLog; if (loggedFollow.Length > 0) ChatLog.Write("approach", loggedFollow); }
+            if (runway.DubinsLog != loggedDubins) { loggedDubins = runway.DubinsLog; if (loggedDubins.Length > 0) ChatLog.Write("approach", loggedDubins); }   // GROK JOIN1
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
                         { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = !vessel.LandedOrSplashed && vessel.altitude - runway.Elevation > 30 && !brakesMoveControls && !powerFloor;
                           bool deployOk = !runway.EnergyLow && vessel.verticalSpeed > runway.DesiredVs - 5;   // GROK LAND4: no new deploy while low or sinking 5 m/s faster than the path (pitch, not drag)   // GROK FIX6: never airbrakes against floor power

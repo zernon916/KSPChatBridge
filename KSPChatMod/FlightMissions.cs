@@ -570,6 +570,73 @@ namespace KSPChatBridge
     /// from the current position/track to a fix ARRIVING ON the fix's required course, at the radius of the bank the controller will
     /// actually fly at the current speed. Local metres x east / y north, compass headings. Re-planned every step (receding horizon);
     /// Command gives the heading to fly now. Pure; tested.</summary>
+    /// <summary>GROK LAND5 (Luke): an ACCEPTED join path is LOCKED in world space (frame: metres east/north of a fixed origin) - arc 1, straight,
+    /// arc 2, final course line - and FOLLOWED (cross-track + track error per segment, arc curvature as feed-forward bank, small intercept),
+    /// never re-fitted (14:22-14:25: the per-tick re-fit drifted to hdg 037, 10 km off, never turned right, then circled left).</summary>
+    internal sealed class LockedPath
+    {
+        internal string Type; internal double R, A1, A2, S, Hu, H0, H1; internal int D1, D2;
+        internal double[] C1, C2, T1, T2, Stub, Fix;   // world frame
+        internal int Seg; internal double Xtrk, TrkErr, BankAsk, DesiredTrack, swept, lastBrg = double.NaN; internal const int N = 4;
+        internal const double UnlockDist = 10000, MaxIntercept = 30;
+        static double Brg(double dx, double dy) { return DubinsPath.Norm(Math.Atan2(dx, dy) * 180 / Math.PI); }
+        static double[] Right(double h) { h *= Math.PI / 180; return new[] { Math.Cos(h), -Math.Sin(h) }; }
+        static double[] Add(double[] a, double ox, double oy) { return a == null ? null : new[] { a[0] + ox, a[1] + oy }; }
+        /// <summary>Lock a plane-relative Dubins plan; (ox, oy) = the plane's world position when planned.</summary>
+        internal static LockedPath From(DubinsPath p, double ox, double oy)
+        {
+            if (p == null || p.Type == "LINE" || p.C1 == null) return null;
+            var l = new LockedPath { Type = p.Type, R = p.R, A1 = p.A1, A2 = p.A2, S = p.S, Hu = p.Hu, H0 = p.H0, H1 = p.H1, D1 = p.D1, D2 = p.D2,
+                C1 = Add(p.C1, ox, oy), C2 = Add(p.C2, ox, oy), T1 = Add(p.T1, ox, oy), T2 = Add(p.T2, ox, oy), Stub = Add(p.Stub ?? new[] { p.X1, p.Y1 }, ox, oy), Fix = new[] { p.X1 + ox, p.Y1 + oy } };
+            l.Seg = l.A1 > 2 ? 0 : l.S > 50 ? 1 : 2; return l;
+        }
+        internal string Describe() { return Type + " " + Math.Round(A1) + "/" + Math.Round(A2) + " deg, straight " + (S / 1000).ToString("0.0") + " km, r " + Math.Round(R) + " m, segments arc1 / straight / arc2 / final"; }
+        /// <summary>One follow step at world (x, y), ground track trk. Returns false when the path must be unlocked (> UnlockDist off).</summary>
+        internal bool Step(double x, double y, double trk, double v, double planBank, double maxBank)
+        {
+            double segTrk, e, ff = 0;
+            for (int guard = 0; guard < 3; guard++)
+            {   // sequencing by swept angle / along-segment progress (cannot skip the second turn)
+                if (Seg == 0 || Seg == 2)
+                {
+                    double[] c = Seg == 0 ? C1 : C2; int d = Seg == 0 ? D1 : D2; double a = Seg == 0 ? A1 : A2;
+                    double b = Brg(x - c[0], y - c[1]); if (!double.IsNaN(lastBrg)) swept += d * FlightPolicy.Wrap(b - lastBrg); lastBrg = b;
+                    if (swept >= a - 1) { Seg++; swept = 0; lastBrg = double.NaN; if (Seg == 1 && S <= 50) Seg = 2; continue; }
+                }
+                else if (Seg == 1)
+                {
+                    double ux = Math.Sin(Hu * Math.PI / 180), uy = Math.Cos(Hu * Math.PI / 180), al = (x - T1[0]) * ux + (y - T1[1]) * uy;
+                    if (al >= S) { Seg = 2; swept = 0; lastBrg = double.NaN; continue; }
+                }
+                break;
+            }
+            if (Seg == 0 || Seg == 2)
+            {
+                double[] c = Seg == 0 ? C1 : C2; int d = Seg == 0 ? D1 : D2;
+                double dist = Math.Sqrt((x - c[0]) * (x - c[0]) + (y - c[1]) * (y - c[1])), b = Brg(x - c[0], y - c[1]);
+                segTrk = DubinsPath.Norm(b + 90 * d); e = d * (R - dist);   // + = right of the path direction
+                ff = d * Math.Atan(v * v / (9.81 * R)) * 180 / Math.PI;   // curvature feed-forward bank
+            }
+            else
+            {
+                double h = Seg == 1 ? Hu : H1; double[] o = Seg == 1 ? T1 : Stub; var rt = Right(h);
+                segTrk = h; e = (x - o[0]) * rt[0] + (y - o[1]) * rt[1];
+            }
+            Xtrk = e;
+            if (Math.Abs(e) > UnlockDist) return false;
+            double cut = FlightPolicy.Clamp(e / Math.Max(1500, .3 * R) * MaxIntercept, -MaxIntercept, MaxIntercept);
+            DesiredTrack = DubinsPath.Norm(segTrk - cut); TrkErr = FlightPolicy.Wrap(DesiredTrack - trk);
+            BankAsk = FlightPolicy.Clamp(ff + 1.5 * TrkErr, -maxBank, maxBank);
+            return true;
+        }
+        /// <summary>The locked geometry for the map (world frame), through the fix.</summary>
+        internal List<double[]> Points()
+        {
+            var pts = new List<double[]>();
+            Action<double[], int, double, double> arc = (c, d, h0, a) => { for (int i = 0; i <= 24; i++) { double h = h0 + d * a * i / 24.0, b = (h - 90 * d) * Math.PI / 180; pts.Add(new[] { c[0] + R * Math.Sin(b), c[1] + R * Math.Cos(b) }); } };
+            arc(C1, D1, H0, A1); pts.Add(T2); arc(C2, D2, Hu, A2); pts.Add(Fix); return pts;
+        }
+    }
     internal sealed class DubinsPath
     {
         internal string Type = ""; internal double Length = double.MaxValue, R, A1, A2, S, Hu, X0, Y0, H0, X1, Y1, H1; internal int D1, D2;
@@ -1445,7 +1512,7 @@ namespace KSPChatBridge
             o.Add(at(d, "fly-out " + Math.Round(d / 1000) + " km (rejoin)"));
             return o;
         }
-        internal void GoAroundReset() { MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        internal void GoAroundReset() { UnlockPath("go-around"); MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanBankRaw, RouteToGo = double.NaN; double wpFromLat = double.NaN, wpFromLon;
         /// <summary>GROK FIX2: distance shown to the pilot - along the route to touchdown during entry, else to the threshold.</summary>
         internal double ToGo { get { return Phase == "entry" && !double.IsNaN(RouteToGo) ? RouteToGo : Distance; } }
@@ -1482,6 +1549,8 @@ namespace KSPChatBridge
         internal static bool RebuildDue(int stepsSinceRebuild) { return stepsSinceRebuild >= RebuildCooldownSteps; }
         int stepsSinceRebuild = RebuildCooldownSteps; bool holdLast; internal int Rebuilds;
         internal double Warp = 1; double jumpLat = double.NaN, jumpLon; int warpHoldSteps;   // GROK LAND4f
+        internal LockedPath Locked; string lockFix; int followLogN; internal string LockLog = "", FollowLog = "";   // GROK LAND5
+        internal void UnlockPath(string why) { if (Locked == null) return; Locked = null; lockFix = null; dubType = null; LockLog = "path UNLOCK: " + why; }
         string dubType, dubFix; double dubR = double.NaN, dubTrk = double.NaN, dubCommitHdg = double.NaN, dubPlanBank; internal List<double[]> DubinsPts; internal double DubinsR; internal string DubinsLog = "";   // GROK JOIN1
         /// <summary>Distance flown since the fix became current before an 'overflown' skip (frame-rate independent): half the spacing, >= 150 m.</summary>
         internal static double BehindMinMove(double spacing) { return Math.Max(150, double.IsNaN(spacing) ? 300 : .5 * spacing); }
@@ -1670,6 +1739,22 @@ namespace KSPChatBridge
                         double r = dubR, k = Math.PI / 180 * radius, cl = Math.Cos(lat * Math.PI / 180);
                         double x1 = (wp.Lon - lon) * k * cl, y1 = (wp.Lat - lat) * k;
                         if (wp.Name != dubFix) { dubFix = wp.Name; dubType = null; dubCommitHdg = double.NaN; }   // a new fix = a fresh choice
+                        double ox = (lon - Lon) * k * cl, oy = (lat - Lat) * k;   // GROK LAND5: world frame = metres from the threshold
+                        if (Locked != null && wp.Name != lockFix) UnlockPath("new join fix " + wp.Name);
+                        if (Locked != null)
+                        {
+                            if (!Locked.Step(ox, oy, track, speed, dubPlanBank, TurnBank > 0 ? TurnBank : 25)) UnlockPath(Math.Round(Math.Abs(Locked.Xtrk)) + " m from the locked path");
+                            else
+                            {
+                                if (Locked.Seg >= 3) { double lh; LatBank = LateralCapture.Bank(nextBrg, -x1 * Math.Cos(nextBrg * Math.PI / 180) + y1 * Math.Sin(nextBrg * Math.PI / 180), track, speed, TurnBank > 0 ? TurnBank : 25, out lh); DesiredHeading = lh; }
+                                else { LatBank = Locked.BankAsk; DesiredHeading = Locked.DesiredTrack; }
+                                ArcBank = 0; leadTurn = false; DubinsR = Locked.R;
+                                if (++followLogN >= 500) { followLogN = 0; FollowLog = "path follow: seg " + (Locked.Seg + 1) + "/" + LockedPath.N + ", xtrk " + Math.Round(Locked.Xtrk) + " m, trk err " + Locked.TrkErr.ToString("0") + " deg, bank ask " + LatBank.ToString("0"); }
+                                var lp = new List<double[]>(); foreach (var q in Locked.Points()) lp.Add(new[] { Lat + q[1] / k, Lon + q[0] / (k * cl) }); if (RouteIndex == Route.Count - 1) lp.Add(new[] { Lat, Lon }); DubinsPts = lp;
+                            }
+                        }
+                        if (Locked == null)
+                        {
                         DubinsPath dp; double cmd = DubinsPath.JoinSteer(0, 0, dubTrk, x1, y1, nextBrg, r, dubType, out dp, DubinsPath.Established(dubType, dubCommitHdg, dubTrk), warpHoldSteps > 0 && dubType != null);
                         if (dp != null)
                         {
@@ -1682,10 +1767,12 @@ namespace KSPChatBridge
                             }
                             if (dp.Type == "LINE") { double ux = Math.Sin(nextBrg * Math.PI / 180), uy = Math.Cos(nextBrg * Math.PI / 180), lh; LatBank = LateralCapture.Bank(nextBrg, -x1 * uy + y1 * ux, track, speed, TurnBank > 0 ? TurnBank : 25, out lh); DesiredHeading = lh; }   // GROK LAND3: on the course line into the fix - same capture law (overshot 1 km at 03:09:30)
                             var pts = new List<double[]>(); foreach (var q in dp.Points()) pts.Add(new[] { lat + q[1] / k, lon + q[0] / (k * cl) }); if (RouteIndex == Route.Count - 1) { pts.Add(new[] { wp.Lat, wp.Lon }); pts.Add(new[] { Lat, Lon }); } DubinsPts = pts;   // GROK LAND4f: the line continues along final to the threshold
+                            if (dp.Type != "LINE" && warpHoldSteps == 0) { Locked = LockedPath.From(dp, ox, oy); if (Locked != null) { lockFix = wp.Name; followLogN = 0; LockLog = "path LOCKED: " + Locked.Describe() + " to " + wp.Name; } }   // GROK LAND5: accept = lock
+                        }
                         }
                         dubAligned = Math.Abs(FlightPolicy.Wrap(track - nextBrg)) < 30;   // never "capture" the join while crossing it on the wrong course
                     }
-                    else { DubinsPts = null; dubType = null; dubR = dubTrk = dubCommitHdg = double.NaN; dubFix = null; }
+                    else { DubinsPts = null; dubType = null; dubR = dubTrk = dubCommitHdg = double.NaN; dubFix = null; if (Locked != null) UnlockPath("join leg done"); }
                     bool behindUs = !dubLeg && !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     if (holdLast && last)
                     {   // fly all the way out to the join point
