@@ -833,6 +833,16 @@ namespace KSPChatBridge
         }
         /// <summary>Land on the end whose heading is closest to ours: swap when the threshold->end course is >90 deg off.</summary>
         internal static bool SwapEnd(double thresholdToEndCourse, double heading) { return Math.Abs(FlightPolicy.Wrap(heading - thresholdToEndCourse)) > 90; }
+        /// <summary>GROK FIX2 (Oct 19 00:15: flying 084 with KSC bearing 260 it picked 09 = fly past the field then reverse again).
+        /// Far out (>= 6 km), if the heading-matched end lands more than 120 deg off the bearing to the runway, take the other end
+        /// (the one we are already pointed at once we turn toward the field).</summary>
+        internal static bool SwapEndInbound(double thresholdToEndCourse, double heading, double bearingToRunway, double distanceM)
+        {
+            bool byHeading = SwapEnd(thresholdToEndCourse, heading);
+            if (double.IsNaN(bearingToRunway) || double.IsNaN(distanceM) || distanceM < 6000) return byHeading;
+            double landing = byHeading ? thresholdToEndCourse + 180 : thresholdToEndCourse;
+            return Math.Abs(FlightPolicy.Wrap(bearingToRunway - landing)) > 120 ? !byHeading : byHeading;
+        }
         /// <summary>Index of the nearest runway among (lat, lon) midpoints.</summary>
         internal static int Nearest(double lat, double lon, IList<double[]> runways, double radius)
         {

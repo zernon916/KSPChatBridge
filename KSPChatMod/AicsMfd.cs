@@ -290,7 +290,7 @@ namespace KSPChatBridge
         {
             GUILayout.BeginArea(area);
             GUILayout.Label("Mode   " + NativeFlightController.Phase.ToUpperInvariant());
-            var act = NativeFlightController.ActiveRunway; if (act != null) GUILayout.Label("Rwy    " + act.Key + "  " + act.Phase + "  " + (act.Distance / 1000).ToString("0.0") + " km");
+            var act = NativeFlightController.ActiveRunway; if (act != null) GUILayout.Label("Rwy    " + act.Key + "  " + act.Phase + "  " + (act.ToGo / 1000).ToString("0.0") + " km");
             GUILayout.Label("Plan   " + NativeFlightController.PlanStatus, scrText);
             var v = FlightGlobals.ActiveVessel;
             if (HighLogic.LoadedSceneIsFlight && v != null) GUILayout.Label(v.vesselName + "\nALT " + Math.Round(v.altitude) + " m   SPD " + Math.Round(v.srfSpeed) + " m/s   HDG " + Math.Round(FlightGlobals.ship_heading).ToString("000") + "\n" + v.situation, scrText);

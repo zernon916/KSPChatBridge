@@ -335,7 +335,7 @@ namespace KSPChatBridge
             else
             {
                 if (v != null) o.Add("POS   " + v.latitude.ToString("0.000") + " " + v.longitude.ToString("0.000") + "\nALT   " + Math.Round(v.altitude) + " m\nHDG   " + Math.Round(FlightGlobals.ship_heading).ToString("000"));
-                if (act != null) o.Add("APP   " + act.Key + " " + act.Phase.ToUpperInvariant() + "  " + (act.Distance / 1000).ToString("0.0") + " km\nDECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km");
+                if (act != null) o.Add("APP   " + act.Key + " " + act.Phase.ToUpperInvariant() + "  " + (act.ToGo / 1000).ToString("0.0") + " km\nDECEL " + (act.DecelStartDist / 1000).ToString("0.0") + " km");
                 o.Add(ScanSatLink.Installed ? "SCANsat coverage" : "flight-path reveal, " + MapReveal.Count(body.bodyName) + " tiles");
             }
             return o;
@@ -402,7 +402,7 @@ namespace KSPChatBridge
         /// <summary>This craft's join speed / bank / radius and which chart turns are tight for it (active route or a preview of the editor fixes).</summary>
         string PlaneLine(NativeFlightController.MapRunway rw, RunwayMission act)
         {
-            if (act != null && act.PlanSpeed > 0) return "Plane " + NativeFlightController.CraftLabel + " " + NativeFlightController.StallLabel + " " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(act.PlanBank) + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km" + (details ? "\ncrew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g, bank now " + Math.Round(act.TurnBank) + "\n" + act.JoinLog + "\n" + act.SmoothLog : "");
+            if (act != null && act.PlanSpeed > 0) return "Plane " + NativeFlightController.CraftLabel + " " + NativeFlightController.StallLabel + " " + Math.Round(act.PlanSpeed) + " m/s, " + act.PlanG.ToString("0.0") + " g (" + ApproachProfile.Limit + "), bank " + Math.Round(act.PlanBank) + (act.PlanBankRaw > act.PlanBank + .5 ? " (capped from " + Math.Round(act.PlanBankRaw) + ")" : "") + ", r " + (act.PlanRadius / 1000).ToString("0.0") + " km" + (details ? "\ncrew " + ApproachProfile.CrewG.ToString("0") + " g, structure " + ApproachProfile.StructG.ToString("0.0") + " g, bank now " + Math.Round(act.TurnBank) + "\n" + act.JoinLog + "\n" + act.SmoothLog : "");
             if (rw == null || Time.realtimeSinceStartup < planeAt) return planeLine;
             planeAt = Time.realtimeSinceStartup + 1;
             double v = ApproachProfile.Speed(NativeFlightController.MapStall), gN = ApproachProfile.LoadFactor(ApproachProfile.JoinG, v, NativeFlightController.MapStall), b = ApproachProfile.BankForG(gN), crs = NavigationMath.Bearing(rw.Lat, rw.Lon, rw.EndLat, rw.EndLon);

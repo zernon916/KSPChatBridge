@@ -14,7 +14,11 @@ namespace KSPChatBridge
     internal static class FinalApproachPolicy
     {
         internal const double LookAheadM = 1500;
-        internal static double BankCommand(double bank, bool landing) { return landing ? double.IsNaN(bank) ? 0 : FlightPolicy.Clamp(bank, -30, 30) : bank; }
+        internal const double LandingBankCap = 30;
+        internal static double BankCommand(double bank, bool landing) { return landing ? double.IsNaN(bank) ? 0 : FlightPolicy.Clamp(bank, -LandingBankCap, LandingBankCap) : bank; }
+        /// <summary>GROK FIX2 (Oct 19: planned 55 deg, flown 30 -> real radius 7.1 km vs 2.8 planned): every route / turn / lead / feed-forward
+        /// computation uses the bank the landing command can actually reach.</summary>
+        internal static double PlanningBank(double bank) { return double.IsNaN(bank) || bank <= 0 ? bank : Math.Min(bank, LandingBankCap); }
         // A virtual point on the extended 3-degree path; flare takes over before touchdown.
         internal static double Slope(double slope) { return double.IsNaN(slope) || double.IsInfinity(slope) || slope <= 0 ? Math.Tan(3 * Math.PI / 180) : slope; }
         internal static double TargetAltitude(double elevation, double along, double touchdown, double slope = double.NaN)

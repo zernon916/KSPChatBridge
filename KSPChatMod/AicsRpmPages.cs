@@ -75,7 +75,7 @@ namespace KSPChatBridge
             {
                 var act = NativeFlightController.ActiveRunway;
                 string t = "AICS AUTOPILOT\n\nMode:  " + NativeFlightController.Phase.ToUpperInvariant();
-                if (act != null) t += "\nRwy:   " + (act.Key ?? "") + "\nPhase: " + act.Phase + "\nDist:  " + (act.Distance / 1000).ToString("0.0") + " km" + (act.DesiredSpeed > 0 ? "\nTgt:   " + act.DesiredSpeed.ToString("0") + " m/s" : "");
+                if (act != null) t += "\nRwy:   " + (act.Key ?? "") + "\nPhase: " + act.Phase + "\nDist:  " + (act.ToGo / 1000).ToString("0.0") + " km" + (act.DesiredSpeed > 0 ? "\nTgt:   " + act.DesiredSpeed.ToString("0") + " m/s" : "");
                 t += "\nPlan:  " + NativeFlightController.PlanStatus;
                 return t;
             }

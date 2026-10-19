@@ -1995,7 +1995,7 @@ class Program
                 Check(ApproachProfile.EstimateStall(3000, 30) == ApproachProfile.UnmeasuredStallFloor && ApproachProfile.Speed(ApproachProfile.EstimateStall(3000, 30)) >= 80, "unmeasured stall estimate floored (no 31 m/s -> 46 m/s joins)");
                 var fast = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 fast.Step(-1.7, -72.09, 700, 700, 200, false, 600000, 31, 55, 55);
-                Check(fast.PlanSpeed >= 199 && Math.Abs(fast.PlanRadius - ApproachProfile.RadiusForG(fast.PlanSpeed, 4)) < 1, "arcs planned at the speed actually flown (200 m/s -> r " + Math.Round(fast.PlanRadius) + " m)");
+                Check(fast.PlanSpeed >= 199 && Math.Abs(fast.PlanRadius - ApproachProfile.Radius(fast.PlanSpeed, FinalApproachPolicy.LandingBankCap)) < 1, "arcs planned at the speed actually flown (200 m/s -> r " + Math.Round(fast.PlanRadius) + " m)");
                 bool ab; double xa;
                 RunwayMission.LegSteer(.3, -74.0, 0, -74.2, 0, -74.05, 90, 200, 20, 600000, out ab, out xa);
                 Check(ab && xa < -3000, "fix sequenced when passed abeam even 3 km off the line (no capture radius needed)");
@@ -2016,7 +2016,7 @@ class Program
                 Check(ApproachProfile.TurnPitch(0) == 0 && Math.Abs(ApproachProfile.TurnPitch(60) - 4) < .01 && ApproachProfile.TurnPitch(85) == 0, "back-pressure scales with 1/cos(bank)");
                 var gm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 gm.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
-                Check(Math.Abs(gm.PlanG - 4) < 1e-9 && Math.Abs(gm.PlanBank - 75.52) < .01 && gm.TurnBank > 75 && gm.PlanRadius < 400, "join planned and flown at 4 g (bank " + Math.Round(gm.PlanBank) + ", r " + Math.Round(gm.PlanRadius) + " m)");
+                Check(Math.Abs(gm.PlanG - 4) < 1e-9 && Math.Abs(gm.PlanBankRaw - 75.52) < .01 && gm.PlanBank == 30 && gm.TurnBank <= 30 && Math.Abs(gm.PlanRadius - ApproachProfile.Radius(120, 30)) < 1, "join rated 4 g but planned/flown at the 30 deg landing cap, GROK FIX2 (bank " + Math.Round(gm.PlanBank) + ", r " + Math.Round(gm.PlanRadius) + " m)");
                 var gb = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1, BankDeg = 30 };
                 gb.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
                 Check(gb.PlanBank == 30 && gb.TurnBank == 30, "explicit bank 30 overrides the g rating");
@@ -2047,6 +2047,20 @@ class Program
             Check(PilotPolicy.ApproachKind(275, 270, 10000, false) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, false) == "long", "head-on (<=20 deg) -> short final, 90 deg -> long");
             Check(PilotPolicy.ApproachKind(230, 270, 10000, true) == "short" && PilotPolicy.ApproachKind(180, 270, 10000, true) == "long" && PilotPolicy.ApproachKind(270, 270, 3000, true) == "long", "short final asked: only if geometry allows");
             Check(PilotPolicy.SwapEnd(90, 270) && !PilotPolicy.SwapEnd(90, 100), "lands on the end matching our heading");
+        {   // GROK FIX2: Oct 19 approach planned at 55 deg, flown at the 30 deg cap; arc legs 1-12 eaten in 0.23 s; KSC 09 picked flying away
+            Check(FinalApproachPolicy.PlanningBank(55) == 30 && FinalApproachPolicy.PlanningBank(20) == 20 && double.IsNaN(FinalApproachPolicy.PlanningBank(double.NaN)), "planning bank clamped to the landing command cap");
+            var capChart = ApproachChart.Build(0, 0, 90, 70, 200, 55, 600000, (la, lo) => 0);
+            Check(Math.Abs(capChart.TurnRadius - ApproachChart.Radius(200, 30)) < 1, "chart turn radius at 200 m/s uses 30 deg (7.06 km + 30% margin), not 55: " + Math.Round(capChart.TurnRadius));
+            Check(!RunwayMission.AdvanceWaypoint(false, 600, 2800, 593, false, 0) && RunwayMission.AdvanceWaypoint(false, 400, 2800, 593, false, 0), "arc capture radius <= 75% of point spacing");
+            Check(RunwayMission.AdvanceWaypoint(false, 800, 2800, double.NaN, false, 0) && !RunwayMission.AdvanceWaypoint(false, 900, 2800, 20000, false, 0), "long legs keep max(700, .3 r)");
+            Check(RunwayMission.AdvanceWaypoint(false, 2000, 2800, 593, true, 300) && !RunwayMission.AdvanceWaypoint(false, 2000, 2800, 593, true, 4), "overflown skip only after flying half the point spacing on that fix");
+            Check(!RunwayMission.AdvanceWaypoint(false, 5000, 2800, 593, true, 100), "overflown skip limited to 1 turn radius (was 2.2)");
+            int consumed = 0; double moved = 0; for (int s = 0; s < 12; s++) { moved += 4; if (RunwayMission.AdvanceWaypoint(false, 1500, 2800, 593, true, moved)) { consumed++; moved = 0; } }   // 200 m/s, 50 Hz
+            Check(consumed == 0, "a turning plane no longer consumes 12 arc points in 12 frames (0.24 s)");
+            Check(PilotPolicy.SwapEndInbound(90, 84, 260, 20000) && !PilotPolicy.SwapEndInbound(90, 84, 90, 20000), "far out: the end not needing a reversal after reaching the field");
+            Check(!PilotPolicy.SwapEndInbound(90, 84, 260, 3000) && PilotPolicy.SwapEndInbound(90, 270, 270, 20000), "close in / aligned: heading rule unchanged");
+            Console.WriteLine("Capped planning bank, waypoint advance, runway end: 9 behavior checks passed.");
+        }
             Check(PilotPolicy.Nearest(-1.4, -72.0, new List<double[]> { new[] { -.0494, -74.607 }, new[] { -1.5154, -71.909 }, new[] { 2.0, -70.0 } }, 600000) == 1, "nearest of built-ins + saved runways");
             Check(ToolRouter.Direct("land at 27 short final", "plane").Value.Value == "{\"where\":\"27 short final\"}" && FlightResidualPolicy.BuiltInRunway("27 short final", "").Item2 == "27", "'short final' in chat");
             Check(NativePlan.Parse("land KSC 27 short final", n => false, r => false).Steps[0].Op == "land", "'short final' in plans");

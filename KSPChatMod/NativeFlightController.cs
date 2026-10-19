@@ -1295,7 +1295,7 @@ namespace KSPChatBridge
                     if (plan != null && plan.Text.Trim() == text.Trim() && plan.Running && !plan.Paused) return "Local plan already running: " + plan.Status;   // never reset a running plan
                     if (plan == null || plan.Text.Trim() != text.Trim()) { plan = ParsePlan(text); planBank = 0; climbPitchMax = 15; descentPitchMin = -5; }   // same text = resume from the current step
                     plan.Start(); planLastTime = Planetarium.GetUniversalTime(); return "Local plan " + plan.Status;
-                case "get_status": case "autopilot_status": return PilotPolicy.StatusLine(mode, vessel.vesselName, mode == "landing" && runway != null ? runway.Phase : null, mode == "landing" && runway != null ? runway.Distance : double.NaN, vessel.altitude, vessel.srfSpeed, FlightGlobals.ship_heading, plan != null && plan.Running ? plan.Index + 1 : 0);
+                case "get_status": case "autopilot_status": return PilotPolicy.StatusLine(mode, vessel.vesselName, mode == "landing" && runway != null ? runway.Phase : null, mode == "landing" && runway != null ? runway.ToGo : double.NaN, vessel.altitude, vessel.srfSpeed, FlightGlobals.ship_heading, plan != null && plan.Running ? plan.Index + 1 : 0);
                 case "get_gps":
                     if (vessel == null) return "No active vessel.";
                     Vector3d v = vessel.srf_velocity;
@@ -1413,7 +1413,9 @@ namespace KSPChatBridge
                         selectedRunway = island ? new RunwayMission { Lat = -1.516092, Lon = -71.856744, EndLat = -1.514809, EndLon = -71.961815, Elevation = 134.6 }
                             : new RunwayMission { Lat = KscRunway.Lat09, Lon = KscRunway.Lon09, EndLat = KscRunway.Lat27, EndLon = KscRunway.Lon27, Elevation = 69.1 };
                     }
-                    if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEnd(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading)
+                    if ((direction == "" && (wantNearest || !savedRunway)) ? PilotPolicy.SwapEndInbound(NavigationMath.Bearing(selectedRunway.Lat, selectedRunway.Lon, selectedRunway.EndLat, selectedRunway.EndLon), FlightGlobals.ship_heading,
+                        NavigationMath.Bearing(vessel.latitude, vessel.longitude, (selectedRunway.Lat + selectedRunway.EndLat) / 2, (selectedRunway.Lon + selectedRunway.EndLon) / 2),
+                        NavigationMath.Distance(vessel.latitude, vessel.longitude, (selectedRunway.Lat + selectedRunway.EndLat) / 2, (selectedRunway.Lon + selectedRunway.EndLon) / 2, vessel.mainBody.Radius))
                     : !savedRunway && (island ? direction == "09" : direction == "27"))
                     { double lat = selectedRunway.Lat, lon = selectedRunway.Lon; selectedRunway.Lat = selectedRunway.EndLat; selectedRunway.Lon = selectedRunway.EndLon; selectedRunway.EndLat = lat; selectedRunway.EndLon = lon; }
                     double rwDist = NavigationMath.Distance(vessel.latitude, vessel.longitude, selectedRunway.Lat, selectedRunway.Lon, vessel.mainBody.Radius);

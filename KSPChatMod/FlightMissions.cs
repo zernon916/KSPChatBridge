@@ -637,6 +637,7 @@ namespace KSPChatBridge
             double db = ChartDesign.Bank(speed), dv = speed;
             if (bankDeg <= 20 && !double.IsNaN(db)) bankDeg = db;   // Oct 12 21:22: middle-ground design bank (55% of learned max)
             else if (bankDeg <= 20 && ApproachProfile.SafeBank != null) bankDeg = ApproachProfile.PhaseBank("entry", speed, speed / 1.5);   // sized from the learned turn envelope
+            if (bankDeg > FinalApproachPolicy.LandingBankCap) bankDeg = FinalApproachPolicy.LandingBankCap;   // GROK FIX2: chart turns at the bank the command can fly (+ the usual 30% margin)
             double r = c.TurnRadius = Radius(speed, bankDeg) / (!double.IsNaN(db) && bankDeg == db ? Margin : 1);   // design bank already IS the margin (no extra 30%)
             double fd = ChartDesign.FafDistance(Math.Max(speed, 60), Math.Max(50, .7 * speed)); double LongFix = double.IsNaN(fd) ? ApproachChart.LongFix : Math.Round(fd / 500) * 500; c.FafD = LongFix;
             if (ChartDesign.Known) ChartDesign.Log("[" + ChartDesign.Key + "]: bank " + Math.Round(bankDeg) + " deg (" + (double.IsNaN(db) ? "no envelope" : "55% learned") + ") @ " + Math.Round(dv) + " m/s -> r " + Math.Round(r) + " m; sink " + (double.IsNaN(ChartDesign.Sink(dv)) ? "-" : ChartDesign.Sink(dv).ToString("0.0")) + ", decel " + (double.IsNaN(ChartDesign.Decel) ? "-" : ChartDesign.Decel.ToString("0.00")) + " -> FAF " + (LongFix / 1000).ToString("0.0") + " km (fixed 12), downwind offset " + (2 * r / 1000).ToString("0.0") + " km, base " + ((LongFix + r) / 1000).ToString("0.0") + " km out, teardrop end " + ((LongFix + 2 * r) / 1000).ToString("0.0") + " km");
@@ -1092,6 +1093,9 @@ namespace KSPChatBridge
         internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         internal void GoAroundReset() { GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        internal double PlanBankRaw, RouteToGo = double.NaN; double wpFromLat = double.NaN, wpFromLon;
+        /// <summary>GROK FIX2: distance shown to the pilot - along the route to touchdown during entry, else to the threshold.</summary>
+        internal double ToGo { get { return Phase == "entry" && !double.IsNaN(RouteToGo) ? RouteToGo : Distance; } }
         internal double PlanSpeed, PlanBank, PlanRadius, PlanG, TurnBank, LastStall = 45; internal List<ApproachChart.Wp> RawRoute;
 
         /// <summary>Fly-by leg steering: track the line prev->fix (cross-track, max 30 deg cut) and start the turn onto the next leg
@@ -1100,7 +1104,8 @@ namespace KSPChatBridge
         internal void Plan(double course, double radius, double speed, int keepIndex, double hereLat = double.NaN, double hereLon = double.NaN)
         {
             PlanSpeed = speed; PlanG = ApproachProfile.LoadFactor(ApproachProfile.JoinG, speed, LastStall);
-            PlanBank = BankDeg > 20 ? BankDeg : ApproachProfile.SafeBank != null ? ApproachProfile.PhaseBank("entry", speed, LastStall) : ApproachProfile.BankForG(PlanG);   // explicit "bank 60" still wins
+            PlanBankRaw = BankDeg > 20 ? BankDeg : ApproachProfile.SafeBank != null ? ApproachProfile.PhaseBank("entry", speed, LastStall) : ApproachProfile.BankForG(PlanG);   // explicit "bank 60" still wins
+            PlanBank = FinalApproachPolicy.PlanningBank(PlanBankRaw);   // GROK FIX2: ...but never above the landing bank cap the command is clamped to
             PlanRadius = ApproachProfile.Radius(speed, PlanBank);
             ApproachChart.Wp target = keepIndex >= 0 && Route != null && keepIndex < Route.Count ? Route[keepIndex] : null;
             // smooth from the plane's own position so the first turn (onto the run-in) gets a lead/arc too, then drop that start point
@@ -1123,6 +1128,17 @@ namespace KSPChatBridge
         internal const int RebuildCooldownSteps = 1000;
         internal static bool RebuildDue(int stepsSinceRebuild) { return stepsSinceRebuild >= RebuildCooldownSteps; }
         int stepsSinceRebuild = RebuildCooldownSteps; bool holdLast; internal int Rebuilds;
+        /// <summary>Distance flown since the fix became current before an 'overflown' skip (frame-rate independent): half the spacing, >= 150 m.</summary>
+        internal static double BehindMinMove(double spacing) { return Math.Max(150, double.IsNaN(spacing) ? 300 : .5 * spacing); }
+        /// <summary>GROK FIX2 (Oct 19: legs 1-12 of a 593 m-spaced arc consumed in 0.23 s): capture radius max(700, .3 r) but never more
+        /// than 75% of the spacing to the previous route point; the overflown ('behind') skip only within 1 turn radius of the tracked
+        /// fix and only after flying BehindMinMove since it became current (no frame-by-frame cascade). The caller advances at most one fix per update.</summary>
+        internal static bool AdvanceWaypoint(bool leadTurn, double dw, double turnRadius, double spacing, bool behindUs, double movedM)
+        {
+            double capture = Math.Max(700, .3 * turnRadius);
+            if (!double.IsNaN(spacing) && spacing > 0) capture = Math.Min(capture, .75 * spacing);
+            return leadTurn || dw < capture || (behindUs && dw < turnRadius && movedM >= BehindMinMove(spacing));
+        }
         internal static double LegSteer(double lat, double lon, double pLat, double pLon, double fLat, double fLon, double nextBrg, double speed, double bankDeg, double radius, out bool advance, out double xte)
         {
             double leg = NavigationMath.Bearing(pLat, pLon, fLat, fLon), len = NavigationMath.Distance(pLat, pLon, fLat, fLon, radius);
@@ -1155,7 +1171,7 @@ namespace KSPChatBridge
             double trackErr = double.IsNaN(track) ? 0 : Math.Abs(FlightPolicy.Wrap(track - course));
             LastStall = stall; LastStallEst = stall;
             // live bank limit for the autopilot = this phase's G rating at the speed we have now (joins 2 g, final 1.5 g)
-            TurnBank = BankDeg > 20 ? BankDeg : ApproachProfile.PhaseBank(Phase, speed, stall);
+            TurnBank = FinalApproachPolicy.PlanningBank(BankDeg > 20 ? BankDeg : ApproachProfile.PhaseBank(Phase, speed, stall));   // GROK FIX2: capped like the command
             stepsSinceRebuild++; if (GateCooldown > 0) GateCooldown--;
             if (Phase == "entry")
             {
@@ -1214,6 +1230,9 @@ namespace KSPChatBridge
                 {
                     var wp = Route[RouteIndex];
                     double dw = NavigationMath.Distance(lat, lon, wp.Lat, wp.Lon, radius);
+                    { double togo = dw; for (int k = RouteIndex; k + 1 < Route.Count; k++) togo += NavigationMath.Distance(Route[k].Lat, Route[k].Lon, Route[k + 1].Lat, Route[k + 1].Lon, radius);
+                      var lw = Route[Route.Count - 1]; RouteToGo = togo + NavigationMath.Distance(lw.Lat, lw.Lon, Lat, Lon, radius); }   // GROK FIX2: along-route distance to touchdown
+                    if (double.IsNaN(wpFromLat)) { wpFromLat = lat; wpFromLon = lon; }
                     double pLat = RouteIndex > 0 ? Route[RouteIndex - 1].Lat : RouteStartLat, pLon = RouteIndex > 0 ? Route[RouteIndex - 1].Lon : RouteStartLon;
                     double nextBrg = RouteIndex + 1 < Route.Count ? NavigationMath.Bearing(wp.Lat, wp.Lon, Route[RouteIndex + 1].Lat, Route[RouteIndex + 1].Lon) : course;
                     bool leadTurn = false;
@@ -1235,7 +1254,7 @@ namespace KSPChatBridge
                     bool behindUs = !double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 100;   // overflown: never orbit a fix
                     bool last = RouteIndex == Route.Count - 1;
                     if (holdLast && last) { DesiredHeading = NavigationMath.Bearing(lat, lon, wp.Lat, wp.Lon); if (dw < 700) { holdLast = false; RouteIndex++; } }   // fly all the way out to the join point
-                    else if (leadTurn || dw < Math.Max(700, .3 * Chart.TurnRadius) || (behindUs && dw < 2.2 * Chart.TurnRadius)) RouteIndex++;
+                    else if (AdvanceWaypoint(leadTurn, dw, Chart.TurnRadius, RouteIndex > 0 ? NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) : double.NaN, behindUs, NavigationMath.Distance(wpFromLat, wpFromLon, lat, lon, radius))) { RouteIndex++; wpFromLat = lat; wpFromLon = lon; }   // GROK FIX2: one fix per update
                 }
                 if (RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }
             }
