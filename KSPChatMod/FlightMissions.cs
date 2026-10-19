@@ -692,12 +692,13 @@ namespace KSPChatBridge
     /// as the current state. Step returns true when the airbrakes should change; Why says why (for the [brakes] log).</summary>
     internal sealed class AirbrakeGate
     {
-        internal const double OnAbove = 8, OffBelow = 2, DwellS = 3;
+        internal const double OnAbove = 8, OffBelow = 2, DwellS = 8;   // GROK LAND4: 8 s minimum hold (was 3: OUT/IN every 3-4 s on the porpoise)
         internal bool On; internal string Why = ""; double changedAt = double.NegativeInfinity;
-        internal bool Step(double now, bool actual, double speed, double plan, bool allowed)
+        /// <summary>deployOk = soft block (GROK LAND4: low, or sinking faster than the path): no NEW deploy; allowed = hard block: retract at once.</summary>
+        internal bool Step(double now, bool actual, double speed, double plan, bool allowed, bool deployOk = true)
         {
             On = actual;
-            bool want = allowed && (On ? speed > plan + OffBelow : speed > plan + OnAbove);
+            bool want = allowed && (On ? speed > plan + OffBelow : deployOk && speed > plan + OnAbove);
             if (want == On) return false;
             if (allowed && now - changedAt < DwellS) return false;
             Why = string.Format(System.Globalization.CultureInfo.InvariantCulture, "airbrakes {0}: {1:0} m/s vs plan {2:0} ({3})", want ? "OUT" : "IN", speed, plan,

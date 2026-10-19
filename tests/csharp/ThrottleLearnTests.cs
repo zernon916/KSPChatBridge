@@ -26,12 +26,14 @@ internal static class ThrottleLearnTests
         {   // GROK FIX3: airbrake hysteresis + dwell (Oct 19 chatter)
             var g = new AirbrakeGate();
             Check(!g.Step(0, false, 177, 171, true) && g.Step(1, false, 180, 171, true) && g.On, "airbrakes out only above plan + 8");
-            Check(!g.Step(2, true, 172, 171, true) && g.On, "no retract inside the 3 s dwell");
+            Check(!g.Step(2, true, 172, 171, true) && !g.Step(8.5, true, 172, 171, true) && g.On, "no retract inside the 8 s minimum hold (GROK LAND4)");
             Check(!g.Step(4.5, true, 174, 171, true) && g.On, "stays out between plan + 2 and plan + 8 (hysteresis)");
             Check(g.Step(5, true, 173.5, 171, true) == false && g.Step(5.1, true, 173.1, 171, true) == false && g.On, "still above plan + 2: out");
-            Check(g.Step(6, true, 172.9 - 1, 171, true) && !g.On, "in below plan + 2 after the dwell");
-            Check(!g.Step(7, false, 185, 171, true) && g.Step(9.1, false, 185, 171, true), "next change waits 3 s again");
-            Check(g.Step(9.2, true, 185, 171, false) && !g.On, "not allowed (ground / low / elevon brakes) retracts at once");
+            Check(g.Step(9.1, true, 172.9 - 1, 171, true) && !g.On, "in below plan + 2 after the hold");
+            Check(!g.Step(10, false, 185, 171, true) && g.Step(17.2, false, 185, 171, true), "next change waits 8 s again");
+            Check(g.Step(17.3, true, 185, 171, false) && !g.On, "not allowed (ground / low / elevon brakes) retracts at once");
+            var g2 = new AirbrakeGate(); Check(!g2.Step(0, false, 190, 171, true, false) && !g2.On, "GROK LAND4: no deploy while low / sinking faster than the path (soft block)");
+            Check(g2.Step(1, false, 190, 171, true, true) && !g2.Step(5, true, 190, 171, true, false) && g2.On, "GROK LAND4: a soft block never yanks them in (only stops new deploys)");
             int flips = 0; bool st = false; for (int k = 0; k < 600; k++) { double v = 171 + 5 + 4 * Math.Sin(k * .3); if (g.Step(20 + k * .02, st, v, 171, true)) { st = g.On; flips++; } }
             Check(flips <= 4, "speed oscillating +1..+9 over plan for 12 s: <= 4 airbrake changes (was every frame), got " + flips);
             Console.WriteLine("Airbrake hysteresis: 8 behavior checks passed.");
