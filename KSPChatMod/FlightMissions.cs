@@ -607,7 +607,7 @@ namespace KSPChatBridge
     /// centreline, downwind past the threshold to abeam the join, 180 deg back onto final at max(FAF, 8 km): one locked path, ~360 deg total.</summary>
     internal static class GoAroundPattern
     {
-        internal const double MinFinalM = 8000; internal const int Side = -1;   // left-hand pattern
+        internal const double MinFinalM = ApproachChart.LongJoinM; internal const int Side = -1;   // GROK LAND5d: base turn ends at D14   // left-hand pattern
         internal static double JoinDistance(double faf) { return Math.Max(faf, MinFinalM); }
         /// <summary>(x, y) = plane in metres from the threshold (x east, y north); course = runway inbound course.</summary>
         internal static LockedPath Build(double x, double y, double course, double r, double faf, int side = Side)
@@ -996,8 +996,8 @@ namespace KSPChatBridge
             if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS) { Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = lastStep = now; accelAtStep = Accel; Why = "config lead +3%"; return Thr; }
             if (now - lastStep < WaitS) return Thr;
             bool improving = !double.IsNaN(accelAtStep) && now - lastStep < 3 * WaitS;
-            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += sz; lastStep = now; accelAtStep = Accel; Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
-            else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc -= sz; lastStep = now; accelAtStep = Accel; Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
+            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += Thr - t0; lastStep = now; accelAtStep = Accel; Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
+            else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc += Thr - t0; lastStep = now; accelAtStep = Accel; Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
             return Thr;
         }
         /// <summary>Bang-bang (idle / full) only for genuine emergencies: more than 30 m/s off the plan.</summary>
@@ -1057,7 +1057,7 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5b: inner attitude gain - wings level and > 2 deg off the target = x2 (it sat 4-5 deg low at 14:46:39).</summary>
         internal static double InnerGain(double err, double bankDeg) { return Math.Abs(bankDeg) <= BankOn && Math.Abs(err) > 2 ? 2 : 1.3; }
         /// <summary>GROK LAND5b: go-around climb-out nose (deg): 8 deg, more with excess speed, less near the stall.</summary>
-        internal static double GoAroundPitch(double speed, double stall) { double s = Math.Max(30, stall); return FlightPolicy.Clamp(8 + .1 * (speed - 1.5 * s), 4, 12); }
+        internal static double GoAroundPitch(double speed, double stall, double target = double.NaN) { double s = Math.Max(30, stall), t = double.IsNaN(target) ? 1.5 * s : target; return FlightPolicy.Clamp(8 + .25 * (speed - t), 4, 15); }   // GROK LAND5d: excess speed -> more nose (climb it off)
         /// <summary>GROK LAND4g: load-factor feed-forward (deg of extra AoA): the 1 g trim AoA x (n - 1), n = 1/cos(bank) - applied as the bank builds.</summary>
         internal static double LoadFF(double trimAoa, double bankDeg) { double a = double.IsNaN(trimAoa) ? 2 : FlightPolicy.Clamp(trimAoa, 0, 8), b = Math.Min(60, Math.Abs(bankDeg)) * Math.PI / 180; return a * (1 / Math.Cos(b) - 1); }
         /// <summary>Blend weight of the attitude hold: 0 wings level, 1 from BankFull deg of bank (no switch jump).</summary>
@@ -1377,8 +1377,23 @@ namespace KSPChatBridge
             flyOutWhy = "start path " + f.Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), FLY-OUT-AND-TURN: bad angle at the start fix, out " + (k / 1000).ToString("0.0") + " km past it, turn, inbound " + Math.Round((legTrack + 360) % 360) + " deg; reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m), total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")";
             return new KeyValuePair<double, List<Wp>>(total + Math.Max(0, total - (1.3 * direct + 8000)) * 4, route);
         }
+        /// <summary>GROK LAND5d (Luke): the plane's track already lines up with a published leg (start p, course crs, length len; metres):
+        /// track within LegMatchTrkDeg AND (the straight-ahead path passes within LegMatchFixM of the leg start, OR the plane is within
+        /// LegMatchXtkM cross-track of the leg and not past its end). Then join that leg and let the follower converge.</summary>
+        internal const double LegMatchTrkDeg = 30, LegMatchFixM = 2500, LegMatchXtkM = 2000, LongJoinM = 14000;
+        internal static bool LegMatch(double x, double y, double heading, double px, double py, double crs, double len)
+        {
+            if (double.IsNaN(heading) || Math.Abs(FlightPolicy.Wrap(heading - crs)) > LegMatchTrkDeg) return false;
+            double h = heading * Math.PI / 180, ux = Math.Sin(h), uy = Math.Cos(h), dx = px - x, dy = py - y;
+            double ahead = dx * ux + dy * uy, pass = Math.Abs(dx * uy - dy * ux);
+            if (ahead > 0 && pass <= LegMatchFixM) return true;
+            double c = crs * Math.PI / 180, cx = Math.Sin(c), cy = Math.Cos(c), al = -(dx * cx + dy * cy), xt = Math.Abs(-dx * cy + dy * cx);
+            return xt <= LegMatchXtkM && al >= -LegMatchFixM && al <= Math.Max(0, len);
+        }
+        internal bool JoinOnLeg;   // GROK LAND5d: the last BestJoin picked a leg the plane already lines up with
         internal List<Wp> BestJoin(double lat, double lon, double heading, double altitude, double speed, double turnR, double radius, out string why, string entry = null)
         {
+            JoinOnLeg = false; bool bestOnLeg = false;
             why = ""; if (double.IsNaN(heading)) { why = "no track yet"; return null; }
             double k = Math.PI / 180 * radius, cl = Math.Cos(ThrLat * Math.PI / 180);
             Func<double, double, double[]> xy = (la, lo) => new[] { (lo - ThrLon) * k * cl, (la - ThrLat) * k };
@@ -1404,6 +1419,7 @@ namespace KSPChatBridge
                         double toJ = NavigationMath.Distance(lat, lon, j.Lat, j.Lon, radius), brg = NavigationMath.Bearing(lat, lon, j.Lat, j.Lon);
                         double icpt = Math.Abs(FlightPolicy.Wrap(legTrack - brg)), hdgErr = Math.Abs(FlightPolicy.Wrap(heading - legTrack));
                         bool onLeg = hdgErr < 30 && toJ < 6000 && icpt < 60;   // already flying this leg: the point ahead on it
+                        if (!onLeg && kk == (a == null ? steps : 1)) { var ps = xy((a ?? f).Lat, (a ?? f).Lon); onLeg = LegMatch(me[0], me[1], heading, ps[0], ps[1], legTrack, legLen); }   // GROK LAND5d: near-miss of the leg start / within 2 km of the leg
                         if (!JoinAngleOk(icpt, onLeg, toJ, turnR))
                         {   // Luke Oct 12 21:22: bad angle onto the START path -> fly out 1.5-2 turn radii past the start fix (upstream), turn around, line up inbound
                             if (i == 0 && a == null) { var fo = FlyOut(lat, lon, heading, altitude, speed, turnR, radius, seq, legTrack, direct, me, xy, right); if (fo.Value != null && fo.Key < bestCost) { bestCost = fo.Key; bestTotal = fo.Key; best = fo.Value; JoinPoint = fo.Value[0]; bestWhy = flyOutWhy; } }
@@ -1429,8 +1445,8 @@ namespace KSPChatBridge
                         }
                         double total = reach + lose + rest, cost = total + Math.Max(0, total - (1.3 * direct + 8000)) * 4 + Math.Max(0, total - ApproachProfile.MaxJoinPath(direct)) * 8;   // Oct 12: a long detour only if nothing else works   // penalize a path much longer than direct
                         cost += SkipCost(direct, i - 1 + fr);   // Oct 12: ample distance -> fly the chart from its first fix, no FAF short-cut
-                        if (onLeg) cost *= .6;   // prefer the leg we are already heading along
-                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestWhy = "joined start path " + seq[0].Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), no fly-out: joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
+                        if (onLeg) cost *= .4 + .05 * i;   // prefer the leg we are already heading along - the EARLIEST matching leg (GROK LAND5d)
+                        if (cost < bestCost) { bestCost = cost; bestTotal = total; best = route; JoinPoint = j; bestOnLeg = onLeg; bestWhy = "joined start path " + seq[0].Name.Split('(')[0].Trim() + " (" + (right ? "right" : "left") + "), no fly-out: joined " + (right ? "right" : "left") + " at " + j.Name + (onLeg ? " (on the leg ahead)" : "") + ": intercept " + Math.Round(icpt) + " deg, reach " + (reach / 1000).ToString("0.0") + " km (r " + Math.Round(turnR) + " m)" + (lose > 0 ? ", +" + (lose / 1000).ToString("0.0") + " km to lose height" : "") + ", total " + (total / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ")"; }
                     }
                 }
             }
@@ -1474,10 +1490,11 @@ namespace KSPChatBridge
                     double fz = altitude - jAlt - reach * fSink / Math.Max(30, speed), flose = fz > 0 ? fz * Math.Max(30, speed) / fSink : 0;   // too high: extra distance at the learned sink
                     if (flose > 30000) { nAlt++; continue; }
                     nFallback++; double cost = reach + flose + d;
-                    if (cost < bestCost) { bestCost = cost; var j = new Wp { Name = "long final -" + (d / 1000).ToString("0") + " km", Lat = la, Lon = lo, Alt = jAlt };
+                    if (cost < bestCost) { bestCost = cost; bestOnLeg = false; var j = new Wp { Name = "long final -" + (d / 1000).ToString("0") + " km", Lat = la, Lon = lo, Alt = jAlt };
                         best = new List<Wp> { j }; JoinPoint = j; bestWhy = "direct to the long final line at " + j.Name + ", reach " + Math.Round(reach / 1000, 1) + " km (r=" + Math.Round(turnR) + " m), total " + (cost / 1000).ToString("0.0") + " km to touchdown (direct " + (direct / 1000).ToString("0.0") + ", final min " + (finalMin / 1000).ToString("0.0") + " km)" + (coneOff > ConeDeg && !double.IsNaN(coneD) && d <= coneD ? ", approach cone: " + Math.Round(coneOff) + " deg off the final course -> intercept at " + j.Name + " sized from r " + Math.Round(turnR) + " m, join <= " + Math.Round(ConeDeg) + " deg" : "") + (detour ? " [chart join was a detour]" : ""); }
                 }
             }
+            JoinOnLeg = best != null && bestOnLeg; if (JoinOnLeg) bestWhy += " [ON PUBLISHED LEG: following the chart]";
             why = (best != null ? bestWhy : "no safe join point") + (PlanLearned.Length > 0 ? " {" + PlanLearned + "}" : "") + " [" + n + " candidates; rejected " + nAlt + " altitude, " + nTerr + " terrain, " + nReach + " unreachable, " + nTight + " too tight for r " + Math.Round(turnR) + " m" + (tightWhy.Length > 0 ? " (" + tightWhy + ")" : "") + (nFallback > 0 ? "; " + nFallback + " long-final fallbacks" : "") + "]" + (coneCap ? " [approach cone: " + Math.Round(coneOff) + " deg off the final course -> intercept capped at " + (coneD / 1000).ToString("0.0") + " km, join <= " + Math.Round(ConeDeg) + " deg]" : coneOff > ConeDeg && !double.IsNaN(coneD) ? " [approach cone: " + Math.Round(coneOff) + " deg off the final course -> cap " + (coneD / 1000).ToString("0.0") + " km is inside the shortest final, sweep unchanged]" : "");
             return best;
         }
@@ -1592,7 +1609,7 @@ namespace KSPChatBridge
         /// <summary>LEARN sink-map hint for flare VS (m/s positive down); NaN = default 1 m/s (AUTOPILOT_REVIEW #6).</summary>
         internal double FlareSinkHint = double.NaN;
         internal double DecelStartDist { get { return ApproachProfile.DecelStartDist(LastStallEst, DecelA); } }
-        internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6;
+        internal const double IfDistance = 12000, FafDistance = 5000, AlignCross = 150, AlignHeading = 8, GateDistance = 1000, GateCross = 40, GateHeading = 6, LineupGateM = 100;   // GROK LAND5d (Luke): lineup corrections run until 100 m before the touchdown point; the go-around decision is there
         internal double Cross, Along;
         internal string Why = "";
         internal Func<double, double, double> Terrain; internal double BankDeg = 20, LongAgl = -1, ShortAgl = -1;
@@ -1612,6 +1629,9 @@ namespace KSPChatBridge
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
         bool finalJoinRoute;   // GROK LAND4
+        /// <summary>GROK LAND5d: go-around climb / downwind / base speed = approach entry speed (never the 250 m/s of 15:54).</summary>
+        internal static double PatternSpeed(double stall) { return Math.Max(ApproachProfile.EntrySpeed(stall), 1.3 * Math.Max(1, stall)); }
+        internal bool PatternActive { get { return MissedClimb || Pattern != null; } }
         internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor; internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
@@ -1776,13 +1796,16 @@ namespace KSPChatBridge
                             double k0 = Math.PI / 180 * radius, cl0 = Math.Cos(lat * Math.PI / 180), tx = (Lon - lon) * k0 * cl0, ty = (Lat - lat) * k0;
                             double fjR = PredictedPath.Radius(DubinsPath.JoinPlanSpeed(ApproachProfile.EntrySpeed(stall), speed), DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25)), sinkOk = .7 * ApproachProfile.SinkLimit(LearnedSink, 15) / Math.Max(50, speed), fd, ft;
                             Func<double, double, bool> fok = (fdd, pl) => altitude - Chart.GlideAlt(fdd) <= pl * sinkOk; double dLo = Math.Max(Chart.FafD, FafDistance + 2000);
-                            var fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, dLo, Math.Max(dLo, ApproachChart.LongLineM), fok, out fd, out ft, false);   // GROK LAND4f: inside the 30 km long-final line first
+                            var fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, Math.Max(dLo, ApproachChart.LongJoinM), Math.Max(dLo, ApproachChart.LongLineM), fok, out fd, out ft, false);   // GROK LAND5d: join at D14 or beyond (arc2 ends outside D14: long wings-level final)
+                            if (fj == null || DubinsPath.TurnDeg(fj) > 270) fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, Math.Max(dLo, ApproachChart.LongJoinM), 40000, fok, out fd, out ft);
+                            if (fj == null) fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, dLo, Math.Max(dLo, ApproachChart.LongLineM), fok, out fd, out ft, false);   // fallback: the FAF-side join only when D14 is impossible
                             if (fj == null || DubinsPath.TurnDeg(fj) > 270) fj = DubinsPath.FinalJoin(0, 0, track, tx, ty, course, fjR, dLo, 40000, fok, out fd, out ft);
                             double cur = 0, pla = lat, plo = lon; if (Route != null) foreach (var w in Route) { cur += NavigationMath.Distance(pla, plo, w.Lat, w.Lon, radius); pla = w.Lat; plo = w.Lon; }
                             cur += NavigationMath.Distance(pla, plo, Lat, Lon, radius);
                             // GROK LAND4e: outbound past the FAF on the extended final = always take the Dubins teardrop join (chart join to the FAF behind is a figure-8)
                             bool outboundPast = Math.Abs(FlightPolicy.Wrap(track - (course + 180))) < 45 && -along > Math.Max(Chart.FafD, FafDistance) + 2000;
-                            if (fj != null && (Route == null || Route.Count == 0 || ft < .9 * cur || outboundPast && !DubinsPath.FigureEight(fj) && DubinsPath.TurnDeg(fj) <= 270))
+                            bool legMatch = Chart.JoinOnLeg && Route != null && Route.Count > 0;   // GROK LAND5d: a published leg lines up -> follow the chart; else the D14 centreline join
+                            if (fj != null && !legMatch && (Route == null || Route.Count == 0 || ft < .9 * cur || fd >= ApproachChart.LongJoinM - 1 || outboundPast && !DubinsPath.FigureEight(fj) && DubinsPath.TurnDeg(fj) <= 270))
                             {
                                 double pLa, pLo; NavigationMath.Offset(Lat, Lon, course + 180, fd, radius, out pLa, out pLo);
                                 Route = new List<ApproachChart.Wp> { new ApproachChart.Wp { Name = "final join " + (fd / 1000).ToString("0.0") + " km", Lat = pLa, Lon = pLo, Alt = Math.Min(Math.Max(Chart.GlideAlt(fd), Elevation + 300), Math.Max(altitude, Chart.GlideAlt(ApproachChart.LongLineM))) } };   // GROK LAND4f: no 2.3 km climb to a 41 km join
@@ -1916,11 +1939,11 @@ namespace KSPChatBridge
                     if (altitude - Elevation >= MissedAgl && missedSteps >= 500)
                     {   // GROK LAND5c item 8: traffic pattern instead of a Dubins/chart re-join
                         MissedClimb = false; missedSteps = 0; double kP = Math.PI / 180 * radius, clP = Math.Cos(lat * Math.PI / 180);
-                        double rP = PredictedPath.Radius(DubinsPath.JoinPlanSpeed(ApproachProfile.EntrySpeed(LastStall), speed), DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25));
+                        double rP = PredictedPath.Radius(PatternSpeed(stall), DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25));   // GROK LAND5d: radius at the pattern TARGET speed
                         Pattern = GoAroundPattern.Build((lon - Lon) * kP * clP, (lat - Lat) * kP, course, rP, Chart != null ? Chart.FafD : FafDistance);
                         Why = "missed approach climb done; pattern"; PatternLog = "go-around pattern: downwind - " + Pattern.Describe() + ", join final " + (GoAroundPattern.JoinDistance(Chart != null ? Chart.FafD : FafDistance) / 1000).ToString("0.0") + " km";
                     }
-                    else { DesiredHeading = double.IsNaN(track) ? course : track; ArcBank = 0; LatBank = 0; Locked = null; DubinsPts = null; DesiredAltitude = Math.Max(DesiredAltitude, Elevation + MissedAgl + 100); DesiredVs = 10; DesiredSpeed = Math.Max(DesiredSpeed, ApproachProfile.Speed(stall)); }
+                    else { DesiredHeading = double.IsNaN(track) ? course : track; ArcBank = 0; LatBank = 0; Locked = null; DubinsPts = null; DesiredAltitude = Math.Max(DesiredAltitude, Elevation + MissedAgl + 100); DesiredVs = 10; DesiredSpeed = PatternSpeed(stall); }   // GROK LAND5d: capped climb speed = approach entry speed
                 }
                 else if (Pattern != null)
                 {   // GROK LAND5c item 8: fly the locked pattern (climb -> 180 -> downwind -> 180 -> final); hold the pattern altitude
@@ -1930,7 +1953,7 @@ namespace KSPChatBridge
                     if (!ok || Pattern.Seg >= 3) { PatternLog = ok ? "go-around pattern: on final - glidepath (hold altitude until it meets us)" : "go-around pattern: off the pattern by " + Math.Round(Math.Abs(Pattern.Xtrk)) + " m - capturing final"; Pattern = null; Phase = "intercept"; ArcBank = 0; }
                     else
                     {
-                        LatBank = Pattern.BankAsk; DesiredHeading = Pattern.DesiredTrack; ArcBank = 0; DubinsR = Pattern.R;
+                        LatBank = Pattern.BankAsk; DesiredHeading = Pattern.DesiredTrack; ArcBank = 0; DubinsR = Pattern.R; DesiredSpeed = PatternSpeed(stall);
                         DesiredAltitude = Math.Max(Elevation + MissedAgl + 100, Math.Min(altitude, Chart != null ? Chart.GlideAlt(GoAroundPattern.JoinDistance(Chart.FafD)) : altitude)); DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) / 20, -5, 5);
                         var lp = new List<double[]>(); foreach (var q in Pattern.Points()) lp.Add(new[] { Lat + q[1] / kP, Lon + q[0] / (kP * clP) }); lp.Add(new[] { Lat, Lon }); DubinsPts = lp;
                     }
@@ -1993,7 +2016,7 @@ namespace KSPChatBridge
                     if (sl == 2 && GateCooldown <= 0 && Phase == "final" && hat > 10) { Phase = "go around"; Why = "too slow: " + speed.ToString("0") + " m/s below the floor " + SpeedFloor.ToString("0") + " for " + ApproachProfile.FloorRecoverS + " s, not recovering"; }
                 }
                 if (GateCooldown <= 0 && Phase == "final" && Distance < ApproachChart.ShortFix && Distance > 100 && predFast) { Phase = "go around"; Why = "too fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ")"; }
-                if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && Distance < GateDistance && Distance > 0 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
+                if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && TouchdownM - along <= LineupGateM && TouchdownM - along > -500 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up " + LineupGateM + " m before touchdown (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 double daHat = Override != null ? Override.DaHat(Elevation) : double.NaN;   // GROK LAND2: plate DA - still well high there = go around
                 if (Phase == "final" && GateCooldown <= 0 && daHat > 20 && hat < daHat && hat > daHat - 40 && above > 60) { Phase = "go around"; Why = "high at DA " + daHat.ToString("0") + " m (" + above.ToString("0") + " m above the glidepath)"; }
                 // A missed threshold at height gets a go-around, never a dive back.

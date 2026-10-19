@@ -282,6 +282,15 @@ namespace KSPChatBridge
         }
         internal static bool LowEnergy(bool was, double speed, double stall, double vs, double agl) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? MinSafeSpeed(stall) : 1.2 * stall); }
         /// <summary>GROK LAND5c: on final the speed part uses the shrinking floor k x stall (enter below k, clear at 1.08k), sink parts unchanged.</summary>
+        /// <summary>GROK LAND5d: stick keys during an autoland = temporary override (resume 3 s after hands off); held > 15 s = a real disengage.</summary>
+        internal const double OverrideResumeS = 3, OverrideMaxS = 15;
+        /// <summary>GROK LAND5d: final lateral - a gentle but real bank toward the centreline aim point (1.5 deg bank per deg of track error, max 15);
+        /// wings level only once the track error (i.e. the cross-track via the aim point) is inside ~0.3 deg.</summary>
+        internal const double FinalLatGain = 2.2, FinalLatMaxBank = 20, FinalLatNearBank = 7, FinalLatFarM = 2000, FinalLatNearM = 100, FinalLatDeadDeg = .3, FinalLatDamp = 1.2;
+        /// <summary>Max correction bank on final: 20 deg outside 2 km, tapering to 7 deg at the 100 m go-around point (Luke: more aggressive lineup).</summary>
+        internal static double FinalLatCap(double distTdM) { if (double.IsNaN(distTdM) || distTdM >= FinalLatFarM) return FinalLatMaxBank; double t = Math.Max(0, distTdM - FinalLatNearM) / (FinalLatFarM - FinalLatNearM); return FinalLatNearBank + (FinalLatMaxBank - FinalLatNearBank) * t; }
+        internal static double FinalLatBank(double trkErr, double distTdM = double.NaN) { double cap = FinalLatCap(distTdM); return Math.Abs(trkErr) < FinalLatDeadDeg ? 0 : FlightPolicy.Clamp(FinalLatGain * trkErr, -cap, cap); }
+        internal static bool OverrideHolds(double since, double now) { return double.IsNaN(since) || now - since <= OverrideMaxS; }
         internal static bool LowEnergyK(bool was, double speed, double stall, double vs, double agl, double k) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? 1.08 * k : k) * stall; }
         internal static bool LowEnergy(double speed, double stall, double vs, double agl) { return speed < MinSafeSpeed(stall) || (vs < -8 && agl < 300) || (vs < -3 && agl < 120); }
         // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----

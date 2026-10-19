@@ -43,7 +43,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -403,7 +403,13 @@ namespace KSPChatBridge
             NativeCommands.WriteStatus(Busy, mode, NativeIds.Vessel(vessel.id));
             if (LearnPilotInput(manual)) manual = false;   // learn waiting: the pilot may fly without ending the test flight
             LiveTick();
-            if (manual && Busy) { Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
+            if (manual && Busy && mode == "landing" && vessel != null && !vessel.LandedOrSplashed && PilotPolicy.OverrideHolds(overrideSince, Time.realtimeSinceStartup))
+            {   // GROK LAND5d (15:55:32 ap=idle): a stick key during the autoland = a temporary pilot override, not a disengage
+                if (double.IsNaN(overrideSince)) { overrideSince = Time.realtimeSinceStartup; ChatLog.Write("ap", "pilot override: manual input during the autoland - controls yours, autoland resumes " + PilotPolicy.OverrideResumeS + " s after hands off"); ChatWindow.Notice("Autoland: pilot override - resumes " + PilotPolicy.OverrideResumeS + " s after you let go."); }
+                overrideUntil = Time.realtimeSinceStartup + PilotPolicy.OverrideResumeS; manual = false;
+            }
+            else if (!manual && !double.IsNaN(overrideSince) && Time.realtimeSinceStartup >= overrideUntil) overrideSince = double.NaN;
+            if (manual && Busy) { overrideSince = double.NaN; Stop(); ChatWindow.Notice("Local autopilot released: manual input; plan paused."); }
             if (!manual)
             {
                 try { TickPlan(); }
@@ -549,6 +555,11 @@ namespace KSPChatBridge
         {
             if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
             if (LearnPilotFlying) return;   // learn wait: pilot has the controls
+            if (mode == "landing" && !double.IsNaN(overrideSince))
+            {   // GROK LAND5d: pilot override - hands off the controls until OverrideResumeS after the last key, then a smooth takeover
+                if (Time.realtimeSinceStartup < overrideUntil) { overridePending = true; return; }
+                if (overridePending) { overridePending = false; takeoverT = 0; takePitch = c.pitch; takeRoll = c.roll; takeYaw = c.yaw; gate.Seed(c.mainThrottle); ChatLog.Write("ap", "pilot override ended: autoland resumed (" + (runway != null ? runway.Phase : "") + ")"); }
+            }
             if (RocketFly(c)) return;
             try
             {
@@ -904,8 +915,9 @@ namespace KSPChatBridge
                 }
                 if (mode == "landing" && runway != null && !double.IsNaN(runway.BankCap)) blim = Math.Min(blim, runway.BankCap);   // GROK LAND5b: <= 20 deg below 500 m after a go-around
             double hdgRateL = double.IsNaN(prevHdgL) || dt <= 0 ? 0 : FlightPolicy.Wrap(FlightGlobals.ship_heading - prevHdgL) / dt; prevHdgL = FlightGlobals.ship_heading;
-            double locDamp = mode == "landing" && runway != null && runway.Phase == "final" ? FlightPolicy.Clamp(1.5 * hdgRateL, -5, 5) : 0;   // GROK LAND5b: track-rate damping on the final capture (16 km wobble)
-            double bank = directBank ?? (latBank.HasValue ? FlightPolicy.Clamp(latBank.Value, -blim, blim) : FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn) - locDamp, -blim, blim));
+            double locDamp = mode == "landing" && runway != null && runway.Phase == "final" ? FlightPolicy.Clamp(PilotPolicy.FinalLatDamp * hdgRateL, -5, 5) : 0;   // GROK LAND5d: track-rate damping sized for the stronger lineup gain (no S-turns)   // GROK LAND5b: track-rate damping on the final capture (16 km wobble)
+            bool finLat = mode == "landing" && runway != null && runway.Phase == "final" && !latBank.HasValue;   // GROK LAND5d (16:01 go-around, 65 m off at 1 km): bank ask was 0.45/deg - it 'straightened out' 200 m off
+            double bank = directBank ?? (latBank.HasValue ? FlightPolicy.Clamp(latBank.Value, -blim, blim) : finLat ? FlightPolicy.Clamp(arcFf + PilotPolicy.FinalLatBank(hdgErr, runway.Distance + runway.TouchdownM) - locDamp, -Math.Min(blim, PilotPolicy.FinalLatCap(runway.Distance + runway.TouchdownM)), Math.Min(blim, PilotPolicy.FinalLatCap(runway.Distance + runway.TouchdownM))) : FlightPolicy.Clamp(arcFf + PilotPolicy.HeadingBank(hdgErr, rudderOn) - locDamp, -blim, blim));
                 bank = (landBank || envBank) && !directBank.HasValue ? FlightPolicy.Clamp(bank, -blim, blim) : PilotPolicy.ClampBank(bank, vessel.srfSpeed, bankOverride);
                 double decel = prevSpd < 0 || dt <= 0 ? 0 : (prevSpd - vessel.srfSpeed) / dt; prevSpd = vessel.srfSpeed;
                 double learnedRoll = learn != null && learn.P != null && !double.IsNaN(learn.P.Perf.RollRate) ? learn.P.Perf.RollRate : profile != null && !double.IsNaN(profile.Perf.RollRate) ? profile.Perf.RollRate : double.NaN;   // step 6 result drives step 7 roll-in in the same flight
@@ -983,7 +995,7 @@ namespace KSPChatBridge
                 if (mode == "landing" && runway != null && runway.Phase == "flare" && runway.FlareFast && !double.IsNaN(flareEntryPitch) && !vessel.LandedOrSplashed) desiredPitch = Math.Min(desiredPitch, flareEntryPitch + 1);   // GROK LAND5c: fast flare = no pitch-up
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 bool missedClimb = mode == "landing" && runway != null && runway.MissedClimb && !vessel.LandedOrSplashed;
-                if (missedClimb && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(PitchAttitude.GoAroundPitch(vessel.srfSpeed, stall), 0, CpMax);   // GROK LAND5b: tracked go-around nose (was 15-17 vs tgt 0-3)
+                if (missedClimb && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(PitchAttitude.GoAroundPitch(vessel.srfSpeed, stall, runway.DesiredSpeed), 0, CpMax);   // GROK LAND5b: tracked go-around nose (was 15-17 vs tgt 0-3)
                 if (targetVs > 3 && !directPitch.HasValue && !missedClimb)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
                     desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, CpMax), CpMax);
@@ -1038,6 +1050,8 @@ namespace KSPChatBridge
                     if (stepThr.Why.Length > 0) ChatLog.Write("throttle", "approach step: " + stepThr.Why + " -> " + Math.Round(100 * throttle) + "% (" + Math.Round(vessel.srfSpeed) + " vs plan " + Math.Round(runway.DesiredSpeed) + ", trend " + stepThr.Accel.ToString("0.0") + " m/s2, 5 s ahead " + Math.Round(stepThr.Predicted) + ")");
                 }
                 else { throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle); stepThr.Thr = double.NaN; }
+                if (mode == "landing" && runway != null && runway.PatternActive && !vessel.LandedOrSplashed && vessel.srfSpeed > runway.DesiredSpeed + 10)
+                { throttle = vessel.srfSpeed > runway.DesiredSpeed + 25 ? 0 : Math.Min(throttle, .3); throttleWhy = "go-around pattern overspeed (" + Math.Round(vessel.srfSpeed) + " vs " + Math.Round(runway.DesiredSpeed) + ")"; }   // GROK LAND5d
                 if (mode == "landing" && runway != null && runway.BelowFloor && (runway.Phase == "final" || runway.Phase == "intercept") && !double.IsNaN(prevThrCfg))
                 { throttle = Math.Min(.9, Math.Max(throttle, prevThrCfg + .05 * dt)); if (!double.IsNaN(stepThr.Thr)) stepThr.Thr = throttle; throttleWhy = "below the speed floor " + Math.Round(runway.SpeedFloor) + ": gentle power-up"; }   // GROK LAND5c
                 if (mode == "landing" && runway != null && directVs.HasValue && !vessel.LandedOrSplashed && (runway.Phase == "final" || runway.Phase == "flare"))

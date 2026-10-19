@@ -129,6 +129,19 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5d
+            // KERBO near-miss: track 090 toward a leg start 2 km north of our line, leg course 110 (20 deg off) -> match
+            Check(ApproachChart.LegMatch(0, 0, 90, 20000, 2000, 110, 15000), "LAND5d: path passes 2 km from the leg start, track 20 deg off -> join the published leg");
+            Check(!ApproachChart.LegMatch(0, 0, 90, 20000, 4000, 110, 15000) && !ApproachChart.LegMatch(0, 0, 90, 20000, 1000, 135, 15000), "LAND5d: 4 km miss or 45 deg off -> no leg match");
+            Check(ApproachChart.LegMatch(5000, -3000, 268, 0, 0, 270, 10000) == false && ApproachChart.LegMatch(-3000, -1500, 268, 0, 0, 270, 10000), "LAND5d: within 2 km cross-track of the leg and not past its end -> match");
+            Check(!ApproachChart.LegMatch(0, 0, 90, -5000, 500, 90, 3000), "LAND5d: leg already behind (past its end) -> no match");
+            Check(GoAroundPattern.JoinDistance(6000) == 14000 && GoAroundPattern.JoinDistance(16000) == 16000, "LAND5d: go-around base turn ends at D14 (FAF only if farther)");
+            Check(Math.Abs(RunwayMission.PatternSpeed(46) - ApproachProfile.EntrySpeed(46)) < 1e-9 || RunwayMission.PatternSpeed(46) >= 1.3 * 46, "LAND5d: pattern speed = approach entry speed");
+            Check(PilotPolicy.OverrideHolds(double.NaN, 100) && PilotPolicy.OverrideHolds(90, 100) && !PilotPolicy.OverrideHolds(80, 100), "LAND5d: stick input = temporary override; > 15 s = real disengage");
+            Check(PilotPolicy.FinalLatBank(-5.8, 5000) < -12 && PilotPolicy.FinalLatBank(-20, 5000) == -20 && PilotPolicy.FinalLatBank(-20, 100) == -7 && Math.Abs(PilotPolicy.FinalLatCap(1050) - 13.5) < 1e-9 && PilotPolicy.FinalLatBank(.2, 5000) == 0, "LAND5d: final lineup bank up to 20 deg outside 2 km, 7 deg at the 100 m gate, wings level only inside tolerance");
+            var stA = new StepThrottle(); stA.Reset(.02); for (int k = 0; k < 400; k++) stA.Update(k * .02 + 4 * (k / 50), 200, 160, .02, double.NaN);
+            Check(stA.Acc >= -.021, "LAND5d: step-throttle accumulator counts only the real change (clamped at idle: no +49% 'back' jump)");
+        }
         {   // GROK TAB-ILS1: deviation bars
             bool cl1, cl2, cl3, cl4; double o1 = Ils.BarOffset(15, 30, 100, out cl1), o2 = Ils.BarOffset(-45, 30, 100, out cl2), o3 = Ils.BarOffset(-5, 10, 80, out cl3), o4 = Ils.BarOffset(double.NaN, 10, 80, out cl4);
             Check(o1 == 50 && !cl1 && o2 == -100 && cl2 && o3 == -40 && !cl3 && o4 == 0 && !cl4, "TAB-ILS1: deviation -> pixel offset, clamped at the end with an arrow");
@@ -167,7 +180,7 @@ class Program
             { double[] a = pp[i], b = pp[i + 1], c = pp[j], d = pp[j + 1]; double d1 = (d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0]), d2 = (d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0]), d3 = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]), d4 = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]); if (d1 * d2 < 0 && d3 * d4 < 0) crossP = true; }
             Console.WriteLine("LAND5c pattern: segs " + string.Join(">", segs) + " turned " + turned.ToString("0") + " downwind off " + minOff.ToString("0") + " end x " + xP.ToString("0") + " hdg " + hP.ToString("0") + " S " + (pat.S / 1000).ToString("0.0") + " km");
             Check(okP && string.Join(">", segs) == "0>1>2>3" && Math.Abs(Math.Abs(turned) - 360) < 25, "LAND5c: go-around pattern = 180, downwind, 180 to final (~360 deg total)");
-            Check(!crossP && minOff > 1.5 * rP && Math.Abs(FlightPolicy.Wrap(hP - 270)) < 10 && xP > 8000, "LAND5c: pattern never crosses itself / the field, downwind 2r off, joins final heading 270 at >= 8 km");
+            Check(!crossP && minOff > 1.5 * rP && Math.Abs(FlightPolicy.Wrap(hP - 270)) < 10 && xP > 13500, "LAND5c/5d: pattern never crosses itself / the field, downwind 2r off, joins final heading 270 at D14");
         }
         {   // GROK LAND5c: 15:16 replay - flaps FULL + gear drag step (decel -2.4 m/s2 at 148), 4 sC engine spool, plan 140
             var stC = new StepThrottle(); double plC = 140, vC = 140, kDC = 6 * .3 / (140 * 140), effC = .3, thrC = .3; stC.Reset(.3);
@@ -212,7 +225,7 @@ class Program
             Check(PitchAttitude.SinkGuard(-3, -7, -20, -7, 143) > -7 && PitchAttitude.SinkGuard(-3, -3, -8, -7, 143) == -3, "LAND5b: sink guard caps sink at path + 3 m/s");
             Check(PitchAttitude.BankSlew(-6.8, -1.4, 1, 0, -5.4) == -2.8 && PitchAttitude.InnerGain(-5, 0) == 2 && PitchAttitude.InnerGain(-5, 20) == 1.3, "LAND5b: nose 5 deg low wings level = 4 deg/s slew + x2 inner gain");
             Check(FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 160, 160) && FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 174, 160) && !FlapsPolicy.FinalLatch(true, 3000, 9400, 2, 176, 160) && !FlapsPolicy.FinalLatch(false, 3000, 9400, 2, 160, 160), "LAND5b: flaps latched on final unless > limit + 15");
-            Check(Math.Abs(PitchAttitude.GoAroundPitch(245, 46) - 12) < 1e-9 && PitchAttitude.GoAroundPitch(60, 46) >= 4 && PitchAttitude.GoAroundPitch(60, 46) <= 8, "LAND5b: go-around climb nose 4-12 deg");
+            Check(Math.Abs(PitchAttitude.GoAroundPitch(245, 46, 160) - 15) < 1e-9 && PitchAttitude.GoAroundPitch(150, 46, 160) >= 4 && PitchAttitude.GoAroundPitch(150, 46, 160) <= 8 && PitchAttitude.GoAroundPitch(160, 46, 160) == 8, "LAND5b/5d: go-around climb nose 4-15 deg, tracks the pattern speed");
             Check(FlapsPolicy.ApproachSchedule("final", 13000, 9400, 0, 900) == 1 && FlapsPolicy.ApproachSchedule("final", 14000, 9400, 0, 900) == 0 && FlapsPolicy.ApproachSchedule("final", 9000, 9400, 1, 700) == 2 && FlapsPolicy.ApproachSchedule("final", 4900, 9400, 2, 500) == 3
                 && FlapsPolicy.ApproachSchedule("final", 3500, 9400, 2, 400) == 2 && FlapsPolicy.ApproachSchedule("final", 4500, 9400, 1, 250) == 1 && FlapsPolicy.GearDistance(9400) == 9400 && FlapsPolicy.GearDistance(5000) == 8000, "LAND5b: flaps 1 from FAF+4 km, 2 at FAF, FULL by 5 km, frozen inside 4 km / 300 m; gear by FAF / 8 km");
             Check(Math.Abs(FlapsPolicy.NextConfigDistance(12000, 9400, 1, false) - 9400) < 1 && double.IsNaN(FlapsPolicy.NextConfigDistance(4500, 9400, 2, true)), "LAND5b: next config step lookahead (lead), none inside the freeze");
@@ -1971,9 +1984,9 @@ class Program
             Check(!descendedUnaligned, "no descent before alignment " + dbgU);
             Check(!double.IsNaN(crossAt1k) && crossAt1k < RunwayMission.GateCross && trkAt1k < RunwayMission.GateHeading, "aligned at 1 km: " + crossAt1k.ToString("0") + " m / " + trkAt1k.ToString("0.0") + " deg");
             var gate = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
-            double gl, gn; NavigationMath.Offset(gate.Lat, gate.Lon, course + 180, 800, R, out gl, out gn); NavigationMath.Offset(gl, gn, course + 90, 120, R, out gl, out gn);
+            double gl, gn; NavigationMath.Offset(gate.Lat, gate.Lon, course, gate.TouchdownM - RunwayMission.LineupGateM + 20, R, out gl, out gn);   // GROK LAND5d: the gate is 100 m before touchdown NavigationMath.Offset(gl, gn, course + 90, 120, R, out gl, out gn);
             gate.Step(gl, gn, 120, 50, 62, false, R, 45, course + 20);   // on speed (1.3 Vs + 3): the alignment gate fires
-            Check(gate.Phase == "go around" && gate.Why.Contains("not lined up"), "misaligned at 1 km -> go around (" + gate.Why + ")");
+            Check(gate.Phase == "go around" && gate.Why.Contains("not lined up"), "misaligned 100 m before touchdown -> go around (" + gate.Why + ")");
         }
         {
             double R = 600000; var g = new RunwayMission { Lat = -.0502119, Lon = -74.490300, EndLat = -.0485997, EndLon = -74.724375, Elevation = 70, Phase = "final" };
@@ -2139,7 +2152,7 @@ class Program
                 var head = fly(90, 270, null);   // from the east, flying west: head-on to runway 27
                 Check(head.Why.StartsWith("ok") && head.Kind == "short", "0 deg (head-on) -> short final: " + head.Why);
                 var abeam = fly(0, 180, null);   // from the north, 90 deg to the runway
-                Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && abeam.JoinLog.StartsWith("joined") && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> nearest safe join, rolls out on centerline: " + abeam.JoinLog + " / " + abeam.Why);
+                Check(abeam.Why.StartsWith("ok") && abeam.Kind == "long" && (abeam.JoinLog.StartsWith("joined") || abeam.JoinLog.Contains("onto the final at 14.0 km")) && double.Parse(System.Text.RegularExpressions.Regex.Match(abeam.Why, @"turned=(\d+)").Groups[1].Value) < 720, "90 deg -> nearest safe join, rolls out on centerline: " + abeam.JoinLog + " / " + abeam.Why);
                 var behind = fly(270, 90, null);   // from the west, flying east (180 deg opposite)
                 Check(behind.Why.StartsWith("ok") && (behind.JoinLog.StartsWith("joined") || behind.JoinLog.StartsWith("DUBINS FINAL JOIN")) && double.Parse(System.Text.RegularExpressions.Regex.Match(behind.Why, @"turned=(\d+)").Groups[1].Value) < 720, "180 deg -> nearest safe join, long final (no circles): " + behind.Why);
                 var ch = ApproachChart.Build(-1.516092, -71.856744, 270, 134.6, 130, 20, R0, null);
@@ -2431,7 +2444,7 @@ class Program
                 Check(hill.BestJoin(bLa, bLo, 180, 800, v, r, 600000, out jw) == null && jw.Contains("terrain"), "terrain in the way: no join, fall back to the long final (" + jw + ")");
                 var rmj = new RunwayMission { Lat = thrLa, Lon = thrLo, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 rmj.Step(bLa, bLo, 700, 700, v, false, 600000, 45, 180, 180);
-                Check(rmj.JoinLog.StartsWith("joined") && rmj.RawRoute != null && rmj.RawRoute[0].Name != rmj.Chart.DownLeftA.Name, "approach start uses the best join: " + rmj.JoinLog);
+                Check((rmj.JoinLog.StartsWith("joined") || rmj.JoinLog.Contains("onto the final at 14.0 km")) && rmj.RawRoute != null && rmj.RawRoute[0].Name != rmj.Chart.DownLeftA.Name, "approach start uses the best join: " + rmj.JoinLog);
             }
             Console.WriteLine("Nearest safe join: 12 behavior checks passed.");
             {

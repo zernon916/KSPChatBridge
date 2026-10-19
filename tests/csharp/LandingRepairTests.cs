@@ -68,7 +68,7 @@ static class LandingRepairTests
         Check(Math.Abs(rw.DesiredVs + 80 * .08) < .01, "vertical guidance follows the selected chart slope");
         Check(Math.Abs(rw.Ils.AboveGsM) < .01, "ILS display and guidance share the chart glidepath");
         var unsafeFinal = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = -.2, Elevation = 70, Phase = "final" };
-        NavigationMath.Offset(0, 0, 90, 800, 600000, out la, out lo);
+        NavigationMath.Offset(0, 0, 270, unsafeFinal.TouchdownM - RunwayMission.LineupGateM + 20, 600000, out la, out lo);   // GROK LAND5d: the lineup gate is 100 m before touchdown
         NavigationMath.Offset(la, lo, 0, 50, 600000, out la, out lo);
         unsafeFinal.Step(la, lo, 80, 10, 62, false, 600000, 45, 270, 270);
         Check(unsafeFinal.Phase == "go around", "parallel offset must not enter flare below the alignment gate");
