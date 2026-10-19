@@ -189,6 +189,16 @@ class Program
                     Check(!DubinsPath.Flyable(tight, 16000, out fw) && fw.Contains("needs") && DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 20000 }, new double[] { 20000, 20000 }, new double[] { 20000, 0 } }, 3000, out fw), "GROK JOIN1: joins needing more turn room than they have are rejected (" + fw + ")");
                     Check(DubinsPath.Flyable(new List<double[]> { new double[] { 0, 0 }, new double[] { 0, 6000 } }, 16000, out fw), "GROK JOIN1: a straight-in final is always flyable");
                 }
+                {   // GROK CHART1: airport diagram geometry
+                    Check(AirportDiagram.EndNumber(90) == "09" && AirportDiagram.EndNumber(270) == "27" && AirportDiagram.EndNumber(3) == "36" && AirportDiagram.EndNumber(355) == "36" && AirportDiagram.EndNumber(184) == "18" && AirportDiagram.EndNumber(-90) == "27", "GROK CHART1: runway end numbers from heading");
+                    var dg = AirportDiagram.BuiltIn(new[] { new KeyValuePair<string, double[]>("VAB", new[] { -0.092, -74.621 }), new KeyValuePair<string, double[]>("Shores", new[] { -0.14, -74.6 }) });
+                    var kRw = dg[0].Runways[0]; double kh = NavigationMath.Bearing(kRw.Lat1, kRw.Lon1, kRw.Lat2, kRw.Lon2);
+                    Check(AirportDiagram.Pair(kh) == "09/27" && Math.Abs(AirportDiagram.Length(kRw, 600000) - 2452) < 30 && dg[0].Blocks.Count == 1 && dg[1].Name == "Island Airfield" && AirportDiagram.Pair(NavigationMath.Bearing(dg[1].Runways[0].Lat1, dg[1].Runways[0].Lon1, dg[1].Runways[0].Lat2, dg[1].Runways[0].Lon2)) == "09/27", "GROK CHART1: KSC 09/27 ~2.45 km, buildings, Island (" + AirportDiagram.RunwayText(kRw, 600000) + ")");
+                    var loc = AirportDiagram.ToLocal(1000 / (Math.PI / 180 * 600000), 0, 0, 0, 600000); var px = AirportDiagram.ToPx(500, 1000, 0, 0, 10, 400);
+                    Check(Math.Abs(loc[1] - 1000) < 1e-6 && Math.Abs(loc[0]) < 1e-9 && px[0] == 250 && px[1] == 100, "GROK CHART1: north-up projection (north = up, east = right)");
+                    Check(AirportDiagram.Nearest(dg, -1.51, -71.9, 600000, 9000) == dg[1] && AirportDiagram.Nearest(dg, 10, 10, 600000, 9000) == null && AirportDiagram.TickStep(8000, 600000) == .1 && AirportDiagram.TickStep(2000, 600000) == .05, "GROK CHART1: nearest field + tick step");
+                    string kn; Check(AirportDiagram.FromKerbalKonstructs(600000, out kn).Count == 0 && kn.Contains("not loaded"), "GROK CHART1: Kerbal Konstructs optional (reflection only)");
+                }
                 {   // GROK APP1: NDB RWY 27 (KERBO) chart (community plate by u/Griffin5000) - glidepath altitudes vs the plate's table
                     string dir = AppDomain.CurrentDomain.BaseDirectory, path = null;
                     for (int up = 0; up < 8 && dir != null && path == null; up++) { string p = System.IO.Path.Combine(dir, "tools", "charts", "KSC_27_NDB_KERBO.json"); if (System.IO.File.Exists(p)) path = p; dir = System.IO.Path.GetDirectoryName(dir.TrimEnd('\\', '/')); }

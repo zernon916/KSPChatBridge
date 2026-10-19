@@ -145,6 +145,45 @@ namespace KSPChatBridge
             return new Vector2((float)(Px / 2 + (lon - cLon) * Math.PI / 180 * R * Math.Cos(cLat * Math.PI / 180) / m), (float)(Px / 2 - (lat - cLat) * Math.PI / 180 * R / m));
         }
 
+        List<AirportDiagram> diagrams; float diagAt = -100; string kkNote = "";
+        /// <summary>GROK CHART1: FAA-style airport diagram for the field nearest the map centre (north-up; runway bar + end numbers,
+        /// length x width, elevations, building blocks, lat/lon ticks). The plane dot is drawn on top by the caller.</summary>
+        void DrawDiagram(IMfdCanvas c)
+        {
+            if (Time.realtimeSinceStartup > diagAt)
+            {
+                diagAt = Time.realtimeSinceStartup + 10; var b = new List<KeyValuePair<string, double[]>>();
+                if (body.bodyName == "Kerbin") { if (KscRoverMap.Points.Count == 0) KscRoverMap.Refresh(body); foreach (var p in KscRoverMap.Points) b.Add(new KeyValuePair<string, double[]>(p.Name, new[] { p.Lat, p.Lon })); }
+                diagrams = body.bodyName == "Kerbin" ? AirportDiagram.BuiltIn(b) : new List<AirportDiagram>();
+                string nt; var kk = AirportDiagram.FromKerbalKonstructs(body.Radius, out nt); diagrams.AddRange(kk);
+                if (nt != kkNote) { kkNote = nt; ChatLog.Write("chart", "airport diagrams: " + diagrams.Count + " field(s); " + nt); }
+            }
+            var d = AirportDiagram.Nearest(diagrams, cLat, cLon, body.Radius, span); if (d == null) return;
+            double mpp = span / Px, R = body.Radius; var ink = new Color(.1f, .1f, .1f);
+            c.Fill(new Rect(0, 0, Px, Px), new Color(.96f, .96f, .93f, .82f));   // paper
+            foreach (var bl in d.Blocks)
+            {
+                var p = Proj(bl.Lat, bl.Lon); float s = Mathf.Max(4, (float)(bl.SizeM / mpp));
+                c.Fill(new Rect(p.x - s / 2, p.y - s / 2, s, s), new Color(.35f, .35f, .38f));
+                if (span <= 5000) Tag(c, new Rect(p.x + s / 2 + 2, p.y - 9, 130, 18), bl.Name);
+            }
+            int line = 0;
+            Tag(c, new Rect(6, 6, 360, 18), d.Name.ToUpperInvariant() + "  AIRPORT DIAGRAM   FIELD ELEV " + Math.Round(d.ElevM) + " m"); line++;
+            foreach (var r in d.Runways)
+            {
+                Vector2 a = Proj(r.Lat1, r.Lon1), e = Proj(r.Lat2, r.Lon2); int th = Mathf.Clamp((int)(r.WidthM / mpp), 4, 40);
+                MfdInk.Line(c, a, e, Color.black, th);
+                double h12 = NavigationMath.Bearing(r.Lat1, r.Lon1, r.Lat2, r.Lon2); Vector2 dir = (a - e).normalized * (th + 12);
+                Tag(c, new Rect(a.x + dir.x - 12, a.y + dir.y - 9, 30, 18), AirportDiagram.EndNumber(h12));     // painted at end 1: landing from end 1 toward end 2
+                Tag(c, new Rect(e.x - dir.x - 12, e.y - dir.y - 9, 30, 18), AirportDiagram.EndNumber(h12 + 180));
+                Tag(c, new Rect(6, 6 + 20 * line++, 360, 18), AirportDiagram.RunwayText(r, R));
+            }
+            double step = AirportDiagram.TickStep(span, R), half = span / 2 / (Math.PI / 180 * R), halfLon = half / Math.Cos(cLat * Math.PI / 180);
+            for (double la = Math.Ceiling((cLat - half) / step) * step; la <= cLat + half; la += step)
+            { var p = Proj(la, cLon); MfdInk.Line(c, new Vector2(0, p.y), new Vector2(10, p.y), ink, 2); Tag(c, new Rect(12, p.y - 9, 80, 18), Math.Abs(la).ToString("0.000") + (la < 0 ? "S" : "N")); }
+            for (double lo = Math.Ceiling((cLon - halfLon) / step) * step; lo <= cLon + halfLon; lo += step)
+            { var p = Proj(cLat, lo); MfdInk.Line(c, new Vector2(p.x, Px), new Vector2(p.x, Px - 10), ink, 2); Tag(c, new Rect(p.x - 30, Px - 30, 80, 18), Math.Abs(lo).ToString("0.000") + (lo < 0 ? "W" : "E")); }
+        }
         void LoadFixes(NativeFlightController.MapRunway rw)
         {
             fixesFor = rw.Key; fixesVer = ChartDesign.Version; sel = -1; fixes.Clear(); note = "";
@@ -206,6 +245,7 @@ namespace KSPChatBridge
             c.Group(map, () =>
             {
                 foreach (var r in runways) MfdInk.Line(c, Proj(r.Lat, r.Lon), Proj(r.EndLat, r.EndLon), Color.black, 1);
+                if (tab == 1 && span <= AirportDiagram.ShowBelowSpan) DrawDiagram(c);   // GROK CHART1: zoomed in near a field -> airport diagram layer in place
                 if (Time.realtimeSinceStartup > taxiAt) { taxiAt = Time.realtimeSinceStartup + 5; taxiRoutes = body.bodyName == "Kerbin" ? NativeFlightController.TaxiRoutes() : new List<TaxiRoute>(); }
                 foreach (var tr in taxiRoutes)
                 {   // ground charts (PluginData/charts/TAXI_*.json): amber dotted centerlines
