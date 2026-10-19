@@ -326,7 +326,7 @@ namespace KSPChatBridge
             why = ""; var d = raw as Dictionary<string, object>; if (d == null) { why = "not an object"; return null; }
             try
             {
-                var o = new ApproachOverride { FlareStartM = N(d, "flare_start_m", 15), FlareSinkMs = N(d, "flare_sink_ms", 1), TouchdownM = N(d, "touchdown_m", 350), TchM = N(d, "tch_m", 15) };
+                var o = new ApproachOverride { FlareStartM = N(d, "flare_start_m", 15), FlareSinkMs = N(d, "flare_sink_ms", ApproachProfile.TouchdownSink), TouchdownM = N(d, "touchdown_m", 350), TchM = N(d, "tch_m", 15) };
                 if (o.FlareStartM < 3 || o.FlareStartM > 60 || o.FlareSinkMs < .2 || o.FlareSinkMs > 5 || o.TouchdownM < 0 || o.TouchdownM > 1500 || o.TchM < 0 || o.TchM > 100) { why = "flare/touchdown/TCH out of range"; return null; }
                 object ar; string altRef = d.TryGetValue("alt_ref", out ar) && ar != null ? Convert.ToString(ar) : "agl";
                 if (altRef != "agl" && altRef != "msl") { why = "alt_ref must be agl or msl"; return null; }
@@ -411,6 +411,36 @@ namespace KSPChatBridge
         }
         /// <summary>Oct 12: a join route may be at most 2.5x the direct distance + 20 km (live: 74 km for an 11 km direct, 4 min wandering at 700 m).</summary>
         /// <summary>Oct 12 (A300 overshoot 03:29): approach energy from the learned profile. Sink limit = learned descent sink (idle dives), fallback the old fixed cap.</summary>
+        /// <summary>GROK LAND5c (Luke: 20 over is fine): predicted touchdown excess over landing speed: <= +10 land, +10..+20 airbrakes + idle
+        /// and continue, > +20 (or the stop estimate past the runway left) go around. 0 = land, 1 = brake/idle continue, 2 = go around.</summary>
+        internal const double ContinueOver = 10, GoAroundOver = 20;
+        internal static int SpeedGate(double predicted, double app, double stopM, double runwayLeftM)
+        {
+            if (double.IsNaN(predicted) || double.IsNaN(app)) return 0;
+            double over = predicted - app;
+            if (over > GoAroundOver || !double.IsNaN(stopM) && !double.IsNaN(runwayLeftM) && over > ContinueOver && stopM > runwayLeftM) return 2;
+            return over > ContinueOver ? 1 : 0;
+        }
+        /// <summary>GROK LAND5c item 5: speed floor shrinks toward the threshold - 1.30x stall at/outside the FAF, 1.15x at 2 km, 1.04x at the
+        /// threshold. Slow above it never goes around (path position first); below it a gentle power-up; go around only if it cannot recover.</summary>
+        internal const double FloorAtFaf = 1.30, FloorAt2k = 1.15, FloorAtThr = 1.04, Floor2kM = 2000, FloorRecoverS = 10;
+        internal static double FloorK(double distM, double faf)
+        {
+            double f = Math.Max(faf, Floor2kM + 1);
+            if (distM >= f) return FloorAtFaf;
+            if (distM >= Floor2kM) return FloorAt2k + (FloorAtFaf - FloorAt2k) * (distM - Floor2kM) / (f - Floor2kM);
+            return FloorAtThr + (FloorAt2k - FloorAtThr) * Math.Max(0, distM) / Floor2kM;
+        }
+        /// <summary>0 = fine, 1 = below the floor: gentle power, 2 = below the floor for FloorRecoverS and still not gaining = go around.</summary>
+        internal static int SlowGate(double speed, double stall, double distM, double faf, double belowS, double accel)
+        {
+            if (double.IsNaN(stall) || stall <= 0 || speed >= FloorK(distM, faf) * stall) return 0;
+            return belowS >= FloorRecoverS && accel <= 0 ? 2 : 1;
+        }
+        /// <summary>GROK LAND5c item 6: touchdown sink class - 1-5 normal, 5-8 firm, > 8 hard.</summary>
+        internal const double TouchdownSink = 3, FlareFastOver = 10;
+        internal static string TouchdownClass(double sink) { double s = Math.Abs(sink); return s <= 5 ? "normal" : s <= 8 ? "firm" : "hard"; }
+        internal static bool FlareFast(double speed, double app) { return !double.IsNaN(app) && speed > app + FlareFastOver; }
         internal static double LandingPitchMin(double desiredVs) { return desiredVs < -6 ? -12 : -5; }
         internal static double SinkLimit(double learnedSink, double fallback) { return double.IsNaN(learnedSink) || learnedSink <= 1 ? fallback : learnedSink; }
         internal const double HighM = 50, FastMs = 10;
@@ -573,6 +603,36 @@ namespace KSPChatBridge
     /// <summary>GROK LAND5 (Luke): an ACCEPTED join path is LOCKED in world space (frame: metres east/north of a fixed origin) - arc 1, straight,
     /// arc 2, final course line - and FOLLOWED (cross-track + track error per segment, arc curvature as feed-forward bank, small intercept),
     /// never re-fitted (14:22-14:25: the per-tick re-fit drifted to hdg 037, 10 km off, never turned right, then circled left).</summary>
+    /// <summary>GROK LAND5c item 8: go-around traffic pattern - after the straight climb: 180 deg turn (one side) onto a downwind 2r off the
+    /// centreline, downwind past the threshold to abeam the join, 180 deg back onto final at max(FAF, 8 km): one locked path, ~360 deg total.</summary>
+    internal static class GoAroundPattern
+    {
+        internal const double MinFinalM = 8000; internal const int Side = -1;   // left-hand pattern
+        internal static double JoinDistance(double faf) { return Math.Max(faf, MinFinalM); }
+        /// <summary>(x, y) = plane in metres from the threshold (x east, y north); course = runway inbound course.</summary>
+        internal static LockedPath Build(double x, double y, double course, double r, double faf, int side = Side)
+        {
+            double hu = DubinsPath.Norm(course + 180), cr = course * Math.PI / 180, ux = Math.Sin(cr), uy = Math.Cos(cr), rx = Math.Cos(cr), ry = -Math.Sin(cr);
+            double e = x * rx + y * ry, a = x * ux + y * uy, jd = JoinDistance(faf);   // lateral offset (+ right) and along (+ past the threshold)
+            double[] p = { x, y }, c1 = { x + side * r * rx, y + side * r * ry }, t1 = { x + 2 * side * r * rx, y + 2 * side * r * ry };
+            double s = Math.Max(0, a + jd);
+            double[] t2 = { t1[0] - s * ux, t1[1] - s * uy };
+            double[] fix = { t2[0] - 2 * side * r * rx, t2[1] - 2 * side * r * ry }, c2 = { t2[0] - side * r * rx, t2[1] - side * r * ry };
+            var l = new LockedPath { Type = side < 0 ? "LSL" : "RSR", R = r, A1 = 180, A2 = 180, S = s, Hu = hu, H0 = DubinsPath.Norm(course), H1 = DubinsPath.Norm(course), D1 = side, D2 = side, C1 = c1, C2 = c2, T1 = t1, T2 = t2, Stub = fix, Fix = fix, Seg = 0 };
+            return l;
+        }
+    }
+    /// <summary>GROK LAND5c item 7: radar-altitude callouts on short final, once each per approach.</summary>
+    internal sealed class AltCallouts
+    {
+        internal static readonly int[] Marks = { 100, 50, 30, 20, 10 }; int next;
+        internal void Reset() { next = 0; }
+        internal string Step(double agl)
+        {
+            string say = null; while (next < Marks.Length && agl <= Marks[next]) { say = Marks[next] + " m"; next++; }
+            return say;
+        }
+    }
     internal sealed class LockedPath
     {
         internal string Type; internal double R, A1, A2, S, Hu, H0, H1; internal int D1, D2;
@@ -904,24 +964,40 @@ namespace KSPChatBridge
     /// at 11-17 deg bank): fly turns like a pilot - hold a pitch ATTITUDE = trim angle (nose pitch - flight-path angle, low-passed; in a bank the
     /// extra AoA is the elevator feed-forward, its vertical projection stays ~ the level-flight trim) + the target flight-path angle; the vs error
     /// is only a gentle (x0.4) correction on a filtered vs, and the altitude error stays the slow outer loop (the mission's target vs).</summary>
-    /// <summary>GROK LAND5b: approach throttle = step-and-wait (Luke): hold inside plan -5/+15 m/s; outside it one small step (4%), then wait
-    /// 3 s and watch the speed trend; another step only if the trend has not turned the right way. Config lead = one small step.</summary>
+    /// <summary>GROK LAND5b/5c: approach throttle = PREDICTIVE step-and-wait. Speed 5 s ahead = v + trend*5 + the thrust still spooling
+    /// (engine lag); hold while that is inside plan -5/+15; outside it one small step (3% within 10 m/s, else 4%), then 3 s wait, and no
+    /// further step while the trend is already toward plan (or improved > 0.5 m/s2 since the last step). When the prediction crosses
+    /// plan, half the accumulated steps come back off at once (15:16 overshoot: 6..30% while already recovering, then +21).</summary>
     internal sealed class StepThrottle
     {
-        internal const double Step = .04, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10;
-        internal double Thr = double.NaN, Accel; double lastStep = double.NegativeInfinity, prevV = double.NaN, lastLead = double.NegativeInfinity;
+        internal const double MaxStep = .15, Step = .04, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
+        internal double Thr = double.NaN, Accel, Eff = double.NaN, Acc, Predicted = double.NaN;
+        internal double SpoolS = 4, AccelPerThr = 6;   // spool lag (s) and m/s2 per unit throttle (defaults; LAND5c)
+        double lastStep = double.NegativeInfinity, prevV = double.NaN, lastLead = double.NegativeInfinity, accelAtStep = double.NaN;
         internal string Why = "";
-        internal void Reset(double thr) { Thr = thr; prevV = double.NaN; Accel = 0; lastStep = double.NegativeInfinity; }
+        internal void Reset(double thr) { Thr = thr; Eff = thr; Acc = 0; prevV = double.NaN; Accel = 0; lastStep = double.NegativeInfinity; accelAtStep = double.NaN; }
+        /// <summary>Speed AheadS from now: trend plus the part of (command - spooled thrust) that arrives inside the window.</summary>
+        internal static double Predict(double v, double accel, double thr, double eff, double spool, double perThr)
+        { double tau = Math.Max(.1, spool); return v + accel * AheadS + perThr * (thr - eff) * (AheadS - tau * (1 - Math.Exp(-AheadS / tau))); }
         /// <summary>leadIn = seconds to the next flap/gear step (NaN = none).</summary>
         internal double Update(double now, double speed, double plan, double dt, double leadIn)
         {
-            if (double.IsNaN(Thr)) Thr = .3;
-            if (!double.IsNaN(prevV) && dt > 0) Accel += ((speed - prevV) / dt - Accel) * Math.Min(1, dt / 1.5); prevV = speed;
-            double e = speed - plan; Why = "";
-            if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS) { Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); lastLead = lastStep = now; Why = "config lead +3%"; return Thr; }
+            if (double.IsNaN(Thr)) Thr = .3; if (double.IsNaN(Eff)) Eff = Thr;
+            if (dt > 0) { if (!double.IsNaN(prevV)) Accel += ((speed - prevV) / dt - Accel) * Math.Min(1, dt / 1.5); Eff += (Thr - Eff) * Math.Min(1, dt / Math.Max(.1, SpoolS)); }
+            prevV = speed;
+            Predicted = Predict(speed, Accel, Thr, Eff, SpoolS, AccelPerThr);
+            double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
+            if (Math.Abs(Accel) > .5 && Math.Sign(Accel) == Math.Sign(e)) sz = FlightPolicy.Clamp(.8 * Math.Abs(Accel + e / 10) / Math.Max(1, AccelPerThr), sz, MaxStep);   // a real drag/thrust step (flaps FULL + gear): half the thrust that would stop the trend, capped
+            if (Acc > 1e-9 && e >= 0 || Acc < -1e-9 && e <= 0)
+            {   // predicted crossing: take half of what we stepped in back out, now
+                double back = Acc / 2; Thr = FlightPolicy.Clamp(Thr - back, 0, 1); Acc = 0; lastStep = now; accelAtStep = Accel;
+                Why = "predicted " + Math.Round(Predicted) + " crosses plan: back " + (back > 0 ? "-" : "+") + Math.Round(100 * Math.Abs(back)) + "%"; return Thr;
+            }
+            if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS) { Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = lastStep = now; accelAtStep = Accel; Why = "config lead +3%"; return Thr; }
             if (now - lastStep < WaitS) return Thr;
-            if (e < -Below && Accel <= .2) { Thr = FlightPolicy.Clamp(Thr + Step, 0, 1); lastStep = now; Why = "slow " + Math.Round(e) + " m/s: +4%"; }
-            else if (e > Above && Accel >= -.2) { Thr = FlightPolicy.Clamp(Thr - Step, 0, 1); lastStep = now; Why = "fast +" + Math.Round(e) + " m/s: -4%"; }
+            bool improving = !double.IsNaN(accelAtStep) && now - lastStep < 3 * WaitS;
+            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += sz; lastStep = now; accelAtStep = Accel; Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
+            else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc -= sz; lastStep = now; accelAtStep = Accel; Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
             return Thr;
         }
         /// <summary>Bang-bang (idle / full) only for genuine emergencies: more than 30 m/s off the plan.</summary>
@@ -1536,7 +1612,7 @@ namespace KSPChatBridge
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
         bool finalJoinRoute;   // GROK LAND4
-        internal int missedSteps; bool goAroundLow; internal double BankCap = double.NaN;   // GROK LAND5b
+        internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor; internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
         /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
@@ -1560,7 +1636,7 @@ namespace KSPChatBridge
             o.Add(at(d, "fly-out " + Math.Round(d / 1000) + " km (rejoin)"));
             return o;
         }
-        internal void GoAroundReset() { UnlockPath("go-around"); missedSteps = 0; goAroundLow = true; MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
+        internal void GoAroundReset() { UnlockPath("go-around"); missedSteps = 0; goAroundLow = true; fastLogged = false; FastContinue = false; FlareFast = false; BelowFloor = false; belowFloorSteps = 0; Pattern = null; PatternLog = "go-around pattern: climb (straight ahead, wings level)"; MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanBankRaw, RouteToGo = double.NaN; double wpFromLat = double.NaN, wpFromLon;
         /// <summary>GROK FIX2: distance shown to the pilot - along the route to touchdown during entry, else to the threshold.</summary>
         internal double ToGo { get { return Phase == "entry" && !double.IsNaN(RouteToGo) ? RouteToGo : Distance; } }
@@ -1777,7 +1853,7 @@ namespace KSPChatBridge
                     if (finalJoinRoute && Chart != null && Phase == "entry") DesiredAltitude = Math.Min(DesiredAltitude, Math.Max(altitude, Chart.GlideAlt(ApproachChart.LongLineM)));   // GROK LAND4f: never climb hugely for a far join
                     if (OffLine && DesiredAltitude < altitude) { DesiredAltitude = altitude; DesiredVs = 0; }   // Oct 12: no descent while badly off the route
                     bool last = RouteIndex == Route.Count - 1;
-                    bool dubLeg = (RouteIndex == 0 || holdLast && last) && !double.IsNaN(track), dubAligned = true;
+                    bool dubLeg = Pattern == null && !MissedClimb && (RouteIndex == 0 || holdLast && last) && !double.IsNaN(track), dubAligned = true;   // GROK LAND5c: no Dubins search while in the go-around pattern
                     if (dubLeg)
                     {   // GROK JOIN1: fly a Dubins turn-tangent-turn path that ARRIVES at the fix on its required course (the next leg / the final)
                         if (wp.Name != dubFix || double.IsNaN(dubR)) { dubPlanBank = DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25); dubR = PredictedPath.Radius(DubinsPath.JoinPlanSpeed(ApproachProfile.EntrySpeed(LastStall), speed), dubPlanBank); }   // GROK LAND4d: radius locked per fix (plan speed, median bank)
@@ -1832,13 +1908,32 @@ namespace KSPChatBridge
                     else if (dubAligned && AdvanceWaypoint(leadTurn, dw, Chart.TurnRadius, RouteIndex > 0 ? NavigationMath.Distance(pLat, pLon, wp.Lat, wp.Lon, radius) : double.NaN, behindUs, NavigationMath.Distance(wpFromLat, wpFromLon, lat, lon, radius))) { RouteIndex++; wpFromLat = lat; wpFromLon = lon; }   // GROK FIX2: one fix per update
                 }
                 if (Math.Abs(LegXte) > 500 || (!double.IsNaN(track) && Math.Abs(FlightPolicy.Wrap(DesiredHeading - track)) > 30)) ArcBank = 0;   // GROK LAND4: arc feed-forward only ON the arc (kept banking right past the ask at 03:30)
-                if (!MissedClimb && Route != null && -along > FafDistance + 1000 && LateralCapture.ShouldCapture(cross, double.IsNaN(track) ? double.NaN : FlightPolicy.Wrap(track - course), PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25), speed, TurnBank > 0 ? TurnBank : 25))
+                if (!MissedClimb && (Pattern == null || Pattern.Seg >= 2) && Route != null && -along > FafDistance + 1000 && LateralCapture.ShouldCapture(cross, double.IsNaN(track) ? double.NaN : FlightPolicy.Wrap(track - course), PredictedPath.Radius(speed, TurnBank > 0 ? TurnBank : 25), speed, TurnBank > 0 ? TurnBank : 25))
                 { Phase = "intercept"; ArcBank = 0; Why = "course capture " + (-along / 1000).ToString("0.0") + " km out (" + Math.Round(cross) + " m, " + Math.Round(trackErr) + " deg)"; EnergyLog = "lateral: " + Why; }   // GROK LAND4: hand over to the LAND3a capture in any phase
                 if (MissedClimb)
                 {   // GROK LAND2/5b: missed approach - straight ahead WINGS LEVEL, climbing, no turns and no join plan for 10 s and until MissedAgl
                     missedSteps++;
-                    if (altitude - Elevation >= MissedAgl && missedSteps >= 500) { MissedClimb = false; missedSteps = 0; Route = null; Why = "missed approach climb done; re-joining"; }
+                    if (altitude - Elevation >= MissedAgl && missedSteps >= 500)
+                    {   // GROK LAND5c item 8: traffic pattern instead of a Dubins/chart re-join
+                        MissedClimb = false; missedSteps = 0; double kP = Math.PI / 180 * radius, clP = Math.Cos(lat * Math.PI / 180);
+                        double rP = PredictedPath.Radius(DubinsPath.JoinPlanSpeed(ApproachProfile.EntrySpeed(LastStall), speed), DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25));
+                        Pattern = GoAroundPattern.Build((lon - Lon) * kP * clP, (lat - Lat) * kP, course, rP, Chart != null ? Chart.FafD : FafDistance);
+                        Why = "missed approach climb done; pattern"; PatternLog = "go-around pattern: downwind - " + Pattern.Describe() + ", join final " + (GoAroundPattern.JoinDistance(Chart != null ? Chart.FafD : FafDistance) / 1000).ToString("0.0") + " km";
+                    }
                     else { DesiredHeading = double.IsNaN(track) ? course : track; ArcBank = 0; LatBank = 0; Locked = null; DubinsPts = null; DesiredAltitude = Math.Max(DesiredAltitude, Elevation + MissedAgl + 100); DesiredVs = 10; DesiredSpeed = Math.Max(DesiredSpeed, ApproachProfile.Speed(stall)); }
+                }
+                else if (Pattern != null)
+                {   // GROK LAND5c item 8: fly the locked pattern (climb -> 180 -> downwind -> 180 -> final); hold the pattern altitude
+                    double kP = Math.PI / 180 * radius, clP = Math.Cos(lat * Math.PI / 180); int segB = Pattern.Seg;
+                    bool ok = !double.IsNaN(track) && Pattern.Step((lon - Lon) * kP * clP, (lat - Lat) * kP, track, speed, DubinsPath.MedianBank(TurnBank > 0 ? TurnBank : 25), altitude - Elevation < 500 ? 20 : (TurnBank > 0 ? TurnBank : 25));
+                    if (Pattern.Seg != segB && Pattern.Seg == 2) PatternLog = "go-around pattern: base-final (180 back onto final)";
+                    if (!ok || Pattern.Seg >= 3) { PatternLog = ok ? "go-around pattern: on final - glidepath (hold altitude until it meets us)" : "go-around pattern: off the pattern by " + Math.Round(Math.Abs(Pattern.Xtrk)) + " m - capturing final"; Pattern = null; Phase = "intercept"; ArcBank = 0; }
+                    else
+                    {
+                        LatBank = Pattern.BankAsk; DesiredHeading = Pattern.DesiredTrack; ArcBank = 0; DubinsR = Pattern.R;
+                        DesiredAltitude = Math.Max(Elevation + MissedAgl + 100, Math.Min(altitude, Chart != null ? Chart.GlideAlt(GoAroundPattern.JoinDistance(Chart.FafD)) : altitude)); DesiredVs = FlightPolicy.Clamp((DesiredAltitude - altitude) / 20, -5, 5);
+                        var lp = new List<double[]>(); foreach (var q in Pattern.Points()) lp.Add(new[] { Lat + q[1] / kP, Lon + q[0] / (kP * clP) }); lp.Add(new[] { Lat, Lon }); DubinsPts = lp;
+                    }
                 }
                 BankCap = goAroundLow && altitude - Elevation < 500 ? 20 : double.NaN; if (goAroundLow && altitude - Elevation >= 500) goAroundLow = false;   // GROK LAND5b: <= 20 deg bank below 500 m after a go-around
                 if (Route != null && RouteIndex >= Route.Count) { Phase = "intercept"; ArcBank = 0; }   // Route == null: replan requested (GROK FIX6), rebuilt next step
@@ -1884,11 +1979,19 @@ namespace KSPChatBridge
                 DesiredVs = FlightPolicy.Clamp(OffLine ? Math.Max(0, pointVs) : pointVs, belowGs ? 0 : -maxSink, belowGs ? (outsideFaf ? 0 : 10) : 3);
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
                 double fs = Override != null ? Override.FlareStartM : 15;
-                double fv = Override != null ? Override.FlareSinkMs : (!double.IsNaN(FlareSinkHint) ? FlareSinkHint : 1);
-                if (low < fs) { Phase = "flare"; DesiredVs = low > fs / 3 ? -Math.Min(1.9, Math.Max(fv, 1.5)) : -Math.Min(fv, 1.5); }   // touchdown sink < 2 m/s; FlareSinkHint from LEARN sink table when present
+                
+                if (low < fs) { if (Phase != "flare") FlareFast = ApproachProfile.FlareFast(speed, AppNow); Phase = "flare"; double ts = FlightPolicy.Clamp(Override != null ? Override.FlareSinkMs : ApproachProfile.TouchdownSink, 1, 5); DesiredVs = -ts; }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
                 double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
                 PredictedNow = predSpd; AppNow = ApproachProfile.AppSpeed(stall);
+                int sg = ApproachProfile.SpeedGate(predSpd, AppNow, double.NaN, double.NaN); predFast = sg == 2; FastContinue = Phase == "final" && sg == 1 && Distance < ApproachChart.ShortFix;   // GROK LAND5c: no stopping estimate yet -> plain +20
+                if (FastContinue && !fastLogged) { fastLogged = true; Why = "fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ", <= +20): airbrakes + idle, continuing"; }
+                {   // GROK LAND5c item 5: shrinking speed floor; slow above it is fine; below it power, and go around only if it cannot recover
+                    bool overRwy = along >= 0 && along <= NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius) && hat < 10; double fa = double.IsNaN(slowPrevV) ? 0 : (speed - slowPrevV) * 50; slowPrevV = speed; slowAcc += (fa - slowAcc) * .02;
+                    int sl = overRwy ? 0 : ApproachProfile.SlowGate(speed, stall, Distance, Chart != null ? Chart.FafD : FafDistance, belowFloorSteps / 50.0, slowAcc);
+                    BelowFloor = sl > 0; belowFloorSteps = sl > 0 ? belowFloorSteps + 1 : 0; SpeedFloor = ApproachProfile.FloorK(Distance, Chart != null ? Chart.FafD : FafDistance) * stall;
+                    if (sl == 2 && GateCooldown <= 0 && Phase == "final" && hat > 10) { Phase = "go around"; Why = "too slow: " + speed.ToString("0") + " m/s below the floor " + SpeedFloor.ToString("0") + " for " + ApproachProfile.FloorRecoverS + " s, not recovering"; }
+                }
                 if (GateCooldown <= 0 && Phase == "final" && Distance < ApproachChart.ShortFix && Distance > 100 && predFast) { Phase = "go around"; Why = "too fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ")"; }
                 if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && Distance < GateDistance && Distance > 0 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up at 1 km (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
                 double daHat = Override != null ? Override.DaHat(Elevation) : double.NaN;   // GROK LAND2: plate DA - still well high there = go around

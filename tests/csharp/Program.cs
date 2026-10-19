@@ -129,6 +129,60 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5c items 5-8
+            Check(ApproachProfile.FloorK(12000, 9400) == 1.30 && ApproachProfile.FloorK(9400, 9400) == 1.30 && Math.Abs(ApproachProfile.FloorK(2000, 9400) - 1.15) < 1e-9 && Math.Abs(ApproachProfile.FloorK(0, 9400) - 1.04) < 1e-9
+                && Math.Abs(ApproachProfile.FloorK(5700, 9400) - 1.225) < 1e-9 && Math.Abs(ApproachProfile.FloorK(1000, 9400) - 1.095) < 1e-9, "LAND5c: speed floor 1.30 at FAF -> 1.15 at 2 km -> 1.04 at the threshold");
+            Check(ApproachProfile.SlowGate(1.01 * 1.15 * 50, 50, 2000, 9400, 30, -1) == 0 && ApproachProfile.SlowGate(1.01 * 1.04 * 50, 50, 0, 9400, 30, -1) == 0, "LAND5c: slow at the floor + 1% continues (no go-around, no power)");
+            Check(ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 3, -1) == 1 && ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 12, .3) == 1 && ApproachProfile.SlowGate(.99 * 1.15 * 50, 50, 2000, 9400, 12, -.1) == 2, "LAND5c: below the floor = gentle power; go around only after 10 s not recovering");
+            Check(PilotPolicy.LowEnergyK(false, 1.05 * 50, 50, -2, 200, 1.04) == false && PilotPolicy.LowEnergyK(false, 1.25 * 50, 50, -2, 200, 1.30), "LAND5c: final low-energy uses the scheduled floor");
+            Check(ApproachProfile.TouchdownClass(-3) == "normal" && ApproachProfile.TouchdownClass(-6.5) == "firm" && ApproachProfile.TouchdownClass(-9) == "hard" && ApproachProfile.FlareFast(70, 58) && !ApproachProfile.FlareFast(66, 58), "LAND5c: touchdown classes 1-5 / 5-8 firm / > 8; fast flare = landing + 10");
+            // fast flare: mission latches FlareFast (no pitch-up / idle / airbrakes / full flaps are applied by the controller on this flag), sink stays 3
+            var ff = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; ff.Step(0, -.1, 130, 60, 65, false, 600000, 45);
+            ff.Step(0, -.005, 80, 10, ApproachProfile.AppSpeed(45) + 15, false, 600000, 45);
+            Check(ff.Phase == "flare" && ff.FlareFast && ff.DesiredVs == -3, "LAND5c: overspeed at the flare point -> FlareFast (no pitch-up, idle + airbrakes + full flaps), sink 3");
+            // flare sim: vs follows the mission's ask with a 0.8 s lag from a 4 m/s glide, touchdown sink in [1,5], near 3
+            var fs = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; fs.Step(0, -.1, 130, 60, 65, false, 600000, 45);
+            double hF = 40, vsF = -4, lonF = -.004, spF = 60, tdF = double.NaN;
+            for (int i = 0; i < 5000 && double.IsNaN(tdF); i++) { fs.Step(0, lonF, 70 + hF, hF, spF, false, 600000, 45); vsF += (fs.DesiredVs - vsF) * .02 / .8; hF += vsF * .02; lonF += spF * .02 / (600000 * Math.PI / 180); if (hF <= 0) tdF = -vsF; }
+            Check(tdF >= 1 && tdF <= 5 && Math.Abs(tdF - 3) < .8, "LAND5c: flare sim touchdown sink " + tdF.ToString("0.0") + " m/s in [1,5], ~3");
+            var co = new AltCallouts(); var said = new List<string>(); foreach (var a in new[] { 120.0, 99, 98, 60, 49, 45, 29, 21, 19, 9, 5, 9, 30 }) { string s = co.Step(a); if (s != null) said.Add(s); }
+            Check(string.Join(",", said) == "100 m,50 m,30 m,20 m,10 m", "LAND5c: callouts 100/50/30/20/10 once each (" + string.Join(",", said) + ")"); co.Reset(); Check(co.Step(95) == "100 m", "LAND5c: callouts re-arm per approach");
+            // go-around pattern from a go-around at 70 m on runway 27: climb out west 2.5 km past the threshold, then pattern
+            double rP = 4000; var pat = GoAroundPattern.Build(-2500, 30, 270, rP, 9400);
+            double xP = -2500, yP = 30, hP = 270, vP = 140, turned = 0, minOff = double.MaxValue; var segs = new List<int> { pat.Seg }; bool okP = true;
+            for (int i = 0; i < 40000 && pat.Seg < 3; i++)
+            {
+                okP &= pat.Step(xP, yP, hP, vP, 20, 25); if (pat.Seg != segs[segs.Count - 1]) segs.Add(pat.Seg);
+                double rate = 9.81 * Math.Tan(pat.BankAsk * Math.PI / 180) / vP * 180 / Math.PI, dh = rate * .1; hP = DubinsPath.Norm(hP + dh); turned += dh;
+                xP += vP * .1 * Math.Sin(hP * Math.PI / 180); yP += vP * .1 * Math.Cos(hP * Math.PI / 180);
+                if (pat.Seg == 1) minOff = Math.Min(minOff, Math.Abs(yP));
+            }
+            var pp = pat.Points(); bool crossP = false;
+            for (int i = 0; i + 1 < pp.Count; i++) for (int j = i + 2; j + 1 < pp.Count; j++)
+            { double[] a = pp[i], b = pp[i + 1], c = pp[j], d = pp[j + 1]; double d1 = (d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0]), d2 = (d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0]), d3 = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]), d4 = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]); if (d1 * d2 < 0 && d3 * d4 < 0) crossP = true; }
+            Console.WriteLine("LAND5c pattern: segs " + string.Join(">", segs) + " turned " + turned.ToString("0") + " downwind off " + minOff.ToString("0") + " end x " + xP.ToString("0") + " hdg " + hP.ToString("0") + " S " + (pat.S / 1000).ToString("0.0") + " km");
+            Check(okP && string.Join(">", segs) == "0>1>2>3" && Math.Abs(Math.Abs(turned) - 360) < 25, "LAND5c: go-around pattern = 180, downwind, 180 to final (~360 deg total)");
+            Check(!crossP && minOff > 1.5 * rP && Math.Abs(FlightPolicy.Wrap(hP - 270)) < 10 && xP > 8000, "LAND5c: pattern never crosses itself / the field, downwind 2r off, joins final heading 270 at >= 8 km");
+        }
+        {   // GROK LAND5c: 15:16 replay - flaps FULL + gear drag step (decel -2.4 m/s2 at 148), 4 sC engine spool, plan 140
+            var stC = new StepThrottle(); double plC = 140, vC = 140, kDC = 6 * .3 / (140 * 140), effC = .3, thrC = .3; stC.Reset(.3);
+            double loC = 0, hiC = 0; int crossC = 0, sideC = 0; double lastBandC = 0;
+            for (int i = 0; i < 6000; i++)   // 120 sC at 50 Hz
+            {
+                double tsC = i * .02, kkC = tsC >= 10 ? kDC * 2.2 : kDC;
+                thrC = stC.Update(tsC, vC, plC, .02, double.NaN);
+                effC += (thrC - effC) * .02 / 4;   // real engine lag 4 sC
+                vC += (6 * effC - kkC * vC * vC) * .02;
+                if (tsC > 10) { loC = Math.Min(loC, vC - plC); hiC = Math.Max(hiC, vC - plC); int sC = vC - plC > 3 ? 1 : vC - plC < -3 ? -1 : 0; if (sC != 0 && sC != sideC) { if (sideC != 0) crossC++; sideC = sC; } }
+                if (tsC > 90) lastBandC = Math.Max(lastBandC, Math.Abs(vC - plC));
+            }
+            Console.WriteLine("LAND5c sim: min " + loC.ToString("0.0") + " max +" + hiC.ToString("0.0") + " band-crossings " + crossC + " last-30s " + lastBandC.ToString("0.0") + " thrC " + thrC.ToString("0.00"));
+            Check(loC >= -10 && hiC <= 15, "LAND5c: drag step + 4 s spool - speed stays -10/+15 of plan");
+            Check(crossC <= 1 && lastBandC <= 6, "LAND5c: no oscillation (<= 1 crossing of the +/-3 band, settled in the last 30 sC)");
+            Check(StepThrottle.Predict(126, -.3, .40, .10, 4, 6) > 126 + 2, "LAND5c: prediction counts thrust still spooling");
+            Check(ApproachProfile.SpeedGate(134 + 15, 134, double.NaN, double.NaN) == 1 && ApproachProfile.SpeedGate(134 + 25, 134, double.NaN, double.NaN) == 2 && ApproachProfile.SpeedGate(134 + 8, 134, double.NaN, double.NaN) == 0
+                && ApproachProfile.SpeedGate(134 + 15, 134, 2500, 2000) == 2, "LAND5c: +15 at touchdown continues (brakes+idle), +25 goes around, stop estimate past the runway goes around");
+        }
         {   // GROK LAND5b: short-final pitch / flap latch / sink guard / go-around / schedule / step throttle
             // sim: wings-level final, 143 m/s, path vs -7.5; a flap step at t=10 s adds a nose-down moment; config trimB pre-load from learned deltas
             var ct = new ConfigTrim(); for (int i = 0; i < 600; i++) { ct.Learn(ConfigTrim.Key(1, true), .05, .05, true); ct.Learn(ConfigTrim.Key(2, true), .15, .05, true); }
@@ -157,8 +211,9 @@ class Program
             Check(FlapsPolicy.ApproachSchedule("final", 13000, 9400, 0, 900) == 1 && FlapsPolicy.ApproachSchedule("final", 14000, 9400, 0, 900) == 0 && FlapsPolicy.ApproachSchedule("final", 9000, 9400, 1, 700) == 2 && FlapsPolicy.ApproachSchedule("final", 4900, 9400, 2, 500) == 3
                 && FlapsPolicy.ApproachSchedule("final", 3500, 9400, 2, 400) == 2 && FlapsPolicy.ApproachSchedule("final", 4500, 9400, 1, 250) == 1 && FlapsPolicy.GearDistance(9400) == 9400 && FlapsPolicy.GearDistance(5000) == 8000, "LAND5b: flaps 1 from FAF+4 km, 2 at FAF, FULL by 5 km, frozen inside 4 km / 300 m; gear by FAF / 8 km");
             Check(Math.Abs(FlapsPolicy.NextConfigDistance(12000, 9400, 1, false) - 9400) < 1 && double.IsNaN(FlapsPolicy.NextConfigDistance(4500, 9400, 2, true)), "LAND5b: next config step lookahead (lead), none inside the freeze");
-            var stp = new StepThrottle(); stp.Reset(.30); double th0 = stp.Update(0, 165, 165, .02, double.NaN), th1 = stp.Update(.02, 178, 165, .02, double.NaN), th2 = stp.Update(.04, 155, 165, .02, double.NaN), th3 = stp.Update(3.1, 155, 165, .02, double.NaN), th4 = stp.Update(3.2, 150, 165, .02, double.NaN);
-            Check(th0 == .30 && th1 == .30 && Math.Abs(th2 - .34) < 1e-9 && Math.Abs(th3 - .38) < 1e-9 && th4 == th3, "LAND5b: step-and-wait throttle - hold in -5/+15, 4% step, wait 3 s");
+            Func<double, double, double> one = (sv, pv) => { var x = new StepThrottle(); x.Reset(.30); for (int k = 0; k < 50; k++) x.Update(k * .02, sv, pv, .02, double.NaN); return x.Thr; };
+            var stp = new StepThrottle(); stp.Reset(.30); for (int k = 0; k < 50; k++) stp.Update(k * .02, 155, 165, .02, double.NaN); double th3 = stp.Update(1.5, 155, 165, .02, double.NaN);
+            Check(one(165, 165) == .30 && one(178, 165) == .30 && Math.Abs(one(155, 165) - .33) < 1e-9 && Math.Abs(one(150, 165) - .34) < 1e-9 && Math.Abs(th3 - .33) < 1e-9, "LAND5b/c: step-and-wait - hold in -5/+15, 3% within 10 m/s, 4% beyond, then wait 3 s");
             var stl = new StepThrottle(); stl.Reset(.30); Check(Math.Abs(stl.Update(0, 165, 165, .02, 3) - .33) < 1e-9 && StepThrottle.Emergency(200, 165) && !StepThrottle.Emergency(185, 165), "LAND5b: config lead = one small step; bang-bang only > 30 m/s off");
             Check(Math.Abs(StepThrottle.ConfigLimit(.3, .9, 1, 2) - .4) < 1e-9 && StepThrottle.ConfigLimit(.3, .9, 1, 6) == .9, "LAND5b: throttle 10%/s during + 5 s after a config change");
         }
@@ -1016,7 +1071,7 @@ class Program
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);
         Check(landing.Gear && Math.Abs(landing.DesiredSpeed - ApproachProfile.AppSpeed(45)) < .01 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
-        landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -1, "flare");
+        landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -3 && !landing.FlareFast, "flare (LAND5c: 3 m/s touchdown sink)");
         landing.Step(0, .02, 70, 0, 40, true, 600000, 45); Check(landing.Phase == "rollout" && landing.Brakes, "touchdown");
         landing.Step(0, .04, 70, 0, .5, true, 600000, 45); Check(landing.Phase == "stopped", "stopped");
         landing.Phase="final"; landing.Step(0, .2, 120, 50, 65, false, 600000, 45); Check(landing.Phase == "go around", "missed touchdown go around");
@@ -2711,7 +2766,7 @@ class Program
                 return "touch " + touchVs.ToString("0.0") + " fast1k " + fastAt1k.ToString("0");
             };
             string draggy = sim(.00012), slick = sim(.000005);
-            Check(draggy.StartsWith("touch") && double.Parse(draggy.Split(' ')[3]) <= 10 && Math.Abs(double.Parse(draggy.Split(' ')[1])) < 2, "200 m/s at the FAF, idle + airbrakes: stabilized by 1 km, touchdown sink < 2 m/s (" + draggy + ")");
+            Check(draggy.StartsWith("touch") && double.Parse(draggy.Split(' ')[3]) <= 10 && Math.Abs(double.Parse(draggy.Split(' ')[1])) >= 1 && Math.Abs(double.Parse(draggy.Split(' ')[1])) <= 5, "200 m/s at the FAF, idle + airbrakes: stabilized by 1 km, touchdown sink 1-5 m/s (LAND5c target 3) (" + draggy + ")");
             Check(slick.StartsWith("GA too fast"), "slick craft still fast: go-around at the speed gate, never a fast landing (" + slick + ")");
             Check(PilotPolicy.ApproachThrottle(.6, 80, 60, .05) == 0 && PilotPolicy.ApproachThrottle(.2, 50, 60, 1) > .2, "approach throttle: idle when fast, spools when slow");
             Console.WriteLine("Forced approach speed: 3 behavior checks passed.");

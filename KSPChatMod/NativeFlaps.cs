@@ -130,7 +130,8 @@ namespace KSPChatBridge
             if (flaps.Count == 0) return;
             RollFlapTick();
             int want = FlapsPolicy.GroundZero(vessel.LandedOrSplashed, mode, takeoffFlaps) ? 0 : FlapsWanted();   // Oct 12: the ground gate zeroed takeoff flaps
-            bool latch = mode == "landing" && runway != null && FlapsPolicy.FinalLatch(runway.Phase == "final" || runway.Phase == "flare", runway.Distance, runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance, flapSet, Eas(), FlapLimit());
+            if (mode == "landing" && runway != null && runway.FlareFast && runway.Phase == "flare") want = 3;   // GROK LAND5c: fast flare = full flaps, no overspeed retract
+            bool latch = mode == "landing" && runway != null && (runway.FlareFast && runway.Phase == "flare" || FlapsPolicy.FinalLatch(runway.Phase == "final" || runway.Phase == "flare", runway.Distance, runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance, flapSet, Eas(), FlapLimit()));
             if (!latch) want = Math.Min(want, FlapsPolicy.MaxAllowed(Eas(), FlapLimit(), flapSet)); else want = Math.Max(want, flapSet);   // GROK LAND5b: latched on final   // flap limit is a stall multiple: EAS (dfbcd0b)
             if (want == 0 && flapSet > 0 && learn != null && !learn.Done)
             {   // Learn flaps test ended / aborted / skipped / climbing back: all the way up at once, not a notch per 2 s

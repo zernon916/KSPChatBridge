@@ -281,6 +281,8 @@ namespace KSPChatBridge
             return FlightPolicy.Clamp(3 + (ClimbBackMax - 3) * (speed - lo) / (hi - lo), 3, ClimbBackMax);
         }
         internal static bool LowEnergy(bool was, double speed, double stall, double vs, double agl) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? MinSafeSpeed(stall) : 1.2 * stall); }
+        /// <summary>GROK LAND5c: on final the speed part uses the shrinking floor k x stall (enter below k, clear at 1.08k), sink parts unchanged.</summary>
+        internal static bool LowEnergyK(bool was, double speed, double stall, double vs, double agl, double k) { bool sink = (vs < -8 && agl < 300) || (vs < -3 && agl < 120); return sink || speed < (was ? 1.08 * k : k) * stall; }
         internal static bool LowEnergy(double speed, double stall, double vs, double agl) { return speed < MinSafeSpeed(stall) || (vs < -8 && agl < 300) || (vs < -3 && agl < 120); }
         // ---- auto-trim (Luke 5:15 PM: new plane would not level off) ----
         internal const double TrimPitchMax = .15, TrimSurfaceMax = 5;
