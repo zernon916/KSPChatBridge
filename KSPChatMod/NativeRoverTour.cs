@@ -13,7 +13,7 @@ namespace KSPChatBridge
         readonly List<KscRoverWaypoint> scienceTourStops = new List<KscRoverWaypoint>();
         readonly HashSet<string> scienceTourVisited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         readonly List<KscRoverPolicy.P> scienceTourRoute = new List<KscRoverPolicy.P>();
-        bool scienceTouring, scienceTourDriving;
+        bool scienceTouring, scienceTourDriving; int scienceTourStopN;
         int scienceTourRouteIndex;
         double scienceTourSpeed = 10;
         KscRoverPolicy.P scienceTourHub;
@@ -78,9 +78,9 @@ namespace KSPChatBridge
             scienceTourStops.Clear();
             scienceTourVisited.Clear();
             scienceTourRoute.Clear();
-            scienceTourRouteIndex = 0;
+            scienceTourRouteIndex = 0; scienceTourStopN = 0;
             tourWaitUntil = 0;
-            scienceTourSpeed = Math.Max(2, Math.Min(10, Num(a, "speed", 10)));
+            scienceTourSpeed = Math.Max(2, Math.Min(RoverCaps.Ceiling, Num(a, "speed", 20)));   // RS3: the guard caps per surface (learned per rover)
             BuildScienceTourStops();
             if (scienceTourStops.Count == 0)
             {
@@ -219,7 +219,11 @@ namespace KSPChatBridge
                 return;
             }
 
-            scienceTourDriving = false;
+            if (scienceTourRouteIndex + 1 >= scienceTourRoute.Count && vessel.srfSpeed > .3)
+            {   // RS3: stop fully (brakes on) before the science run
+                SetGroup(vessel, KSPActionGroup.Brakes, true); tourWaitUntil = Time.realtimeSinceStartup + .5f; return;
+            }
+            scienceTourDriving = false; roverStuck.Count = 0;
             scienceTourRouteIndex++;
             if (scienceTourRouteIndex < scienceTourRoute.Count)
             {
@@ -247,6 +251,7 @@ namespace KSPChatBridge
                     + (ran.Count == 0 ? 0 : scienceValue).ToString("0.0", CultureInfo.InvariantCulture) + " estimated science value" : "science blocked: " + blocker)
                 + " | " + (ran.Count == 0 ? "none run" : string.Join(", ", ran.ToArray()));
             ChatLog.Write("rover-tour", log);
+            ChatLog.Write("rover", "stop " + (++scienceTourStopN) + " " + ScienceBiomeHere() + ": ran " + ran.Count + " (worth " + (ran.Count == 0 ? 0 : scienceValue).ToString("0.0", CultureInfo.InvariantCulture) + "), kept " + HeldDataCount());
             ChatWindow.Notice(Voice().Key + ": At " + stop.Name + ". "
                 + (blocker != null ? "Science blocked: " + blocker + "."
                     : ran.Count > 0 ? "Ran " + string.Join(", ", ran.ToArray()) + "; about "

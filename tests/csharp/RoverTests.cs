@@ -13,6 +13,7 @@ internal static class RoverTests
         passes = 0;
         VehicleClassTests();
         ScienceInventoryTests();
+        DrivePolicyTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -42,6 +43,35 @@ internal static class RoverTests
         Check(ScienceInventory.KscMiniBiome("VehicleAssemblyBuilding") == "VAB" && ScienceInventory.KscMiniBiome("Shores") == null, "KSC mini-biome names");
         Check(ScienceInventory.Line(X(3.2), null).Contains("worth 3.2") && ScienceInventory.Line(X(3.2), null).EndsWith("RUN"), "inventory line");
         Check(SciencePolicy.AutoSkipReason(false, false, true, false, .3, false, false, true) == "0 sci" && SciencePolicy.AutoSkipReason(false, false, true, false, .3, false, false, true, 0) == null, "plane watcher keeps 0.5, rover min 0");
+    }
+
+    static void DrivePolicyTests()
+    {
+        double R = 600000;
+        Check(RoverDrivePolicy.Surface("Runway", 0, 0, R) == RoverSurface.Runway && RoverDrivePolicy.Surface("", -.0495, -74.6, R) == RoverSurface.Runway
+            && RoverDrivePolicy.Surface("KSC_Crawlerway", -.08, -74.6, R) == RoverSurface.Road && RoverDrivePolicy.Surface("", 1, -70, R) == RoverSurface.OffRoad, "surface classes");
+        var caps = new RoverCaps(); Check(caps.Get(RoverSurface.Road) == 12 && caps.Get(RoverSurface.Runway) == 20 && caps.Get(RoverSurface.OffRoad) == 6, "plan default caps");
+        var c2 = RoverCaps.FromDict(caps.ToDict()); c2.Set(RoverSurface.OffRoad, 99); Check(c2.OffRoad == RoverCaps.Ceiling && RoverCaps.FromDict(null).Road == 12, "caps round-trip and clamp");
+        Check(RoverDrivePolicy.SlopeCap(10, 20, 15) == RoverDrivePolicy.CrawlSpeed && Math.Abs(RoverDrivePolicy.SlopeCap(10, 12, 15) - 6) < 1e-9 && RoverDrivePolicy.SlopeCap(10, 5, 15) == 10, "slope limit");
+        Check(Math.Abs(RoverDrivePolicy.SlopeDeg(0, 20, 20) - 45) < 1e-9 && RoverDrivePolicy.SlopeDeg(double.NaN, 1, 20) == 0, "slope from terrain samples");
+        Check(RoverDrivePolicy.RollCap(10, 25, 20) == 5 && RoverDrivePolicy.RollCap(10, 10, 20) == 10 && RoverDrivePolicy.BrakeForRoll(31) && !RoverDrivePolicy.BrakeForRoll(29), "tip-over limits");
+        Check(Math.Abs(RoverDrivePolicy.TurnCap(20, .5) - .25 * 9.81 / .5) < 1e-9 && RoverDrivePolicy.TurnCap(20, 0) == 20, "lateral accel <= 0.25 g");
+        Check(RoverDrivePolicy.Cap(30, 12, 0, 15, 0, 20, 0) == 12 && RoverDrivePolicy.Cap(30, 12, 0, 15, 25, 20, 0) == 6, "combined cap");
+        Check(RoverDrivePolicy.HoldShort(false, true, 1500, 300) && !RoverDrivePolicy.HoldShort(true, true, 1500, 300) && !RoverDrivePolicy.HoldShort(false, true, 3000, 300) && !RoverDrivePolicy.HoldShort(false, false, 100, 50), "runway hold-short");
+        bool brake; Check(RoverDrivePolicy.Detour(double.NaN, 5, 5, 10, out brake) == 0 && !brake, "clear ahead");
+        Check(RoverDrivePolicy.Detour(30, 10, double.NaN, 5, out brake) == 35 && !brake && RoverDrivePolicy.Detour(30, double.NaN, 10, 5, out brake) == -35, "detour to the freer side");
+        RoverDrivePolicy.Detour(5, 1, 1, 8, out brake); Check(brake, "brake inside braking distance");
+        var st = new RoverStuck(); bool back = false; for (double t = 0; t <= 9.5; t += .5) back |= st.Sample(t, 5, .1, .5);
+        Check(!back && st.Sample(10.5, 5, .1, .5) && st.Backing && st.Count == 1, "stuck after 10 s without progress");
+        double tt = 11; while (st.Sample(tt, 5, 1, .5)) tt += .5; Check(!st.Backing && tt - 11 <= 5.5, "backs up 5 m then re-routes");
+        Check(!new RoverStuck().Sample(20, 0, 0, .5), "not stuck when stopped on purpose");
+        var stops = new List<double[]> { new[] { 0, .01, 0d }, new[] { 0, .012, 50d }, new[] { 0, .002, 0d } };
+        var ord = RoverDrivePolicy.WeightedOrder(0, 0, stops, R); Check(ord.Count == 3 && ord[0] == 1 && ord[1] == 0 && ord[2] == 2, "value-weighted nearest neighbour (rich stop first, then nearest)");
+        var lc = new RoverCaps(); var ln = new RoverSpeedLearner(); string ch = null; for (double t = 0; t <= 31; t += 1) ch = ln.Sample(t, RoverSurface.Road, lc, false, 11.5, 2, 20, false) ?? ch;
+        Check(ch != null && lc.Road == 13, "learns a faster cap after 30 s stable");
+        ln.Sample(40, RoverSurface.Road, lc, false, 12.5, 25, 20, true); Check(lc.Road == 11, "safety event drops the cap");
+        for (double t = 41; t < 120; t += 1) ln.Sample(t, RoverSurface.Road, lc, false, 11, 2, 20, false); Check(lc.Road == 11, "no more raising after a safety event");
+        var uc = new RoverCaps(); var lu = new RoverSpeedLearner(); for (double t = 0; t < 100; t += 1) lu.Sample(t, RoverSurface.Road, uc, true, 12, 0, 20, false); Check(uc.Road == 12, "user cap never learned over");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

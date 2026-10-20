@@ -777,6 +777,7 @@ namespace KSPChatBridge
                     if (RoverTopSpeedTick(vessel.srfSpeed, roverPitch, roverRoll)
                         || RoverBrakingTick(vessel.srfSpeed, roverPitch, roverRoll)
                         || RoverTurnTick(vessel.srfSpeed, roverPitch, roverRoll)) return;
+                    if (RoverGuardTick(c, ref targetSpeed, roverPitch, roverRoll, roverDt)) return;   // RS3: autopilot-only caps / obstacles / stuck (manual driving is never limited)
                     bool slowForSafety = KscRoverPolicy.ReduceSpeed(roverPitch, roverRoll, sideSpeed, vessel.srfSpeed);
                     bool brakeForRollover = KscRoverPolicy.BrakeForRollover(roverRoll);
                     if (slowForSafety != roverSafetySlow || brakeForRollover != roverSafetyBrake)

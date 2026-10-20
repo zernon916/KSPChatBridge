@@ -49,9 +49,6 @@ namespace KSPChatBridge
         internal static string CurrentClassReason { get { var i = instance; if (i == null || i.vessel == null) return ""; i.ScanClass(); return i.classReason; } }
         /// <summary>RS1: the per-craft ROVER switch (craft_overrides.vehicle_rover); unset/off = plane pages, as before.</summary>
         internal static bool RoverMode { get { return CraftReady && CraftOverrideGet(CraftOverrides.RoverKey) >= .5; } }
-        /// <summary>Value in use for a rover setting (the tablet field when blank).</summary>
-        double RoverInUse(CraftOverrides.Def d) { return d.Default; }
-
         /// <summary>RS1: ROVER home card on the tablet.</summary>
         internal static List<string> RoverStatusLines()
         {

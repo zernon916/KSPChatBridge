@@ -11,6 +11,9 @@ namespace KSPChatBridge
         /// <summary>RS2: run an experiment when it yields more than this (CRAFT rover_min_science; default 0 = any science).</summary>
         static double RoverMinScience() { double v = CraftOverrides.L(CraftOverrides.RoverMinScience); return double.IsNaN(v) ? 0 : Math.Max(0, v); }
 
+        /// <summary>Science results held on board (experiments + containers).</summary>
+        int HeldDataCount() { int n = 0; foreach (var h in vessel.FindPartModulesImplementing<IScienceDataContainer>()) n += h.GetScienceCount(); return n; }
+
         bool HasScientist() { foreach (var cm in vessel.GetVesselCrew()) if (cm.trait == "Scientist") return true; return false; }
 
         /// <summary>RS2: every science module on the vessel with its value here (subject from the mini-biome when landed on one).</summary>

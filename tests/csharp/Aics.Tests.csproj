@@ -113,6 +113,7 @@
     <Compile Include="RoverTests.cs"/>
     <Compile Include="../../KSPChatMod/VehicleClass.cs"/>
     <Compile Include="../../KSPChatMod/ScienceInventory.cs"/>
+    <Compile Include="../../KSPChatMod/RoverDrivePolicy.cs"/>
     <Reference Include="System.IO.Compression"/><Reference Include="System.IO.Compression.FileSystem"/>
   </ItemGroup>
 </Project>
