@@ -129,6 +129,24 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK TEST1: landing test zone preset geometry
+            var dp = LandingTestPresets.Defaults(); double la, lo, R = LandingTestPresets.KerbinR;
+            Check(dp.Count >= 9, "TEST1: >= 9 presets (5 approach + 4 heading-away)");
+            LandingTestPresets.Position(dp[0], out la, out lo); double dD14 = NavigationMath.Distance(la, lo, -.049541, -73.270435, R);
+            Check(dD14 < 5 && Math.Abs(dp[0].AltM - 818) < 3, "TEST1: preset a sits on the chart D14.0KSC fix (" + Math.Round(dD14) + " m) at the glidepath altitude");
+            LandingTestPresets.Position(dp[4], out la, out lo); double dThr = NavigationMath.Distance(la, lo, LandingTestPresets.ThrLat, LandingTestPresets.ThrLon, R);
+            Check(Math.Abs(dThr - Math.Sqrt(5000.0 * 5000 + 300 * 300)) < 20 && la > LandingTestPresets.ThrLat, "TEST1: preset e 5 km out, 300 m north");
+            LandingTestPresets.Position(dp[8], out la, out lo); Check(Math.Abs(la - (LandingTestPresets.ThrLat + LandingTestPresets.EndLat) / 2) < 1e-9, "TEST1: preset i overhead the runway midpoint");
+            double mLa = (LandingTestPresets.ThrLat + LandingTestPresets.EndLat) / 2, mLo = (LandingTestPresets.ThrLon + LandingTestPresets.EndLon) / 2; bool away = true;
+            for (int i = 5; i <= 7; i++) { LandingTestPresets.Position(dp[i], out la, out lo); double brg = NavigationMath.Bearing(mLa, mLo, la, lo); away &= Math.Abs(FlightPolicy.Wrap(dp[i].Heading - brg)) < 60; }
+            Check(away, "TEST1: presets f/g/h head away from the field");
+            LandingTestPresets.Position(dp[6], out la, out lo); Check(Math.Abs(NavigationMath.Distance(mLa, mLo, la, lo, R) - 20000) < 20 && NavigationMath.Bearing(mLa, mLo, la, lo) > 300, "TEST1: preset g 20 km NW");
+            double ve, vn, vu; LandingTestPresets.VelocityEnu(dp[5], out ve, out vn, out vu); Check(Math.Abs(ve - 150) < 1e-9 && Math.Abs(vn) < 1e-9, "TEST1: heading 090 velocity is due east");
+            string why; var rt = LandingTestPresets.Parse(LandingTestPresets.ToJson(dp), out why);
+            Check(rt != null && rt.Count == dp.Count && rt[1].Lat == dp[1].Lat && rt[6].Bearing == 315 && rt[4].Along == 5000 && rt[4].Cross == 300 && rt[2].Heading == 0, "TEST1: presets JSON round trip (" + why + ")");
+            var badP = LandingTestPresets.Parse("[{\"name\":\"x\",\"alt\":900},{\"name\":\"y\",\"along\":9000,\"alt\":5,\"speed\":120}]", out why); Check(badP == null && why.Contains("no position") && why.Contains("out of range"), "TEST1: bad presets skipped with reasons");
+            Check(LandingTestPresets.RunLine(3, dp[0], "Aeris 3A") == "run 3 preset=a straight-in D14 on glidepath craft=Aeris 3A" && LandingTestPresets.Outcome(3, "landed", 2.9, 41, 1).Contains("sink=2.9 m/s"), "TEST1: run/outcome log lines");
+        }
         {   // GROK LAND5g
             var t1 = new StepThrottle(); t1.Reset(.31); double r1 = t1.Update(0, 108, 117, .02, double.NaN, 92, 10000), r2 = t1.Update(4, 108, 117, .02, double.NaN, 92, 10000);
             Check(r1 == .31 && r2 == .31, "LAND5g: 108 vs plan 117, floor 92 (above floor + 8) = hold, no steps");
