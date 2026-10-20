@@ -474,16 +474,20 @@ namespace KSPChatBridge
             else rows.Add(new KeyValuePair<string, Color>("FD   " + (guidance ? "no signal" : "off (GUIDE)"), Text));
             float wd = dw - 8, rx = area.width - dw + 6, ry = 2;
             // GROK TAB-ILS2: scale the font so the rows fill the whole tall panel (was fixed 10-15 px -> top half only), then spread the slack
-            Func<int, float> total = px => { float t = 0; foreach (var row in rows) t += cv.TextHeight(row.Key, wd, px, true); return t; };
-            int ip = Ils.FitPx(total, area.height - 4, IlsPx(area), Ils.MaxPx);
-            float gap = rows.Count > 1 ? Mathf.Max(0, (area.height - 4 - total(ip)) / rows.Count) : 0;
+            // GROK TAB-ILS3: size from fixed-width templates, one line per row, recomputed only when the panel / row layout changes, with hysteresis
+            var tpl = new List<string>(); foreach (var row in rows) tpl.Add(Ils.Template(row.Key));
+            string panelKey = Mathf.RoundToInt(wd) + "x" + Mathf.RoundToInt(area.height), layout = panelKey + "|" + string.Join("\n", tpl.ToArray());
+            if (layout != ilsLayout) { ilsLayout = layout; ilsCand = Ils.FitLines((t, px) => cv.TextWidth(t, px), px => cv.TextHeight("Hg", wd, px, false), tpl, wd, area.height - 4, IlsPx(area), Ils.MaxPx); }
+            int ip = ilsHold.Update(Time.realtimeSinceStartup, ilsCand, panelKey);
+            float lh = cv.TextHeight("Hg", wd, ip, false), gap = rows.Count > 1 ? Mathf.Max(0, (area.height - 4 - rows.Count * lh) / rows.Count) : 0;
             foreach (var row in rows)
-            {   // each row is sized by the canvas (a wrapped row takes the height it needs); drawing stops at the bottom edge
-                float h = cv.TextHeight(row.Key, wd, ip, true); if (ry + h > area.height) break;
-                cv.Text(new Rect(rx, ry, wd, h), row.Key, ip, row.Value, TextAnchor.UpperLeft, true); ry += h + gap;
+            {   // one line per row (no wrapping); drawing stops at the bottom edge
+                if (ry + lh > area.height) break;
+                cv.Text(new Rect(rx, ry, wd, lh), row.Key, ip, row.Value, TextAnchor.UpperLeft, false); ry += lh + gap;
             }
         }
         /// <summary>ILS data-block text size for a page size (the same clamp the CHART data block uses).</summary>
+        static string ilsLayout; static int ilsCand; static readonly Ils.FontHold ilsHold = new Ils.FontHold();
         static int IlsPx(Rect area) { return Mathf.Clamp(Mathf.RoundToInt(area.height / 30), 10, 15); }
 
         string planeLine = ""; float planeAt;

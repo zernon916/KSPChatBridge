@@ -145,6 +145,32 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5e: the speed row shows the speed the autopilot controls against (surface speed), IAS small.</summary>
         /// <summary>GROK TAB-ILS2: the largest font px in [min, max] whose wrapped rows fit maxH (total = summed row height at a px).</summary>
         internal const int MaxPx = 40;
+        /// <summary>GROK TAB-ILS3 (Luke: ILS text 'flashing up and down'): the fit uses fixed-width templates (every digit -> '8'), one line per
+        /// row (no wrapping), so changing values never change the size.</summary>
+        internal static string Template(string s) { var c = (s ?? "").ToCharArray(); for (int i = 0; i < c.Length; i++) if (c[i] >= '0' && c[i] <= '9') c[i] = '8'; return new string(c); }
+        internal static int FitLines(Func<string, int, float> width, Func<int, float> lineH, IList<string> templates, float maxW, float maxH, int min, int max)
+        {
+            int n = Math.Max(1, templates.Count);
+            Func<int, bool> ok = px => { if (n * lineH(px) > maxH) return false; foreach (var t in templates) if (width(t, px) > maxW) return false; return true; };
+            int lo = Math.Max(6, min), hi = Math.Max(lo, max); if (!ok(lo)) return lo;
+            while (lo < hi) { int mid = (lo + hi + 1) / 2; if (ok(mid)) lo = mid; else hi = mid - 1; }
+            return lo;
+        }
+        /// <summary>Hysteresis on the chosen size: a panel resize applies at once; otherwise a change of >= HoldPx must persist HoldS.</summary>
+        internal sealed class FontHold
+        {
+            internal const int HoldPx = 2; internal const double HoldS = 1;
+            int cur = -1, pend = -1; double since; string panel;
+            internal int Px { get { return cur; } }
+            internal int Update(double now, int cand, string panelKey)
+            {
+                if (cur < 0 || panelKey != panel) { cur = cand; panel = panelKey; pend = -1; return cur; }
+                if (Math.Abs(cand - cur) < HoldPx) { pend = -1; return cur; }
+                if (cand != pend) { pend = cand; since = now; return cur; }
+                if (now - since >= HoldS) { cur = cand; pend = -1; }
+                return cur;
+            }
+        }
         internal static int FitPx(Func<int, float> total, float maxH, int min, int max)
         {
             int lo = Math.Max(6, min), hi = Math.Max(lo, max);
