@@ -65,11 +65,11 @@ namespace KSPChatBridge
         float CraftRowLabelH(Rect c, int i, string label, float row)
         {
             bool dim; string head = CraftRowHead(i, label, out dim);
-            return Mathf.Max(row * .8f, TabletUi.WrapHeight(head, c.width));   // UI2: always its own full-width line(s)
+            return Mathf.Max(row * .8f, TabletUi.WrapHeight(head, c.width - 2 * CraftBoxPad));   // UI2: always its own full-width line(s); UI3: inside the box padding
         }
         /// <summary>UI1: real height of a row - long labels wrap on their own line(s) with the controls below.</summary>
-        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftRowLabelH(c, i, label, row) + CraftRowGap + row; }
-        const float CraftRowGap = 4, CraftRowIndent = 12;   // UI2: label-to-controls gap, controls indent (same for every row)
+        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftBoxPad + CraftRowLabelH(c, i, label, row) + CraftRowGap + row + CraftBoxPad; }   // UI3: box padding included (callers add the gap between boxes)
+        const float CraftRowGap = 4, CraftRowIndent = 12, CraftBoxPad = 7;   // UI2: label-to-controls gap, controls indent (same for every row)
         static string StepText(double s) { return (s > 0 ? "+" : "") + s.ToString("0.##"); }
         /// <summary>One override row, shared by CRAFT / DETAILS and the LANDING page (same craft_overrides entry and text buffers, so both
         /// pages stay in sync). Numbers: "<label> <value> <unit>" | -L -S [field] +S +L SET X. Switches: AUTO / ON / OFF. Returns the next y.
@@ -80,11 +80,12 @@ namespace KSPChatBridge
             if (tabletCraftFor != craft || tabletCraftText == null || tabletCraftText.Length != defs.Count)
             { tabletCraftFor = craft; tabletCraftText = new string[defs.Count]; for (int k = 0; k < defs.Count; k++) tabletCraftText[k] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(defs[k].Key)); }
             var d = defs[i]; double cur = NativeFlightController.CraftOverrideGet(d.Key), use = NativeFlightController.CraftInUse(d.Key);
-            float fw = Mathf.Max(90, tabletFont * 5f), x = c.x + CraftRowIndent;   // UI2: one layout - label line(s) full width, controls below at a fixed indent
+            float boxH = CraftOverrideRowHeight(c, i, label, row); TabletUi.RowBox(new Rect(c.x, ry, c.width, boxH)); float rowEnd = ry + boxH; ry += CraftBoxPad;   // UI3: each setting in its own box
+            float fw = Mathf.Max(90, tabletFont * 5f), x = c.x + CraftBoxPad + CraftRowIndent;   // UI2: one layout - label line(s) full width, controls below at a fixed indent
             float bw = Mathf.Max(52, TabletUi.ButtonWidth("+0.5")); foreach (double s in new[] { -d.Large, -d.Small, d.Small, d.Large }) bw = Mathf.Max(bw, TabletUi.ButtonWidth(StepText(s)));
             float sw = Mathf.Max(bw, TabletUi.ButtonWidth("SET")), ow = Mathf.Max(bw * 1.4f, TabletUi.ButtonWidth("AUTO"));
             bool dim; string head = CraftRowHead(i, label, out dim); float lh = CraftRowLabelH(c, i, label, row);
-            TabletUi.LabelWrap(new Rect(c.x, ry, c.width, lh), head, dim); ry += lh + CraftRowGap;
+            TabletUi.LabelWrap(new Rect(c.x + CraftBoxPad, ry, c.width - 2 * CraftBoxPad, lh), head, dim); ry += lh + CraftRowGap;
             /* UI2: no side-by-side label */
             if (d.Bool)
             {
@@ -92,7 +93,7 @@ namespace KSPChatBridge
                 if (TabletUi.Button(new Rect(x, ry, ow, row), "AUTO", auto, en) && !auto) CraftSet(i, double.NaN); x += ow + 4;
                 if (TabletUi.Button(new Rect(x, ry, ow, row), "ON", !auto && on, en)) CraftSet(i, 1); x += ow + 4;
                 if (TabletUi.Button(new Rect(x, ry, ow, row), "OFF", !auto && !on, en)) CraftSet(i, 0);
-                return ry + row;
+                return rowEnd;
             }
             foreach (double s in new[] { -d.Large, -d.Small }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
             tabletCraftText[i] = TabletUi.Field(new Rect(x, ry, fw, row), tabletCraftText[i] ?? "", en); x += fw + 4;
@@ -100,7 +101,7 @@ namespace KSPChatBridge
             double? p = CraftOverrides.Parse(d.Key, tabletCraftText[i]);
             if (TabletUi.ActionButton(new Rect(x, ry, sw, row), "SET", en && p.HasValue, false)) CraftSet(i, p.Value); x += sw + 4;
             if (TabletUi.ActionButton(new Rect(x, ry, bw, row), "X", en && !double.IsNaN(cur), false)) CraftSet(i, double.NaN);
-            return ry + row;
+            return rowEnd;
         }
         static int CraftIndex(string key) { return Array.IndexOf(CraftOverrides.Fields, key); }
 

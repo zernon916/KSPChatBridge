@@ -68,6 +68,9 @@ namespace KSPChatBridge
         internal static void LabelWrap(Rect r, string text, bool dim = false) { if (wrapS == null) { Label(r, text, dim); return; } var o = wrapS.normal.textColor; wrapS.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, wrapS); wrapS.normal.textColor = o; }
         internal static void Fill(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, round == null ? Texture2D.whiteTexture : (Texture)round); GUI.color = o; }
         internal static void Rect(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, Texture2D.whiteTexture); GUI.color = o; }
+        /// <summary>UI3: one setting's box - subtle panel darker than the card with a 1 px lighter edge (cached rounded style, no per-frame allocation).</summary>
+        internal static readonly Color RowBoxFill = new Color(.10f, .115f, .14f), RowBoxEdge = new Color(.24f, .27f, .32f);
+        internal static void RowBox(Rect r) { Box(r, RowBoxEdge); Box(new Rect(r.x + 1, r.y + 1, r.width - 2, r.height - 2), RowBoxFill); }
         static void Box(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.Box(r, GUIContent.none, cardS); GUI.color = o; }
 
         /// <summary>Rounded card with a title; returns the inner content rect.</summary>
