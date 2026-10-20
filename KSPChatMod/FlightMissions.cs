@@ -1096,6 +1096,10 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// <summary>ROLL1: no 2 Hz on/off pulsing (Luke: brakes kick on and off, worst for the steering) - on once the ramp passes 0.5, off below 0.3.</summary>
         internal const double HoldOn = .5, HoldOff = .3;
         internal static bool Hold(double duty, bool was) { return was ? duty > HoldOff : duty >= HoldOn; }
+        /// <summary>ROLL2: wheel brakes from touchdown at any speed (Stearwing A300: on only at 45 m/s, 9 s after touchdown -> grass). Off once airborne
+        /// for more than AirReleaseS in a bounce, back on at the next contact; the short airborne debounce keeps a skipping gear from pulsing them.</summary>
+        internal const double AirReleaseS = .2;
+        internal static bool FromTouchdown(bool landed, double airS, bool was) { return landed || was && airS < AirReleaseS; }
     }
     /// <summary>ROLL1: rollout nosewheel steering (Aeris 22:xx: 270 -> 285 -> 256 -> 283 in 6 s, ask 266-274): P on heading error + yaw-rate
     /// damping, gain scheduled down with speed (full at <= 20 m/s, 1/4 at 80+) and with the brakes on, output and slew limited.</summary>

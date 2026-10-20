@@ -955,11 +955,11 @@ namespace KSPChatBridge
                             reversers.ApWants = CraftOverrides.On("reverser", true);   // TAB-CRAFT1   // GROK LAND5i: the whole rollout (bounces included) is the AP's own reverser use
                             c.roll = (float)FlightPolicy.Clamp(-.06 * roll - .015 * p, -1, 1);   // GROK LAND5f: firm wings level on the rollout (rudder/wheel steer, no roll)
                             if (vessel.LandedOrSplashed) rolloutLandedS += dt; else rolloutLandedS = 0;
-                            { bool wb = derot.BrakesAllowed && RolloutBrake.Hold(RolloutBrake.Duty(rolloutLandedS, vessel.srfSpeed), vessel.ActionGroups[KSPActionGroup.Brakes]);   /* ROLL1: hysteresis, no pulsing */ if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on (progressive) at " + Math.Round(vessel.srfSpeed) + " m/s"); } } }
+                            { bool wb = RolloutBrake.FromTouchdown(vessel.LandedOrSplashed, rolloutAirS, vessel.ActionGroups[KSPActionGroup.Brakes]);   /* ROLL2: from main-gear contact, released in a bounce; debounced, no pulsing */ if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on at touchdown (" + Math.Round(vessel.srfSpeed) + " m/s)"); } } }
                             { double hNow = FlightGlobals.ship_heading, hr = double.IsNaN(rollHdgPrev) || dt <= 0 ? 0 : FlightPolicy.Wrap(hNow - rollHdgPrev) / dt; rollHdgPrev = hNow; rollHdgRate = double.IsNaN(rollHdgRate) ? hr : rollHdgRate + .3 * (hr - rollHdgRate); rollSteer = RolloutSteer.Step(rollSteer, heading - hNow, rollHdgRate, vessel.srfSpeed, vessel.ActionGroups[KSPActionGroup.Brakes], dt); c.wheelSteer = (float)rollSteer; }   // ROLL1: damped, speed/brake-scheduled, slew-limited nosewheel steering
                             lateralBankAsk = 0;
                             LogLandingLateral(c);
-                            if (!derot.BrakesAllowed && vessel.ActionGroups[KSPActionGroup.Brakes] && !AirbrakesByAutopilot) SetGroup(vessel, KSPActionGroup.Brakes, false);   // wheel brakes only once the nose wheel is down (LAND5i: one brake owner, the progressive ramp above)
+                            /* ROLL2: no nose-down gate on the wheel brakes any more - they start at main-gear contact */
                             return;
                         }
                     }
