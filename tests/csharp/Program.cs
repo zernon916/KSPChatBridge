@@ -222,6 +222,13 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // LAND5q
+                Check(ApproachProfile.FlareFastDone(57, 52) && !ApproachProfile.FlareFastDone(58, 52) && !ApproachProfile.FlareFastDone(40, double.NaN), "LAND5q: fast flare ends at threshold_speed + 5");
+                Check(!ApproachProfile.FlareTooLong(200, 60, 500, 350) && ApproachProfile.FlareTooLong(250, 60, 500, 350) && ApproachProfile.FlareTooLong(50, 60, 700, 350), "LAND5q: flare long after ~4 s of ground run or 300 m past the aim point");
+                Check(Derotation.BounceStart(8, 62, 45) == 8 && Derotation.BounceStart(3, 62, 45) == 3 && Derotation.BounceStart(0, 50, 45) == 2 && Derotation.BounceStart(12, 50, 45) == 8 && Math.Abs(Derotation.BounceStep(3, 62, 45, .5) - 2.5) < 1e-9 && Derotation.BounceStep(.2, 62, 45, 1) == 0 && Derotation.BounceStep(-1, 62, 45, 1) == -1 && Derotation.BounceStep(5, 50, 45, 1) == 5, "LAND5q: fast bounce never pitches up (current pitch, lowering 1 deg/s to 0); near stall holds 2-8");
+                var dq = new Derotation(); double qp = 6; dq.Step(qp, .02, false, 60); for (int k = 0; k < 60; k++) { dq.Step(qp, .02, false, 60); qp = dq.Command; } double q1 = qp; for (int k = 0; k < 500; k++) { dq.Step(qp, .02, false, 60); qp = dq.Command; }
+                Check(Math.Abs(q1 - (6 - 2 * (61 * .02 - Derotation.HoldS))) < .05 && Math.Abs(qp + 3) < 1e-6, "LAND5q: first contact = straight 2 deg/s ramp to -rollout_pitch_deg even at constant speed (" + q1.ToString("0.00") + ")");
+            }
             {   // LAND5p
                 Check(Math.Abs(FlarePolicy.Pitch(7, 50, -2.8, -1.5) - FlarePolicy.Pitch(7, 50, -1.5, -1.5) - 2.6) < 1e-9 && Math.Abs(FlarePolicy.Pitch(7, 50, -12, -1.5) - FlarePolicy.Pitch(7, 50, -1.5, -1.5) - 8) < 1e-9 && FlarePolicy.CapPitch(FlarePolicy.Pitch(7, 50, -6, -1.5), 9) == 9, "LAND5p: flare pitch 2 deg per m/s of sink error (+-8), still capped by flare_max_pitch_deg");
                 string bk = null; int bn = 0; for (int k = 0; k < 1379; k++) if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "OUT over|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++;
@@ -3135,14 +3142,14 @@ class Program
                 Check(Math.Abs(FlarePolicy.Pitch(8, v, -2) - Math.Asin(-2 / v) * 180 / Math.PI - 8) < 1e-9, "flare holds AoA at speed " + v);
             Check(double.IsNaN(FlarePolicy.Pitch(double.NaN, 80, -1)) && double.IsNaN(FlarePolicy.Pitch(8, 0, 0)), "unmeasured AoA or unusable speed falls back");
             var dr = new Derotation();
-            for (int i = 0; i < 40; i++) dr.Step(8, .05, false, 80);
-            Check(Math.Abs(dr.Command - 8) < 1e-9, "nose holds while touchdown speed is unchanged");
+            for (int i = 0; i < 15; i++) dr.Step(8, .05, false, 80);
+            Check(Math.Abs(dr.Command - 8) < 1e-9, "nose holds through the 0.8 s touchdown hold");
             double before = dr.Command; dr.Step(8, .05, false, 40);
             Check(dr.Command < before && before - dr.Command <= Derotation.Rate * .05 + 1e-9, "speed drop lowers nose at limited rate");
-            for (int i = 0; i < 100; i++) dr.Step(8, .05, false, 40);
-            Check(Math.Abs(dr.Command - 2.5) < 1e-9, "half touchdown speed progressively lowers nose (to -3 at 0)");
-            dr.Step(2.5, .05, false, 70);
-            Check(Math.Abs(dr.Command - 2.5) < 1e-9, "speed increase never raises nose during rollout");
+            for (int i = 0; i < 200; i++) dr.Step(8, .05, false, 40);
+            Check(Math.Abs(dr.Command + 3) < 1e-9, "LAND5q: nose ramps to -rollout_pitch_deg (-3)");
+            dr.Step(-3, .05, false, 70);
+            Check(Math.Abs(dr.Command + 3) < 1e-9, "speed increase never raises nose during rollout");
             Console.WriteLine("Touchdown AoA: 11 behavior checks passed.");
         }
         {   // derotation: nose lowered at <= 2.5 deg/s, no forward-stick spike, brakes only after nose-wheel contact (Luke 4:26 PM)

@@ -88,7 +88,7 @@ namespace KSPChatBridge
         /// <summary>Brake surfaces follow the Brakes action group (deploy), so spoilers not wired to the AG still act as airbrakes; only what we deployed is retracted.</summary>
         void BrakeSurfacesTick()
         {
-            if (vessel == null) return; bool on = vessel.ActionGroups[KSPActionGroup.Brakes] && !vessel.LandedOrSplashed;
+            if (vessel == null) return; bool on = vessel.ActionGroups[KSPActionGroup.Brakes] && !vessel.LandedOrSplashed || liftDump && mode == "landing";   // LAND5q: lift dump on the rollout
             foreach (var cs in brakeSurfs)
             {
                 if (cs == null || flaps.Contains(cs) || cs.deploy == on) continue;
