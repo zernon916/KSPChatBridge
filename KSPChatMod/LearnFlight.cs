@@ -1370,6 +1370,16 @@ namespace KSPChatBridge
         internal static double RollFlapAngle(double deg) { return double.IsNaN(deg) ? .01 : Math.Max(.01, Math.Abs(deg)); }
         internal static double DroopStep(double cur, double target, double dt) { return target <= cur ? target : Math.Min(target, cur + .5 * Math.Max(0, dt)); }
         internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
+        /// <summary>FLAP2: deployAngle for a flap stage. flapDeg NaN = the part's own angle and sign (the player's deploy direction; 0 = full range);
+        /// else |flapDeg| (<= range) aimed trailing-edge down (+) / up (-) using posDir = where +angle goes with the part's Invert (0 unknown = +down).
+        /// Never touches Invert. Stages 1/2 = 1/3, 2/3.</summary>
+        internal static double FlapAngle(int setting, double partAngle, double range, double flapDeg, int posDir)
+        {
+            double f = Fraction(setting), mag, sign;
+            if (double.IsNaN(flapDeg)) { mag = Math.Abs(partAngle) > .1 ? Math.Abs(partAngle) : range; sign = partAngle < -.1 ? -1 : 1; }
+            else { mag = Math.Min(Math.Abs(flapDeg), Math.Max(0, range)); sign = (flapDeg < 0 ? -1 : 1) * (posDir < 0 ? -1 : 1); }
+            return sign * mag * f;
+        }
         internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }
         /// <summary>Flap speed limit: learned, else 1.6x clean stall.</summary>
         internal static double SpeedLimit(double cleanStall, double learned) { return !double.IsNaN(learned) && learned > 0 ? learned : 1.6 * (double.IsNaN(cleanStall) || cleanStall <= 0 ? 60 : cleanStall); }

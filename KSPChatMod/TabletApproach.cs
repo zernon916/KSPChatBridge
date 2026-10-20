@@ -35,6 +35,7 @@ namespace KSPChatBridge
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareMaxPitch), "Max flare pitch (deg)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.TouchdownAim), "Touchdown aim point (m past threshold, negative = short)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.RolloutPitch), "Rollout nose-down (deg)", row, TabletLink) + gap;
+            sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlapDeg), "Flap degree (full flaps, negative = trailing edge up, blank = part setting)", row, TabletLink) + gap;   // FLAP2
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.AutoGa), "Auto go-around (this craft)", row, TabletLink) + gap;
                 bool gOn = NativeFlightController.GlobalAutoGoAround;   // LAND5k: global default (OFF); manual GO AROUND always works
                 TabletUi.Label(new Rect(sc.x, sy, Mathf.Max(260, sc.width * .36f), row), "Auto go-around (all craft): " + (gOn ? "ON" : "OFF"));

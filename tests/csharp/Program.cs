@@ -248,6 +248,14 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // FLAP2
+                bool fOk = Math.Abs(FlapsPolicy.FlapAngle(3, -20, 30, double.NaN, 1) + 20) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(1, 15, 30, double.NaN, 1) - 5) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 0, 25, double.NaN, -1) - 25) < 1e-9;
+                bool oOk = Math.Abs(FlapsPolicy.FlapAngle(3, 20, 30, -10, 1) + 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 20, 30, -10, -1) - 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(2, 20, 30, 15, 1) - 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 20, 12, 30, 1) - 12) < 1e-9 && FlapsPolicy.FlapAngle(0, 20, 30, -10, 1) == 0;
+                double? fpNeg = CraftOverrides.Parse(CraftOverrides.FlapDeg, "-10"), fpDot = CraftOverrides.Parse(CraftOverrides.FlapDeg, "-7.5"), fpBig = CraftOverrides.Parse(CraftOverrides.FlapDeg, "-45");
+                Check(fOk, "FLAP2: flap stages keep the part's own deploy direction/angle (negative angle stays negative)");
+                Check(oOk, "FLAP2: Flap degree -10 = trailing edge up whatever Invert says, stages scale 1/3 2/3, capped at the range");
+                Check(fpNeg == -10 && fpDot == -7.5 && fpBig == -30, "FLAP2: Flap degree field takes '-' and '.' decimals, clamped -30..30");
+            }
             {   // ROLL1
                 double r1hs = 285, r1hr = 0, r1st = double.NaN, r1ask = 270, r1maxDev = 0, r1maxRate = 0, r1prevSt = 0;
                 for (int k = 0; k < 600; k++) { double r1sp = 50 - k * .06; r1st = RolloutSteer.Step(r1st, r1ask - r1hs, r1hr, r1sp, k > 100, .02); if (k > 0) r1maxRate = Math.Max(r1maxRate, Math.Abs(r1st - r1prevSt) / .02); r1prevSt = r1st; double r1acc = -r1st * 60 * Math.Min(1, r1sp / 20) - .8 * r1hr; r1hr += r1acc * .02; r1hs += r1hr * .02; if (k > 300) r1maxDev = Math.Max(r1maxDev, Math.Abs(r1hs - r1ask)); }
@@ -1438,7 +1446,7 @@ class Program
         Check(safeguards.Tick(vessel, 0, true) == 0 && !safeguards.CanTrim(surface), "pending recovery blocks baseline adoption");
         Check(safeguards.Noticed.Count == 4, "each tampered module noticed once (pilot callout)");
         Check(safeguards.Tick(vessel, 4.01, true) == 4 && safeguards.Noticed.Count == 0, "restore changed modules by identity");
-        Check(!surface.deployInvert && !surface.ignorePitch && intake.intakeEnabled && engine.thrustPercentage == 100 && multi.runningPrimary, "configuration actually restored");
+        Check(surface.deployInvert && !surface.ignorePitch && intake.intakeEnabled && engine.thrustPercentage == 100 && multi.runningPrimary, "configuration actually restored (FLAP2: the player's Invert is kept)");
         surface.deployAngle = 3; safeguards.AcceptSurface(surface);
         Check(safeguards.Tick(vessel, 7, true) == 0 && safeguards.CanTrim(surface), "authorized trim retained");
         surface.deployAngle = 9; safeguards.Tick(vessel, 8, true); safeguards.Tick(vessel, 12, false);

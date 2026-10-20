@@ -85,10 +85,10 @@ namespace KSPChatBridge
                 pitch = surface.ignorePitch, roll = surface.ignoreRoll, yaw = surface.ignoreYaw;
             entries[surface] = new Entry { Module = surface,
                 Changed = () => Math.Abs(surface.deployAngle - angle) > .01 || Math.Abs(surface.authorityLimiter - authority) > .01
-                    || surface.deployInvert != invert || surface.partDeployInvert != partInvert
+                    
                     || surface.ignorePitch != pitch || surface.ignoreRoll != roll || surface.ignoreYaw != yaw,
                 Restore = () => { surface.deployAngle = angle; surface.authorityLimiter = authority;   // deploy is left alone: it follows Brakes (GROK FIX1)
-                    surface.deployInvert = invert; surface.partDeployInvert = partInvert;
+                    /* FLAP2: Invert / deploy direction are the player's - never noticed or restored */
                     surface.ignorePitch = pitch; surface.ignoreRoll = roll; surface.ignoreYaw = yaw; } };
         }
         internal readonly List<string> Noticed = new List<string>();

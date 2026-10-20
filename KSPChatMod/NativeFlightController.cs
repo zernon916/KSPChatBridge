@@ -259,7 +259,7 @@ namespace KSPChatBridge
             internal SurfaceState(ModuleControlSurface s)
             { Angle = s.deployAngle; Authority = s.authorityLimiter; Deploy = s.deploy; Invert = s.deployInvert; PartInvert = s.partDeployInvert; Pitch = s.ignorePitch; Roll = s.ignoreRoll; Yaw = s.ignoreYaw; }
             internal void Restore(ModuleControlSurface s)
-            { s.deployAngle = Angle; s.authorityLimiter = Authority; s.deploy = Deploy; s.deployInvert = Invert; s.partDeployInvert = PartInvert; s.ignorePitch = Pitch; s.ignoreRoll = Roll; s.ignoreYaw = Yaw; }
+            { s.deployAngle = Angle; s.authorityLimiter = Authority; s.deploy = Deploy; /* FLAP2: Invert / PartInvert stay the player's */ s.ignorePitch = Pitch; s.ignoreRoll = Roll; s.ignoreYaw = Yaw; }
         }
         static double Num(Dictionary<string, object> a, string key, double fallback)
         {

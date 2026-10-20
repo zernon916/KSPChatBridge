@@ -10,6 +10,8 @@ namespace KSPChatBridge
     {
         sealed class FlapSnap { internal bool Deploy, Invert; internal float Angle; }
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
+        readonly Dictionary<ModuleControlSurface, int> flapGeom = new Dictionary<ModuleControlSurface, int>();   // FLAP2: scan's TE direction of a raw +angle (before Invert / mirror), 0 = unknown
+        double flapDegApplied = double.NaN;
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
         readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 0, rfApplied = -1; float rfLast; int rfSet, rfSetApplied = -1; string rfPhase;   // GROK RF1
         // AICS3: ROLL / FLAPS droop = deploy with a POSITIVE angle in the stock deploy direction (KSP mirrors symmetric pairs, so both wings
@@ -27,7 +29,7 @@ namespace KSPChatBridge
         /// are brakes, never flaps; untagged leading-edge surfaces are left alone. Each part's role is logged whenever the result changes.</summary>
         void ScanFlaps()
         {
-            brakeWantSet = false; flaps.Clear(); rollFlaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
+            brakeWantSet = false; flaps.Clear(); flapGeom.Clear(); rollFlaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
             var surfs = new List<ModuleControlSurface>();
             foreach (Part p in vessel.parts)
             {
@@ -59,7 +61,7 @@ namespace KSPChatBridge
                     Transform hinge = (string.IsNullOrEmpty(cs.transformName) ? null : p.FindModelTransform(cs.transformName)) ?? p.transform;
                     float sg = (cs.deployInvert ? -1 : 1) * (cs.usesMirrorDeploy && cs.mirrorDeploy ? -1 : 1) * (cs.deployAngle < 0 ? -1 : 1);
                     Vector3 lever = chord == 1 ? fwd : -fwd, moved = Quaternion.AngleAxis(10 * sg, hinge.right) * lever;
-                    float dz = Vector3.Dot(moved - lever, top); defl = dz < -.02f ? 1 : dz > .02f ? -1 : 0;
+                    float dz = Vector3.Dot(moved - lever, top); defl = dz < -.02f ? 1 : dz > .02f ? -1 : 0; flapGeom[cs] = defl * (sg < 0 ? -1 : 1);   // FLAP2: only used to aim flap_deg; never writes Invert
                 }
                 catch (Exception) { defl = 0; }
                 bool mainTe = false;
@@ -173,6 +175,7 @@ namespace KSPChatBridge
             {   // GROK TO3: over the flap limit = all the way up now, not a notch per 2 s (live: still at 1 at 139/134)
                 flapSet = 0; RestoreFlaps(); flapNextStep = Time.realtimeSinceStartup + 2; configChangedAt = Time.realtimeSinceStartup; ChatLog.Write("flaps", "UP (over limit " + FlapLimit().ToString("0") + " at " + Eas().ToString("0") + " m/s)"); return;
             }
+            { double fdNow = CraftOverrides.L(CraftOverrides.FlapDeg); if (flapSet > 0 && !(double.IsNaN(fdNow) && double.IsNaN(flapDegApplied) || fdNow == flapDegApplied)) { ApplyFlaps(); ChatLog.Write("flaps", "flap degree " + (double.IsNaN(fdNow) ? "part setting" : CraftOverrides.Text(fdNow)) + " applied live at " + FlapsPolicy.Name(flapSet)); } }   // FLAP2: live
             if (want != flapSet && Time.realtimeSinceStartup >= flapNextStep)
             {   // one notch at a time, 2 s apart
                 flapSet += Math.Sign(want - flapSet); flapNextStep = Time.realtimeSinceStartup + 2; configChangedAt = Time.realtimeSinceStartup;
@@ -218,21 +221,21 @@ namespace KSPChatBridge
         }
         void ApplyFlaps()
         {
+            flapDegApplied = CraftOverrides.L(CraftOverrides.FlapDeg);   // FLAP2: Flap degree (negative = trailing edge up), NaN = the part's own deploy angle / direction
             foreach (var cs in flaps)
             {
                 if (cs == null || !cs.ignorePitch || rollFlaps.Contains(cs)) continue;   // NEVER deploy a pitch surface; AICS1: ROLL / FLAPS = ApplyRollFlaps
                 FlapSnap o; if (!flapOrig.TryGetValue(cs, out o)) flapOrig[cs] = o = new FlapSnap { Deploy = cs.deploy, Invert = cs.deployInvert, Angle = cs.deployAngle };
-                float max = o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange; bool rf = rollFlaps.Contains(cs);
-                if (rf) max = Math.Min(max, (float)FlapsPolicy.RollFlapThrow * cs.ctrlSurfaceRange);   // GROK RF1: half the throw stays for roll
-                cs.deployAngle = max * (float)(FlapsPolicy.Fraction(flapSet) * (rf ? rfDroop : 1)); cs.deployInvert = o.Invert; cs.deploy = flapSet > 0;
+                int gd; flapGeom.TryGetValue(cs, out gd); int posDir = gd * (cs.deployInvert ? -1 : 1) * (cs.usesMirrorDeploy && cs.mirrorDeploy ? -1 : 1);   // where +angle goes with the player's Invert NOW
+                cs.deployAngle = (float)FlapsPolicy.FlapAngle(flapSet, o.Angle, cs.ctrlSurfaceRange, flapDegApplied, posDir); cs.deploy = flapSet > 0;   // FLAP2: deployInvert is the player's, never written
                 try { recovery.AcceptSurface(cs); } catch (Exception) { }
             }
         }
         /// <summary>Restore every surface's original deploy / angle / direction.</summary>
         void RestoreFlaps()
         {
-            foreach (var kv in flapOrig) if (kv.Key != null) { kv.Key.deploy = kv.Value.Deploy; kv.Key.deployAngle = kv.Value.Angle; if (!rollFlaps.Contains(kv.Key)) kv.Key.deployInvert = kv.Value.Invert; try { recovery.AcceptSurface(kv.Key); } catch (Exception) { } }
-            flapOrig.Clear(); flapSet = 0; rfApplied = -1; rfSetApplied = -1;
+            foreach (var kv in flapOrig) if (kv.Key != null) { kv.Key.deploy = kv.Value.Deploy; kv.Key.deployAngle = kv.Value.Angle;   /* FLAP2: Invert left as the player has it */ try { recovery.AcceptSurface(kv.Key); } catch (Exception) { } }
+            flapOrig.Clear(); flapSet = 0; flapDegApplied = double.NaN; rfApplied = -1; rfSetApplied = -1;
         }
     }
 }
