@@ -98,6 +98,21 @@ namespace KSPChatBridge
         /// <summary>Log lines (one marker per run, one outcome).</summary>
         internal static string RunLine(int run, TestPreset p, string craft) { return "run " + run + " preset=" + p.Name + " craft=" + craft; }
         internal static string RunLine(int run, TestPreset p, string craft, double fuelPct) { return RunLine(run, p, craft) + (double.IsNaN(fuelPct) ? "" : " fuel=" + fuelPct.ToString("0.#", CultureInfo.InvariantCulture) + "%"); }
+        /// <summary>TEST4: start speed / altitude overrides (NaN = preset). Speed 30-600 m/s, altitude 100-20000 m; blank / bad = NaN.</summary>
+        internal static double ParseOpt(string text, double min, double max)
+        { double v; if (!double.TryParse((text ?? "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v) || double.IsNaN(v) || double.IsInfinity(v)) return double.NaN; return Math.Max(min, Math.Min(max, v)); }
+        internal static double Eff(double overrideV, double preset) { return double.IsNaN(overrideV) ? preset : overrideV; }
+        internal static double ReadNum(string json, string key)
+        { try { var d = MiniJson.DeserializeObject(json) as Dictionary<string, object>; return d != null ? D(d, key, double.NaN) : double.NaN; } catch { return double.NaN; } }
+        internal static string WriteNum(string json, string key, double v)
+        {
+            object root = null; try { root = MiniJson.DeserializeObject(json); } catch { }
+            var d = root as Dictionary<string, object>;
+            if (d == null) d = new Dictionary<string, object> { { "presets", root as System.Collections.IList ?? (object)new List<object>() } };
+            if (double.IsNaN(v)) d.Remove(key); else d[key] = v; return MiniJson.Serialize(d);
+        }
+        internal static string RunLine(int run, TestPreset p, string craft, double fuelPct, double speed, double alt)
+        { return RunLine(run, p, craft, fuelPct) + " speed=" + Math.Round(Eff(speed, p.Speed)).ToString(CultureInfo.InvariantCulture) + (double.IsNaN(speed) ? "" : "*") + " alt=" + Math.Round(Eff(alt, p.AltM)).ToString(CultureInfo.InvariantCulture) + (double.IsNaN(alt) ? "" : "*"); }
         /// <summary>FIX: vessel types cleared from the test save before a launch (everything but asteroids / comets).</summary>
         internal static bool LeftoverType(string type) { return type != "SpaceObject" && type != "Unknown"; }
         /// <summary>TEST3: fuel % 0-100 (bad / blank = 100).</summary>

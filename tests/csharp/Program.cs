@@ -248,6 +248,13 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // TEST4
+                var tp4 = LandingTestPresets.Defaults()[0];
+                Check(double.IsNaN(LandingTestPresets.ParseOpt("", 30, 600)) && LandingTestPresets.ParseOpt("165", 30, 600) == 165 && LandingTestPresets.ParseOpt("900", 30, 600) == 600 && LandingTestPresets.Eff(double.NaN, 125) == 125 && LandingTestPresets.Eff(165, 125) == 165, "TEST4: blank = preset, clamped");
+                string j4 = LandingTestPresets.WriteNum(LandingTestPresets.WriteNum(LandingTestPresets.ToJson(LandingTestPresets.Defaults()), "start_speed", 165), "start_alt", double.NaN); string w4; var l4 = LandingTestPresets.Parse(j4, out w4);
+                Check(LandingTestPresets.ReadNum(j4, "start_speed") == 165 && double.IsNaN(LandingTestPresets.ReadNum(j4, "start_alt")) && l4 != null && l4.Count == LandingTestPresets.Defaults().Count, "TEST4: start_speed / start_alt saved in landing_tests.json, presets kept");
+                Check(LandingTestPresets.RunLine(1, tp4, "Stearwing A300", 50, 165, double.NaN).EndsWith(" fuel=50% speed=165* alt=" + Math.Round(tp4.AltM)), "TEST4: run line speed/alt (* = override)");
+            }
             {   // TEST3: fuel %
                 Check(LandingTestPresets.ClampFuel(150) == 100 && LandingTestPresets.ClampFuel(-5) == 0 && LandingTestPresets.ClampFuel(double.NaN) == 100 && LandingTestPresets.ParseFuel("35%", 100) == 35 && LandingTestPresets.ParseFuel("abc", 60) == 60 && LandingTestPresets.ParseFuel("", 100) == 100, "TEST3: fuel % clamp / parse");
                 Check(LandingTestPresets.FuelResource("LiquidFuel") && LandingTestPresets.FuelResource("Oxidizer") && LandingTestPresets.FuelResource("MonoPropellant") && LandingTestPresets.FuelResource("XenonGas") && !LandingTestPresets.FuelResource("ElectricCharge") && !LandingTestPresets.FuelResource("Ablator") && !LandingTestPresets.FuelResource("Ore") && !LandingTestPresets.FuelResource("IntakeAir"), "TEST3: fuel resource filter");
