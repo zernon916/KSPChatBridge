@@ -45,7 +45,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; double bouncePitch = double.NaN; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -510,6 +510,14 @@ namespace KSPChatBridge
             return Math.Min(landStall0, Math.Max(fs, .6 * landStall0));
         }
         /// <summary>GROK LAND5f AUTOWARP: physics warp on long straight wings-level legs (setting autoland_autowarp, default on); the player's own warp wins.</summary>
+        /// <summary>GROK LAND5i: 1 = every running engine's actual throttle is within 5% of its request, 0 = spooling, -1 = no engine data.</summary>
+        int EnginesSettled()
+        {
+            int n = 0; bool ok = true;
+            try { foreach (var e in vessel.FindPartModulesImplementing<ModuleEngines>()) { if (!e.EngineIgnited || e.flameout) continue; n++; if (Math.Abs(e.currentThrottle - e.requestedThrottle) > .05f) ok = false; } }
+            catch { return -1; }
+            return n == 0 ? -1 : ok ? 1 : 0;
+        }
         void AutoWarpTick(bool live)
         {
             if (TimeWarp.fetch == null || Time.realtimeSinceStartup < autoWarpNext) return;
@@ -846,14 +854,20 @@ namespace KSPChatBridge
                             c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
                             c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, "ground", "rollout idle/reversers");
-                            derot.Step(pitch, dt, NoseGearDown(), vessel.srfSpeed); c.pitch = (float)derot.Elevator(pitch, q);   // speed-based derotation, limited to 2.5 deg/s
+                            if (!vessel.LandedOrSplashed)
+                            {   // GROK LAND5i: bounced - hold the touchdown attitude (no derotation in the air, which slammed the nose gear and porpoised)
+                                if (double.IsNaN(bouncePitch)) { bouncePitch = FlightPolicy.Clamp(pitch, 2, 8); ChatLog.Write("approach", "rollout: bounced - holding " + bouncePitch.ToString("0.0") + " deg nose, idle"); }
+                                c.pitch = (float)FlightPolicy.Clamp(.05 * (bouncePitch - pitch) - .03 * q, -.3, .3);
+                            }
+                            else { bouncePitch = double.NaN; derot.Step(pitch, dt, NoseGearDown(), vessel.srfSpeed); c.pitch = (float)Math.Min(derot.Elevator(pitch, q), 0.02f); }   // speed-based derotation, limited to 2.5 deg/s; LAND5i: no pitch-up on the ground
+                            reversers.ApWants = true;   // GROK LAND5i: the whole rollout (bounces included) is the AP's own reverser use
                             c.roll = (float)FlightPolicy.Clamp(-.06 * roll - .015 * p, -1, 1);   // GROK LAND5f: firm wings level on the rollout (rudder/wheel steer, no roll)
                             if (vessel.LandedOrSplashed) rolloutLandedS += dt; else rolloutLandedS = 0;
-                            { bool wb = RolloutBrake.On(RolloutBrake.Duty(rolloutLandedS, vessel.srfSpeed), Time.time); if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on (progressive) at " + Math.Round(vessel.srfSpeed) + " m/s"); } } }
+                            { bool wb = derot.BrakesAllowed && RolloutBrake.On(RolloutBrake.Duty(rolloutLandedS, vessel.srfSpeed), Time.time); if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on (progressive) at " + Math.Round(vessel.srfSpeed) + " m/s"); } } }
                             c.wheelSteer = (float)FlightPolicy.WheelSteering(heading - FlightGlobals.ship_heading, .4);
                             lateralBankAsk = 0;
                             LogLandingLateral(c);
-                            SetGroup(vessel, KSPActionGroup.Brakes, derot.BrakesAllowed && (vessel.srfSpeed < 25 || ((int)(Planetarium.GetUniversalTime() * 2) % 2 == 0)));   // wheel brakes only once the nose wheel is down
+                            if (!derot.BrakesAllowed && vessel.ActionGroups[KSPActionGroup.Brakes] && !AirbrakesByAutopilot) SetGroup(vessel, KSPActionGroup.Brakes, false);   // wheel brakes only once the nose wheel is down (LAND5i: one brake owner, the progressive ramp above)
                             return;
                         }
                     }
@@ -1080,14 +1094,15 @@ namespace KSPChatBridge
                 {   // GROK LAND5b (Luke): step-and-wait approach throttle (hold -5/+15 m/s, 4% steps 3 s apart, lead step before flap/gear)
                     if (double.IsNaN(stepThr.Thr) || stepMode != runway.Phase && runway.Phase == "entry") { stepThr.Reset(throttle); stepMode = runway.Phase; }
                     double faf = runway.Chart != null ? runway.Chart.FafD : RunwayMission.FafDistance, nd = runway.Phase == "final" ? FlapsPolicy.NextConfigDistance(runway.Distance, faf, flapSet, landingGearDown) : double.NaN;
+                    stepThr.EngineSettled = EnginesSettled(); stepThr.Frozen = StepThrottle.Freeze(runway.Phase, vessel.radarAltitude, runway.Distance);
                     throttle = stepThr.Update(Time.realtimeSinceStartup, vessel.srfSpeed, runway.DesiredSpeed, dt, double.IsNaN(nd) ? double.NaN : (runway.Distance - nd) / Math.Max(30, vessel.srfSpeed) - 4, runway.SpeedFloor, runway.Phase == "final" ? runway.Distance : double.NaN);
                     if (stepThr.Why.Length > 0) ChatLog.Write("throttle", "approach step: " + stepThr.Why + " -> " + Math.Round(100 * throttle) + "% (" + Math.Round(vessel.srfSpeed) + " vs plan " + Math.Round(runway.DesiredSpeed) + ", trend " + stepThr.Accel.ToString("0.0") + " m/s2, 5 s ahead " + Math.Round(stepThr.Predicted) + ")");
                 }
                 else { throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle); stepThr.Thr = double.NaN; }
                 if (mode == "landing" && runway != null && runway.PatternActive && !vessel.LandedOrSplashed && vessel.srfSpeed > runway.DesiredSpeed + 10)
                 { throttle = vessel.srfSpeed > runway.DesiredSpeed + 25 ? 0 : Math.Min(throttle, .3); throttleWhy = "go-around pattern overspeed (" + Math.Round(vessel.srfSpeed) + " vs " + Math.Round(runway.DesiredSpeed) + ")"; }   // GROK LAND5d
-                if (mode == "landing" && runway != null && runway.BelowFloor && (runway.Phase == "final" || runway.Phase == "intercept") && !double.IsNaN(prevThrCfg))
-                { throttle = Math.Min(.9, Math.Max(throttle, prevThrCfg + .05 * dt)); if (!double.IsNaN(stepThr.Thr)) stepThr.Thr = throttle; throttleWhy = "below the speed floor " + Math.Round(runway.SpeedFloor) + ": gentle power-up"; }   // GROK LAND5c
+                // GROK LAND5i: the LAND5c 'below the floor: gentle power-up' ramp (+5%/s, written back into the step throttle) is gone - it turned each
+                // logged '+3%' into +18% over the 3 s wait. The step throttle owns below-floor power now.
                 if (mode == "landing" && runway != null && directVs.HasValue && !vessel.LandedOrSplashed && (runway.Phase == "final" || runway.Phase == "flare"))
                 {   // learned sink map: throttle for the target sink rate (flare: map only; final: blended with the speed hold)
                     double st = SinkThrottle(directVs.Value);

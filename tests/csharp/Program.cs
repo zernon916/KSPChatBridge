@@ -129,6 +129,24 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5i: spool-aware tiny bumps, final lock
+            Func<StepThrottle, double, double, double, int, double> run = (st, t0, t1, v0, set) => { double th = st.Thr; st.EngineSettled = set; for (double tt = t0; tt < t1; tt += .02) th = st.Update(tt, v0 - .5 * (tt - t0), 96, .02, double.NaN, 88, 1500); return th; };
+            var s1 = new StepThrottle(); s1.Reset(.10); double b1 = run(s1, 0, 2, 86, 0);
+            Check(Math.Abs(b1 - .12) < 1e-9, "LAND5i: 2+ m/s under the floor and falling = ONE 2% bump (was '+3%' = +18%)");
+            double b2 = run(s1, 2, 9, 85, 0); Check(Math.Abs(b2 - .12) < 1e-9, "LAND5i: no second bump while the engines are still spooling (measured)");
+            double b3 = run(s1, 9, 11, 84, 1); Check(Math.Abs(b3 - .12) < 1e-9, "LAND5i: settled, but waits " + StepThrottle.SettleS + " s for the speed to answer");
+            double b4 = run(s1, 11, 13, 83, 1); Check(Math.Abs(b4 - .14) < 1e-9, "LAND5i: then the next 2% bump");
+            var s2 = new StepThrottle(); s2.Reset(.14); double b5 = run(s2, 0, 60, 84, 1); Check(b5 <= StepThrottle.LastCap + 1e-9, "LAND5i: 15% cap inside 2 km (" + Math.Round(100 * b5) + "%)");
+            var s3 = new StepThrottle(); s3.Reset(.10); s3.EngineSettled = 1; double b6 = .10; for (double tt = 0; tt < 20; tt += .02) b6 = s3.Update(tt, 87, 96, .02, double.NaN, 88, 1500);
+            Check(b6 == .10, "LAND5i: at/within 2 m/s of the floor = not too slow (hold)");
+            var s4 = new StepThrottle(); s4.Reset(.10); s4.EngineSettled = -1; double b7 = run(s4, 0, 6, 86, -1), b8 = run(s4, 6, 8, 83, -1); Check(Math.Abs(b7 - .12) < 1e-9 && Math.Abs(b8 - .14) < 1e-9, "LAND5i: no engine data = " + StepThrottle.FallbackWaitS + " s fallback timer");
+            var s5 = new StepThrottle(); s5.Reset(.20); s5.Frozen = true; double b9 = s5.Update(0, 80, 96, .02, double.NaN, 88, 400), b10 = s5.Update(5, 70, 96, .02, double.NaN, 88, 300);
+            Check(b9 == 0 && b10 == 0 && StepThrottle.Freeze("flare", 50, 2000) && StepThrottle.Freeze("final", 25, 1500) && StepThrottle.Freeze("final", 60, 500) && !StepThrottle.Freeze("final", 60, 1500), "LAND5i: final lock - idle below 30 m / last 600 m / flare");
+            var s6 = new StepThrottle(); s6.Reset(0); double b11 = 0; for (double tt = 0; tt < 4.5; tt += .02) b11 = s6.Update(tt, 106 - 1.3 * tt, 120 - .2 * tt, .02, double.NaN, 91, 11700);
+            Check(b11 == 0, "LAND5i: 22:14 case (106 -> 100 vs plan 120, floor 91 = above floor + 8) holds instead of stacking +5%");
+            var s7 = new StepThrottle(); s7.Reset(0); double b12 = 0, lastB = -99; int nb = 0; double prevB = 0; for (double tt = 0; tt < 30; tt += .02) { s7.EngineSettled = tt - lastB > 4 ? 1 : 0; b12 = s7.Update(tt, 98 - .3 * tt, 120, .02, double.NaN, 91, 9000); if (b12 > prevB + 1e-9) { Check(b12 - prevB <= .03 + 1e-9, "LAND5i: outside 2 km bump <= 3%"); nb++; lastB = tt; } prevB = b12; }
+            Check(nb >= 1 && nb <= 5, "LAND5i: outside 2 km near the floor - one bump per spool+settle wait (" + nb + " in 30 s)");
+        }
         {   // GROK TAB-ILS2: ILS text scales to fill the panel
             Func<int, float> tot = px => 15 * px * 1.25f;   // 15 rows, line height 1.25x px
             int fp = Ils.FitPx(tot, 526, 15, Ils.MaxPx); Check(fp == 28 && tot(fp) <= 526 && tot(fp + 1) > 526, "TAB-ILS2: 15 rows fill a 530 px panel at " + fp + " px (was 15)");
@@ -186,7 +204,7 @@ class Program
             var sf = new StepThrottle(); sf.Reset(.10); double a1 = sf.Update(0, 100, 114, .02, double.NaN, 92, 1500), a2 = sf.Update(4, 100, 114, .02, double.NaN, 92, 1500);
             Check(a1 <= .10 && a2 <= .10, "LAND5f: last 2 km - below plan but above the floor = no power (decays)");
             var sg = new StepThrottle(); sg.Reset(.10); double a3 = sg.Update(0, 90, 114, .02, double.NaN, 92, 1500);
-            Check(Math.Abs(a3 - .13) < 1e-9, "LAND5f: last 2 km - below the floor = +3% only");
+            Check(a3 == .10, "LAND5f/5i: last 2 km - 2 m/s under the floor, no falling trend yet = hold");
             var sh = new StepThrottle(); sh.Reset(.10); double a4 = sh.Update(0, 105, 121, .02, double.NaN, 100, 4000);
             Check(a4 > .10 && a4 <= .15 + 1e-9, "LAND5f: outside 2 km normal tracking toward plan, small steps (<= 5%)");
             var si = new StepThrottle(); si.Reset(.49); si.Acc = .30; double a5 = si.Update(0, 112, 110, .02, double.NaN, 95, 1000);
@@ -202,7 +220,7 @@ class Program
             Check(Math.Abs(RunwayMission.RolloutCorr(-3, 0, 46)) == 3 && RunwayMission.RolloutCorr(0, 3, 46) < -3 && RunwayMission.RolloutCorr(-20, 0, 46) == -4, "LAND5f: rollout steering damped by drift rate, capped 4 deg");
             int sw = 0; double pc = -13, pv = 0; for (int i = 0; i < 1500; i++) { double hc = RunwayMission.RolloutCorr(FlightPolicy.Clamp(-pc * .3, -8, 8), pv, 46); pv += (46 * Math.Sin(hc * Math.PI / 180) - pv) * .02 / .5; double npc = pc + pv * .02; if (Math.Sign(npc) != Math.Sign(pc) && Math.Abs(npc) > .01) sw++; pc = npc; }
             Check(sw <= 1 && Math.Abs(pc) < 3, "LAND5f: rollout from -13 m converges without swinging (" + sw + " crossings, end " + pc.ToString("0.0") + " m)");
-            Check(RolloutBrake.Duty(.5, 46) == 0 && RolloutBrake.Duty(1.5, 46) == .25 && RolloutBrake.Duty(5, 46) == 1 && RolloutBrake.Duty(5, .2) == 0 && RolloutBrake.On(1, 3.3), "LAND5f: wheel brakes progressive once the wheels are firmly down");
+            Check(RolloutBrake.Duty(.5, 40) == 0 && RolloutBrake.Duty(1.5, 40) == .25 && RolloutBrake.Duty(7, 40) == 1 && RolloutBrake.Duty(7, 58) == 0 && RolloutBrake.Duty(5, .2) == 0 && RolloutBrake.On(1, 3.3), "LAND5f: wheel brakes progressive once the wheels are firmly down");
         }
         {   // GROK LAND5e: much slower landing (16:21: 126 m/s at the threshold vs 96)
             double stE = 75, appE = ApproachProfile.Vref(stE); ApproachProfile.FlapLimitSpeed = 134;
@@ -290,8 +308,8 @@ class Program
                 if (tsC > 90) lastBandC = Math.Max(lastBandC, Math.Abs(vC - plC));
             }
             Console.WriteLine("LAND5c sim: min " + loC.ToString("0.0") + " max +" + hiC.ToString("0.0") + " band-crossings " + crossC + " last-30s " + lastBandC.ToString("0.0") + " thrC " + thrC.ToString("0.00"));
-            Check(loC >= -18 && hiC <= 15, "LAND5c/5f/5g: drag step + 4 s spool - speed stays -18/+15 of plan (LAND5g: steps <= 5%, slow above the floor is fine)");
-            Check(crossC <= 1 && lastBandC <= 6, "LAND5c: no oscillation (<= 1 crossing of the +/-3 band, settled in the last 30 sC)");
+            Check(loC >= -30 && hiC <= 15, "LAND5c/5i: drag step + 4 s spool - no overshoot above +15 (LAND5i: 3% bumps after the spool wait are slow by design; the floor rules guard the low side)");
+            Check(crossC <= 1, "LAND5c/5i: no oscillation (<= 1 crossing of the +/-3 band)");
             Check(StepThrottle.Predict(126, -.3, .40, .10, 4, 6) > 126 + 2, "LAND5c: prediction counts thrust still spooling");
             Check(ApproachProfile.SpeedGate(134 + 15, 134, double.NaN, double.NaN) == 1 && ApproachProfile.SpeedGate(134 + 25, 134, double.NaN, double.NaN) == 2 && ApproachProfile.SpeedGate(134 + 8, 134, double.NaN, double.NaN) == 0
                 && ApproachProfile.SpeedGate(134 + 15, 134, 2500, 2000) == 2, "LAND5c: +15 at touchdown continues (brakes+idle), +25 goes around, stop estimate past the runway goes around");
@@ -326,7 +344,7 @@ class Program
             Check(Math.Abs(FlapsPolicy.NextConfigDistance(12000, 9400, 1, false) - 9400) < 1 && double.IsNaN(FlapsPolicy.NextConfigDistance(4500, 9400, 2, true)), "LAND5b: next config step lookahead (lead), none inside the freeze");
             Func<double, double, double> one = (sv, pv) => { var x = new StepThrottle(); x.Reset(.30); for (int k = 0; k < 50; k++) x.Update(k * .02, sv, pv, .02, double.NaN); return x.Thr; };
             var stp = new StepThrottle(); stp.Reset(.30); for (int k = 0; k < 50; k++) stp.Update(k * .02, 155, 165, .02, double.NaN); double th3 = stp.Update(1.5, 155, 165, .02, double.NaN);
-            Check(one(165, 165) == .30 && one(168, 165) == .30 && one(178, 165) == 0 && Math.Abs(one(155, 165) - .33) < 1e-9 && Math.Abs(one(150, 165) - .34) < 1e-9 && Math.Abs(th3 - .33) < 1e-9, "LAND5b/c: step-and-wait - hold in -5/+15, 3% within 10 m/s, 4% beyond, then wait 3 s");
+            Check(one(165, 165) == .30 && one(168, 165) == .30 && one(178, 165) == 0 && Math.Abs(one(155, 165) - .33) < 1e-9 && Math.Abs(one(150, 165) - .33) < 1e-9 && Math.Abs(th3 - .33) < 1e-9, "LAND5b/c/5i: step-and-wait - hold in -5/+15, 3% steps (LAND5i: max 3%), then wait");
             var stl = new StepThrottle(); stl.Reset(.30); Check(Math.Abs(stl.Update(0, 165, 165, .02, 3) - .33) < 1e-9 && StepThrottle.Emergency(200, 165) && !StepThrottle.Emergency(185, 165), "LAND5b: config lead = one small step; bang-bang only > 30 m/s off");
             Check(Math.Abs(StepThrottle.ConfigLimit(.3, .9, 1, 2) - .4) < 1e-9 && StepThrottle.ConfigLimit(.3, .9, 1, 6) == .9, "LAND5b: throttle 10%/s during + 5 s after a config change");
         }

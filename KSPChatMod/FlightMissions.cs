@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System;
 
 namespace KSPChatBridge
@@ -1009,8 +1009,8 @@ namespace KSPChatBridge
     /// <summary>GROK LAND5f: rollout wheel brakes - none until the wheels have been down 1 s, then a duty cycle ramping to full over 3 s.</summary>
     internal static class RolloutBrake
     {
-        internal const double SettleS = 1, RampS = 3;
-        internal static double Duty(double landedS, double speed) { if (speed < .5 || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
+        internal const double SettleS = 1, RampS = 6, StartMs = 45;   // GROK LAND5i: 22:16 brakes at 58 m/s -> swerve off the runway
+        internal static double Duty(double landedS, double speed) { if (speed < .5 || speed > StartMs || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
         internal static bool On(double duty, double now) { return duty >= 1 || duty > 0 && (now * 2 - Math.Floor(now * 2)) < duty; }
     }
     /// <summary>GROK LAND5g: autowarp ownership - a change is the player's only if the rate moved off what the game settled on after our last
@@ -1034,7 +1034,7 @@ namespace KSPChatBridge
     }
     internal sealed class StepThrottle
     {
-        internal const double IdleOver = 3, MaxStep = .05, Step = .04, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
+        internal const double IdleOver = 3, MaxStep = .03, Step = .03, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
         internal double Thr = double.NaN, Accel, Eff = double.NaN, Acc, Predicted = double.NaN;
         internal double SpoolS = 4, AccelPerThr = 6;   // spool lag (s) and m/s2 per unit throttle (defaults; LAND5c)
         double lastStep = double.NegativeInfinity, prevV = double.NaN, lastLead = double.NegativeInfinity, accelAtStep = double.NaN;
@@ -1045,6 +1045,22 @@ namespace KSPChatBridge
         { double tau = Math.Max(.1, spool); return v + accel * AheadS + perThr * (thr - eff) * (AheadS - tau * (1 - Math.Exp(-AheadS / tau))); }
         /// <summary>leadIn = seconds to the next flap/gear step (NaN = none).</summary>
         internal const double LastM = 2000, ShortM = 6000, DecayPerS = .01, HoldOverFloor = 8;
+        /// <summary>GROK LAND5i (Luke: 'any throttle change NEEDS TO WAIT for the engines to SPOOL, then TINY BUMPS'): after a change, wait until the
+        /// engines report settled (measured; fallback FallbackWaitS), then SettleS for the speed to answer. Last 2 km: 2% bumps, 15% cap, only
+        /// > FloorMarginMs below the floor with a falling trend. Freeze (< 30 m / last 600 m / flare): idle and locked.</summary>
+        internal const double SettleS = 3, FallbackWaitS = 7, LastStep = .02, LastCap = .15, FloorMarginMs = 2, FreezeAgl = 30, FreezeM = 600;
+        double settledAt = double.NaN; bool frozenLogged;
+        /// <summary>engineSettled: 1 = the engines' actual throttle matches the command, 0 = still spooling, -1 = no engine data.</summary>
+        internal bool Ready(double now, int engineSettled)
+        {
+            if (double.IsNegativeInfinity(lastStep)) return true;
+            if (engineSettled < 0) return now - lastStep >= FallbackWaitS;
+            if (engineSettled == 1 && double.IsNaN(settledAt) && now - lastStep > .2) settledAt = now;
+            return !double.IsNaN(settledAt) && now - settledAt >= SettleS;
+        }
+        void Stepped(double now) { lastStep = now; settledAt = double.NaN; accelAtStep = Accel; }
+        internal static bool Freeze(string phase, double agl, double distM) { return phase == "flare" || phase == "final" && (agl < FreezeAgl || distM < FreezeM); }
+        internal int EngineSettled = -1; internal bool Frozen;
         internal double PlanRate; double prevPlan = double.NaN;
         internal double Update(double now, double speed, double plan, double dt, double leadIn, double floor = double.NaN, double distM = double.NaN)
         {
@@ -1053,33 +1069,35 @@ namespace KSPChatBridge
             prevV = speed;
             if (dt > 0 && !double.IsNaN(prevPlan)) PlanRate += ((plan - prevPlan) / dt - PlanRate) * Math.Min(1, dt / 3); prevPlan = plan;
             Predicted = Predict(speed, Accel, Thr, Eff, SpoolS, AccelPerThr);
+            if (Frozen) { if (Thr > 0 || !frozenLogged) { Why = Thr > 0 ? "final lock: idle, no more throttle changes" : "final lock: held at idle"; frozenLogged = true; } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5i
+            frozenLogged = false;
             double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
-            if (speed > plan + IdleOver) { if (Thr > 0) { Why = "fast +" + Math.Round(speed - plan) + " m/s: idle"; lastStep = now; } Thr = 0; Acc = 0; accelAtStep = Accel; return Thr; }   // GROK LAND5e: > plan + 3 = idle
+            if (speed > plan + IdleOver) { if (Thr > 0) { Why = "fast +" + Math.Round(speed - plan) + " m/s: idle"; Stepped(now); } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5e: > plan + 3 = idle
             if (Math.Abs(Accel) > .5 && Math.Sign(Accel) == Math.Sign(e)) sz = FlightPolicy.Clamp(.8 * Math.Abs(Accel + e / 10) / Math.Max(1, AccelPerThr), sz, MaxStep);   // a real drag/thrust step (flaps FULL + gear): half the thrust that would stop the trend, capped
             if (Acc < -1e-9 && e <= 0 && speed > plan) Acc = 0;   // GROK LAND5e: 'back' never adds power while over plan
-            if (!double.IsNaN(distM) && distM <= ShortM && e >= 0 && Thr > 0 && Acc > 1e-9) { Thr = 0; Acc = 0; lastStep = now; accelAtStep = Accel; Why = "predicted " + Math.Round(Predicted) + " crosses plan on short final: idle"; return Thr; }   // GROK LAND5f: straight to idle (spool lag)
+            if (!double.IsNaN(distM) && distM <= ShortM && e >= 0 && Thr > 0 && Acc > 1e-9) { Thr = 0; Acc = 0; Stepped(now); Why = "predicted " + Math.Round(Predicted) + " crosses plan on short final: idle"; return Thr; }   // GROK LAND5f: straight to idle (spool lag)
+            bool ready = Ready(now, EngineSettled);
             if (!double.IsNaN(distM) && distM <= LastM && e < 0)
-            {   // GROK LAND5f (Luke: slow is fine down to the floor; distance matters more): last 2 km - power only below the floor, small steps
-                bool low = !double.IsNaN(floor) && (speed < floor || Predicted < floor);
-                if (low && now - lastStep >= WaitS) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr + NearStep, 0, 1); Acc += Thr - t0; lastStep = now; accelAtStep = Accel; Why = "below the floor " + Math.Round(floor) + ": +3%"; }
-                else if (!low && Thr > 0) Thr = Math.Max(0, Thr - DecayPerS * Math.Max(0, dt));   // between floor and plan: decay toward idle
+            {   // GROK LAND5f/5i: last 2 km - hold; power only > 2 m/s below the floor with a falling trend, after the spool wait, 2% bumps, 15% cap
+                bool low = !double.IsNaN(floor) && speed < floor - FloorMarginMs && Accel < 0;
+                if (low && ready && Thr < LastCap) { double t0 = Thr; Thr = Math.Min(LastCap, FlightPolicy.Clamp(Thr + LastStep, 0, 1)); Acc += Thr - t0; Stepped(now); Why = "below the floor " + Math.Round(floor) + " by " + Math.Round(floor - speed) + " m/s, falling: +" + Math.Round(100 * (Thr - t0)) + "%"; }
                 return Thr;
             }
             if (Acc > 1e-9 && e >= 0 || Acc < -1e-9 && e <= 0)
             {   // predicted crossing: take half of what we stepped in back out, now
-                double back = Acc / 2; Thr = FlightPolicy.Clamp(Thr - back, 0, 1); Acc = 0; lastStep = now; accelAtStep = Accel;
+                double back = Acc / 2; Thr = FlightPolicy.Clamp(Thr - back, 0, 1); Acc = 0; Stepped(now);
                 Why = "predicted " + Math.Round(Predicted) + " crosses plan: back " + (back > 0 ? "-" : "+") + Math.Round(100 * Math.Abs(back)) + "%"; return Thr;
             }
             // GROK LAND5g (Luke: 'throttle increases even though it's supposed to be slowing down'): on final, power up only near the floor (floor + 8);
             // elsewhere never while the plan itself is decelerating.
-            bool upOk = !double.IsNaN(distM) && !double.IsNaN(floor) ? Predicted < floor + HoldOverFloor || speed < floor + HoldOverFloor : PlanRate > -.05;
+            bool upOk = (!double.IsNaN(distM) && !double.IsNaN(floor) ? speed < floor + HoldOverFloor : PlanRate > -.05) && Accel < .2;   // GROK LAND5i: current speed (the 5 s prediction stacked +5% steps at 106 vs floor 91)
             if (!upOk && e < 0) { Why = ""; return Thr; }   // hold
             if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS && speed <= plan) {   // GROK LAND5e: config lead only at/below plan (LAND5g: and near the floor)
-                 Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = lastStep = now; accelAtStep = Accel; Why = "config lead +3%"; return Thr; }
-            if (now - lastStep < WaitS) return Thr;
+                 if (!ready) return Thr; Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = now; Stepped(now); Why = "config lead +3%"; return Thr; }
+            if (now - lastStep < WaitS || !ready) return Thr;   // GROK LAND5i: one bump, then wait for the spool + response
             bool improving = !double.IsNaN(accelAtStep) && now - lastStep < 3 * WaitS;
-            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += Thr - t0; lastStep = now; accelAtStep = Accel; Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
-            else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc += Thr - t0; lastStep = now; accelAtStep = Accel; Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
+            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += Thr - t0; Stepped(now); Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
+            else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc += Thr - t0; Stepped(now); Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
             return Thr;
         }
         /// <summary>Bang-bang (idle / full) only for genuine emergencies: more than 30 m/s off the plan.</summary>
