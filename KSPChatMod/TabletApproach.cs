@@ -31,6 +31,7 @@ namespace KSPChatBridge
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.Threshold), "Landing speed (at runway)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareStart), "Flare height (above runway)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareThrottle), "Flare throttle (blank = idle)", row, TabletLink) + gap;
+            sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareSpoolLead), "Flare spool-up lead (seconds before flare)", row, TabletLink) + gap;   // THR9
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareSink), "Flare sink rate (m/s)", row, TabletLink) + gap;   // LAND5n
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareMaxPitch), "Max flare pitch (deg)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.TouchdownAim), "Touchdown aim point (m past threshold, negative = short)", row, TabletLink) + gap;

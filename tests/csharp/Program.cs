@@ -247,6 +247,14 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // THR9
+                string ls; double lt = StepThrottle.LockThrottle(0, 113, 145, 95, -3.4, 99, 6, 4, out ls), lt2 = StepThrottle.LockThrottle(.5, 146, 145, 144, 0, 99, 6, 4, out ls), lt3 = StepThrottle.LockThrottle(0, 130, 145, 128, -1, 99, 6, 4, out ls);
+                Check(lt == 1 && lt2 == 0 && lt3 > .1 && lt3 <= StepThrottle.LockCap, "THR9: final lock idles only at/above plan; below plan power sized to the deficit, full near stall");
+                var s9 = new StepThrottle(); s9.Reset(0); s9.Frozen = true; s9.Update(0, 113, 145, .02, double.NaN, 99, 500); string w1 = s9.Why; double th1 = s9.Thr; s9.Update(.02, 113, 145, .02, double.NaN, 99, 500);
+                Check(w1.StartsWith("final lock") && s9.Why == "" && th1 > .5, "THR9: final-lock reason logged once on state change, power added (" + w1 + ")");
+                Check(StepThrottle.FlareLeadDue(40, 30, -6, 2) && !StepThrottle.FlareLeadDue(50, 30, -6, 2) && StepThrottle.FlareLeadDue(29, 30, 0, 2) && !StepThrottle.FlareLeadDue(40, 30, 0, 2), "THR9: flare throttle starts lead s before the flare height");
+                Check(CraftOverrides.FlareSpoolLeadS() == 2 && CraftOverrides.Parse(CraftOverrides.FlareSpoolLead, "9") == 6, "THR9: flare spool-up lead default 2 s, 0-6");
+            }
             {   // AIM1
                 double a225 = FinalApproachPolicy.AimPathAlt(69, 0, 225), a400 = FinalApproachPolicy.AimPathAlt(69, 0, 400), t3 = Math.Tan(3 * Math.PI / 180);
                 Check(a400 > a225 && Math.Abs(a225 - (69 + 225 * t3)) < 1e-9 && Math.Abs(FinalApproachPolicy.AimPathAlt(69, 400, 300) - (69 + 700 * t3)) < 1e-9, "AIM1: alt plan at the threshold rises with touchdown_aim_m (tan 3 deg x aim)");
@@ -318,7 +326,7 @@ class Program
             Check(b6 == .10, "LAND5i: at/within 2 m/s of the floor = not too slow (hold)");
             var s4 = new StepThrottle(); s4.Reset(.10); s4.EngineSettled = -1; double b7 = run(s4, 0, 6, 86, -1), b8 = run(s4, 6, 8, 83, -1); Check(Math.Abs(b7 - .12) < 1e-9 && Math.Abs(b8 - .14) < 1e-9, "LAND5i: no engine data = " + StepThrottle.FallbackWaitS + " s fallback timer");
             var s5 = new StepThrottle(); s5.Reset(.20); s5.Frozen = true; double b9 = s5.Update(0, 80, 96, .02, double.NaN, 88, 400), b10 = s5.Update(5, 70, 96, .02, double.NaN, 88, 300);
-            Check(b9 == 0 && b10 == 0 && StepThrottle.Freeze("flare", 50, 2000) && StepThrottle.Freeze("final", 25, 1500) && StepThrottle.Freeze("final", 60, 500) && !StepThrottle.Freeze("final", 60, 1500), "LAND5i: final lock - idle below 30 m / last 600 m / flare");
+            double thr9b = s5.Update(6, 98, 96, .02, double.NaN, 88, 250); Check(b9 > .3 && b10 == 1 && thr9b == 0 && StepThrottle.Freeze("flare", 50, 2000) && StepThrottle.Freeze("final", 25, 1500) && StepThrottle.Freeze("final", 60, 500) && !StepThrottle.Freeze("final", 60, 1500), "LAND5i/THR9: final lock below 30 m / last 600 m / flare - idle only at/above plan, deficit-sized, full near the floor (" + b9 + " " + b10 + " " + thr9b + " pred " + s5.Predicted.ToString("0") + ")");
             var s6 = new StepThrottle(); s6.Reset(0); double b11 = 0; for (double tt = 0; tt < 4.5; tt += .02) b11 = s6.Update(tt, 106 - 1.3 * tt, 120 - .2 * tt, .02, double.NaN, 91, 11700);
             Check(b11 == 0, "LAND5i: 22:14 case (106 -> 100 vs plan 120, floor 91 = above floor + 8) holds instead of stacking +5%");
             var s7 = new StepThrottle(); s7.Reset(0); double b12 = 0, lastB = -99; int nb = 0; double prevB = 0; for (double tt = 0; tt < 30; tt += .02) { s7.EngineSettled = tt - lastB > 4 ? 1 : 0; b12 = s7.Update(tt, 98 - .3 * tt, 120, .02, double.NaN, 91, 9000); if (b12 > prevB + 1e-9) { Check(b12 - prevB <= (nb == 0 && 98 - .3 * tt >= 91 ? .03 : StepThrottle.BigStep) + 1e-9, "LAND5i/5k: outside 2 km first bump <= 3%, persistent deficit / under floor sized (<= 35%)"); nb++; lastB = tt; } prevB = b12; }

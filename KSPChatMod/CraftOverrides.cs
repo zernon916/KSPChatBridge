@@ -10,7 +10,7 @@ namespace KSPChatBridge
     internal static class CraftOverrides
     {
         internal const string Table = "craft_overrides", Approach = "approach_speed", Threshold = "threshold_speed", Stall = "stall_override";
-        internal const string AutoGa = "auto_go_around", Vr = "vr", RotatePitch = "rotate_pitch_deg", FlareStart = "flare_start_m", FlareThrottle = "flare_throttle_pct", FlareSink = "flare_sink", FlareMaxPitch = "flare_max_pitch_deg", TouchdownAim = "touchdown_aim_m", RolloutPitch = "rollout_pitch_deg", FlapDeg = "flap_deg";   /* FLAP2 */
+        internal const string AutoGa = "auto_go_around", Vr = "vr", RotatePitch = "rotate_pitch_deg", FlareStart = "flare_start_m", FlareThrottle = "flare_throttle_pct", FlareSink = "flare_sink", FlareMaxPitch = "flare_max_pitch_deg", TouchdownAim = "touchdown_aim_m", RolloutPitch = "rollout_pitch_deg", FlapDeg = "flap_deg", FlareSpoolLead = "flare_spool_lead_s";   /* FLAP2 */
         internal sealed class Def
         {
             internal string Key, Label, Group, Unit; internal double Small = 1, Large = 5, Min = 15, Max = 400, Default = double.NaN; internal bool Bool;
@@ -25,7 +25,7 @@ namespace KSPChatBridge
             D("SPEEDS", "flap_limit_speed", "Flap limit speed", "m/s", 1, 5, 20, 400),
             B("APPROACH", AutoGa, "Auto go-around", false), D("APPROACH", "max_approach_bank", "Max approach bank", "deg", 1, 5, 5, 45), B("APPROACH", "airbrakes", "Airbrakes allowed", true),
             D("TOUCHDOWN", "flare_start_m", "Flare start height", "m", 1, 5, 3, 60, 15), D("TOUCHDOWN", "touchdown_sink", "Touchdown sink target", "m/s", .5, 1, .5, 5, 3),
-            D("TOUCHDOWN", FlareThrottle, "Flare throttle", "%", 1, 5, 0, 100), D("TOUCHDOWN", FlareSink, "Flare sink rate", "m/s", .1, .5, 0, 5), D("TOUCHDOWN", FlareMaxPitch, "Max flare pitch", "deg", .5, 1, 0, 20), D("TOUCHDOWN", RolloutPitch, "Rollout nose-down", "deg", .5, 1, 0, 10), D("TOUCHDOWN", "touchdown_aim_m", "Touchdown aim distance", "m", 10, 50, -300, 1500, 350), D("TOUCHDOWN", FlapDeg, "Flap degree", "deg", .5, 5, -30, 30),
+            D("TOUCHDOWN", FlareThrottle, "Flare throttle", "%", 1, 5, 0, 100), D("TOUCHDOWN", FlareSpoolLead, "Flare spool-up lead", "s", .5, 1, 0, 6, 2), D("TOUCHDOWN", FlareSink, "Flare sink rate", "m/s", .1, .5, 0, 5), D("TOUCHDOWN", FlareMaxPitch, "Max flare pitch", "deg", .5, 1, 0, 20), D("TOUCHDOWN", RolloutPitch, "Rollout nose-down", "deg", .5, 1, 0, 10), D("TOUCHDOWN", "touchdown_aim_m", "Touchdown aim distance", "m", 10, 50, -300, 1500, 350), D("TOUCHDOWN", FlapDeg, "Flap degree", "deg", .5, 5, -30, 30),
             B("ROLLOUT", "reverser", "Reverser on rollout", true), D("ROLLOUT", "brake_start_speed", "Wheel-brake start speed", "m/s", 1, 5, 5, 150, 45),
             D("TAKEOFF", "vr", "Rotation speed (Vr)", "m/s", 1, 5, 15, 300), D("TAKEOFF", RotatePitch, "Rotation angle", "deg", .5, 1, TakeoffMission.RotPitchMin, TakeoffMission.RotPitchMax), D("TAKEOFF", "climb_speed", "Climb speed", "m/s", 1, 5, 20, 400),
         };
@@ -97,6 +97,8 @@ namespace KSPChatBridge
             return "override " + craft + ": vr=" + (double.IsNaN(vr) ? "-" : Text(vr)) + " rotate=" + (double.IsNaN(rotate) ? "-" : Text(rotate));
         }
         /// <summary>LAND5m: flare throttle 0-1 (NaN = idle).</summary>
+        /// <summary>THR9: seconds before the flare to command the flare throttle (blank = 2, 0-6).</summary>
+        internal static double FlareSpoolLeadS() { double v = L(FlareSpoolLead); return double.IsNaN(v) ? 2 : Math.Max(0, Math.Min(6, v)); }
         internal static double FlareThrottleFrac() { double p = L(FlareThrottle); return double.IsNaN(p) ? double.NaN : Math.Max(0, Math.Min(100, p)) / 100; }
         internal static string Text(double v) { return double.IsNaN(v) ? "" : v.ToString("0.#", CultureInfo.InvariantCulture); }
         /// <summary>Apply a craft's overrides to the approach schedule (live): sets ApproachProfile.OverrideApproach / OverrideThreshold and

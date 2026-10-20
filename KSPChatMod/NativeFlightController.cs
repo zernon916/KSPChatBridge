@@ -45,7 +45,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        double rollHdgPrev = double.NaN, rollHdgRate = double.NaN, rollSteer = double.NaN; /* ROLL1 */ string brakeLogKey; bool flareFastEndLogged, liftDump;   /* LAND5q */ bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; double rolloutAirS, bouncePitch = double.NaN; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        bool flareThrCmd, flareThrLogged; double flareThrAuto = double.NaN;   /* THR9 */ double rollHdgPrev = double.NaN, rollHdgRate = double.NaN, rollSteer = double.NaN; /* ROLL1 */ string brakeLogKey; bool flareFastEndLogged, liftDump;   /* LAND5q */ bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; double rolloutAirS, bouncePitch = double.NaN; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -186,6 +186,7 @@ namespace KSPChatBridge
             if (field == "vr") return i.takeoff != null && i.takeoff.Vr > 0 ? i.takeoff.Vr : TakeoffMission.RotateSpeed(i.stall, i.liftoffSpeed);
             if (field == CraftOverrides.RotatePitch) return TakeoffMission.RotateTarget(double.NaN);
             if (field == CraftOverrides.FlareThrottle) return 0;
+            if (field == CraftOverrides.FlareSpoolLead) return 2;
             if (field == CraftOverrides.FlareSink) return -FlarePolicy.SinkTarget(double.NaN, CraftOverrides.L("touchdown_sink"), i.runway != null && i.runway.Override != null ? i.runway.Override.FlareSinkMs : double.NaN);
             if (field == CraftOverrides.FlareMaxPitch) return i.CpMax;
             if (field == CraftOverrides.RolloutPitch) return Derotation.DefaultNoseDown;
@@ -1202,16 +1203,26 @@ namespace KSPChatBridge
                 if (mode == "landing" && runway != null && directVs.HasValue && !vessel.LandedOrSplashed && (runway.Phase == "final" || runway.Phase == "flare"))
                 {   // learned sink map: throttle for the target sink rate (flare: map only; final: blended with the speed hold)
                     double st = SinkThrottle(directVs.Value);
-                    if (runway.Phase == "flare") { double ft = CraftOverrides.FlareThrottleFrac(); throttle = double.IsNaN(ft) ? 0 : ft; throttleWhy = double.IsNaN(ft) ? "flare: idle" : "flare: throttle " + Math.Round(100 * ft) + "% (craft override)"; }   // GROK LAND5c: idle in the flare (bleed toward stall at touchdown); LAND5b: final = step-and-wait only
+                    /* THR9: flare throttle moved below - it no longer depends on a sink-map target */   // GROK LAND5c: idle in the flare (bleed toward stall at touchdown); LAND5b: final = step-and-wait only
                 }   // smooth PI on airspeed (pitch flies the vertical speed)
-                if (mode == "landing" && runway != null && StepThrottle.Emergency(vessel.srfSpeed, runway.DesiredSpeed) && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
+                flareThrCmd = false;
+            if (mode == "landing" && runway != null && !runway.MissedClimb && !vessel.LandedOrSplashed && (runway.Phase == "flare" || runway.Phase == "final" && StepThrottle.FlareLeadDue(runway.Low, runway.FlareH, vessel.verticalSpeed, CraftOverrides.FlareSpoolLeadS())))
+            {   // THR9: flare throttle (override, else the final-lock power latched at the lead point) from lead s before the flare to main-gear touchdown
+                double ft = CraftOverrides.FlareThrottleFrac(); bool ov = !double.IsNaN(ft);
+                if (double.IsNaN(flareThrAuto)) flareThrAuto = Math.Max(0, Math.Min(1, throttle));
+                throttle = ov ? ft : flareThrAuto; flareThrCmd = true; throttleWhy = "flare: throttle " + Math.Round(100 * throttle) + "% (" + (ov ? "override" : "auto") + ")";
+                if (!flareThrLogged) { flareThrLogged = true; ChatLog.Write("throttle", "flare: " + Math.Round(100 * throttle) + "% (" + (ov ? "override" : "auto") + "), lead " + CraftOverrides.FlareSpoolLeadS().ToString("0.#") + " s" + (runway.Phase == "final" ? ", spooling before the flare at " + Math.Round(runway.Low) + " m (flare " + Math.Round(runway.FlareH) + " m)" : "")); }
+            }
+            else if (runway == null || runway.Phase != "final" && runway.Phase != "flare") { flareThrLogged = false; flareThrAuto = double.NaN; }
+            if (mode == "landing" && runway != null && runway.Phase == "flare" && vessel.LandedOrSplashed) throttle = 0;   // THR9: idle at main-gear touchdown
+            if (mode == "landing" && runway != null && StepThrottle.Emergency(vessel.srfSpeed, runway.DesiredSpeed) && ApproachProfile.IdleWanted(runway.EnergyHigh, vessel.srfSpeed, runway.DesiredSpeed, ApproachProfile.NearShort(runway.Phase, runway.Distance)) && !vessel.LandedOrSplashed && (runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final"))
                 { throttle = 0; throttleWhy = "approach high/fast: idle"; }
                 if (mode == "landing" && runway != null && runway.FastContinue && runway.Phase != "flare" && !vessel.LandedOrSplashed) { throttle = 0; throttleWhy = "+10..+20 predicted at touchdown: idle, continuing"; }   // GROK LAND5c   // Oct 12 (A300 03:29): sink-map blend held 46-69% while 800 m high and 20+ m/s fast
             if ((landFloor && mode == "landing" && (runway == null || vessel.srfSpeed < runway.DesiredSpeed + 3) || lowEnergy) && !vessel.LandedOrSplashed)   // Oct 12 (log 02:17): no 90% sink-floor power on final while above the planned speed (110 -> 164 m/s)
                 { throttle = Math.Max(throttle, .9); throttleKind = "emergency"; throttleWhy = lowEnergy ? "low-energy floor" : "landing sink floor"; powerFloor = true; }   // arrest the sink with power, not only pitch
             else powerFloor = false;
             if (mode == "takeoff" && vessel.LandedOrSplashed) throttle = tground == null ? 1 : tground.Throttle(Planetarium.GetUniversalTime());   // ramp 25%/s from brake release (no 0->100% jolt)
-            if (mode == "landing" && throttleKind != "emergency") { throttle = StepThrottle.ConfigLimit(prevThrCfg, throttle, dt, Time.realtimeSinceStartup - configChangedAt); }   // GROK LAND5b: 10%/s during + 5 s after a config change
+            if (mode == "landing" && throttleKind != "emergency" && !flareThrCmd) { throttle = StepThrottle.ConfigLimit(prevThrCfg, throttle, dt, Time.realtimeSinceStartup - configChangedAt); }   // GROK LAND5b: 10%/s during + 5 s after a config change
             prevThrCfg = throttle;
             LearnDecel(dt); MeasureLag(dt);
             bool speedLock = ApproachSpeedLocked;

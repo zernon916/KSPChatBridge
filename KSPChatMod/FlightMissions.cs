@@ -1171,6 +1171,22 @@ internal static double BounceStep(double cur, double speed, double stall, double
             return !double.IsNaN(settledAt) && now - settledAt >= SettleS;
         }
         void Stepped(double now) { lastStep = now; settledAt = double.NaN; accelAtStep = Accel; }
+        /// <summary>THR9 (Stearwing run 5: locked at idle 113 -> 91 vs plan 145 -> 140): the final lock idles only at/above plan (and 5 s ahead not
+        /// below plan - 5). Below that it adds power at once, sized to the deficit (+ the falling trend), up to 70%, full power near the floor (stall).</summary>
+        internal const double LockSlackMs = 5, LockCap = .7, NearStallMs = 5;
+        string lockState = "";
+        internal static double LockThrottle(double thr, double speed, double plan, double predicted, double accel, double floor, double accelPerThr, double spoolS, out string state)
+        {
+            if (double.IsNaN(predicted)) predicted = speed;
+            if (speed >= plan && predicted >= plan - LockSlackMs) { state = "at/above plan: idle"; return 0; }
+            bool nearStall = !double.IsNaN(floor) && (speed < floor + NearStallMs || predicted < floor);
+            double need = ((plan - Math.Min(speed, predicted)) / (Math.Max(AheadS, spoolS) + SettleS) + Math.Max(0, -accel)) / Math.Max(1, accelPerThr);
+            state = nearStall ? "near stall: power (up to 100%)" : "below plan: power (up to " + Math.Round(100 * LockCap) + "%)";
+            return FlightPolicy.Clamp(Math.Max(double.IsNaN(thr) ? 0 : thr, need), 0, nearStall ? 1 : LockCap);
+        }
+        /// <summary>THR9: start the flare throttle leadS before the flare (J-90 spool): (height above the flare height) / sink rate.</summary>
+        internal static bool FlareLeadDue(double low, double fs, double vs, double leadS)
+        { if (double.IsNaN(low) || double.IsNaN(fs)) return false; if (low < fs) return true; return vs < -.3 && (low - fs) / -vs <= leadS; }
         internal static bool Freeze(string phase, double agl, double distM) { return phase == "flare" || phase == "final" && (agl < FreezeAgl || distM < FreezeM); }
         internal int EngineSettled = -1; internal bool Frozen;
         internal double PlanRate; double prevPlan = double.NaN;
@@ -1181,8 +1197,9 @@ internal static double BounceStep(double cur, double speed, double stall, double
             prevV = speed;
             if (dt > 0 && !double.IsNaN(prevPlan)) PlanRate += ((plan - prevPlan) / dt - PlanRate) * Math.Min(1, dt / 3); prevPlan = plan;
             Predicted = Predict(speed, Accel, Thr, Eff, SpoolS, AccelPerThr);
-            if (Frozen) { if (Thr > 0 || !frozenLogged) { Why = Thr > 0 ? "final lock: idle, no more throttle changes" : "final lock: held at idle"; frozenLogged = true; } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5i
-            frozenLogged = false;
+            Why = "";   // THR9: a reason is logged once, not carried into every later frame
+            if (Frozen) { string st; Thr = LockThrottle(Thr, speed, plan, Predicted, Accel, floor, AccelPerThr, SpoolS, out st); Acc = 0; if (st != lockState) { lockState = st; Why = "final lock: " + st; } return Thr; }   // GROK LAND5i; THR9: idle only at/above plan
+            lockState = "";
             double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
             {   // GROK LAND5j: FAST DECAY exception - the trend crosses the floor within the spool horizon: one step sized to the deficit, now
                 double hz = Math.Max(AheadS, SpoolS), predH = speed + Accel * hz;
@@ -1861,7 +1878,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
         internal const double RolloutMaxCorr = 4, RolloutDampK = 1.0;
         internal static double RolloutCorr(double corrDeg, double crossRateMs, double speed) { return FlightPolicy.Clamp(corrDeg - RolloutDampK * Math.Atan2(crossRateMs, Math.Max(5, speed)) * 180 / Math.PI, -RolloutMaxCorr, RolloutMaxCorr); }
         double lastCrossR = double.NaN;
-        internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor, FlareFastEnded; internal double FlareStartAlong = double.NaN, FlareEntrySpeed;   /* LAND5q */ internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
+        internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor, FlareFastEnded; internal double FlareH = 15, Low = double.NaN;   /* THR9 */ internal double FlareStartAlong = double.NaN, FlareEntrySpeed;   /* LAND5q */ internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
         /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
@@ -2253,6 +2270,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
                 if (above > 0) DesiredVs = Math.Max(DesiredVs, ApproachProfile.CaptureVs(above, -speed * Math.Tan(FinalSlope * Math.PI / 180), maxSink));   // GROK LAND5j: early, blended pull-out onto the glidepath
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
                 double fs = !double.IsNaN(CraftOverrides.L("flare_start_m")) ? CraftOverrides.L("flare_start_m") : Override != null ? Override.FlareStartM : 15;   // TAB-CRAFT1
+                FlareH = fs; Low = low;   // THR9: flare spool-up lead
                 
                 if (low < fs && (Phase == "flare" || FinalApproachPolicy.FlareGate(low, fs, TouchdownM - along, FinalSlope))) { if (Phase != "flare") {   /* AIM1: flare point tied to the aim */ FlareFast = ApproachProfile.FlareFast(speed, AppNow); FlareFastEnded = false; FlareStartAlong = along; FlareEntrySpeed = speed; } Phase = "flare"; if (FlareFast && ApproachProfile.FlareFastDone(speed, AppNow)) { FlareFast = false; FlareFastEnded = true; } /* LAND5s: no long-flare rule - hold flare_sink to touchdown */ DesiredVs = FlarePolicy.SinkTarget(CraftOverrides.L(CraftOverrides.FlareSink), CraftOverrides.L("touchdown_sink"), Override != null ? Override.FlareSinkMs : double.NaN); }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
