@@ -58,9 +58,13 @@ namespace KSPChatBridge
             field.normal.textColor = field.hover.textColor = field.focused.textColor = Text;   // this Unity's GUIStyle has no caret/selection colour, so the caret stays the engine default
             toggleCap = new GUIStyle(label) { alignment = TextAnchor.MiddleLeft };
             wrapS = new GUIStyle(label) { wordWrap = true, clipping = TextClipping.Overflow, alignment = TextAnchor.UpperLeft };   // UI1
+            smallWrapS = new GUIStyle(small) { wordWrap = true, clipping = TextClipping.Overflow, alignment = TextAnchor.UpperLeft }; smallWrapS.normal.textColor = Dim;   // AUTO1: setting descriptions
         }
         internal static GUIStyle TextStyle { get { return label; } }
         static GUIStyle wrapS;   // UI1: word-wrapped label, measured height
+        static GUIStyle smallWrapS;   // AUTO1
+        internal static float SmallWrapHeight(string text, float width) { return smallWrapS == null || string.IsNullOrEmpty(text) ? 0 : smallWrapS.CalcHeight(new GUIContent(text), Mathf.Max(10, width)); }
+        internal static void SmallWrap(Rect r, string text) { if (smallWrapS != null && !string.IsNullOrEmpty(text)) GUI.Label(r, text, smallWrapS); }
         /// <summary>UI2: width a (bold) button needs for its text, padding included.</summary>
         internal static float ButtonWidth(string text) { return btnOn == null ? 0 : btnOn.CalcSize(new GUIContent(text ?? "")).x + 20; }
         internal static float TextWidth(string text) { return label == null ? 0 : label.CalcSize(new GUIContent(text ?? "")).x; }

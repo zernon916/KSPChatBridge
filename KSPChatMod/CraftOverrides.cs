@@ -36,7 +36,51 @@ namespace KSPChatBridge
         static double Clamp(string key, double v) { var d = Find(key); return d == null ? Clamp(v) : Math.Max(d.Min, Math.Min(d.Max, d.Bool ? Math.Round(v) : v)); }
         /// <summary>Live values for the active craft (Apply); NaN = auto.</summary>
         static readonly Dictionary<string, double> live = new Dictionary<string, double>();
-        internal static double L(string key) { double v; return live.TryGetValue(key, out v) ? v : double.NaN; }
+        internal static double L(string key) { double v; return live.TryGetValue(key, out v) ? v : auto.TryGetValue(key, out v) ? v : double.NaN; }
+        /// <summary>AUTO1: computed defaults (AutoLanding) for blank landing settings - L() falls back to them; the saved overrides are untouched.</summary>
+        static readonly Dictionary<string, double> auto = new Dictionary<string, double>();
+        internal static bool IsUser(string key) { return live.ContainsKey(key); }
+        internal static double AutoValue(string key) { double v; return auto.TryGetValue(key, out v) ? v : double.NaN; }
+        internal static void ClearAuto() { auto.Clear(); }
+        internal static void SetAuto(AutoLanding a)
+        {
+            auto.Clear(); if (a == null || double.IsNaN(a.Landing)) return;
+            auto[Threshold] = a.Landing; auto[Approach] = a.Approach; auto[FlareStart] = a.FlareStart; auto[FlareSink] = a.FlareSink; auto[FlareMaxPitch] = a.FlareMaxPitch; auto[TouchdownAim] = a.Aim;
+            if (a.FlareThrottlePct > 0) auto[FlareThrottle] = a.FlareThrottlePct;
+        }
+        /// <summary>AUTO1: one line per setting, shown under its label (CRAFT > DETAILS).</summary>
+        static readonly Dictionary<string, string> desc = new Dictionary<string, string>
+        {
+            { Approach, "Speed held on the approach until the final slow-down. Blank = 1.4 x landing speed, capped by measured thrust." },
+            { Threshold, "Speed crossing the runway threshold. Blank = level flight at 5 deg AoA (measured lift), never below 1.15 x stall." },
+            { Stall, "Stall speed for this craft. Blank = learned in flight / wing-loading estimate." },
+            { "decel_plan", "Slow-down rate used to plan the approach (m/s2). Blank = learned idle decel." },
+            { "flap_limit_speed", "Highest speed for full flaps. Blank = from the flap parts." },
+            { AutoGa, "Go around by itself when the approach is unsafe (manual GO AROUND always works)." },
+            { "max_approach_bank", "Steepest bank in approach turns." },
+            { "airbrakes", "Let the autopilot use airbrakes to slow down." },
+            { FlareStart, "Height above the runway where the flare starts. Blank = 1.5 s of glidepath sink (5-15 m)." },
+            { "touchdown_sink", "Sink rate aimed for at touchdown when no flare sink is set." },
+            { FlareThrottle, "Throttle held through the flare. Blank = idle, or a little for slow-spooling jets." },
+            { FlareSpoolLead, "Seconds before the flare to set the flare throttle, so the engines are spooled." },
+            { FlareSink, "Sink rate held in the flare. Blank = 0.5 m/s, more if the plane floats over 5 s." },
+            { FlareMaxPitch, "Highest nose-up pitch in the flare (tail-strike guard). Blank = 6.5 deg." },
+            { RolloutPitch, "Nose-down pitch after touchdown to keep the nose wheel on the runway." },
+            { TouchdownAim, "Touchdown point past the threshold. Blank = 200 m, shorter when the stop distance is tight." },
+            { FlapDeg, "Full-flap deflection (negative = trailing edge up). Blank = the part's setting." },
+            { "reverser", "Use thrust reversers on the rollout." },
+            { "brake_high_pct", "Wheel brake strength above the high speed." },
+            { "brake_mid_pct", "Wheel brake strength between the low and high speeds." },
+            { "brake_low_pct", "Wheel brake strength below the low speed." },
+            { "brake_high_speed", "Speed above which the high-speed brake strength is used. Blank = max(stall, 90)." },
+            { "brake_low_speed", "Speed below which the low-speed brake strength is used." },
+            { "reverse_pct", "Reverse throttle on the rollout." },
+            { "reverse_off_speed", "Speed where reverse thrust is cut and stowed." },
+            { Vr, "Speed where the takeoff rotation starts." },
+            { RotatePitch, "Nose-up pitch held during the takeoff rotation." },
+            { "climb_speed", "Speed held in the climb after takeoff." },
+        };
+        internal static string Desc(string key) { string s; return key != null && desc.TryGetValue(key, out s) ? s : ""; }
         /// <summary>Bool fields: an override, else the global/default.</summary>
         internal static bool On(string key, bool auto) { double v = L(key); return double.IsNaN(v) ? auto : v >= .5; }
         static double Num(object o)
@@ -106,6 +150,7 @@ namespace KSPChatBridge
         internal static double Apply(Dictionary<string, object> s, string craft, out double approach, out double threshold)
         {
             double so = Get(s, craft, Stall); approach = Get(s, craft, Approach); threshold = Get(s, craft, Threshold);
+            if (double.IsNaN(approach)) approach = AutoValue(Approach); if (double.IsNaN(threshold)) threshold = AutoValue(Threshold);   // AUTO1: blank = computed default
             if (!(approach > 30)) approach = double.NaN; if (!(threshold > 20)) threshold = double.NaN;
             ApproachProfile.OverrideApproach = approach; ApproachProfile.OverrideThreshold = threshold;
             live.Clear(); foreach (var df in Defs) { double v = Get(s, craft, df.Key); if (!double.IsNaN(v)) live[df.Key] = v; }

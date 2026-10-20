@@ -261,6 +261,46 @@ class Program
                 var rb = new ReverseRollout(); rb.Step(true, true, 100, 0, 0, 70, 25, rvSet); rb.Step(false, true, 100, .5, 0, 70, 25, rvSet);
                 Check(!rvOn && !rb.Reversed, "REV1: a bounce stows the reversers");
             }
+            {   // AUTO1: replay of the 6 planes - mass / lift from the .craft files, stall in use, touchdown speed + AoA from the logs (Oct 20)
+                var auPl = new[] {
+                    new { N = "Aeris 3A", M = 5.555, L = 7.44, S = 36.0, V = double.NaN, A = double.NaN, Land = 41.5, App = 70.0 },
+                    new { N = "Aeris 4A", M = 19.96, L = 9.02, S = 59.0, V = 124.0, A = 4.598, Land = 115.0, App = 160.0 },
+                    new { N = "Albatross 3", M = 39.88, L = 48.78, S = 48.0, V = 90.0, A = 0.521, Land = 55.0, App = 80.0 },
+                    new { N = "Thunderbird", M = 14.23, L = 8.51, S = 47.0, V = 120.0, A = 4.598, Land = 115.0, App = 130.0 },
+                    new { N = "Stratolauncher", M = 36.9, L = 38.0, S = 64.0, V = 71.0, A = 6.418, Land = 74.0, App = 147.0 },
+                    new { N = "Stearwing A300", M = 48.945, L = 62.05, S = 85.0, V = 78.0, A = 2.952, Land = 125.0, App = 160.0 } };
+                double auT3 = Math.Tan(3 * Math.PI / 180);
+                foreach (var p in auPl)
+                {
+                    double cl = double.IsNaN(p.V) ? double.NaN : AutoLanding.ClPerDegFrom(p.M, p.V, 1.225, p.A, 0, 0, p.L);
+                    var a = AutoLanding.Compute(new AutoLanding.In { MassT = p.M, LiftCoeff = p.L, Stall = p.S, ClPerDeg = cl, RunwayM = 2450 });
+                    // check 1: independent closed forms (level-flight identity v5 = v_td x sqrt(aoa_td / 5); stall estimate via the existing ApproachProfile code)
+                    double vs = Math.Sqrt(2 * p.M * 1000 * 9.81 / (1.225 * 3.52 * p.L * 1.6)), v5 = p.A >= 1.5 ? p.V * Math.Sqrt(p.A / 5) : double.NaN, exp = Math.Max(1.15 * p.S, double.IsNaN(v5) ? 1.4 * vs : v5);
+                    Console.WriteLine("AUTO1 replay " + p.N.PadRight(15) + " landing " + a.Landing.ToString("0.0").PadLeft(6) + " (Luke " + p.Land + ")  approach " + a.Approach.ToString("0.0").PadLeft(6) + " (Luke " + p.App + ")  flare " + a.FlareStart.ToString("0.0") + " m  aim " + a.Aim.ToString("0") + " m  | " + a.LandingWhy);
+                    double expFs = Math.Max(5, Math.Min(15, 1.5 * exp * auT3)), expAim = Math.Max(100, Math.Min(200, 2450 - exp * exp / 5 - 300));
+                    Check(Math.Abs(a.Landing - exp) < 1e-6 && Math.Abs(a.VsEst - vs) < 1e-6 && Math.Abs(ApproachProfile.EstimateStall(p.M * 1000, p.L) - Math.Max(vs, ApproachProfile.UnmeasuredStallFloor)) < 1e-6 && Math.Abs(a.Approach - Math.Max(1.4 * exp, exp + 10)) < 1e-6 && Math.Abs(a.FlareStart - expFs) < 1e-6 && Math.Abs(a.Aim - expAim) < 1e-6 && a.FlareMaxPitch == 6.5 && a.FlareSink == .5,
+                        "AUTO1 replay " + p.N + ": landing " + a.Landing.ToString("0") + " (Luke " + p.Land + "), approach " + a.Approach.ToString("0") + " (Luke " + p.App + "), flare " + a.FlareStart.ToString("0.0") + " m, aim " + a.Aim.ToString("0") + " m");
+                }
+                Func<int, AutoLanding> auRun = k => { var p = auPl[k]; return AutoLanding.Compute(new AutoLanding.In { MassT = p.M, LiftCoeff = p.L, Stall = p.S, ClPerDeg = AutoLanding.ClPerDegFrom(p.M, p.V, 1.225, p.A, 0, 0, p.L), RunwayM = 2450 }); };
+                var au4 = auRun(1); var auTb = auRun(3); var auSl = auRun(4);
+                Check(Math.Abs(au4.Landing - 115) < 6 && Math.Abs(auTb.Landing - 115) < 6 && Math.Abs(au4.Landing - 115) < Math.Abs(1.15 * 59 - 115) && Math.Abs(auTb.Landing - 115) < Math.Abs(1.15 * 47 - 115) && Math.Abs(auSl.Landing - 74) < 8, "AUTO1: measured lift puts the 4A / Thunderbird within 6 m/s of Luke's 115 (old 1.15 x stall: 68 / 54); Stratolauncher near its good 74");
+                Check(double.IsNaN(AutoLanding.ClPerDegFrom(39.88, 90, 1.225, .521, 0, 0, 48.78)) && auRun(2).LandingWhy.Contains("no lift measurement"), "AUTO1: a 0.5 deg touchdown AoA (Albatross) is not a lift measurement - wing-loading fallback");
+                double auDk = 60.0 / (160 * 160); var auCap = AutoLanding.Compute(new AutoLanding.In { MassT = 14.23, LiftCoeff = 8.51, Stall = 47, ClPerDeg = auTb.V5 > 0 ? AutoLanding.ClPerDegFrom(14.23, 120, 1.225, 4.598, 0, 0, 8.51) : double.NaN, ThrustKN = 60, DragK = auDk, RunwayM = 2450 });
+                Check(auCap.Approach < auTb.Approach && Math.Abs(auDk * auCap.Approach * auCap.Approach - (.8 * 60 + 14.23 * 9.81 * Math.Sin(3 * Math.PI / 180))) < 1e-6 && auCap.ApproachWhy.Contains("thrust cap"), "AUTO1: thrust-capped approach (" + auCap.Approach.ToString("0") + " vs " + auTb.Approach.ToString("0") + "): drag there = 80% thrust + glide component");
+                var auLow = AutoLanding.Compute(new AutoLanding.In { MassT = 14.23, LiftCoeff = 8.51, Stall = 47, ClPerDeg = .115, ThrustKN = 10, DragK = auDk, RunwayM = 2450 });
+                Check(Math.Abs(auLow.Approach - (auLow.Landing + 10)) < 1e-9 && auLow.ApproachWhy.Contains("marginal"), "AUTO1: thrust too weak = landing + 10, flagged marginal");
+                Check(AutoLanding.FloatSink(.5, 4) == .5 && Math.Abs(AutoLanding.FloatSink(.5, 7) - 1.5) < 1e-9 && AutoLanding.FloatSink(.5, 30) == 3, "AUTO1: flare float detection - +0.5 m/s per s after 5 s, max 3");
+                Check(AutoLanding.Compute(new AutoLanding.In { MassT = 20, LiftCoeff = 9, Stall = 60, SpoolS = 3, FinalTrim = .4 }).FlareThrottlePct == 10 && AutoLanding.Compute(new AutoLanding.In { MassT = 20, LiftCoeff = 9, Stall = 60, SpoolS = 1, FinalTrim = .4 }).FlareThrottlePct == 0 && AutoLanding.Compute(new AutoLanding.In { MassT = 20, LiftCoeff = 9, Stall = 60 }).Aim == 200, "AUTO1: flare throttle 25% of trim only for slow spool; aim 200 without a runway length");
+                var auLm = new LiftMeter(); for (int k = 0; k < 150; k++) auLm.Add(.14, .02); bool auLv1 = auLm.Valid; for (int k = 0; k < 100; k++) auLm.Add(.14, .02); auLm.Add(5, .02);
+                Check(!auLv1 && auLm.Valid && Math.Abs(auLm.ClPerDeg - .14) < 1e-9, "AUTO1: lift meter valid after 4 s, rejects impossible samples");
+                var auDt = new DragThrustMeter(); for (int k = 0; k < 250; k++) auDt.Add(50, .5, 10, -1, -3, 100, .02);
+                double auD = 50 - 10 * (-1 + 9.81 * Math.Sin(-3 * Math.PI / 180));
+                Check(auDt.DragValid && auDt.ThrustValid && Math.Abs(auDt.DragK - auD / 1e4) < 1e-9 && Math.Abs(auDt.ThrustKN - 100) < 1e-9, "AUTO1: drag = thrust - m (a + g sin gamma), available thrust = thrust / throttle");
+                bool auDesc = true; foreach (var d in CraftOverrides.Defs) if (CraftOverrides.Desc(d.Key).Length < 10) auDesc = false;
+                Check(auDesc, "AUTO1: every craft setting has a one-line description");
+                CraftOverrides.SetAuto(au4); bool auL = Math.Abs(CraftOverrides.L(CraftOverrides.Threshold) - au4.Landing) < 1e-9 && !CraftOverrides.IsUser(CraftOverrides.Threshold) && CraftOverrides.L(CraftOverrides.FlareMaxPitch) == 6.5 && double.IsNaN(CraftOverrides.L(CraftOverrides.FlareThrottle)); CraftOverrides.ClearAuto();
+                Check(auL && double.IsNaN(CraftOverrides.L(CraftOverrides.Threshold)), "AUTO1: blank settings read the computed defaults; flare throttle stays idle (NaN) when 0");
+            }
             {   // ROLL3 (Aeris 4A run 6: 137 m/s touchdown, stall 87)
                 bool r3l = false; double r3a = RolloutBrake.Strength(137, 1.1 * 87, 0, 0, 0, ref r3l), r3b = RolloutBrake.Strength(137, 1.1 * 87, 2, 0, 0, ref r3l), r3c = RolloutBrake.Strength(80, 1.1 * 87, 5, 0, 0, ref r3l);
                 Check(Math.Abs(r3a - RolloutBrake.LightFrac) < 1e-9 && Math.Abs(r3b - Math.Pow(95.7 / 137, 2)) < 1e-9 && r3c == 1, "ROLL3: light at contact, (full speed / speed)^2 after the 1.5 s ramp (" + Math.Round(100 * r3b) + "% at 137), full below 1.1 x stall");

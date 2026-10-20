@@ -68,7 +68,9 @@ namespace KSPChatBridge
             return Mathf.Max(row * .8f, TabletUi.WrapHeight(head, c.width - 2 * CraftBoxPad));   // UI2: always its own full-width line(s); UI3: inside the box padding
         }
         /// <summary>UI1: real height of a row - long labels wrap on their own line(s) with the controls below.</summary>
-        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftBoxPad + CraftRowLabelH(c, i, label, row) + CraftRowGap + row + CraftBoxPad; }   // UI3: box padding included (callers add the gap between boxes)
+        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftBoxPad + CraftRowLabelH(c, i, label, row) + CraftRowDescH(c, i) + CraftRowGap + row + CraftBoxPad; }
+        /// <summary>AUTO1: the setting's one-line description under its label (wrapped, measured).</summary>
+        float CraftRowDescH(Rect c, int i) { return TabletUi.SmallWrapHeight(CraftOverrides.Desc(CraftOverrides.Defs[i].Key), c.width - 2 * CraftBoxPad); }   // UI3: box padding included (callers add the gap between boxes)
         const float CraftRowGap = 4, CraftRowIndent = 12, CraftBoxPad = 7;   // UI2: label-to-controls gap, controls indent (same for every row)
         static string StepText(double s) { return (s > 0 ? "+" : "") + s.ToString("0.##"); }
         /// <summary>One override row, shared by CRAFT / DETAILS and the LANDING page (same craft_overrides entry and text buffers, so both
@@ -85,7 +87,8 @@ namespace KSPChatBridge
             float bw = Mathf.Max(52, TabletUi.ButtonWidth("+0.5")); foreach (double s in new[] { -d.Large, -d.Small, d.Small, d.Large }) bw = Mathf.Max(bw, TabletUi.ButtonWidth(StepText(s)));
             float sw = Mathf.Max(bw, TabletUi.ButtonWidth("SET")), ow = Mathf.Max(bw * 1.4f, TabletUi.ButtonWidth("AUTO"));
             bool dim; string head = CraftRowHead(i, label, out dim); float lh = CraftRowLabelH(c, i, label, row);
-            TabletUi.LabelWrap(new Rect(c.x + CraftBoxPad, ry, c.width - 2 * CraftBoxPad, lh), head, dim); ry += lh + CraftRowGap;
+            TabletUi.LabelWrap(new Rect(c.x + CraftBoxPad, ry, c.width - 2 * CraftBoxPad, lh), head, dim); ry += lh;
+            { float dh = CraftRowDescH(c, i); TabletUi.SmallWrap(new Rect(c.x + CraftBoxPad, ry, c.width - 2 * CraftBoxPad, dh), CraftOverrides.Desc(d.Key)); ry += dh + CraftRowGap; }   // AUTO1
             /* UI2: no side-by-side label */
             if (d.Bool)
             {

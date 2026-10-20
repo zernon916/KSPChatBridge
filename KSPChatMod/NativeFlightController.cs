@@ -91,12 +91,52 @@ namespace KSPChatBridge
         float nextRotorTrim;
         bool holdAltitude = true, holdHeading = true, holdSpeed = true; double vsSlew = double.NaN;
         TakeoffMission takeoff; TakeoffGround tground; readonly SpeedHold shold = new SpeedHold(); readonly ThrottleGate gate = new ThrottleGate { Log = m => ChatLog.Write("throttle", m) }; string throttleKind = "pi", throttleWhy = ""; string shapedSpeedMode = ""; bool landFloor, lowEnergy; float lowTraceNext, attTraceNext;
+        /* AUTO1: automatic landing defaults + in-flight lift / drag / thrust measurement */ AutoLanding autoLand; LiftMeter liftMeter = new LiftMeter(); DragThrustMeter dtMeter = new DragThrustMeter(); List<ModuleEngines> autoEngines; double autoSpoolS = double.NaN, autoPrevSpd = double.NaN, autoAcc = double.NaN, autoPrevVs = double.NaN; bool autoLiftDone, autoThrustDone;
+        Dictionary<string, object> AutoSaved(bool create)
+        {
+            if (vessel == null) return null; object o; var t = settingsData.TryGetValue("auto_landing", out o) ? o as Dictionary<string, object> : null;
+            if (t == null) { if (!create) return null; settingsData["auto_landing"] = t = new Dictionary<string, object>(); }
+            object e; var d = t.TryGetValue(vessel.vesselName, out e) ? e as Dictionary<string, object> : null; if (d == null && create) t[vessel.vesselName] = d = new Dictionary<string, object>(); return d;
+        }
+        void AutoSave(string key, double v) { if (double.IsNaN(v) || double.IsInfinity(v)) return; var d = AutoSaved(true); if (d == null) return; d[key] = Math.Round(v, 6); try { Save(); } catch (Exception) { } }
+        /// <summary>AUTO1: blank landing settings = AutoLanding from mass, wing lift, stall, spool, runway length and the saved / live lift, drag and thrust measurements.</summary>
+        void ComputeAuto()
+        {
+            CraftOverrides.ClearAuto(); double ap0, th0; stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap0, out th0);
+            var x = new AutoLanding.In { MassT = vessel.totalMass, LiftCoeff = liftArea, Stall = LearnedStall(), SpoolS = autoSpoolS };
+            if (runway != null) x.RunwayM = NavigationMath.Distance(runway.Lat, runway.Lon, runway.EndLat, runway.EndLon, vessel.mainBody.Radius);
+            var sv = AutoSaved(false); if (sv != null) { x.ClPerDeg = Num(sv, "cl_per_deg", double.NaN); x.ThrustKN = Num(sv, "thrust_kn", double.NaN); x.DragK = Num(sv, "drag_k", double.NaN); x.FinalTrim = Num(sv, "final_trim", double.NaN); }
+            if (liftMeter.Valid) x.ClPerDeg = liftMeter.ClPerDeg; if (dtMeter.DragValid) x.DragK = dtMeter.DragK; if (dtMeter.ThrustValid) x.ThrustKN = dtMeter.ThrustKN;
+            autoLand = AutoLanding.Compute(x); CraftOverrides.SetAuto(autoLand);
+        }
+        void RecomputeAuto(string why)
+        {
+            if (vessel == null) return; ComputeAuto(); double ap1, th1; stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap1, out th1);
+            stall = LearnedStall(); if (landMass0 > 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
+            ChatLog.Write("auto", why + " - " + autoLand.Summary(vessel.vesselName));
+        }
+        /// <summary>AUTO1: steady samples on the way in (not in the flare / on the ground): lift slope while wings level and not pitching, drag and thrust.</summary>
+        void AutoMeasure(double aoa, double bank, double dt)
+        {
+            if (dt <= 0) return; double sp = vessel.srfSpeed, vs = vessel.verticalSpeed, gam = FlarePolicy.PathAngle(sp, vs);
+            double acc = double.IsNaN(autoPrevSpd) ? double.NaN : (sp - autoPrevSpd) / dt, vAcc = double.IsNaN(autoPrevVs) ? double.NaN : (vs - autoPrevVs) / dt; autoPrevSpd = sp; autoPrevVs = vs;
+            if (!double.IsNaN(acc)) autoAcc = double.IsNaN(autoAcc) ? acc : autoAcc + Math.Min(1, dt) * (acc - autoAcc);
+            if (Math.Abs(bank) < 5 && !double.IsNaN(vAcc) && Math.Abs(vAcc) < 1.5) liftMeter.Add(AutoLanding.ClPerDegFrom(vessel.totalMass, sp, vessel.atmDensity, aoa, gam, bank, liftArea), dt);
+            if (!vessel.ActionGroups[KSPActionGroup.Brakes] && autoEngines != null) { double tNow = 0; foreach (var e in autoEngines) if (e != null && e.EngineIgnited) tNow += e.finalThrust; dtMeter.Add(tNow, vessel.ctrlState.mainThrottle, vessel.totalMass, autoAcc, gam, sp, dt); }
+            if (liftMeter.Valid && !autoLiftDone) { autoLiftDone = true; AutoSave("cl_per_deg", liftMeter.ClPerDeg); RecomputeAuto("lift measured " + liftMeter.ClPerDeg.ToString("0.000") + "/deg at " + Math.Round(sp) + " m/s"); }
+            if (dtMeter.DragValid && dtMeter.ThrustValid && !autoThrustDone) { autoThrustDone = true; AutoSave("drag_k", dtMeter.DragK); AutoSave("thrust_kn", dtMeter.ThrustKN); RecomputeAuto("thrust " + Math.Round(dtMeter.ThrustKN) + " kN / drag " + Math.Round(dtMeter.DragK * sp * sp) + " kN at " + Math.Round(sp) + " m/s measured"); }
+        }
+        internal static string AutoLandingLine()
+        {
+            var i = instance; if (i == null || i.autoLand == null || double.IsNaN(i.autoLand.Landing)) return "Auto: no estimate yet";
+            var a = i.autoLand; return "Auto: landing " + Math.Round(a.Landing) + " m/s, approach " + Math.Round(a.Approach) + ", flare at " + a.FlareStart.ToString("0.0") + " m, aim " + Math.Round(a.Aim) + " m (" + (double.IsNaN(a.V5) ? "lift estimated" : "lift measured") + ")";
+        }
         StallLearner learner; double stallGuess = 45, liftArea; float nextStallSample, nextStallSave;
         void ConfigureInertia()
         {
             double thrust = 0, spool = 0; int n = 0;
             foreach (Part ep in vessel.parts) foreach (PartModule pm in ep.Modules) { var en = pm as ModuleEngines; if (en == null) continue; thrust += en.maxThrust; n++; if (en.useEngineResponseTime && en.engineAccelerationSpeed > 0) spool = Math.Max(spool, 1 / en.engineAccelerationSpeed); }
-            double twr = n == 0 ? double.NaN : thrust / (vessel.totalMass * 9.81);
+            double twr = n == 0 ? double.NaN : thrust / (vessel.totalMass * 9.81); autoSpoolS = spool; autoEngines = vessel.FindPartModulesImplementing<ModuleEngines>();   // AUTO1
             shold.Configure(vessel.totalMass, twr, spool); if (spool > 0) stepThr.SpoolS = FlightPolicy.Clamp(spool, 1, 15);
             if (!double.IsNaN(twr)) stepThr.AccelPerThr = FlightPolicy.Clamp(.5 * twr * 9.81, 2, 15);   // GROK LAND5k: deficit steps sized from the thrust (half the static TWR, drag/spool margin)   // GROK LAND5j: measured spool = the prediction horizon
             { object lo; var lc = settingsData.TryGetValue("throttle_lag", out lo) ? lo as Dictionary<string, object> : null; double ml = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); if (!double.IsNaN(ml)) shold.SetLag(ml); lagMeasured = !double.IsNaN(ml); }
@@ -158,10 +198,10 @@ namespace KSPChatBridge
         void ApplyCraftOverrides(bool live)
         {
             if (vessel == null) return; double ap, th;
-            stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap, out th);
+            ComputeAuto(); stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap, out th);   // AUTO1
             RunwayMission.AutoGoAround = CraftOverrides.On(CraftOverrides.AutoGa, Bool(settingsData, "autoland_auto_go_around", false));   // GROK LAND5k: default OFF
             string txt = "stall " + (double.IsNaN(stallOverride) ? "learned" : Math.Round(stallOverride).ToString()) + ", approach " + (double.IsNaN(ap) ? "-" : Math.Round(ap).ToString()) + ", threshold " + (double.IsNaN(th) ? "-" : Math.Round(th).ToString()) + " m/s, auto go-around " + (RunwayMission.AutoGoAround ? "ON" : "OFF");
-            if (!live) { ChatLog.Write("vessel", "craft override: " + txt + (double.IsNaN(stallOverride) ? "" : " (learned stall ignored)")); return; }
+            if (!live) { ChatLog.Write("vessel", "craft override: " + txt + (double.IsNaN(stallOverride) ? "" : " (learned stall ignored)")); if (autoLand != null) ChatLog.Write("auto", autoLand.Summary(vessel.vesselName)); return; }
             stall = LearnedStall(); if (landMass0 > 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
             ChatLog.Write("vessel", "craft override changed (tablet): " + txt + " -> stall used " + Math.Round(stall) + "; speed schedule replanned, path kept");
         }
@@ -188,6 +228,7 @@ namespace KSPChatBridge
         internal static double CraftInUse(string field)
         {
             var i = instance; if (!CraftReady) return double.NaN;
+            { double av = CraftOverrides.AutoValue(field); if (!double.IsNaN(av) && !CraftOverrides.IsUser(field)) return av; }   // AUTO1: computed default in use
             if (field == CraftOverrides.Stall) return i.stall;
             if (field == CraftOverrides.AutoGa) return RunwayMission.AutoGoAround ? 1 : 0;
             if (field == "airbrakes" || field == "reverser") return 1;
@@ -337,7 +378,7 @@ namespace KSPChatBridge
             if (vessel == active) return;
             Stop();
             if (vessel != null) vessel.OnFlyByWire -= Fly;
-            vessel = active; originals.Clear(); parkingSet = parkingReleased = false; ResetLearnState();   // revert / reload / switch: no Learn state or menu cursor survives onto another vessel object
+            vessel = active; originals.Clear(); liftMeter = new LiftMeter(); dtMeter = new DragThrustMeter(); autoLiftDone = autoThrustDone = false; autoPrevSpd = autoAcc = autoPrevVs = double.NaN; autoLand = null;   /* AUTO1 */ parkingSet = parkingReleased = false; ResetLearnState();   // revert / reload / switch: no Learn state or menu cursor survives onto another vessel object
             if (vessel == null) return;
             {   // GROK LAND5k: a launched .craft can carry an unresolved '#autoLOC_...' ship name - profiles are keyed by name, so resolve it
                 string raw = vessel.vesselName, loc = raw; try { loc = KSP.Localization.Localizer.Format(raw); } catch (Exception) { }
@@ -902,8 +943,9 @@ namespace KSPChatBridge
                     }
                     string landingPhaseBefore = runway.Phase;
                     if (!vessel.LandedOrSplashed)
-                    { landingAoa = pitch - FlarePolicy.PathAngle(vessel.srfSpeed, vessel.verticalSpeed); lastAirVs = vessel.verticalSpeed; }
+                    { landingAoa = pitch - FlarePolicy.PathAngle(vessel.srfSpeed, vessel.verticalSpeed); lastAirVs = vessel.verticalSpeed; if (runway.Phase != "flare" && runway.Phase != "rollout") AutoMeasure(landingAoa, roll, dt); }   // AUTO1
                     runway.Step(vessel.latitude, vessel.longitude, vessel.altitude, vessel.radarAltitude, vessel.srfSpeed, vessel.LandedOrSplashed, vessel.mainBody.Radius, ApproachProfile.StallAt(ApproachStall0(), landMass0, vessel.totalMass), Track(), FlightGlobals.ship_heading);
+                    if (runway.Phase == "flare" && landingPhaseBefore != "flare" && !double.IsNaN(appThr.Base)) AutoSave("final_trim", appThr.Base);   // AUTO1: final-approach throttle for the flare throttle default
                     if (runway.Phase == "flare" && landingPhaseBefore != "flare" && runway.FlareFast) { flareEntryPitch = pitch; ChatLog.Write("approach", "flare FAST (" + Math.Round(vessel.srfSpeed) + " m/s, > landing + 10): small pitch-up (entry + " + FastPitchUp + " deg), idle + airbrakes + full flaps, sink " + (-runway.DesiredVs).ToString("0.0") + " m/s (flare_sink), long landing"); }
             if (runway.Phase == "flare" && landingPhaseBefore != "flare")
                         ChatLog.Write("approach", profileTrusted && profile != null && FlarePolicy.ValidAoa(profile.TouchdownAoa) ? "flare: learned touchdown AoA " + profile.TouchdownAoa.ToString("0.0") + " deg" : "flare: no trusted touchdown AoA; using sink-rate fallback");
@@ -1790,7 +1832,7 @@ namespace KSPChatBridge
                     selectedRunway.WantShort = Bool(a, "short_final", false) || destination.ToLowerInvariant().Contains("short") || Str(a, "name", "").ToLowerInvariant().Contains("short");
                     selectedRunway.ForceKind = RunwayMission.PickedKind(Str(a, "final", ""), selectedRunway.ChartPin);   // GROK LAND2: LONG/SHORT as picked (a picked chart = its own long-final join)
                     ChatLog.Write("approach", "engage: " + selectedRunway.Key + ", chart " + (selectedRunway.ChartPin.Length > 0 ? selectedRunway.ChartPin + " (picked)" : selectedRunway.Override != null ? System.IO.Path.GetFileNameWithoutExtension(ChartStore.PathFor(selectedRunway.Key)) + " (active)" : "computed") + ", final " + (selectedRunway.ForceKind.Length > 0 ? selectedRunway.ForceKind + " (picked)" : "auto"));
-                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; reverseRollout = new ReverseRollout(); derot.Reset(); landingAoa = double.NaN; holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
+                goArounds = 0; landMass0 = 0; capLifted = false; lastAskedSpeed = double.NaN; BeginHold(); runway = selectedRunway; RecomputeAuto("landing engaged");   /* AUTO1: runway length known now */ reverseRollout = new ReverseRollout(); derot.Reset(); landingAoa = double.NaN; holdAltitude = holdHeading = holdSpeed = true; mode = "landing"; directPitch = directBank = null;
                     object cacheValue; var learned = settingsData.TryGetValue("stall_speeds", out cacheValue) ? cacheValue as Dictionary<string, object> : null;
                     needStallStudy = approachSpeed <= 0 && (learned == null || !learned.ContainsKey(vessel.vesselName));
                     if (approachSpeed > 0) stall = FlightPolicy.Clamp(approachSpeed / 1.3, 20, 200);
