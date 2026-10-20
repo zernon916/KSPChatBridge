@@ -1366,6 +1366,8 @@ namespace KSPChatBridge
         }
         /// <summary>AICS2: lift dump only on an autopilot landing rollout, wheels down, still rolling (> 3 m/s).</summary>
         internal static bool LiftDump(string mode, string phase, bool landed, double speed) { return mode == "landing" && phase == "rollout" && landed && speed > 2; }
+        /// <summary>AICS3: droop deploy angle - always >= 0 (direction comes only from the stock deploy direction / the pilot's Invert).</summary>
+        internal static double RollFlapAngle(double deg) { return double.IsNaN(deg) ? .01 : Math.Max(.01, Math.Abs(deg)); }
         internal static double DroopStep(double cur, double target, double dt) { return target <= cur ? target : Math.Min(target, cur + .5 * Math.Max(0, dt)); }
         internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
         internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }

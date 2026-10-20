@@ -12,7 +12,8 @@ namespace KSPChatBridge
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
         readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 0, rfApplied = -1; float rfLast; int rfSet, rfSetApplied = -1; string rfPhase;   // GROK RF1
-        readonly Dictionary<ModuleControlSurface, bool> rfInvert = new Dictionary<ModuleControlSurface, bool>();   // AICS1: deployInvert that makes this surface droop DOWN
+        // AICS3: ROLL / FLAPS droop = deploy with a POSITIVE angle in the stock deploy direction (KSP mirrors symmetric pairs, so both wings
+        // match) - the same convention as the FLAPS role. If a part's stock deploy goes up, the pilot flips it with the PAW 'Invert'; we never override it.
         float configChangedAt = -100; int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
         internal static int FlapSetting { get { return instance == null ? 0 : instance.flapSet; } }
         internal static bool HasFlapsNow { get { return instance != null && instance.flaps.Count > 0; } }
@@ -75,7 +76,7 @@ namespace KSPChatBridge
                 bool aero = cs is ModuleAeroSurface;
                 if (surfTagged) { role = tagged ?? SurfRole.Other; why = tagged.HasValue ? "tag '" + AicsSurfaceTag.TagOf(p) + "'" : "untagged (tags in use)"; }
                 else { role = SurfaceRoles.Classify(!cs.ignorePitch, !cs.ignoreYaw, !cs.ignoreRoll, aero, brakeAg, span01, chord, vert, defl, mainTe); why = "auto"; }
-                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) { rollFlapCount++; rollFlaps.Add(cs); rfInvert[cs] = defl == -1 ? !cs.deployInvert : cs.deployInvert; } }
+                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) { rollFlapCount++; rollFlaps.Add(cs); } }   // AICS3: no geometry flip (the defl guess ignored partDeployInvert and flipped good surfaces UP)
                 else if (role == SurfRole.Brake) brakeSurfs.Add(cs);
                 log.Append(p.partInfo != null ? p.partInfo.title : p.name).Append(" @").Append(l.x.ToString("0.0")).Append("/").Append(l.y.ToString("0.0")).Append("/").Append(l.z.ToString("0.0"))
                    .Append(" span ").Append(span01.ToString("0.00")).Append(chord == 1 ? " LE" : chord == -1 ? " TE" : " mid").Append(vert == 1 ? " top" : vert == -1 ? " bottom" : "")
@@ -185,7 +186,7 @@ namespace KSPChatBridge
             if (rollFlaps.Count == 0) return;
             if (mode == "idle")
             {   // FIX: AP off = hands off the surfaces; put back what the droop changed, once
-                if (rfApplied > 0 || rfSetApplied > 0) { foreach (var cs in rollFlaps) { FlapSnap o; if (cs != null && flapOrig.TryGetValue(cs, out o)) { cs.deploy = o.Deploy; cs.deployAngle = o.Angle; cs.deployInvert = o.Invert; flapOrig.Remove(cs); } } ChatLog.Write("aics", "roll/flaps droop off (autopilot off) - surfaces restored"); }
+                if (rfApplied > 0 || rfSetApplied > 0) { foreach (var cs in rollFlaps) { FlapSnap o; if (cs != null && flapOrig.TryGetValue(cs, out o)) { cs.deploy = o.Deploy; cs.deployAngle = o.Angle; flapOrig.Remove(cs); } } ChatLog.Write("aics", "roll/flaps droop off (autopilot off) - surfaces restored"); }
                 rfApplied = 0; rfSetApplied = 0; rfDroop = 0; rfSet = 0; rfPhase = "idle"; rfLast = 0; return;
             }
             float now = Time.realtimeSinceStartup; double dt = rfLast > 0 ? now - rfLast : 0; rfLast = now;
@@ -211,7 +212,7 @@ namespace KSPChatBridge
                 if (cs == null || !cs.ignorePitch) continue;   // NEVER deploy a pitch surface
                 FlapSnap o; if (!flapOrig.TryGetValue(cs, out o)) flapOrig[cs] = o = new FlapSnap { Deploy = cs.deploy, Invert = cs.deployInvert, Angle = cs.deployAngle };
                 float deg = (float)FlapsPolicy.RollFlapDeg(cs.ctrlSurfaceRange, o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange, rfSet, rfDroop, vessel.ctrlState.roll);
-                bool inv; cs.deployInvert = rfInvert.TryGetValue(cs, out inv) ? inv : o.Invert; cs.deployAngle = Math.Max(.01f, deg); cs.deploy = deg > .05f;
+                cs.deployAngle = (float)FlapsPolicy.RollFlapAngle(deg); cs.deploy = deg > .05f;   // AICS3: deployInvert is the pilot's (PAW 'Invert'), never written - droop = the stock deploy direction, like FLAPS
                 try { recovery.AcceptSurface(cs); } catch (Exception) { }
             }
         }
@@ -230,7 +231,7 @@ namespace KSPChatBridge
         /// <summary>Restore every surface's original deploy / angle / direction.</summary>
         void RestoreFlaps()
         {
-            foreach (var kv in flapOrig) if (kv.Key != null) { kv.Key.deploy = kv.Value.Deploy; kv.Key.deployAngle = kv.Value.Angle; kv.Key.deployInvert = kv.Value.Invert; try { recovery.AcceptSurface(kv.Key); } catch (Exception) { } }
+            foreach (var kv in flapOrig) if (kv.Key != null) { kv.Key.deploy = kv.Value.Deploy; kv.Key.deployAngle = kv.Value.Angle; if (!rollFlaps.Contains(kv.Key)) kv.Key.deployInvert = kv.Value.Invert; try { recovery.AcceptSurface(kv.Key); } catch (Exception) { } }
             flapOrig.Clear(); flapSet = 0; rfApplied = -1; rfSetApplied = -1;
         }
     }

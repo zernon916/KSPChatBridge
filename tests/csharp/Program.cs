@@ -254,6 +254,10 @@ class Program
                 string fj = LandingTestPresets.WriteFuel(LandingTestPresets.ToJson(LandingTestPresets.Defaults()), 40); string fwhy; var fl = LandingTestPresets.Parse(fj, out fwhy);
                 Check(LandingTestPresets.ReadFuel(fj) == 40 && fl != null && fl.Count == LandingTestPresets.Defaults().Count && LandingTestPresets.ReadFuel(LandingTestPresets.ToJson(LandingTestPresets.Defaults())) == 100 && LandingTestPresets.RunLine(2, fl[0], "Aeris 3A", 40).EndsWith(" craft=Aeris 3A fuel=40%"), "TEST3: fuel_pct remembered in landing_tests.json, presets kept, run line fuel=<n>%");
             }
+            {   // AICS3: droop direction
+                bool pos = true; for (double r = -1; r <= 1.0001; r += .1) { double dg = FlapsPolicy.RollFlapDeg(20, 30, 3, FlapsPolicy.RollFlapDroop(r, 0, 0, 0), r); if (FlapsPolicy.RollFlapAngle(dg) < 0 || FlapsPolicy.RollFlapAngle(-dg) < 0) pos = false; }
+                Check(pos && FlapsPolicy.RollFlapAngle(-7) == 7 && FlapsPolicy.RollFlapAngle(double.NaN) == .01, "AICS3: droop angle always positive (stock deploy direction / pilot Invert decide down, never flipped by us)");
+            }
             {   // AICS1: ROLL / FLAPS flaperon droop
                 Check(FlapsPolicy.RollFlapDeg(20, 30, 3, 1, 0) == 10 && FlapsPolicy.RollFlapDeg(20, 6, 3, 1, 0) == 6 && FlapsPolicy.RollFlapDeg(20, 30, 0, 1, 0) == 0 && FlapsPolicy.RollFlapDeg(20, 30, 3, .5, 0) == 5, "AICS1: droop = min(deploy angle, half the range) x setting x factor");
                 bool inRange = true; for (double r = 0; r <= 1.0001; r += .05) { double rfq = FlapsPolicy.RollFlapDroop(r, 0, 0, 0), dd = FlapsPolicy.RollFlapDeg(20, 30, 3, rfq, r); if (dd + r * 20 > 20 + 1e-9 || dd > .6 * 20 + 1e-9) inRange = false; }
