@@ -247,6 +247,15 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // THR10: smooth energy throttle (08:18 replay + run 3)
+                var at = new ApproachThrottle(); at.Reset(.3); double atMin = 1, atMax = 0, atPrev = at.Cmd, atStep = 0;
+                for (int k = 0; k < 3000; k++) { double t10tt = k * .02, t10v = 140 + 4 * Math.Sin(t10tt / 3), t10acc = 4 / 3.0 * Math.Cos(t10tt / 3), t10below = 35 + 6 * Math.Sin(t10tt / 7); double t10o = at.Update(.02, t10v, 140, t10v + 5 * t10acc, t10below); if (k > 250) { atMin = Math.Min(atMin, t10o); atMax = Math.Max(atMax, t10o); } atStep = Math.Max(atStep, Math.Abs(t10o - atPrev)); atPrev = t10o; }
+                Check(atMin > .2 && atMax < .7 && atStep <= ApproachThrottle.UpRate * .02 + 1e-9, "THR10: 08:18 replay (below GS 30-40, speed 140 +-4) stays " + Math.Round(100 * atMin) + "-" + Math.Round(100 * atMax) + "%, max step " + (100 * atStep).ToString("0.00") + "%/frame");
+                var at3 = new ApproachThrottle(); at3.Reset(.3); double a3 = .3; for (int k = 0; k < 150; k++) a3 = at3.Update(.02, 130, 140, 127, 40);
+                Check(a3 > .6 && at3.State.StartsWith("low energy"), "THR10: run 3 low (40 m) and slow (130 vs 140) gets power smoothly (" + Math.Round(100 * a3) + "% after 3 s)");
+                var at4 = new ApproachThrottle(); at4.Reset(.5); double a4 = .5; for (int k = 0; k < 50; k++) a4 = at4.Update(.02, 150, 140, 152, -60);
+                Check(a4 < .5 && a4 >= .5 - ApproachThrottle.DownRate * 1.0 - 1e-9 && Math.Abs(ApproachThrottle.Limit(.9, 0, .02) - (.9 - ApproachThrottle.DownRate * .02)) < 1e-12, "THR10: high and fast comes down at <= 10%/s - no idle slam");
+            }
             {   // LAT3 (run 5)
                 double lc = 0, lt = 0, lb = 0;
                 double hFar = RunwayMission.CenterlineHeading(-5, 270, 270, 90, ref lc, 0, 270, ref lt, true, FinalApproachPolicy.LookAheadM), hNear = RunwayMission.CenterlineHeading(-5, 270, 270, 90, ref lb, 0, 270, ref lt, true, FinalApproachPolicy.LateralLookAhead(300));

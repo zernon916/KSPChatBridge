@@ -1131,6 +1131,32 @@ internal static double BounceStep(double cur, double speed, double stall, double
         }
         internal void Reset() { Req = Got = -1; Settling = PlayerOwns = false; }
     }
+    /// <summary>THR10 (Aeris 4A 08:18: sink-floor 90% vs 'fast +3: idle' every 15 s, 30-42 m below the GS all final): ONE smooth approach
+    /// throttle. target = base (slow integrator = learned trim) + Kv x speed deficit (5 s prediction) + Kv x height deficit as an energy
+    /// equivalent (g x below / v, m/s), rate-limited 15%/s up, 10%/s down - no idle / 90% jumps (touchdown idle and go-around excepted).</summary>
+    internal sealed class ApproachThrottle
+    {
+        internal const double UpRate = .15, DownRate = .10, Kv = .02, Ki = .001, PathMaxMs = 8, G = 9.81;
+        internal double Cmd = double.NaN, Base = double.NaN, SpeedTerm, PathTerm, BelowM; internal string State = "";
+        internal void Reset(double thr) { double t = double.IsNaN(thr) ? .3 : FlightPolicy.Clamp(thr, 0, 1); Cmd = t; Base = t; State = ""; }
+        internal static double Limit(double prev, double want, double dt) { if (double.IsNaN(prev) || double.IsNaN(want)) return want; double d = Math.Max(0, dt); return FlightPolicy.Clamp(want, prev - DownRate * d, prev + UpRate * d); }
+        /// <summary>belowM: metres below the glidepath / planned altitude (+ = low). Returns the rate-limited command; sets State on a sign change.</summary>
+        internal double Update(double dt, double speed, double plan, double predicted, double belowM)
+        {
+            if (double.IsNaN(Cmd)) Reset(.3);
+            if (double.IsNaN(predicted)) predicted = speed; if (double.IsNaN(belowM)) belowM = 0; BelowM = belowM;
+            double sErr = plan - predicted, hEq = FlightPolicy.Clamp(G * belowM / Math.Max(30, speed), -PathMaxMs, PathMaxMs), tot = sErr + hEq;   // total-energy error (m/s)
+            if (dt > 0) Base = FlightPolicy.Clamp(Base + Ki * FlightPolicy.Clamp(tot, -15, 15) * dt, 0, .9);   // slow trim: persistent error moves the base, not a step
+            SpeedTerm = Kv * sErr; PathTerm = Kv * hEq;
+            double target = FlightPolicy.Clamp(Base + SpeedTerm + PathTerm, 0, 1);
+            Cmd = Limit(Cmd, target, dt);
+            string st = tot > 2 ? "low energy: power" : tot < -2 ? "high energy: less power" : "on energy";
+            if (st != State) { State = st; Changed = true; }
+            return Cmd;
+        }
+        internal bool Changed;
+        internal string LogLine(double belowGsM) { Changed = false; return "approach: " + Math.Round(100 * Cmd) + "% (base " + Math.Round(100 * Base) + ", speed " + (100 * SpeedTerm).ToString("+0;-0;0") + ", path " + (100 * PathTerm).ToString("+0;-0;0") + ") " + (BelowM >= 0 ? "below" : "above") + " GS " + Math.Round(Math.Abs(BelowM)) + " m, " + State; }
+    }
     internal sealed class StepThrottle
     {
         internal const double IdleOver = 3, MaxStep = .03, Step = .03, NearStep = .03, NearMs = 10, WaitS = 3, Below = 5, Above = 15, LeadStep = .03, LeadS = 4, PostConfigS = 5, ConfigRate = .10, AheadS = 5;
