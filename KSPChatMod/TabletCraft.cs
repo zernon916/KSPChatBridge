@@ -65,10 +65,12 @@ namespace KSPChatBridge
         float CraftRowLabelH(Rect c, int i, string label, float row)
         {
             bool dim; string head = CraftRowHead(i, label, out dim);
-            return TabletUi.TextWidth(head) <= CraftLabelW(c) - 8 ? 0 : Mathf.Max(row * .8f, TabletUi.WrapHeight(head, c.width));
+            return Mathf.Max(row * .8f, TabletUi.WrapHeight(head, c.width));   // UI2: always its own full-width line(s)
         }
         /// <summary>UI1: real height of a row - long labels wrap on their own line(s) with the controls below.</summary>
-        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftRowLabelH(c, i, label, row) + row; }
+        internal float CraftOverrideRowHeight(Rect c, int i, string label, float row) { return CraftRowLabelH(c, i, label, row) + CraftRowGap + row; }
+        const float CraftRowGap = 4, CraftRowIndent = 12;   // UI2: label-to-controls gap, controls indent (same for every row)
+        static string StepText(double s) { return (s > 0 ? "+" : "") + s.ToString("0.##"); }
         /// <summary>One override row, shared by CRAFT / DETAILS and the LANDING page (same craft_overrides entry and text buffers, so both
         /// pages stay in sync). Numbers: "<label> <value> <unit>" | -L -S [field] +S +L SET X. Switches: AUTO / ON / OFF. Returns the next y.
         /// UI1: a label wider than its column is word-wrapped across the full width, controls on the line below (measured height).</summary>
@@ -78,24 +80,26 @@ namespace KSPChatBridge
             if (tabletCraftFor != craft || tabletCraftText == null || tabletCraftText.Length != defs.Count)
             { tabletCraftFor = craft; tabletCraftText = new string[defs.Count]; for (int k = 0; k < defs.Count; k++) tabletCraftText[k] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(defs[k].Key)); }
             var d = defs[i]; double cur = NativeFlightController.CraftOverrideGet(d.Key), use = NativeFlightController.CraftInUse(d.Key);
-            float bw = Mathf.Max(52, tabletFont * 3f), lw = CraftLabelW(c), fw = Mathf.Max(80, tabletFont * 5f), x = c.x + lw;
+            float fw = Mathf.Max(90, tabletFont * 5f), x = c.x + CraftRowIndent;   // UI2: one layout - label line(s) full width, controls below at a fixed indent
+            float bw = Mathf.Max(52, TabletUi.ButtonWidth("+0.5")); foreach (double s in new[] { -d.Large, -d.Small, d.Small, d.Large }) bw = Mathf.Max(bw, TabletUi.ButtonWidth(StepText(s)));
+            float sw = Mathf.Max(bw, TabletUi.ButtonWidth("SET")), ow = Mathf.Max(bw * 1.4f, TabletUi.ButtonWidth("AUTO"));
             bool dim; string head = CraftRowHead(i, label, out dim); float lh = CraftRowLabelH(c, i, label, row);
-            if (lh > 0) { TabletUi.LabelWrap(new Rect(c.x, ry, c.width, lh), head, dim); ry += lh; x = c.x + Mathf.Min(lw * .25f, 40); }
-            else TabletUi.Label(new Rect(c.x, ry, lw, row), head, dim);
+            TabletUi.LabelWrap(new Rect(c.x, ry, c.width, lh), head, dim); ry += lh + CraftRowGap;
+            /* UI2: no side-by-side label */
             if (d.Bool)
             {
                 bool auto = double.IsNaN(cur), on = auto ? use >= .5 : cur >= .5;
-                if (TabletUi.Button(new Rect(x, ry, bw * 1.6f, row), "AUTO", auto, en) && !auto) CraftSet(i, double.NaN); x += bw * 1.6f + 4;
-                if (TabletUi.Button(new Rect(x, ry, bw * 1.6f, row), "ON", !auto && on, en)) CraftSet(i, 1); x += bw * 1.6f + 4;
-                if (TabletUi.Button(new Rect(x, ry, bw * 1.6f, row), "OFF", !auto && !on, en)) CraftSet(i, 0);
+                if (TabletUi.Button(new Rect(x, ry, ow, row), "AUTO", auto, en) && !auto) CraftSet(i, double.NaN); x += ow + 4;
+                if (TabletUi.Button(new Rect(x, ry, ow, row), "ON", !auto && on, en)) CraftSet(i, 1); x += ow + 4;
+                if (TabletUi.Button(new Rect(x, ry, ow, row), "OFF", !auto && !on, en)) CraftSet(i, 0);
                 return ry + row;
             }
-            foreach (double s in new[] { -d.Large, -d.Small }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), s.ToString(d.Small < 1 ? "0.0" : "0"), en)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
+            foreach (double s in new[] { -d.Large, -d.Small }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
             tabletCraftText[i] = TabletUi.Field(new Rect(x, ry, fw, row), tabletCraftText[i] ?? "", en); x += fw + 4;
-            foreach (double s in new[] { d.Small, d.Large }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), "+" + s.ToString(d.Small < 1 ? "0.0" : "0"), en)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
+            foreach (double s in new[] { d.Small, d.Large }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
             double? p = CraftOverrides.Parse(d.Key, tabletCraftText[i]);
-            if (TabletUi.ActionButton(new Rect(x, ry, bw * 1.3f, row), "SET", en && p.HasValue)) CraftSet(i, p.Value); x += bw * 1.3f + 4;
-            if (TabletUi.ActionButton(new Rect(x, ry, bw, row), "X", en && !double.IsNaN(cur))) CraftSet(i, double.NaN);
+            if (TabletUi.ActionButton(new Rect(x, ry, sw, row), "SET", en && p.HasValue, false)) CraftSet(i, p.Value); x += sw + 4;
+            if (TabletUi.ActionButton(new Rect(x, ry, bw, row), "X", en && !double.IsNaN(cur), false)) CraftSet(i, double.NaN);
             return ry + row;
         }
         static int CraftIndex(string key) { return Array.IndexOf(CraftOverrides.Fields, key); }

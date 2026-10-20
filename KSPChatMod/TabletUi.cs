@@ -61,6 +61,8 @@ namespace KSPChatBridge
         }
         internal static GUIStyle TextStyle { get { return label; } }
         static GUIStyle wrapS;   // UI1: word-wrapped label, measured height
+        /// <summary>UI2: width a (bold) button needs for its text, padding included.</summary>
+        internal static float ButtonWidth(string text) { return btnOn == null ? 0 : btnOn.CalcSize(new GUIContent(text ?? "")).x + 20; }
         internal static float TextWidth(string text) { return label == null ? 0 : label.CalcSize(new GUIContent(text ?? "")).x; }
         internal static float WrapHeight(string text, float width) { return wrapS == null ? 0 : wrapS.CalcHeight(new GUIContent(text ?? ""), Mathf.Max(10, width)); }
         internal static void LabelWrap(Rect r, string text, bool dim = false) { if (wrapS == null) { Label(r, text, dim); return; } var o = wrapS.normal.textColor; wrapS.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, wrapS); wrapS.normal.textColor = o; }
@@ -183,14 +185,14 @@ namespace KSPChatBridge
             var oc = label.normal.textColor; label.normal.textColor = c; GUI.Label(new Rect(r.x + d + 10, r.y, r.width - d - 10, r.height), text, label); label.normal.textColor = oc;
         }
         /// <summary>GROK TAB1: action button (starts something on the craft) - green fill, bold ">> " prefix; nav buttons stay plain.</summary>
-        internal static bool ActionButton(Rect r, string text, bool enabled = true)
+        internal static bool ActionButton(Rect r, string text, bool enabled = true, bool arrows = true)
         {
             var oldBackground = GUI.backgroundColor; var normal = btnOn.normal.textColor; var hover = btnOn.hover.textColor; var fs = btnOn.fontStyle;
             try
             {
                 GUI.backgroundColor = enabled ? new Color(.20f, .62f, .32f) : new Color(.25f, .27f, .30f);
                 btnOn.fontStyle = FontStyle.Bold; if (!enabled) btnOn.normal.textColor = btnOn.hover.textColor = Dim;
-                return GUI.Button(r, ">> " + text, btnOn) && enabled;
+                return GUI.Button(r, arrows ? ">> " + text : text, btnOn) && enabled;
             }
             finally { GUI.backgroundColor = oldBackground; btnOn.normal.textColor = normal; btnOn.hover.textColor = hover; btnOn.fontStyle = fs; }
         }
