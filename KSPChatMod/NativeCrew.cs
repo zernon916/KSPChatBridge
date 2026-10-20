@@ -42,12 +42,15 @@ namespace KSPChatBridge
         {
             if (instance == null || instance.vessel == null) return "";
             var v = instance.vessel;
+            if (RoverMode) return "rover";   // RS1: the CRAFT page ROVER switch wins
+            switch (CurrentClass)
+            {
+                case VehicleKind.Rover: return "rover";
+                case VehicleKind.Heli: return "heli";
+                case VehicleKind.Plane: return "plane";
+            }
             if (instance.props.HasLift(v)) return "heli";
-            if (instance.IsPlane()) return "plane";
-            bool motor = false, engine = false;
-            foreach (Part p in v.parts) { motor |= p.FindModuleImplementing<ModuleWheels.ModuleWheelMotor>() != null; engine |= p.FindModuleImplementing<ModuleEngines>() != null; }
-            if (motor && !engine) return "rover";
-            return "rocket";
+            return instance.IsPlane() ? "plane" : "rocket";
         }
 
         static bool ChatterOn { get { return AicsCore.AiEnabled; } }

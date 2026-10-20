@@ -28,13 +28,16 @@ namespace KSPChatBridge
                 try
                 {
                     float w = body.width - 26, y = 0, pad = 16 + tabletFont * 1.6f; int groups = 0; string g0 = null;
-                    foreach (var d in defs) if (d.Group != g0) { groups++; g0 = d.Group; }
-                    Rect probe = new Rect(12, 0, w - 24, 0); float rowsH = 0; for (int k = 0; k < defs.Count; k++) rowsH += CraftOverrideRowHeight(probe, k, defs[k].Label, row) + gap;   // UI1: measured
+                    bool rov = NativeFlightController.RoverMode;   // RS1: plane rows when the ROVER switch is off, rover rows when on
+                    foreach (var d in defs) if (CraftOverrides.Visible(d, rov) && d.Group != g0) { groups++; g0 = d.Group; }
+                    Rect probe = new Rect(12, 0, w - 24, 0); float rowsH = 0; for (int k = 0; k < defs.Count; k++) if (CraftOverrides.Visible(defs[k], rov)) rowsH += CraftOverrideRowHeight(probe, k, defs[k].Label, row) + gap;   // UI1: measured
                 float eh = pad + rowsH + groups * (row * .8f) + row + gap;
+                    y += TabletVehicleSwitch(new Rect(0, y, w, 0), row) + gap;   // RS1: ROVER switch at the very top
                     Rect c = TabletUi.CardPanel(new Rect(0, y, w, eh), "DETAILS - " + craft + " (dim value = automatic)");
                     float ry = c.y; g0 = null;
                     for (int i = 0; i < defs.Count; i++)
                     {
+                        if (!CraftOverrides.Visible(defs[i], rov)) continue;
                         if (defs[i].Group != g0) { g0 = defs[i].Group; TabletUi.Label(new Rect(c.x, ry, c.width, row * .8f), g0, true); ry += row * .8f; }
                         ry = CraftOverrideRow(c, ry, i, defs[i].Label, row, TabletLink) + gap;
                     }
@@ -42,7 +45,7 @@ namespace KSPChatBridge
                     if (!tabletCraftConfirm) { if (TabletUi.ActionButton(new Rect(c.x, ry, rb, row), "RESET ALL TO AUTO", TabletLink)) tabletCraftConfirm = true; }
                     else
                     {
-                        if (TabletUi.ActionButton(new Rect(c.x, ry, rb, row), "CONFIRM RESET ALL", TabletLink)) { NativeFlightController.CraftOverrideSet(null, double.NaN); tabletCraftFor = null; tabletCraftConfirm = false; }
+                        if (TabletUi.ActionButton(new Rect(c.x, ry, rb, row), "CONFIRM RESET ALL", TabletLink)) { NativeFlightController.CraftOverrideSet(null, double.NaN); if (rov) NativeFlightController.SetRoverMode(true); tabletCraftFor = null; tabletCraftConfirm = false; }   // RS1: reset keeps the ROVER switch
                         if (TabletUi.Button(new Rect(c.x + rb + 8, ry, Mathf.Max(120, tabletFont * 6f), row), "CANCEL")) tabletCraftConfirm = false;
                     }
                     y += eh + gap;
@@ -59,6 +62,7 @@ namespace KSPChatBridge
         {
             var d = CraftOverrides.Defs[i]; double cur = NativeFlightController.CraftOverrideGet(d.Key), use = NativeFlightController.CraftInUse(d.Key); dim = double.IsNaN(cur);
             if (d.Bool) { bool on = dim ? use >= .5 : cur >= .5; return label + ": " + (on ? "ON" : "OFF") + (dim ? " (auto)" : ""); }
+            if (d.Choices != null) { int k = ChoiceIndex(d, cur, use); return label + ": " + d.Choices[k] + (dim ? " (auto)" : ""); }   // RS3/RS4
             return string.IsNullOrEmpty(d.Unit) ? label : label + " (" + d.Unit + ")";   // AUTO2: the value lives in the field now (dim + AUTO lit = automatic)
         }
         float CraftLabelW(Rect c) { return Mathf.Max(260, c.width * .36f); }
@@ -99,6 +103,17 @@ namespace KSPChatBridge
                 if (TabletUi.Button(new Rect(x, ry, ow, row), "OFF", !auto && !on, en)) CraftSet(i, 0);
                 return rowEnd;
             }
+            if (d.Choices != null)
+            {   // RS3/RS4: option buttons (value = index), AUTO = the default
+                bool auto = double.IsNaN(cur); int sel = ChoiceIndex(d, cur, use);
+                if (TabletUi.Button(new Rect(x, ry, ow, row), "AUTO", auto, en) && !auto) CraftSet(i, double.NaN); x += ow + 4;
+                for (int k = 0; k < d.Choices.Length; k++)
+                {
+                    float cw = Mathf.Max(ow, TabletUi.ButtonWidth(d.Choices[k]));
+                    if (TabletUi.Button(new Rect(x, ry, cw, row), d.Choices[k], !auto && sel == k, en)) CraftSet(i, k); x += cw + 4;
+                }
+                return rowEnd;
+            }
             foreach (double s in new[] { -d.Large, -d.Small }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
             bool isAuto; string shown = CraftOverrides.FieldText(cur, use, tabletCraftText[i], ref tabletCraftAutoShown[i], out isAuto);   // AUTO2: blank = the autopilot's live value, dimmed
             tabletCraftText[i] = TabletUi.Field(new Rect(x, ry, fw, row), shown, en, isAuto); x += fw + 4;
@@ -107,6 +122,11 @@ namespace KSPChatBridge
             if (TabletUi.ActionButton(new Rect(x, ry, sw, row), "SET", en && p.HasValue, false)) CraftSet(i, p.Value); x += sw + 4;
             if (TabletUi.Button(new Rect(x, ry, ow, row), "AUTO", isAuto, en) && !isAuto) CraftSet(i, double.NaN);   // AUTO2: lit = following the autopilot; tap = reset to auto
             return rowEnd;
+        }
+        static int ChoiceIndex(CraftOverrides.Def d, double cur, double use)
+        {
+            double v = !double.IsNaN(cur) ? cur : !double.IsNaN(use) ? use : d.Default;
+            return Math.Max(0, Math.Min(d.Choices.Length - 1, double.IsNaN(v) ? 0 : (int)Math.Round(v)));
         }
         static int CraftIndex(string key) { return Array.IndexOf(CraftOverrides.Fields, key); }
 

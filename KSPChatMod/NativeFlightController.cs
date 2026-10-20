@@ -200,6 +200,7 @@ namespace KSPChatBridge
             if (vessel == null) return; double ap, th;
             ComputeAuto(); stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap, out th);   // AUTO1
             RunwayMission.AutoGoAround = CraftOverrides.On(CraftOverrides.AutoGa, Bool(settingsData, "autoland_auto_go_around", false));   // GROK LAND5k: default OFF
+            if (!live) { classParts = -1; ScanClass(); }   // RS1: [class] log on vessel load
             string txt = "stall " + (double.IsNaN(stallOverride) ? "learned" : Math.Round(stallOverride).ToString()) + ", approach " + (double.IsNaN(ap) ? "-" : Math.Round(ap).ToString()) + ", threshold " + (double.IsNaN(th) ? "-" : Math.Round(th).ToString()) + " m/s, auto go-around " + (RunwayMission.AutoGoAround ? "ON" : "OFF");
             if (!live) { ChatLog.Write("vessel", "craft override: " + txt + (double.IsNaN(stallOverride) ? "" : " (learned stall ignored)")); if (autoLand != null) ChatLog.Write("auto", autoLand.Summary(vessel.vesselName)); return; }
             stall = LearnedStall(); if (landMass0 > 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
@@ -228,6 +229,7 @@ namespace KSPChatBridge
         internal static double CraftInUse(string field)
         {
             var i = instance; if (!CraftReady) return double.NaN;
+            { var rd = CraftOverrides.Find(field); if (rd != null && (rd.Rover || rd.Group == "VEHICLE")) return i.RoverInUse(rd); }   // RS3: rover settings
             { double av = CraftOverrides.AutoValue(field); if (!double.IsNaN(av) && !CraftOverrides.IsUser(field)) return av; }   // AUTO1: computed default in use
             if (field == CraftOverrides.Stall) return i.stall;
             if (field == CraftOverrides.AutoGa) return RunwayMission.AutoGoAround ? 1 : 0;

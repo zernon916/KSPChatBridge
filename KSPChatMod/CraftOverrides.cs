@@ -14,9 +14,16 @@ namespace KSPChatBridge
         internal sealed class Def
         {
             internal string Key, Label, Group, Unit; internal double Small = 1, Large = 5, Min = 15, Max = 400, Default = double.NaN; internal bool Bool;
+            internal string[] Choices;   // RS3/RS4: option buttons (value = index)
+            internal bool Rover { get { return Group != null && Group.StartsWith("ROVER", StringComparison.Ordinal); } }
         }
         static Def D(string g, string k, string l, string u, double sm, double lg, double mn, double mx, double def = double.NaN) { return new Def { Group = g, Key = k, Label = l, Unit = u, Small = sm, Large = lg, Min = mn, Max = mx, Default = def }; }
         static Def B(string g, string k, string l, bool def) { return new Def { Group = g, Key = k, Label = l, Unit = "", Bool = true, Min = 0, Max = 1, Default = def ? 1 : 0 }; }
+        static Def C(string g, string k, string l, double def, params string[] choices) { return new Def { Group = g, Key = k, Label = l, Unit = "", Choices = choices, Small = 1, Large = 1, Min = 0, Max = choices.Length - 1, Default = def }; }
+        /// <summary>RS1: per-craft ROVER switch (drawn at the top of AUTOPILOT / CRAFT, not as a row). OFF/unset = plane pages (unchanged).</summary>
+        internal const string RoverKey = "vehicle_rover", RoverTransmit = "rover_transmit", RoverScienceBy = "rover_science_by", RoverChargeWarp = "rover_charge_warp", RoverMinScience = "rover_min_science";
+        /// <summary>RS1: rows shown on CRAFT / DETAILS - plane groups when the ROVER switch is off, ROVER groups when on (VEHICLE is the header switch).</summary>
+        internal static bool Visible(Def d, bool rover) { return d != null && d.Group != "VEHICLE" && d.Rover == rover; }
         /// <summary>TAB-CRAFT1 per-craft tuning (blank = auto). Groups SPEEDS / APPROACH / TOUCHDOWN / ROLLOUT / TAKEOFF.</summary>
         internal static readonly List<Def> Defs = new List<Def>
         {
@@ -28,12 +35,18 @@ namespace KSPChatBridge
             D("TOUCHDOWN", FlareThrottle, "Flare throttle", "%", 1, 5, 0, 100), D("TOUCHDOWN", FlareSpoolLead, "Flare spool-up lead", "s", .5, 1, 0, 6, 2), D("TOUCHDOWN", FlareSink, "Flare sink rate", "m/s", .1, .5, 0, 5), D("TOUCHDOWN", FlareMaxPitch, "Max flare pitch", "deg", .5, 1, 0, 20), D("TOUCHDOWN", RolloutPitch, "Rollout nose-down", "deg", .5, 1, 0, 10), D("TOUCHDOWN", "touchdown_aim_m", "Touchdown aim distance", "m", 10, 50, -300, 1500, 350), D("TOUCHDOWN", FlapDeg, "Flap degree", "deg", .5, 5, -30, 30),
             B("ROLLOUT", "reverser", "Reverser on rollout", true), D("ROLLOUT", "brake_high_pct", "Brakes % at high speed", "%", 5, 10, 0, 100, 60), D("ROLLOUT", "brake_mid_pct", "Brakes % at mid speed", "%", 5, 10, 0, 100, 80), D("ROLLOUT", "brake_low_pct", "Brakes % at low speed", "%", 5, 10, 0, 100, 100), D("ROLLOUT", "brake_high_speed", "High speed above (m/s)", "m/s", 1, 5, 5, 250), D("ROLLOUT", "brake_low_speed", "Low speed below (m/s)", "m/s", 1, 5, 0, 150, 40),   /* ROLL5: live brake bands */ D("ROLLOUT", "reverse_pct", "Reverse thrust %", "%", 1, 10, 0, 100, 70), D("ROLLOUT", "reverse_off_speed", "Reverse thrust off speed", "m/s", 1, 5, 0, 150, 25),   /* REV1 */
             D("TAKEOFF", "vr", "Rotation speed (Vr)", "m/s", 1, 5, 15, 300), D("TAKEOFF", RotatePitch, "Rotation angle", "deg", .5, 1, TakeoffMission.RotPitchMin, TakeoffMission.RotPitchMax), D("TAKEOFF", "climb_speed", "Climb speed", "m/s", 1, 5, 20, 400),
+            B("VEHICLE", RoverKey, "Rover", false),   /* RS1 */
+            D("ROVER DRIVE", "rover_max_speed", "Off-road speed cap", "m/s", .5, 2, 1, 40, 6), D("ROVER DRIVE", "rover_road_speed", "KSC road speed cap", "m/s", .5, 2, 1, 40, 12), D("ROVER DRIVE", "rover_runway_speed", "Runway speed cap", "m/s", .5, 2, 1, 40, 20),
+            D("ROVER DRIVE", "rover_slope_deg", "Max slope", "deg", 1, 5, 3, 40, 15), D("ROVER DRIVE", "rover_roll_slow_deg", "Slow down above roll", "deg", 1, 5, 5, 30, 20), B("ROVER DRIVE", "rover_learn_speed", "Learn faster safe speeds", true),
+            D("ROVER SCIENCE", RoverMinScience, "Min science per experiment", "sci", .1, 1, 0, 50, 0), C("ROVER SCIENCE", RoverTransmit, "Transmit science", 2, "ALWAYS", "IF >= 60%", "IF >= 40%", "SAVE"), C("ROVER SCIENCE", RoverScienceBy, "Who runs the experiments", 0, "OURS", "OTHER MODS"),
+            D("ROVER POWER", "rover_low_ec_pct", "Stop and charge below", "%", 1, 5, 5, 90, 25), D("ROVER POWER", "rover_resume_ec_pct", "Resume driving at", "%", 1, 5, 20, 100, 80), D("ROVER POWER", "rover_reserve_pct", "Fuel reserve margin", "%", 1, 5, 0, 100, 20),
+            C("ROVER POWER", RoverChargeWarp, "Time warp while charging", 0, "OFF", "x2", "x3", "x4"),
         };
         internal static readonly string[] Fields = Defs.ConvertAll(x => x.Key).ToArray();
         internal static readonly string[] Labels = Defs.ConvertAll(x => x.Label).ToArray();
         internal const double Min = 15, Max = 400;
         internal static Def Find(string key) { return Defs.Find(x => x.Key == key); }
-        static double Clamp(string key, double v) { var d = Find(key); return d == null ? Clamp(v) : Math.Max(d.Min, Math.Min(d.Max, d.Bool ? Math.Round(v) : v)); }
+        static double Clamp(string key, double v) { var d = Find(key); return d == null ? Clamp(v) : Math.Max(d.Min, Math.Min(d.Max, d.Bool || d.Choices != null ? Math.Round(v) : v)); }
         /// <summary>Live values for the active craft (Apply); NaN = auto.</summary>
         static readonly Dictionary<string, double> live = new Dictionary<string, double>();
         internal static double L(string key) { double v; return live.TryGetValue(key, out v) ? v : auto.TryGetValue(key, out v) ? v : double.NaN; }
@@ -79,6 +92,20 @@ namespace KSPChatBridge
             { Vr, "Speed where the takeoff rotation starts." },
             { RotatePitch, "Nose-up pitch held during the takeoff rotation." },
             { "climb_speed", "Speed held in the climb after takeoff." },
+            { RoverKey, "ROVER = rover pages (Drive, Science tour, Places) and rover settings; PLANE = the plane pages." },
+            { "rover_max_speed", "Speed cap off-road while the autopilot drives (raised by itself when the rover proves stable; never limits manual driving)." },
+            { "rover_road_speed", "Speed cap on KSC roads and the Crawlerway while the autopilot drives." },
+            { "rover_runway_speed", "Speed cap on runways while the autopilot drives." },
+            { "rover_slope_deg", "Steepest climb or descent the autopilot drives; steeper ground ahead = slow to a crawl." },
+            { "rover_roll_slow_deg", "Roll where the autopilot slows down (brakes above 30 deg)." },
+            { "rover_learn_speed", "Let the autopilot test slightly higher caps on good ground and keep them when the rover stays stable." },
+            { RoverMinScience, "Run an experiment when it yields more than this (0 = any science at all)." },
+            { RoverTransmit, "ALWAYS = send everything; IF >= 60% / 40% = send when the transmit value is at least that share of the full value, else keep on board; SAVE = keep all on board." },
+            { RoverScienceBy, "OURS = this autopilot runs the experiments (other auto-science mods are paused for this craft); OTHER MODS = we only drive and transmit." },
+            { "rover_low_ec_pct", "Battery % where the rover stops and charges (solar, fuel cells, generators)." },
+            { "rover_resume_ec_pct", "Battery % where the rover drives on after charging." },
+            { "rover_reserve_pct", "Extra fuel kept for the drive home (fuel cells / generators)." },
+            { RoverChargeWarp, "Physics time warp while parked and charging (OFF by default; physics warp can flip rovers)." },
         };
         internal static string Desc(string key) { string s; return key != null && desc.TryGetValue(key, out s) ? s : ""; }
         /// <summary>Bool fields: an override, else the global/default.</summary>

@@ -30,6 +30,7 @@ namespace KSPChatBridge
         /// <summary>AUTOPILOT: the holds page + a bottom row of sub-page buttons; a sub-page gets a "< AUTOPILOT" back button.</summary>
         void TabletAutopilot(Rect area)
         {
+            if (NativeFlightController.RoverMode) { TabletRoverAutopilot(area); return; }   // RS1: ROVER switch on = rover pages
             float kh = Mathf.Max(48, tabletFont * 2.6f);
             if (tabletApSub >= 0 && tabletApSub < TabletNav.ApSubPages.Length)
             {

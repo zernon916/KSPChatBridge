@@ -110,6 +110,8 @@
     <Compile Include="../../KSPChatMod/EmbeddedPrompt.cs"/>
     <Compile Include="../../KSPChatMod/EmbeddedLlm.cs"/>
     <Compile Include="../../KSPChatMod/PluginDataMigration.cs"/>
+    <Compile Include="RoverTests.cs"/>
+    <Compile Include="../../KSPChatMod/VehicleClass.cs"/>
     <Reference Include="System.IO.Compression"/><Reference Include="System.IO.Compression.FileSystem"/>
   </ItemGroup>
 </Project>

@@ -13,6 +13,9 @@ namespace KSPChatBridge
         internal const int SubTakeoff = 0, SubLanding = 1, SubStatus = 2, SubTaxi = 3, SubTrim = 4, SubCraft = 5;
         /// <summary>TAB-CRAFT1: AUTOPILOT / CRAFT pages (DETAILS now; the top-down diagram is a later item).</summary>
         internal static readonly string[] CraftPages = { "DETAILS" };
+        /// <summary>RS1: AUTOPILOT sub-pages when the CRAFT page ROVER switch is on (CRAFT keeps the switch reachable).</summary>
+        internal static readonly string[] RoverSubPages = { "DRIVE", "SCIENCE TOUR", "PLACES", "CRAFT" };
+        internal const int RoverDrive = 0, RoverTour = 1, RoverPlaces = 2, RoverCraft = 3;
         /// <summary>Saved values >= 100 are the new layout (100 + 10 x (sub + 1) + top); below 100 = the old page index in
         /// FLIGHT, AIRCRAFT, APPROACH, TAXI, ABOUT, TRIM, ABORT, SHIP order, mapped onto the new tabs.</summary>
         internal const int SavedNewBase = 100;

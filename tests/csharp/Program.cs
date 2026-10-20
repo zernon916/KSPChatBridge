@@ -34,6 +34,7 @@ class Program
             T("FlightLogTests", FlightLogTests.Run);
             T("ShipInfoTests", ShipInfoTests.Run);
             T("CommsStatusTests", CommsStatusTests.Run);
+            T("RoverTests", RoverTests.Run);
             T("ScienceTrackerTests", ScienceTrackerTests.Run);
             T("EncyclopediaMathTests", EncyclopediaMathTests.Run);
             T("TransferDiagramMathTests", TransferDiagramMathTests.Run);
