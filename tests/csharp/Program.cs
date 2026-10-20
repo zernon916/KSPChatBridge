@@ -247,6 +247,11 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // AIM1
+                double a225 = FinalApproachPolicy.AimPathAlt(69, 0, 225), a400 = FinalApproachPolicy.AimPathAlt(69, 0, 400), t3 = Math.Tan(3 * Math.PI / 180);
+                Check(a400 > a225 && Math.Abs(a225 - (69 + 225 * t3)) < 1e-9 && Math.Abs(FinalApproachPolicy.AimPathAlt(69, 400, 300) - (69 + 700 * t3)) < 1e-9, "AIM1: alt plan at the threshold rises with touchdown_aim_m (tan 3 deg x aim)");
+                Check(!FinalApproachPolicy.FlareGate(29, 30, 1000) && FinalApproachPolicy.FlareGate(29, 30, 600) && FinalApproachPolicy.FlareGate(14, 30, 1000) && !FinalApproachPolicy.FlareGate(31, 30, 100), "AIM1: flare starts relative to the aim point, not just at flare height");
+            }
             {   // FLAP2
                 bool fOk = Math.Abs(FlapsPolicy.FlapAngle(3, -20, 30, double.NaN, 1) + 20) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(1, 15, 30, double.NaN, 1) - 5) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 0, 25, double.NaN, -1) - 25) < 1e-9;
                 bool oOk = Math.Abs(FlapsPolicy.FlapAngle(3, 20, 30, -10, 1) + 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 20, 30, -10, -1) - 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(2, 20, 30, 15, 1) - 10) < 1e-9 && Math.Abs(FlapsPolicy.FlapAngle(3, 20, 12, 30, 1) - 12) < 1e-9 && FlapsPolicy.FlapAngle(0, 20, 30, -10, 1) == 0;
@@ -441,7 +446,7 @@ class Program
             Check(ApproachProfile.TouchdownClass(-3) == "normal" && ApproachProfile.TouchdownClass(-6.5) == "firm" && ApproachProfile.TouchdownClass(-9) == "hard" && ApproachProfile.FlareFast(70, 58) && !ApproachProfile.FlareFast(66, 58), "LAND5c: touchdown classes 1-5 / 5-8 firm / > 8; fast flare = landing + 10");
             // fast flare: mission latches FlareFast (no pitch-up / idle / airbrakes / full flaps are applied by the controller on this flag), sink stays 3
             var ff = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; ff.Step(0, -.1, 130, 60, 65, false, 600000, 45);
-            ff.Step(0, -.005, 80, 10, ApproachProfile.AppSpeed(45) + 15, false, 600000, 45);
+            ff.Step(0, -.0002, 80, 10, ApproachProfile.AppSpeed(45) + 15, false, 600000, 45);   // AIM1: flare point is tied to the aim (350 m), so test it near the threshold
             Check(ff.Phase == "flare" && ff.FlareFast && ff.DesiredVs == -1.5, "LAND5c: overspeed at the flare point -> FlareFast (no pitch-up, idle + airbrakes + full flaps), sink 1.5 (LAND5n)");
             // flare sim: vs follows the mission's ask with a 0.8 s lag from a 4 m/s glide, touchdown sink in [1,5], near 3
             var fs = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; fs.Step(0, -.1, 130, 60, 65, false, 600000, 45);

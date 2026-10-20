@@ -41,6 +41,11 @@ namespace KSPChatBridge
         internal static double PlanningBank(double bank) { return double.IsNaN(bank) || bank <= 0 ? bank : Math.Min(bank, LandingBankCap); }
         // A virtual point on the extended 3-degree path; flare takes over before touchdown.
         internal static double Slope(double slope) { return double.IsNaN(slope) || double.IsInfinity(slope) || slope <= 0 ? Math.Tan(3 * Math.PI / 180) : slope; }
+        /// <summary>AIM1: glidepath height at distToThr before the threshold, through the aim point (threshold + aimM): at the threshold = tan(slope) x aim.</summary>
+        internal static double AimPathAlt(double elevation, double distToThr, double aimM, double slope = double.NaN) { return elevation + Math.Max(0, distToThr + aimM) * Slope(slope); }
+        /// <summary>AIM1: flare only from where the aimed path is at flare height (fs / slope before the aim, + 100 m) - a height dip before that
+        /// (terrain, apron) no longer starts it early; well below the flare height (< half) it always flares.</summary>
+        internal static bool FlareGate(double low, double fs, double distToAim, double slope = double.NaN) { return low < fs && (distToAim <= fs / Slope(slope) + 100 || low < fs * .5); }
         internal static double TargetAltitude(double elevation, double along, double touchdown, double slope = double.NaN)
         { return elevation + (touchdown - along - LookAheadM) * Slope(slope); }
         internal static double VerticalSpeed(double targetAltitude, double altitude, double speed, double cross)

@@ -1804,7 +1804,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
         }
         internal static double PredictCross(double cross, double speed, double track, double course, double tau)
         { return double.IsNaN(track) ? cross : cross + tau * speed * Math.Sin(FlightPolicy.Wrap(track - course) * Math.PI / 180); }
-        internal double FinalSlope { get { double s = Chart == null ? double.NaN : Chart.Slope; return FinalApproachPolicy.Slope(s); } }
+        internal double FinalSlope { get { double s = Chart == null ? double.NaN : Chart.Slope, s3 = Math.Tan(3 * Math.PI / 180); return FinalApproachPolicy.Slope(double.IsNaN(s) ? s3 : Math.Max(s, s3)); } }   // AIM1: at least 3 deg (the KSC chart gave ~2.5)
         internal double Lat, Lon, EndLat, EndLon, Elevation;
         internal string Phase = "entry";
         internal double DesiredHeading, DesiredAltitude, DesiredSpeed, DesiredVs;
@@ -1823,7 +1823,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
             if (key == energyKey && b == energyBucket) return; energyKey = key; energyBucket = b;
             EnergyLog = "energy " + Phase + " leg " + leg + ": " + (Distance / 1000).ToString("0.0") + " km to thr, alt plan " + plannedAlt.ToString("0") + " act " + altitude.ToString("0") + " (" + (altitude - plannedAlt).ToString("+0;-0") + " m), spd plan " + DesiredSpeed.ToString("0") + " act " + speed.ToString("0")
                 + ", sink limit " + ApproachProfile.SinkLimit(LearnedSink, 10).ToString("0") + (double.IsNaN(LearnedSink) ? " (default)" : " (learned)") + ", decel " + (double.IsNaN(EffDecel) ? "-" : EffDecel.ToString("0.00")) + ApproachProfile.EnergyLabel(altitude - plannedAlt, speed, DesiredSpeed)
-                + (Phase == "final" ? "; steering to moving centerline point 1500 m ahead on 3 deg glide path" + (OffLine ? "; off line: descent held" : "") : "");
+                + ", aim " + TouchdownM.ToString("0") + " m" + (Phase == "final" ? "; steering to moving centerline point 1500 m ahead on " + (Math.Atan(FinalSlope) * 180 / Math.PI).ToString("0.0") + " deg glide path" + (OffLine ? "; off line: descent held" : "") : "");
         }
         /// <summary>Predicted touchdown speed / landing speed for the ILS speed cue (NaN = no prediction).</summary>
         internal static double PredictedNow = double.NaN, AppNow = double.NaN;
@@ -2254,7 +2254,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
                 double fs = !double.IsNaN(CraftOverrides.L("flare_start_m")) ? CraftOverrides.L("flare_start_m") : Override != null ? Override.FlareStartM : 15;   // TAB-CRAFT1
                 
-                if (low < fs) { if (Phase != "flare") { FlareFast = ApproachProfile.FlareFast(speed, AppNow); FlareFastEnded = false; FlareStartAlong = along; FlareEntrySpeed = speed; } Phase = "flare"; if (FlareFast && ApproachProfile.FlareFastDone(speed, AppNow)) { FlareFast = false; FlareFastEnded = true; } /* LAND5s: no long-flare rule - hold flare_sink to touchdown */ DesiredVs = FlarePolicy.SinkTarget(CraftOverrides.L(CraftOverrides.FlareSink), CraftOverrides.L("touchdown_sink"), Override != null ? Override.FlareSinkMs : double.NaN); }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
+                if (low < fs && (Phase == "flare" || FinalApproachPolicy.FlareGate(low, fs, TouchdownM - along, FinalSlope))) { if (Phase != "flare") {   /* AIM1: flare point tied to the aim */ FlareFast = ApproachProfile.FlareFast(speed, AppNow); FlareFastEnded = false; FlareStartAlong = along; FlareEntrySpeed = speed; } Phase = "flare"; if (FlareFast && ApproachProfile.FlareFastDone(speed, AppNow)) { FlareFast = false; FlareFastEnded = true; } /* LAND5s: no long-flare rule - hold flare_sink to touchdown */ DesiredVs = FlarePolicy.SinkTarget(CraftOverrides.L(CraftOverrides.FlareSink), CraftOverrides.L("touchdown_sink"), Override != null ? Override.FlareSinkMs : double.NaN); }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
                 double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
                 PredictedNow = predSpd; AppNow = double.IsNaN(ApproachProfile.OverrideThreshold) ? ApproachProfile.AppSpeed(stall) : ApproachProfile.OverrideThreshold;   // GROK LAND5k: 'landing 66' ignored threshold_speed 52
