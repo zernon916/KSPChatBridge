@@ -39,9 +39,33 @@ namespace KSPChatBridge
             if (!string.Equals(Path.GetFullPath(local), Path.GetFullPath(CraftPath), StringComparison.OrdinalIgnoreCase)) File.Copy(CraftPath, local, true);
             var node = ConfigNode.Load(local);
             var manifest = g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node));
-            Run++; PlacePending = true;
+            Run++; PlacePending = true; LaunchPending = local;
             ChatLog.Write("TEST", LandingTestPresets.RunLine(Run, Preset, CraftName));
+            // GROK TEST1b: launching straight from the main menu NREs in FlightDriver.setStartupNewVessel ('Cannot find a transform named
+            // Facility/End09/SpawnPoint on Runway' - the KSC facilities are not built yet) and KSP falls back to the Space Center.
+            // Start the game into the Space Center first (stock flow); LandingTestKsc launches once the KSC scene is up.
+            g.startScene = GameScenes.SPACECENTER; g.Start();
+        }
+        internal static string LaunchPending;
+        internal static void LaunchNow()
+        {
+            string local = LaunchPending; LaunchPending = null; var g = HighLogic.CurrentGame;
+            var node = ConfigNode.Load(local);
+            var manifest = g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node));
+            ChatLog.Write("TEST", "run " + Run + " launching from the Space Center: " + Path.GetFileName(local));
             FlightDriver.StartWithNewLaunch(local, g.flagURL, "Runway", manifest);
+        }
+    }
+
+    /// <summary>GROK TEST1b: once the test sandbox's Space Center scene is up, launch the picked craft onto the runway.</summary>
+    [KSPAddon(KSPAddon.Startup.SpaceCentre, false)]
+    public class LandingTestKsc : MonoBehaviour
+    {
+        IEnumerator Start()
+        {
+            if (LandingTestRun.LaunchPending == null || HighLogic.SaveFolder != LandingTestRun.SaveName) yield break;
+            for (int i = 0; i < 120; i++) yield return null;   // let the KSC facilities and spawn points finish building
+            try { LandingTestRun.LaunchNow(); } catch (Exception ex) { Debug.LogException(ex); ChatLog.Write("TEST", "run " + LandingTestRun.Run + " launch failed: " + ex.Message); }
         }
     }
 
@@ -50,7 +74,10 @@ namespace KSPChatBridge
     public class LandingTestMenu : MonoBehaviour
     {
         bool open; Rect win = new Rect(40, 80, 560, 520); Vector2 s1, s2; List<string> crafts = new List<string>(); int craft = -1, preset = 0; string err = "";
-        void Start() { LandingTestRun.Load(); }
+        bool leaving;
+        void Start() { LandingTestRun.Load(); GameEvents.onGameSceneLoadRequested.Add(OnLeave); }
+        void OnDestroy() { GameEvents.onGameSceneLoadRequested.Remove(OnLeave); }
+        void OnLeave(GameScenes s) { leaving = true; open = false; }   // GROK TEST1b: hide on the loading screen
         static void Scan(string dir, List<string> into) { try { if (Directory.Exists(dir)) into.AddRange(Directory.GetFiles(dir, "*.craft")); } catch { } }
         void Refresh()
         {
@@ -61,6 +88,7 @@ namespace KSPChatBridge
         }
         void OnGUI()
         {
+            if (leaving) return;
             if (!open) { if (GUI.Button(new Rect(20, 20, 230, 30), "KSPChatBridge Landing Tests")) { open = true; Refresh(); LandingTestRun.Load(); } return; }
             win = GUILayout.Window(0x4C54, win, Draw, "KSPChatBridge Landing Tests");
         }
@@ -84,8 +112,8 @@ namespace KSPChatBridge
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Fly test") && craft >= 0)
             {
-                try { LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; LandingTestRun.Launch(); }
-                catch (Exception ex) { err = "Launch failed: " + ex.Message; Debug.LogException(ex); }
+                try { LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; leaving = true; open = false; LandingTestRun.Launch(); }
+                catch (Exception ex) { leaving = false; open = true; err = "Launch failed: " + ex.Message; Debug.LogException(ex); }
             }
             if (GUILayout.Button("Close")) open = false;
             GUILayout.EndHorizontal();

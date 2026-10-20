@@ -40,26 +40,44 @@ namespace KSPChatBridge
         internal static void Register()
         {
             if (registered) return;
-            GameEvents.onLaunch.Add(OnLaunch);
-            GameEvents.onStageActivate.Add(OnStageActivate);
-            GameEvents.onVesselSOIChanged.Add(OnSoiChanged);
-            GameEvents.onVesselSituationChange.Add(OnSituationChanged);
-            GameEvents.onCrash.Add(OnCrash);
-            GameEvents.onCrashSplashdown.Add(OnCrashSplashdown);
-            registered = true;
+            try
+            {   // GROK TEST1b: KSP's EventData.Add NREs on STATIC handlers (EvtDelegate reads evt.Target) - register instance forwarders
+                GameEvents.onLaunch.Add(H.Launch);
+                GameEvents.onStageActivate.Add(H.Stage);
+                GameEvents.onVesselSOIChanged.Add(H.Soi);
+                GameEvents.onVesselSituationChange.Add(H.Situation);
+                GameEvents.onCrash.Add(H.Crash);
+                GameEvents.onCrashSplashdown.Add(H.CrashSplash);
+                registered = true;
+            }
+            catch (System.Exception ex) { UnityEngine.Debug.LogWarning("[KSPChatBridge] flight log events: " + ex.Message); }
         }
 
         internal static void Unregister()
         {
             if (!registered) return;
-            GameEvents.onLaunch.Remove(OnLaunch);
-            GameEvents.onStageActivate.Remove(OnStageActivate);
-            GameEvents.onVesselSOIChanged.Remove(OnSoiChanged);
-            GameEvents.onVesselSituationChange.Remove(OnSituationChanged);
-            GameEvents.onCrash.Remove(OnCrash);
-            GameEvents.onCrashSplashdown.Remove(OnCrashSplashdown);
+            try
+            {
+                GameEvents.onLaunch.Remove(H.Launch);
+                GameEvents.onStageActivate.Remove(H.Stage);
+                GameEvents.onVesselSOIChanged.Remove(H.Soi);
+                GameEvents.onVesselSituationChange.Remove(H.Situation);
+                GameEvents.onCrash.Remove(H.Crash);
+                GameEvents.onCrashSplashdown.Remove(H.CrashSplash);
+            }
+            catch (System.Exception) { }
             registered = false;
         }
+        sealed class Fwd
+        {
+            internal void Launch(EventReport r) { OnLaunch(r); }
+            internal void Stage(int s) { OnStageActivate(s); }
+            internal void Soi(GameEvents.HostedFromToAction<Vessel, CelestialBody> c) { OnSoiChanged(c); }
+            internal void Situation(GameEvents.HostedFromToAction<Vessel, Vessel.Situations> c) { OnSituationChanged(c); }
+            internal void Crash(EventReport r) { OnCrash(r); }
+            internal void CrashSplash(EventReport r) { OnCrashSplashdown(r); }
+        }
+        static readonly Fwd H = new Fwd();
 
         static void OnLaunch(EventReport report)
         {
