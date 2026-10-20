@@ -217,7 +217,7 @@ namespace KSPChatBridge
             if (!InTest || !placed || done) return;
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
             bool act = NativeFlightController.Active;   // GROK LAND5k: pilot disengage / re-engage = an intervention in the run summary
-            if (engagedSeen && wasActive && !act) { interventions++; ChatLog.Write("TEST", "run " + LandingTestRun.Run + " pilot intervened: autopilot disengaged"); }
+            if (engagedSeen && wasActive && !act) { if (LandingTestPresets.StoppedOff(v.LandedOrSplashed, v.srfSpeed)) ChatLog.Write("TEST", "run " + LandingTestRun.Run + " stopped: autopilot finished"); else { interventions++; ChatLog.Write("TEST", "run " + LandingTestRun.Run + " pilot intervened: autopilot disengaged"); }   /* ROLL1: AP letting go after the stop is not an intervention */ }
             if (engagedSeen && !wasActive && act) ChatLog.Write("TEST", "run " + LandingTestRun.Run + " autopilot re-engaged");
             if (act) engagedSeen = true; wasActive = act;
             string ph = NativeFlightController.RunwayPhase ?? "";

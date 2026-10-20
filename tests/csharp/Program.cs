@@ -248,6 +248,14 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // ROLL1
+                double r1hs = 285, r1hr = 0, r1st = double.NaN, r1ask = 270, r1maxDev = 0, r1maxRate = 0, r1prevSt = 0;
+                for (int k = 0; k < 600; k++) { double r1sp = 50 - k * .06; r1st = RolloutSteer.Step(r1st, r1ask - r1hs, r1hr, r1sp, k > 100, .02); if (k > 0) r1maxRate = Math.Max(r1maxRate, Math.Abs(r1st - r1prevSt) / .02); r1prevSt = r1st; double r1acc = -r1st * 60 * Math.Min(1, r1sp / 20) - .8 * r1hr; r1hr += r1acc * .02; r1hs += r1hr * .02; if (k > 300) r1maxDev = Math.Max(r1maxDev, Math.Abs(r1hs - r1ask)); }
+                Check(r1maxDev < 2 && r1maxRate <= RolloutSteer.Slew + 1e-6, "ROLL1: rollout steering settles a 15 deg error without oscillating (late dev " + r1maxDev.ToString("0.0") + ", slew " + r1maxRate.ToString("0.00") + ")");
+                Check(RolloutSteer.Gain(80, false) == .25 && RolloutSteer.Gain(10, false) == 1 && Math.Abs(RolloutSteer.Gain(10, true) - .7) < 1e-9 && RolloutSteer.Step(double.NaN, 0, 5, 20, false, .02) > 0, "ROLL1: gain lower at speed / with brakes; yaw-rate damping opposes the turn");
+                Check(!RolloutBrake.Hold(.4, false) && RolloutBrake.Hold(.5, false) && RolloutBrake.Hold(.35, true) && !RolloutBrake.Hold(.25, true), "ROLL1: wheel brakes with hysteresis (no 2 Hz pulsing)");
+                Check(LandingTestPresets.StoppedOff(true, 1) && !LandingTestPresets.StoppedOff(true, 20) && !LandingTestPresets.StoppedOff(false, 1), "ROLL1: AP off after the stop logs 'stopped', not 'pilot intervened'");
+            }
             {   // LAND5r
                 Check(FlarePolicy.LongCapStart(-5.1, -5.1) == FlarePolicy.LongFloor && FlarePolicy.LongCapStart(3, 4) == 3 && FlarePolicy.LongCap(-1.5, -2, -1.5) == -1.5 && double.IsPositiveInfinity(FlarePolicy.LongCap(-1.5, -3.2, -1.5)) && double.IsPositiveInfinity(FlarePolicy.LongCap(0, -8.2, -1.5)), "LAND5r: long flare caps the nose no lower than -1.5 and lifts the cap when sinking > 2x flare_sink");
             }

@@ -1093,6 +1093,23 @@ internal static double BounceStep(double cur, double speed, double stall, double
         internal const double SettleS = 1, RampS = 6, StartMs = 45;   // GROK LAND5i: 22:16 brakes at 58 m/s -> swerve off the runway
         internal static double Duty(double landedS, double speed) { double st = CraftOverrides.L("brake_start_speed"); if (speed < .5 || speed > (double.IsNaN(st) ? StartMs : st) || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
         internal static bool On(double duty, double now) { return duty >= 1 || duty > 0 && (now * 2 - Math.Floor(now * 2)) < duty; }
+        /// <summary>ROLL1: no 2 Hz on/off pulsing (Luke: brakes kick on and off, worst for the steering) - on once the ramp passes 0.5, off below 0.3.</summary>
+        internal const double HoldOn = .5, HoldOff = .3;
+        internal static bool Hold(double duty, bool was) { return was ? duty > HoldOff : duty >= HoldOn; }
+    }
+    /// <summary>ROLL1: rollout nosewheel steering (Aeris 22:xx: 270 -> 285 -> 256 -> 283 in 6 s, ask 266-274): P on heading error + yaw-rate
+    /// damping, gain scheduled down with speed (full at <= 20 m/s, 1/4 at 80+) and with the brakes on, output and slew limited.</summary>
+    internal static class RolloutSteer
+    {
+        internal const double Kp = .04, Kd = .03, MaxCmd = .4, Slew = 1.5;
+        internal static double Gain(double speed, bool brakes) { return FlightPolicy.Clamp(20 / Math.Max(1, speed), .25, 1) * (brakes ? .7 : 1); }
+        /// <summary>err = wanted - actual heading (deg), rate = heading rate (deg/s, + = heading increasing). Same sign as WheelSteering (- = toward a higher heading).</summary>
+        internal static double Step(double prev, double err, double rate, double speed, bool brakes, double dt)
+        {
+            double g = Gain(speed, brakes), lim = MaxCmd * Math.Max(.5, g);
+            double want = FlightPolicy.Clamp(g * (-Kp * FlightPolicy.Wrap(err) + Kd * (double.IsNaN(rate) ? 0 : rate)), -lim, lim);
+            double step = Slew * Math.Max(0, dt); return double.IsNaN(prev) ? want : FlightPolicy.Clamp(want, prev - step, prev + step);
+        }
     }
     /// <summary>GROK LAND5g: autowarp ownership - a change is the player's only if the rate moved off what the game settled on after our last
     /// request (the game's own clamp is not a player change); we only ever undo warp we set.</summary>

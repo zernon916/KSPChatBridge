@@ -113,6 +113,8 @@ namespace KSPChatBridge
         }
         internal static string RunLine(int run, TestPreset p, string craft, double fuelPct, double speed, double alt)
         { return RunLine(run, p, craft, fuelPct) + " speed=" + Math.Round(Eff(speed, p.Speed)).ToString(CultureInfo.InvariantCulture) + (double.IsNaN(speed) ? "" : "*") + " alt=" + Math.Round(Eff(alt, p.AltM)).ToString(CultureInfo.InvariantCulture) + (double.IsNaN(alt) ? "" : "*"); }
+        /// <summary>ROLL1: AP off while landed and (nearly) stopped = the landing finished, not a pilot intervention.</summary>
+        internal static bool StoppedOff(bool landed, double speed) { return landed && speed < 3; }
         /// <summary>FIX: vessel types cleared from the test save before a launch (everything but asteroids / comets).</summary>
         internal static bool LeftoverType(string type) { return type != "SpaceObject" && type != "Unknown"; }
         /// <summary>TEST3: fuel % 0-100 (bad / blank = 100).</summary>
