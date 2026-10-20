@@ -4,7 +4,7 @@
   <ItemGroup><Compile Include="Program.cs"/><Compile Include="LandingRepairTests.cs"/><Compile Include="GpsInfoTests.cs"/><Compile Include="ContractFormatTests.cs"/><Compile Include="../../KSPChatMod/GpsInfo.cs"/><Compile Include="../../KSPChatMod/ContractFormat.cs"/><Compile Include="../../KSPChatMod/RotorMeasurements.cs"/><Compile Include="../../KSPChatMod/RotorPlacement.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/FlightPolicy.cs"/></ItemGroup><ItemGroup><Compile Include="../../KSPChatMod/EngineDrill.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/RotorSpool.cs"/></ItemGroup>
-  <ItemGroup><Compile Include="../../KSPChatMod/FlightMissions.cs"/><Compile Include="../../KSPChatMod/LandingTest.cs"/></ItemGroup>
+  <ItemGroup><Compile Include="../../KSPChatMod/FlightMissions.cs"/><Compile Include="../../KSPChatMod/CraftOverrides.cs"/><Compile Include="../../KSPChatMod/LandingTest.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/NativePlan.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/EngineRestart.cs"/></ItemGroup>
   <ItemGroup><Compile Include="../../KSPChatMod/RecoveryGate.cs"/></ItemGroup>

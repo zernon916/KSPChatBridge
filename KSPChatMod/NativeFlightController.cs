@@ -141,6 +141,66 @@ namespace KSPChatBridge
         /// <summary>Equivalent airspeed (from dynamic pressure): the ONE speed every stall comparison uses.</summary>
         double Eas() { return vessel == null ? double.NaN : PilotPolicy.Eas(vessel.dynamicPressurekPa, vessel.srfSpeed); }
         bool stallCached, stallConservative; double stallOverride = double.NaN;
+        /// <summary>GROK LAND5k / TAB-CRAFT1: per-craft overrides (craft_overrides.<name>: stall_override, approach_speed, threshold_speed) beat the
+        /// learned/estimated stall. live = changed from the tablet mid-flight: the speed schedule is replanned, the locked path is kept.</summary>
+        void ApplyCraftOverrides(bool live)
+        {
+            if (vessel == null) return; double ap, th;
+            stallOverride = CraftOverrides.Apply(settingsData, vessel.vesselName, out ap, out th);
+            RunwayMission.AutoGoAround = CraftOverrides.On(CraftOverrides.AutoGa, Bool(settingsData, "autoland_auto_go_around", false));   // GROK LAND5k: default OFF
+            string txt = "stall " + (double.IsNaN(stallOverride) ? "learned" : Math.Round(stallOverride).ToString()) + ", approach " + (double.IsNaN(ap) ? "-" : Math.Round(ap).ToString()) + ", threshold " + (double.IsNaN(th) ? "-" : Math.Round(th).ToString()) + " m/s, auto go-around " + (RunwayMission.AutoGoAround ? "ON" : "OFF");
+            if (!live) { ChatLog.Write("vessel", "craft override: " + txt + (double.IsNaN(stallOverride) ? "" : " (learned stall ignored)")); return; }
+            stall = LearnedStall(); if (landMass0 > 0) { landMass0 = vessel.totalMass; landStall0 = stall; }
+            ChatLog.Write("vessel", "craft override changed (tablet): " + txt + " -> stall used " + Math.Round(stall) + "; speed schedule replanned, path kept");
+        }
+        /// <summary>GROK LAND5k: global auto go-around (autoland_auto_go_around, default OFF); a craft's auto_go_around beats it.</summary>
+        internal static bool GlobalAutoGoAround
+        {
+            get { return instance != null && Bool(instance.settingsData, "autoland_auto_go_around", false); }
+            set { var i = instance; if (i == null) return; i.settingsData["autoland_auto_go_around"] = value; try { i.Save(); } catch (Exception) { } if (i.vessel != null) i.ApplyCraftOverrides(true); else RunwayMission.AutoGoAround = value; ChatLog.Write("craft", "auto go-around (all craft) " + (value ? "ON" : "OFF")); }
+        }
+        internal static bool CraftReady { get { return instance != null && instance.vessel != null; } }
+        internal static string CraftName { get { return CraftReady ? instance.vessel.vesselName : ""; } }
+        internal static double CraftOverrideGet(string field) { return CraftReady ? CraftOverrides.Get(instance.settingsData, CraftName, field) : double.NaN; }
+        /// <summary>Tablet edit: saved to native_settings.json at once and applied live.</summary>
+        internal static void CraftOverrideSet(string field, double v)
+        {
+            var i = instance; if (!CraftReady) return;
+            if (field == null) CraftOverrides.Clear(i.settingsData, CraftName); else CraftOverrides.Set(i.settingsData, CraftName, field, v);
+            try { i.Save(); } catch (Exception) { ChatWindow.Notice("Craft override could not be saved."); }
+            i.ApplyCraftOverrides(true);
+            ChatLog.Write("craft", CraftOverrides.LogLine(CraftName, CraftOverrides.Get(i.settingsData, CraftName, CraftOverrides.Approach), CraftOverrides.Get(i.settingsData, CraftName, CraftOverrides.Threshold), CraftOverrides.Get(i.settingsData, CraftName, CraftOverrides.Stall)));
+        }
+        /// <summary>Value in use for a field (the -/+ start point when no override is set).</summary>
+        internal static double CraftInUse(string field)
+        {
+            var i = instance; if (!CraftReady) return double.NaN;
+            if (field == CraftOverrides.Stall) return i.stall;
+            if (field == CraftOverrides.AutoGa) return RunwayMission.AutoGoAround ? 1 : 0;
+            if (field == "airbrakes" || field == "reverser") return 1;
+            if (field == "decel_plan") return i.runway != null ? i.runway.EffDecelPublic : double.NaN;
+            if (field == "flap_limit_speed") return ApproachProfile.FlapLimitSpeed;
+            if (field == "max_approach_bank") return i.runway != null && i.runway.TurnBank > 0 ? i.runway.TurnBank : 30;
+            if (field == "flare_start_m" || field == "touchdown_sink" || field == "touchdown_aim_m" || field == "brake_start_speed") { var df = CraftOverrides.Find(field); return field == "touchdown_aim_m" && i.runway != null ? i.runway.TouchdownM : df.Default; }
+            if (field == "vr") return TakeoffMission.RotateSpeed(i.stall, i.liftoffSpeed);
+            if (field == "climb_speed") return i.vessel != null ? i.ClimbSpeedTarget() : double.NaN;
+            if (field == CraftOverrides.Threshold) return ApproachProfile.Vref(i.stall);
+            return ApproachProfile.HiSpeed(i.stall);
+        }
+        internal static List<string> CraftInfoLines()
+        {
+            var i = instance; var r = new List<string>(); if (!CraftReady) { r.Add("No active vessel."); return r; }
+            var v = i.vessel; double m = v.GetTotalMass(), ms = i.learner == null ? double.NaN : i.learner.MeasuredStall(m * 1000, i.liftArea), cf = i.learner == null ? 0 : i.learner.Confidence;
+            double de = Decel.Estimate(v.vesselName, 150, 100, true), s = i.stall;
+            r.Add("Mass " + m.ToString("0.0", CultureInfo.InvariantCulture) + " t");
+            r.Add("Stall in use " + Math.Round(s) + " m/s (" + (double.IsNaN(i.stallOverride) ? (i.stallConservative ? "conservative estimate" : "learned/estimated") : "override") + ")");
+            r.Add("Learned stall " + (double.IsNaN(ms) ? "-" : Math.Round(ms).ToString()) + " (conf " + Math.Round(100 * cf) + "%), aero est " + (double.IsNaN(i.stallEstimate) ? Math.Round(i.stallGuess) : Math.Round(i.stallEstimate)));
+            r.Add("Idle decel " + (double.IsNaN(de) ? ApproachProfile.MassDecel(v.totalMass).ToString("0.00", CultureInfo.InvariantCulture) + " m/s2 (mass est)" : de.ToString("0.00", CultureInfo.InvariantCulture) + " m/s2 (measured)"));
+            r.Add("Engine lag " + i.shold.Lag.ToString("0.0", CultureInfo.InvariantCulture) + " s");
+            r.Add("Flare " + Math.Round(ApproachProfile.Vref(s)) + " m/s, floor " + Math.Round(ApproachProfile.FloorAtThr * s) + " (thr) - " + Math.Round(ApproachProfile.FloorAtFaf * s) + " (FAF)");
+            r.Add("Approach " + Math.Round(ApproachProfile.HiSpeed(s)) + " m/s" + (double.IsNaN(ApproachProfile.OverrideThreshold) ? "" : ", threshold " + Math.Round(ApproachProfile.OverrideThreshold) + " m/s"));
+            return r;
+        }
         double LearnedStall() { if (learner == null || vessel == null) return stallGuess; if (!double.IsNaN(stallOverride)) return stallOverride; double ms0 = StallLearner.Accept(learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), stallEstimate, profile != null ? profile.Stall : double.NaN), s0 = StallLearner.Effective(stallGuess, ms0, learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess;
             stallConservative = double.IsNaN(ms0) && !stallCached && (profile == null || double.IsNaN(profile.Stall)); if (stallConservative) s0 = StallLearner.Conservative(s0, UsableLiftoff);   /* GROK LAND5k */ s0 = CraftClass.ConservativeStall(s0, UsableLiftoff); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
         double stallEstimate = double.NaN; bool rotateStalled;   // GROK TO3
@@ -285,19 +345,8 @@ namespace KSPChatBridge
                 vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
             ConfigureInertia(); LoadProfile();
             { object sc0; var stc = settingsData.TryGetValue("stall_speeds", out sc0) ? sc0 as Dictionary<string, object> : null; object v0 = null; stallCached = stc != null && stc.TryGetValue(vessel.vesselName, out v0) && v0 != null; }
-            {   // GROK LAND5k: per-craft manual overrides (craft_overrides.<name>: stall_override, approach_speed, threshold_speed) beat learned/estimated stall
-                stallOverride = double.NaN; ApproachProfile.OverrideApproach = ApproachProfile.OverrideThreshold = double.NaN;
-                object co; var cd = settingsData.TryGetValue("craft_overrides", out co) ? co as Dictionary<string, object> : null; object me = null;
-                var ov = cd != null && cd.TryGetValue(vessel.vesselName, out me) ? me as Dictionary<string, object> : null;
-                if (ov != null)
-                {
-                    double so = Num(ov, "stall_override", double.NaN), ap = Num(ov, "approach_speed", double.NaN), th = Num(ov, "threshold_speed", double.NaN);
-                    if (!double.IsNaN(th) && th > 20) ApproachProfile.OverrideThreshold = th; if (!double.IsNaN(ap) && ap > 30) ApproachProfile.OverrideApproach = ap;
-                    stallOverride = StallLearner.OverrideStall(so, ApproachProfile.OverrideThreshold);
-                    ChatLog.Write("vessel", "craft override: stall " + (double.IsNaN(stallOverride) ? "-" : Math.Round(stallOverride).ToString()) + ", approach " + (double.IsNaN(ap) ? "-" : Math.Round(ap).ToString()) + ", threshold " + (double.IsNaN(th) ? "-" : Math.Round(th).ToString()) + " m/s (learned stall ignored)");
-                }
-            }
-            stall = LearnedStall(); if (stallConservative) ChatLog.Write("vessel", "stall: no measurement, no learned profile - conservative estimate " + Math.Round(stall) + " (aero " + Math.Round(stallGuess) + " x " + StallLearner.UnmeasuredK + (double.IsNaN(UsableLiftoff) ? "" : ", liftoff " + Math.Round(UsableLiftoff) + " x " + StallLearner.LiftoffK) + ")");
+            ApplyCraftOverrides(false);
+            stall = LearnedStall(); if (!double.IsNaN(stallOverride)) ChatLog.Write("vessel", "stall in use " + Math.Round(stall) + " (craft override)"); if (stallConservative) ChatLog.Write("vessel", "stall: no measurement, no learned profile - conservative estimate " + Math.Round(stall) + " (aero " + Math.Round(stallGuess) + " x " + StallLearner.UnmeasuredK + (double.IsNaN(UsableLiftoff) ? "" : ", liftoff " + Math.Round(UsableLiftoff) + " x " + StallLearner.LiftoffK) + ")");
             ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.rootPart.transform.position, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
@@ -354,7 +403,7 @@ namespace KSPChatBridge
         /// <summary>Climb / climbout IAS: LEARN best-climb when known, else 1.8x stall (AUTOPILOT_REVIEW #3/#12).</summary>
         double ClimbSpeedTarget()
         {
-            double vy = profile != null ? profile.BestClimbSpeed(stall, vessel.totalMass) : double.NaN;
+            double vy = !double.IsNaN(CraftOverrides.L("climb_speed")) ? CraftOverrides.L("climb_speed") : profile != null ? profile.BestClimbSpeed(stall, vessel.totalMass) : double.NaN;   // TAB-CRAFT1
             DecisionLog.Use("climb speed", double.IsNaN(vy) || vy <= 0 ? "default 1.8x stall" : "learned climb curve", double.IsNaN(vy) || vy <= 0 ? FlightPolicy.Clamp(1.8 * stall, 80, 200) : vy);
             return double.IsNaN(vy) || vy <= 0 ? FlightPolicy.Clamp(1.8 * stall, 80, 200) : FlightPolicy.Clamp(vy, 40, 250);   // no profile: the old 1.8x stall, 80-200
         }
@@ -529,7 +578,7 @@ namespace KSPChatBridge
         /// <summary>Approach stall: the learned flaps-full stall once flaps are 2+ (never below 1.0x of it), else the clean one.</summary>
         double ApproachStall0()
         {
-            if (profile == null || double.IsNaN(profile.FlapStall) || flaps.Count == 0 || flapSet < 2) return landStall0;
+            if (!double.IsNaN(stallOverride) || profile == null || double.IsNaN(profile.FlapStall) || flaps.Count == 0 || flapSet < 2) return landStall0;   // TAB-CRAFT1: an override is not scaled down by the flap stall
             double fs = PlaneProfile.ScaleSpeed(profile.FlapStall, profile.M0, landMass0);
             return Math.Min(landStall0, Math.Max(fs, .6 * landStall0));
         }
@@ -863,7 +912,7 @@ namespace KSPChatBridge
             if (runway.DubinsLog != loggedDubins) { loggedDubins = runway.DubinsLog; if (loggedDubins.Length > 0) ChatLog.Write("approach", loggedDubins); }   // GROK JOIN1
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
                         { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = AirbrakeGate.Allowed(vessel.LandedOrSplashed, vessel.altitude - runway.Elevation, vessel.srfSpeed, runway.DesiredSpeed, brakesMoveControls, powerFloor);   // GROK LAND5e
-                          bool deployOk = AirbrakeGate.DeployOk(!runway.EnergyLow && vessel.verticalSpeed > runway.DesiredVs - 5, double.IsNaN(stepThr.Thr) ? 0 : stepThr.Accel, runway.DesiredVs > vessel.verticalSpeed + 3);   // GROK LAND5j: not while decelerating hard / pulling up   // GROK LAND4: no new deploy while low or sinking 5 m/s faster than the path (pitch, not drag)   // GROK FIX6: never airbrakes against floor power
+                          bool deployOk = CraftOverrides.On("airbrakes", true) && AirbrakeGate.DeployOk(!runway.EnergyLow && vessel.verticalSpeed > runway.DesiredVs - 5, double.IsNaN(stepThr.Thr) ? 0 : stepThr.Accel, runway.DesiredVs > vessel.verticalSpeed + 3);   // GROK LAND5j: not while decelerating hard / pulling up   // GROK LAND4: no new deploy while low or sinking 5 m/s faster than the path (pitch, not drag)   // GROK FIX6: never airbrakes against floor power
                           if (airPhase && airGate.Step(Time.time, on, double.IsNaN(stepThr.Thr) ? vessel.srfSpeed : stepThr.PredictOver(vessel.srfSpeed), runway.DesiredSpeed, allowed, deployOk)) { SetGroup(vessel, KSPActionGroup.Brakes, airGate.On); AirbrakesByAutopilot = airGate.On; ChatLog.Write("brakes", airGate.Why + ", phase " + runway.Phase); }
                             if ((runway.FastContinue || runway.FlareFast && runway.Phase == "flare") && !vessel.LandedOrSplashed && !on) { SetGroup(vessel, KSPActionGroup.Brakes, true); AirbrakesByAutopilot = true; if (!fastBrakeLogged) { fastBrakeLogged = true; ChatLog.Write("brakes", "airbrakes: fast at touchdown, continuing (LAND5c)"); } }
                             if (!runway.FastContinue && !runway.FlareFast) fastBrakeLogged = false; }   // GROK FIX3: +8/+2 m/s hysteresis, 3 s dwell
@@ -884,7 +933,7 @@ namespace KSPChatBridge
                                 c.pitch = (float)FlightPolicy.Clamp(.05 * (bouncePitch - pitch) - .03 * q, -.3, .3);
                             }
                             else { bouncePitch = double.NaN; derot.Step(pitch, dt, NoseGearDown(), vessel.srfSpeed); c.pitch = (float)Math.Min(derot.Elevator(pitch, q), 0.02f); }   // speed-based derotation, limited to 2.5 deg/s; LAND5i: no pitch-up on the ground
-                            reversers.ApWants = true;   // GROK LAND5i: the whole rollout (bounces included) is the AP's own reverser use
+                            reversers.ApWants = CraftOverrides.On("reverser", true);   // TAB-CRAFT1   // GROK LAND5i: the whole rollout (bounces included) is the AP's own reverser use
                             c.roll = (float)FlightPolicy.Clamp(-.06 * roll - .015 * p, -1, 1);   // GROK LAND5f: firm wings level on the rollout (rudder/wheel steer, no roll)
                             if (vessel.LandedOrSplashed) rolloutLandedS += dt; else rolloutLandedS = 0;
                             { bool wb = derot.BrakesAllowed && RolloutBrake.On(RolloutBrake.Duty(rolloutLandedS, vessel.srfSpeed), Time.time); if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on (progressive) at " + Math.Round(vessel.srfSpeed) + " m/s"); } } }
@@ -984,6 +1033,7 @@ namespace KSPChatBridge
                     else ChatLog.Write("att", "heading hold: bank flies the heading again (err " + hdgErr.ToString("0.0") + " deg) - rudder released" + (Time.realtimeSinceStartup < rudderOffUntil ? "; no progress on the rudder, off for " + (rudderOffUntil - Time.realtimeSinceStartup).ToString("0") + " s" : ""));
                 }
                 if (mode == "landing" && runway != null && !double.IsNaN(runway.BankCap)) blim = Math.Min(blim, runway.BankCap);
+                if (mode == "landing" && !double.IsNaN(CraftOverrides.L("max_approach_bank"))) blim = Math.Min(blim, CraftOverrides.L("max_approach_bank"));   // TAB-CRAFT1
             blim = PilotPolicy.LandBankCap(blim, mode == "landing", vessel.radarAltitude, vessel.LandedOrSplashed);   // GROK LAND5f: wings level at touchdown (16:41 wingtip strike)
             if (mode == "hold" && pendingLand != null) blim = PilotPolicy.FerryBank(blim, TimeWarp.CurrentRate);   // GROK LAND5f: ferry 54 deg at 235 m/s under warp   // GROK LAND5b: <= 20 deg below 500 m after a go-around
             double hdgRateL = double.IsNaN(prevHdgL) || dt <= 0 ? 0 : FlightPolicy.Wrap(FlightGlobals.ship_heading - prevHdgL) / dt; prevHdgL = FlightGlobals.ship_heading;
@@ -1071,7 +1121,7 @@ namespace KSPChatBridge
                 if (targetVs > 3 && !directPitch.HasValue && !missedClimb)
                 {   // climb: hold at least a climb attitude; bias toward LEARN Vy when known (AUTOPILOT_REVIEW #12)
                     desiredPitch = FlightPolicy.Clamp(desiredPitch, Math.Min(5, CpMax), CpMax);
-                    if (profile != null) { double vy = profile.BestClimbSpeed(stall, vessel.totalMass); if (!double.IsNaN(vy) && vy > 0) desiredPitch = FlightPolicy.Clamp(desiredPitch + .35 * (vessel.srfSpeed - vy), Math.Min(5, CpMax), CpMax); }
+                    if (profile != null || !double.IsNaN(CraftOverrides.L("climb_speed"))) { double vy = !double.IsNaN(CraftOverrides.L("climb_speed")) ? CraftOverrides.L("climb_speed") : profile.BestClimbSpeed(stall, vessel.totalMass); if (!double.IsNaN(vy) && vy > 0) desiredPitch = FlightPolicy.Clamp(desiredPitch + .35 * (vessel.srfSpeed - vy), Math.Min(5, CpMax), CpMax); }
                 }
                 if (mode != shapedMode || vessel.LandedOrSplashed) { shapedMode = mode; pitchShape.Reset(pitch); pitchIntegral = 0; vsIntegral = 0; }   // every mode change starts from the current state (no stale filter jump)
             ApproachProfile.Backoff = ApproachProfile.StressStep(ApproachProfile.Backoff, vessel.geeForce, ApproachProfile.StructG, dt);

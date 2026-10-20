@@ -43,6 +43,7 @@ namespace KSPChatBridge
                     case TabletNav.SubLanding: TabletApproach(sb); break;
                     case TabletNav.SubStatus: TabletStatusSub(sb); break;
                     case TabletNav.SubTaxi: TabletTaxi(sb); break;
+                    case TabletNav.SubCraft: TabletCraftSub(sb); break;
                     default: TabletTrim(sb); break;
                 }
                 return;

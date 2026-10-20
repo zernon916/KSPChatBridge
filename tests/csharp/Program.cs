@@ -14,6 +14,7 @@ class Program
     static int Main(string[] testOptions)
     {
         // Never let a test exception escape (unhandled exceptions raise WER 0xe0434352 popups): report FAIL, keep going, exit non-zero.
+        RunwayMission.AutoGoAround = true;   // LAND5k: the game default is OFF; the legacy gate tests exercise the go-around logic
         AppDomain.CurrentDomain.UnhandledException += (s, e) => { Console.Error.WriteLine("FAIL (unhandled, background thread): " + e.ExceptionObject); Console.Error.Flush(); Environment.Exit(1); };
         if (testOptions.Length == 1 && testOptions[0] == "--runway-geometry") T("RunwayGeometry", LandingRepairTests.RunwayGeometry);
         else
@@ -174,6 +175,27 @@ class Program
             int dr = NativeSettings.CleanProfiles(cs); var cov = cs["craft_overrides"] as Dictionary<string, object>; var aer = cov["Aeris 3A"] as Dictionary<string, object>;
             cov.Remove("Aeris 3A"); NativeSettings.CleanProfiles(cs);
             Check(dr == 2 && ((Dictionary<string, object>)cs["stall_learn"]).ContainsKey("Aeris 3A") && (double)aer["approach_speed"] == 100 && (double)aer["threshold_speed"] == 52 && !cov.ContainsKey("Aeris 3A"), "LAND5k: '#autoLOC' profile entries dropped, real ones kept, Aeris 3A override seeded once");
+            {   // TAB-CRAFT1: craft_overrides save/load, field ranges, live apply; LAND5k: auto go-around OFF, override decel cap
+                var so = new Dictionary<string, object>();
+                CraftOverrides.Set(so, "Aeris 3A", CraftOverrides.Approach, 100); CraftOverrides.Set(so, "Aeris 3A", CraftOverrides.Threshold, 52); CraftOverrides.Set(so, "Aeris 3A", "decel_plan", .9); CraftOverrides.Set(so, "Aeris 3A", "airbrakes", 7);
+                var rt = MiniJson.Deserialize(MiniJson.Serialize(so));
+                Check(CraftOverrides.Get(rt, "Aeris 3A", CraftOverrides.Approach) == 100 && CraftOverrides.Get(rt, "Aeris 3A", CraftOverrides.Threshold) == 52 && Math.Abs(CraftOverrides.Get(rt, "Aeris 3A", "decel_plan") - .9) < 1e-9 && CraftOverrides.Get(rt, "Aeris 3A", "airbrakes") == 1 && double.IsNaN(CraftOverrides.Get(rt, "Aeris 3A", CraftOverrides.Stall)), "TAB-CRAFT1: craft_overrides survive a JSON save/load, per-field ranges (switch clamps to 1)");
+                CraftOverrides.Set(so, "Aeris 3A", "decel_plan", double.NaN); bool gone = double.IsNaN(CraftOverrides.Get(so, "Aeris 3A", "decel_plan")); CraftOverrides.Set(so, "X", "vr", 80); CraftOverrides.Set(so, "X", "vr", double.NaN);
+                Check(gone && CraftOverrides.Entry(so, "X", false) == null, "TAB-CRAFT1: blank = auto removes the field; an empty craft entry is removed");
+                Check(CraftOverrides.Parse("threshold_speed", "52") == 52 && double.IsNaN(CraftOverrides.Parse("vr", " ").Value) && !CraftOverrides.Parse("vr", "abc").HasValue && Math.Abs(CraftOverrides.Parse("decel_plan", "0.9").Value - .9) < 1e-9 && CraftOverrides.Parse("touchdown_sink", "9") == 5
+                    && CraftOverrides.Bump(double.NaN, 5, 52, "threshold_speed") == 57 && CraftOverrides.Bump(100, -1, 0, CraftOverrides.Approach) == 99 && Math.Abs(CraftOverrides.Bump(double.NaN, .1, double.NaN, "touchdown_sink") - 3.1) < 1e-9, "TAB-CRAFT1: field text / -+ steps (unset starts from the value in use or the default)");
+                Check(CraftOverrides.LogLine("Aeris 3A", 100, 52, double.NaN) == "override Aeris 3A: approach=100 landing=52", "TAB-CRAFT1: '[craft] override <craft>: approach=<n> landing=<n>' log line");
+                CraftOverrides.Set(so, "Aeris 3A", "touchdown_aim_m", 500); CraftOverrides.Set(so, "Aeris 3A", "brake_start_speed", 30); CraftOverrides.Set(so, "Aeris 3A", "vr", 70);
+                double ap0, th0; double stO = CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0); double sch = ApproachProfile.FinalSchedule(1000, stO, 1.7); var rmo = new RunwayMission();
+                bool liveOk = Math.Abs(stO - 52 / 1.15) < 1e-9 && ApproachProfile.OverrideThreshold == 52 && Math.Abs(sch - ApproachProfile.OverrideSchedule(1000, 100, 52, 1.7)) < 1e-9 && rmo.TouchdownM == 500 && RolloutBrake.Duty(10, 40) == 0 && RolloutBrake.Duty(10, 25) > 0 && TakeoffMission.RotateSpeed(45, 160) == 70 && !CraftOverrides.On("airbrakes", false) == false;
+                CraftOverrides.Set(so, "Aeris 3A", CraftOverrides.Threshold, 60); CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0); double sch2 = ApproachProfile.FinalSchedule(0, 60 / 1.15, 1.7);
+                CraftOverrides.Clear(so, "Aeris 3A"); CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0);
+                Check(liveOk && Math.Abs(sch2 - 60) < 1e-9 && double.IsNaN(ApproachProfile.OverrideThreshold) && double.IsNaN(CraftOverrides.L("vr")) && rmo.TouchdownM == 350, "TAB-CRAFT1: overrides apply live (schedule, aim point, brake start, Vr) and a change re-plans; clear = auto again");
+                Check(Math.Abs(ApproachProfile.OverrideStartM(100, 52, 3.51) - (100 * 100 - 52 * 52) / (2 * ApproachProfile.OverrideDecelMax)) < 1e-6 && ApproachProfile.OverrideStartM(100, 52, 3.51) > 3800, "LAND5k: 23:06 airbrake-boosted 3.51 m/s2 no longer puts the decel point at 2 km (now " + Math.Round(ApproachProfile.OverrideStartM(100, 52, 3.51)) + " m)");
+                var ga = new RunwayMission(); ga.Phase = "final"; RunwayMission.AutoGoAround = false; bool g1 = ga.GoAround("too slow: x"); string w1 = ga.Why; RunwayMission.AutoGoAround = true; bool g2 = ga.GoAround("too slow: x");
+                Check(!g1 && w1.StartsWith("would go around: too slow") && g2 && ga.Phase == "go around", "LAND5k: auto go-around OFF logs 'would go around' and keeps flying; ON goes around");
+                var dz = new StepThrottle(); dz.Reset(0); dz.AccelPerThr = 8; double dzs = dz.DeficitStep(.03, 59, 100, 50, 7000); Check(dzs <= .5 * ((100 - 59) / (Math.Max(StepThrottle.AheadS, dz.SpoolS) + StepThrottle.SettleS)) / 8 + 1e-9 || dzs <= .03 + 1e-9, "LAND5k: deficit steps sized to half the deficit (" + Math.Round(100 * dzs) + "%)");
+            }
             Check(LandingTestPresets.Outcome(1, "landed (pilot intervened x1)", 2.5, 70, 0).Contains("pilot intervened"), "LAND5k: the [TEST] outcome names a pilot intervention");
         }
         {   // GROK LAND5i: spool-aware tiny bumps, final lock
@@ -2341,7 +2363,7 @@ class Program
                 Check(PilotPolicy.ApLine("landing (entry, 12.0 km)", "step 2/4: climb 1000 m", 1000, 150, 271, 20, true).Contains("bank limit 20") , "autopilot window summary");
         {   // GROK TAB1: flight tablet nav model, parked speed, targets while off
             Check(PilotPolicy.ApLine("idle", "no plan running", 0, 150, 0, 20, false).EndsWith("Target: -"), "no default target alt 0 / speed 150 while the autopilot is off");
-            Check(string.Join(",", TabletNav.TopTabs) == "FLIGHT,AUTOPILOT,ABORT,CRAFT" && string.Join(",", TabletNav.ApSubPages) == "TAKEOFF,LANDING,STATUS,TAXI,TRIM", "top tabs and AUTOPILOT sub-pages per spec");
+            Check(string.Join(",", TabletNav.TopTabs) == "FLIGHT,AUTOPILOT,ABORT,CRAFT" && string.Join(",", TabletNav.ApSubPages) == "TAKEOFF,LANDING,STATUS,TAXI,TRIM,CRAFT" && string.Join(",", TabletNav.CraftPages) == "DETAILS", "top tabs and AUTOPILOT sub-pages per spec");
             int tt, ts; TabletNav.DecodeSaved(2, out tt, out ts); Check(tt == TabletNav.Autopilot && ts == TabletNav.SubLanding, "old APPROACH page -> AUTOPILOT / LANDING");
             TabletNav.DecodeSaved(7, out tt, out ts); Check(tt == TabletNav.Craft && ts == -1, "old SHIP -> CRAFT");
             TabletNav.DecodeSaved(5, out tt, out ts); Check(tt == TabletNav.Autopilot && ts == TabletNav.SubTrim, "old TRIM -> AUTOPILOT / TRIM");
@@ -2947,7 +2969,7 @@ class Program
             };
             string draggy = sim(.00012), slick = sim(.000005);
             Check(draggy.StartsWith("touch") && double.Parse(draggy.Split(' ')[3]) <= 10 && Math.Abs(double.Parse(draggy.Split(' ')[1])) >= 1 && Math.Abs(double.Parse(draggy.Split(' ')[1])) <= 5, "200 m/s at the FAF, idle + airbrakes: stabilized by 1 km, touchdown sink 1-5 m/s (LAND5c target 3) (" + draggy + ")");
-            Check(slick.StartsWith("GA too fast"), "slick craft still fast: go-around at the speed gate, never a fast landing (" + slick + ")");
+            Check(!slick.StartsWith("GA too fast"), "LAND5k (Luke): no too-fast go-around - a slick fast craft lands long (" + slick + ")");
             Check(PilotPolicy.ApproachThrottle(.6, 80, 60, .05) == 0 && PilotPolicy.ApproachThrottle(.2, 50, 60, 1) > .2, "approach throttle: idle when fast, spools when slow");
             Console.WriteLine("Forced approach speed: 3 behavior checks passed.");
         }

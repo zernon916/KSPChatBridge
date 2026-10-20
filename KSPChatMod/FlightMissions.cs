@@ -285,6 +285,7 @@ namespace KSPChatBridge
         /// the speed gained while the nose comes up (accel x RotPitch / pitch rate) - the Aeris lifted at 164 m/s because rotation started at Vr.</summary>
         internal static double RotateSpeed(double stall, double liftoff, double pitchRate = double.NaN, double accel = double.NaN)
         {
+            if (!double.IsNaN(CraftOverrides.L("vr"))) return CraftOverrides.L("vr");   // TAB-CRAFT1 per-craft Vr
             double vr = 1.15 * FlightPolicy.Clamp(stall, 15, 200);
             if (double.IsNaN(liftoff) || liftoff < 10) return vr;
             double lead = !double.IsNaN(pitchRate) && pitchRate > .5 && !double.IsNaN(accel) && accel > 0 ? FlightPolicy.Clamp(accel, 0, 15) * FlightPolicy.Clamp(RotPitch / pitchRate, .5, 6) : 0;
@@ -578,7 +579,9 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5k (Luke, Aeris 3A): per-craft approach_speed / threshold_speed overrides - hold the approach speed, then a constant
         /// decel (the measured idle+airbrake decel x OverrideMargin) that reaches the threshold speed exactly at the threshold.</summary>
         internal static double OverrideApproach = double.NaN, OverrideThreshold = double.NaN; internal const double OverrideMargin = .5, OverrideDecelDefault = .8;
-        internal static double OverrideDecel(double a) { return Math.Max(.3, (double.IsNaN(a) || a <= 0 ? OverrideDecelDefault / OverrideMargin : a) * OverrideMargin); }
+        /// <summary>GROK LAND5k (23:06: the airbrake-boosted 3.51 m/s2 put the decel point at 2 km - real glide decel ~1): capped at OverrideDecelMax.</summary>
+        internal const double OverrideDecelMax = .9;
+        internal static double OverrideDecel(double a) { return FlightPolicy.Clamp((double.IsNaN(a) || a <= 0 ? OverrideDecelDefault / OverrideMargin : a) * OverrideMargin, .3, OverrideDecelMax); }
         internal static double OverrideStartM(double app, double thr, double a) { return Math.Max(0, (app * app - thr * thr) / (2 * OverrideDecel(a))); }
         internal static double OverrideSchedule(double d, double app, double thr, double a)
         {
@@ -1055,7 +1058,7 @@ namespace KSPChatBridge
     internal static class RolloutBrake
     {
         internal const double SettleS = 1, RampS = 6, StartMs = 45;   // GROK LAND5i: 22:16 brakes at 58 m/s -> swerve off the runway
-        internal static double Duty(double landedS, double speed) { if (speed < .5 || speed > StartMs || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
+        internal static double Duty(double landedS, double speed) { double st = CraftOverrides.L("brake_start_speed"); if (speed < .5 || speed > (double.IsNaN(st) ? StartMs : st) || landedS < SettleS) return 0; return FlightPolicy.Clamp((landedS - SettleS) / RampS, .25, 1); }
         internal static bool On(double duty, double now) { return duty >= 1 || duty > 0 && (now * 2 - Math.Floor(now * 2)) < duty; }
     }
     /// <summary>GROK LAND5g: autowarp ownership - a change is the player's only if the rate moved off what the game settled on after our last
@@ -1093,7 +1096,7 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5i (Luke: 'any throttle change NEEDS TO WAIT for the engines to SPOOL, then TINY BUMPS'): after a change, wait until the
         /// engines report settled (measured; fallback FallbackWaitS), then SettleS for the speed to answer. Last 2 km: 2% bumps, 15% cap, only
         /// > FloorMarginMs below the floor with a falling trend. Freeze (< 30 m / last 600 m / flare): idle and locked.</summary>
-        internal const double DecayAcc = 1.0, BigStep = .35, DeficitMs = 5;
+        internal const double DecayAcc = 1.0, BigStep = .35, DeficitMs = 5, DeficitDamp = .5;
         /// <summary>GROK LAND5k (test zone: 90 -> 51 m/s on +3% bumps): after the spool wait, still > 5 m/s under plan and not rising, or under the
         /// floor at all (outside the last 2 km) - the step is sized to the deficit (close it over spool + settle), not a fixed 3%.</summary>
         internal double DeficitStep(double sz, double speed, double plan, double floor, double distM)
@@ -1101,7 +1104,7 @@ namespace KSPChatBridge
             if (!double.IsNaN(distM) && distM <= LastM) return sz;
             bool persist = Acc > 1e-6 && speed < plan - DeficitMs && Accel <= 0, low = !double.IsNaN(floor) && speed < floor;
             if (!persist && !low) return sz;
-            double need = ((plan - speed) / (Math.Max(AheadS, SpoolS) + SettleS) + Math.Max(0, -Accel)) / Math.Max(1, AccelPerThr);
+            double need = DeficitDamp * ((plan - speed) / (Math.Max(AheadS, SpoolS) + SettleS) + Math.Max(0, -Accel)) / Math.Max(1, AccelPerThr);   // 23:05 73 -> 59 -> 95: half the deficit, re-evaluated after the spool
             return FlightPolicy.Clamp(need, sz, BigStep);
         }
         /// <summary>GROK LAND5j: speed predicted over the spool horizon (airbrake decisions).</summary>
@@ -1761,7 +1764,8 @@ namespace KSPChatBridge
         internal double LearnedDecel = double.NaN; internal int FlapStepsLeft; internal bool HasAirbrakes;
         /// <summary>Oct 12: learned descent sink (m/s, from LEARN idle dives; NaN = fixed fallbacks), energy state and the per-leg energy log line.</summary>
         internal double LearnedSink = double.NaN; internal bool EnergyHigh; internal bool EnergyLow; internal string EnergyLog = ""; double energyBucket = double.NaN; string energyKey = "";
-        double EffDecel { get { return ApproachProfile.PlanDecel(DecelA, HasAirbrakes); } }
+        internal double EffDecelPublic { get { return EffDecel; } }
+        double EffDecel { get { double t = CraftOverrides.L("decel_plan"); return !double.IsNaN(t) ? t : ApproachProfile.PlanDecel(DecelA, HasAirbrakes); } }   // TAB-CRAFT1 decel_plan
         void EnergyNote(double altitude, double speed, double plannedAlt, int leg)
         {   // one line per leg / phase and every 2 km: planned vs actual altitude and speed, distance to the threshold
             double b = Math.Floor(Distance / 2000); string key = Phase + "/" + leg;
@@ -1795,7 +1799,7 @@ namespace KSPChatBridge
             else if (Chart != null && Override != null) Chart.Apply(Override);
         }
         internal Ils.Reading Ils; internal bool LocCoupled, GsCoupled; internal const double LocRange = 18000;
-        internal double TouchdownM { get { return Override != null ? Override.TouchdownM : 350; } }
+        internal double TouchdownM { get { double t = CraftOverrides.L("touchdown_aim_m"); return !double.IsNaN(t) ? t : Override != null ? Override.TouchdownM : 350; } }
         internal bool Coupled { get { return LocCoupled && (Phase == "final" || Phase == "flare"); } }
         /// <summary>GROK LAND2: after a go-around, climb straight ahead on the runway heading to MissedAgl before any turn, then re-plan from there.</summary>
         bool finalJoinRoute;   // GROK LAND4
@@ -1829,6 +1833,16 @@ namespace KSPChatBridge
             if (behind < d - 3 * r) o.Add(at(Math.Max(0, behind), "fly-out abeam"));
             o.Add(at(d, "fly-out " + Math.Round(d / 1000) + " km (rejoin)"));
             return o;
+        }
+        /// <summary>GROK LAND5k (Luke: 'Turn off GO AROUND. IT WAS PERFECT!'): automatic go-arounds only when Auto go-around is ON (global
+        /// autoland_auto_go_around / per-craft auto_go_around, default OFF). Off: log 'would go around: <reason>' once per reason and keep flying.
+        /// The manual GO AROUND (go_around tool) does not come through here.</summary>
+        internal static bool AutoGoAround; internal string WouldWhy = "";
+        internal bool GoAround(string why)
+        {
+            if (AutoGoAround) { Phase = "go around"; Why = why; return true; }
+            string key = why.Split(':')[0]; if (key != WouldWhy) { WouldWhy = key; Why = "would go around: " + why + " (auto go-around OFF)"; ChatLog.Write("approach", Why); }
+            return false;
         }
         internal void GoAroundReset() { UnlockPath("go-around"); missedSteps = 0; goAroundLow = true; fastLogged = false; FastContinue = false; FlareFast = false; BelowFloor = false; belowFloorSteps = 0; Pattern = null; PatternLog = "go-around pattern: climb (straight ahead, wings level)"; MissedClimb = true; GateCooldown = GateCooldownSteps; PredictedNow = double.NaN; LocCoupled = GsCoupled = false; Phase = "entry"; Kind = ForceKind.Length > 0 ? ForceKind : "long"; FixDistance = IfDistance; Route = null; CrossI = 0; Crab = 0; lastAlong = double.NaN; }
         internal double PlanBankRaw, RouteToGo = double.NaN; double wpFromLat = double.NaN, wpFromLon;
@@ -2147,7 +2161,7 @@ namespace KSPChatBridge
                 DesiredVs = ApproachProfile.PathVs(DesiredAltitude - altitude, speed, Chart != null ? Chart.Slope : 0, ApproachProfile.SinkLimit(LearnedSink, 15), 10, speed - DesiredSpeed);   // GROK LAND2
                 EnergyHigh = ApproachProfile.EnergyHigh(altitude - DesiredAltitude, speed, DesiredSpeed); EnergyLow = ApproachProfile.EnergyLow(altitude - DesiredAltitude); EnergyNote(altitude, speed, DesiredAltitude, -1);
                 if (Math.Abs(cross) < AlignCross && trackErr < AlignHeading) Phase = "final";
-                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { Phase = "go around"; Why = "not aligned " + (-along / 1000).ToString("0.0") + " km out (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg off)"; }   // GROK LAND2: close-in failed intercept = go around (climb, fly out, re-join), never a tight re-join   // never descend unaligned
+                else if (-along < (Kind == "short" ? 2000 : FafDistance) && (Math.Abs(cross) > 1000 || trackErr > 30 || -along < GateDistance + 500)) { GoAround("not aligned " + (-along / 1000).ToString("0.0") + " km out (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg off)"); }   // GROK LAND2: close-in failed intercept = go around (climb, fly out, re-join), never a tight re-join   // never descend unaligned
             }
             if (Phase == "final" || Phase == "flare")
             {
@@ -2177,27 +2191,27 @@ namespace KSPChatBridge
                 DesiredVs = FlightPolicy.Clamp(OffLine ? Math.Max(0, pointVs) : pointVs, belowGs ? 0 : -maxSink, belowGs ? (outsideFaf ? 0 : 10) : 3);
                 if (above > 0) DesiredVs = Math.Max(DesiredVs, ApproachProfile.CaptureVs(above, -speed * Math.Tan(FinalSlope * Math.PI / 180), maxSink));   // GROK LAND5j: early, blended pull-out onto the glidepath
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
-                double fs = Override != null ? Override.FlareStartM : 15;
+                double fs = !double.IsNaN(CraftOverrides.L("flare_start_m")) ? CraftOverrides.L("flare_start_m") : Override != null ? Override.FlareStartM : 15;   // TAB-CRAFT1
                 
-                if (low < fs) { if (Phase != "flare") FlareFast = ApproachProfile.FlareFast(speed, AppNow); Phase = "flare"; double ts = FlightPolicy.Clamp(Override != null ? Override.FlareSinkMs : ApproachProfile.TouchdownSink, 1, 5); DesiredVs = -ts; }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
+                if (low < fs) { if (Phase != "flare") FlareFast = ApproachProfile.FlareFast(speed, AppNow); Phase = "flare"; double ts = FlightPolicy.Clamp(!double.IsNaN(CraftOverrides.L("touchdown_sink")) ? CraftOverrides.L("touchdown_sink") : Override != null ? Override.FlareSinkMs : ApproachProfile.TouchdownSink, .5, 5); DesiredVs = -ts; }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
                 double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
-                PredictedNow = predSpd; AppNow = ApproachProfile.AppSpeed(stall);
+                PredictedNow = predSpd; AppNow = double.IsNaN(ApproachProfile.OverrideThreshold) ? ApproachProfile.AppSpeed(stall) : ApproachProfile.OverrideThreshold;   // GROK LAND5k: 'landing 66' ignored threshold_speed 52
                 int sg = ApproachProfile.SpeedGate(ApproachProfile.GateSpeed(predSpd, speed, Distance), AppNow, double.NaN, double.NaN); predFast = sg == 2; FastContinue = Phase == "final" && sg == 1 && Distance < ApproachChart.ShortFix;   // GROK LAND5c: no stopping estimate yet -> plain +20
                 if (!FastContinue) fastLogged = false; if (FastContinue && !fastLogged) { fastLogged = true; Why = "fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ", <= +20): airbrakes + idle, continuing"; }
                 {   // GROK LAND5c item 5: shrinking speed floor; slow above it is fine; below it power, and go around only if it cannot recover
                     bool overRwy = along >= 0 && along <= NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius) && hat < 10; double fa = double.IsNaN(slowPrevV) ? 0 : (speed - slowPrevV) * 50; slowPrevV = speed; slowAcc += (fa - slowAcc) * .02;
                     int sl = overRwy ? 0 : ApproachProfile.SlowGate(speed, stall, Distance, Chart != null ? Chart.FafD : FafDistance, belowFloorSteps / 50.0, slowAcc);
                     BelowFloor = sl > 0; belowFloorSteps = sl > 0 ? belowFloorSteps + 1 : 0; SpeedFloor = ApproachProfile.FloorK(Distance, Chart != null ? Chart.FafD : FafDistance) * stall;
-                    if (sl == 2 && GateCooldown <= 0 && Phase == "final" && hat > 10) { Phase = "go around"; Why = "too slow: " + speed.ToString("0") + " m/s below the floor " + SpeedFloor.ToString("0") + " for " + ApproachProfile.FloorRecoverS + " s, not recovering"; }
+                    if (sl == 2 && GateCooldown <= 0 && Phase == "final" && hat > 10) { GoAround("too slow: " + speed.ToString("0") + " m/s below the floor " + SpeedFloor.ToString("0") + " for " + ApproachProfile.FloorRecoverS + " s, not recovering"); }
                 }
-                if (GateCooldown <= 0 && Phase == "final" && Distance < ApproachChart.ShortFix && Distance > 100 && predFast) { Phase = "go around"; Why = "too fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ")"; }
-                if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && TouchdownM - along <= LineupGateM && TouchdownM - along > -500 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { Phase = "go around"; Why = "not lined up " + LineupGateM + " m before touchdown (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"; }
+                // GROK LAND5k (Luke): the 'too fast' go-around is gone - in the last 2 km fast is OK (idle, flaps, airbrakes, no flare pitch-up)
+                if ((GateCooldown <= 0 || hat < 60) && (Phase == "final" || Phase == "flare") && TouchdownM - along <= LineupGateM && TouchdownM - along > -500 && (Math.Abs(cross) > GateCross || trackErr > GateHeading)) { GoAround("not lined up " + LineupGateM + " m before touchdown (" + Math.Abs(cross).ToString("0") + " m, " + trackErr.ToString("0") + " deg)"); }
                 double daHat = Override != null ? Override.DaHat(Elevation) : double.NaN;   // GROK LAND2: plate DA - still well high there = go around
-                if (Phase == "final" && GateCooldown <= 0 && daHat > 20 && hat < daHat && hat > daHat - 40 && above > 60) { Phase = "go around"; Why = "high at DA " + daHat.ToString("0") + " m (" + above.ToString("0") + " m above the glidepath)"; }
+                if (Phase == "final" && GateCooldown <= 0 && daHat > 20 && hat < daHat && hat > daHat - 40 && above > 60) { GoAround("high at DA " + daHat.ToString("0") + " m (" + above.ToString("0") + " m above the glidepath)"); }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
-                if (!grounded && along > length - 200 && hat > 3) { Phase = "go around"; Why = "overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"; }
+                if (!grounded && along > length - 200 && hat > 3) { GoAround("overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"); }
                 if (grounded) Phase = "rollout";
             }
             if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); { double dtR = dsr / Math.Max(1, speed), cr = double.IsNaN(lastCrossR) || dtR <= 0 ? 0 : (cross - lastCrossR) / dtR; lastCrossR = cross; DesiredHeading = DubinsPath.Norm(course + RolloutCorr(FlightPolicy.Wrap(DesiredHeading - course), cr, speed)); }   // GROK LAND5f: damped rollout steering

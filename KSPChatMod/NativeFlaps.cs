@@ -126,7 +126,7 @@ namespace KSPChatBridge
         {
             if (vessel == null) return;
             if (flapVessel != vessel || Time.realtimeSinceStartup > flapScanAt + 10) { if (flapVessel != vessel) RestoreFlaps(); ScanFlaps(); flapScanAt = Time.realtimeSinceStartup; }
-            ApproachProfile.FlapLimitSpeed = flaps.Count > 0 ? FlapLimit() : double.NaN;   // GROK LAND5e: the early decel targets flap limit - 10 by D14
+            ApproachProfile.FlapLimitSpeed = !double.IsNaN(CraftOverrides.L("flap_limit_speed")) ? CraftOverrides.L("flap_limit_speed") : flaps.Count > 0 ? FlapLimit() : double.NaN;   // TAB-CRAFT1   // GROK LAND5e: the early decel targets flap limit - 10 by D14
             BrakeSurfacesTick();
             if (flaps.Count == 0) return;
             RollFlapTick();
