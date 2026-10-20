@@ -1102,7 +1102,19 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// light (0.15) while |yaw rate| > 3 deg/s or |heading error| > 3 deg, until both are back under 1.5.</summary>
         internal const double LightFrac = .15, RampInS = 1.5, YawLimit = 3, HdgLimit = 3, StraightAgain = 1.5;
         internal static double FullSpeed(double stall) { return FullSpeed(stall, CraftOverrides.L("brake_full_speed")); }
-        internal static double FullSpeed(double stall, double ov) { return !double.IsNaN(ov) && ov > 0 ? ov : !double.IsNaN(stall) && stall > 10 ? 1.1 * stall : 60; }
+        internal static double FullSpeed(double stall, double ov) { return !double.IsNaN(ov) && ov > 0 ? ov : !double.IsNaN(stall) && stall > 10 ? Math.Min(1.1 * stall, FullCapMs) : 60; }
+        /// <summary>ROLL4 (Aeris 4A run 2, stall override 130: full brakes at 118 m/s, then 100/15/100/15 at yaw 3.1-3.3): blank full-brake speed
+        /// capped at 70 m/s; the yaw back-off is proportional - base x clamp(1 - (|yaw| - 1.5) / 3, 0.3, 1) - and the strength moves at most
+        /// 50%/s, so it can never flip between full and light.</summary>
+        internal const double FullCapMs = 70, YawFree = 1.5, YawSpan = 3, YawMinFrac = .3, SlewPerS = .5;
+        internal static double YawFactor(double yawRate) { double yr = double.IsNaN(yawRate) ? 0 : Math.Abs(yawRate); return FlightPolicy.Clamp(1 - (yr - YawFree) / YawSpan, YawMinFrac, 1); }
+        internal static double Smooth(double prev, double speed, double fullSpeed, double landedS, double yawRate, double dt)
+        {
+            double s = speed <= fullSpeed ? 1 : Math.Max(LightFrac, (fullSpeed / speed) * (fullSpeed / speed));
+            s = LightFrac + (s - LightFrac) * FlightPolicy.Clamp(landedS / RampInS, 0, 1);
+            double want = s * YawFactor(yawRate); if (double.IsNaN(prev)) prev = LightFrac;
+            double step = SlewPerS * Math.Max(0, dt); return FlightPolicy.Clamp(want, prev - step, prev + step);
+        }
         internal static double Strength(double speed, double fullSpeed, double landedS, double yawRate, double hdgErr, ref bool light)
         {
             double s = speed <= fullSpeed ? 1 : Math.Max(LightFrac, (fullSpeed / speed) * (fullSpeed / speed));
@@ -1118,6 +1130,30 @@ internal static double BounceStep(double cur, double speed, double stall, double
     {
         internal const double Kp = .04, Kd = .03, MaxCmd = .4, Slew = 1.5;
         internal static double Gain(double speed, bool brakes) { return FlightPolicy.Clamp(20 / Math.Max(1, speed), .25, 1) * (brakes ? .7 : 1); }
+        /// <summary>ROLL4 (run 2: ask stuck at course - 4 with cross 130 -> 46 -> 117 m, wheelOut 0.01, one 0.20 spike -> 308 deg): track the
+        /// centreline - ask = course - clamp(k x (cross + LookS x cross rate), +-8), k 0.15 deg/m at <= 30 m/s down to 0.05 at >= 100
+        /// (cross + = right of the centreline, so steer to a lower heading).</summary>
+        internal const double AskMax = 8, LookS = 2.5, KLow = .15, KHigh = .05, WheelRate = 1.0, RudderRate = 2.0;
+        internal static double CrossGain(double speed) { double v = Math.Max(0, speed); return v <= 30 ? KLow : v >= 100 ? KHigh : KLow + (KHigh - KLow) * (v - 30) / 70; }
+        internal static double HeadingAsk(double course, double cross, double crossRate, double speed)
+        {
+            if (double.IsNaN(cross)) return course; double pc = cross + LookS * (double.IsNaN(crossRate) ? 0 : FlightPolicy.Clamp(crossRate, -30, 30));
+            return DubinsPath.Norm(course - FlightPolicy.Clamp(CrossGain(speed) * pc, -AskMax, AskMax));
+        }
+        /// <summary>ROLL4 nosewheel: P on the heading error + yaw-rate damping, gains ~2/v and ~1.5/v per deg (0.1 / 0.06 slow, 0.025 / 0.02 at
+        /// 100 m/s), output cap 30/v (0.25..0.6), rate limit 1.0/s. err = ask - heading; + output = toward a lower heading (KSP wheelSteer).</summary>
+        internal static double Wheel(double prev, double err, double rate, double speed, double dt)
+        {
+            double v = Math.Max(1, speed), kp = FlightPolicy.Clamp(2 / v, .025, .1), kd = FlightPolicy.Clamp(1.5 / v, .02, .06), lim = FlightPolicy.Clamp(30 / v, .25, .6);
+            double want = FlightPolicy.Clamp(-kp * FlightPolicy.Wrap(double.IsNaN(err) ? 0 : err) + kd * (double.IsNaN(rate) ? 0 : rate), -lim, lim);
+            double step = WheelRate * Math.Max(0, dt); return double.IsNaN(prev) ? FlightPolicy.Clamp(want, -step, step) : FlightPolicy.Clamp(want, prev - step, prev + step);
+        }
+        /// <summary>ROLL4 rudder (was 0 on the rollout): strong at speed, fading below 20 m/s; + = nose right (higher heading).</summary>
+        internal static double Rudder(double prev, double err, double rate, double speed, double dt)
+        {
+            double f = FlightPolicy.Clamp(speed / 60, .2, 1), want = FlightPolicy.Clamp(f * (.06 * FlightPolicy.Wrap(double.IsNaN(err) ? 0 : err) - .08 * (double.IsNaN(rate) ? 0 : rate)), -.6, .6);
+            double step = RudderRate * Math.Max(0, dt); return double.IsNaN(prev) ? FlightPolicy.Clamp(want, -step, step) : FlightPolicy.Clamp(want, prev - step, prev + step);
+        }
         /// <summary>err = wanted - actual heading (deg), rate = heading rate (deg/s, + = heading increasing). Same sign as WheelSteering (- = toward a higher heading).</summary>
         internal static double Step(double prev, double err, double rate, double speed, bool brakes, double dt)
         {
@@ -1923,7 +1959,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// <summary>GROK LAND5f (16:41 rollout swung -13/+17/-29 m): rollout heading correction capped and damped by the lateral drift rate.</summary>
         internal const double RolloutMaxCorr = 4, RolloutDampK = 1.0;
         internal static double RolloutCorr(double corrDeg, double crossRateMs, double speed) { return FlightPolicy.Clamp(corrDeg - RolloutDampK * Math.Atan2(crossRateMs, Math.Max(5, speed)) * 180 / Math.PI, -RolloutMaxCorr, RolloutMaxCorr); }
-        double lastCrossR = double.NaN;
+        double lastCrossR = double.NaN; internal double RolloutCrossRate;
         internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor, FlareFastEnded; internal double FlareH = 15, Low = double.NaN;   /* THR9 */ internal double FlareStartAlong = double.NaN, FlareEntrySpeed;   /* LAND5q */ internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
@@ -2339,7 +2375,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
                 if (!grounded && along > length - 200 && hat > 3) { GoAround("overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)", true); }
                 if (grounded) Phase = "rollout";
             }
-            if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); { double dtR = dsr / Math.Max(1, speed), cr = double.IsNaN(lastCrossR) || dtR <= 0 ? 0 : (cross - lastCrossR) / dtR; lastCrossR = cross; DesiredHeading = DubinsPath.Norm(course + RolloutCorr(FlightPolicy.Wrap(DesiredHeading - course), cr, speed)); }   // GROK LAND5f: damped rollout steering
+            if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); { double dtR = dsr / Math.Max(1, speed), cr = double.IsNaN(lastCrossR) || dtR <= 0 ? 0 : (cross - lastCrossR) / dtR; lastCrossR = cross; RolloutCrossRate = cr; DesiredHeading = RolloutSteer.HeadingAsk(course, cross, cr, speed); }   /* ROLL4: track the centreline (was capped at course +-4) */   // GROK LAND5f: damped rollout steering
                     DesiredSpeed = 0; Gear = Brakes = true; if (speed < 1) Phase = "stopped"; }
         }
     }

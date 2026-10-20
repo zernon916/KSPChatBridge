@@ -266,7 +266,20 @@ class Program
                 Check(Math.Abs(r3a - RolloutBrake.LightFrac) < 1e-9 && Math.Abs(r3b - Math.Pow(95.7 / 137, 2)) < 1e-9 && r3c == 1, "ROLL3: light at contact, (full speed / speed)^2 after the 1.5 s ramp (" + Math.Round(100 * r3b) + "% at 137), full below 1.1 x stall");
                 double r3d = RolloutBrake.Strength(80, 95.7, 5, 4, 0, ref r3l); bool r3dl = r3l; double r3e = RolloutBrake.Strength(80, 95.7, 5, 2, 0, ref r3l); double r3f = RolloutBrake.Strength(80, 95.7, 5, 1, .5, ref r3l);
                 Check(r3d == RolloutBrake.LightFrac && r3dl && r3e == RolloutBrake.LightFrac && r3f == 1 && RolloutBrake.Strength(200, 60, 9, 0, 0, ref r3l) == RolloutBrake.LightFrac, "ROLL3: yaw > 3 deg/s = light brakes until straight again (< 1.5); never below 15%");
-                Check(Math.Abs(RolloutBrake.FullSpeed(87, double.NaN) - 95.7) < 1e-9 && RolloutBrake.FullSpeed(double.NaN, double.NaN) == 60 && RolloutBrake.FullSpeed(87, 70) == 70, "ROLL3: brake_full_speed blank = 1.1 x stall, 60 if unknown");
+                Check(RolloutBrake.FullSpeed(87, double.NaN) == 70 && Math.Abs(RolloutBrake.FullSpeed(50, double.NaN) - 55) < 1e-9 && RolloutBrake.FullSpeed(double.NaN, double.NaN) == 60 && RolloutBrake.FullSpeed(87, 90) == 90, "ROLL3/ROLL4: brake_full_speed blank = min(1.1 x stall, 70), 60 if unknown");
+            {   // ROLL4 (Aeris 4A run 2, 09:22: stall override 130 -> full brakes at 118 m/s; 100/15 flips at yaw 3.1-3.3; ask stuck at course - 4)
+                Check(RolloutBrake.FullSpeed(130, double.NaN) == 70 && RolloutBrake.FullSpeed(130, 143) == 143, "ROLL4: blank full-brake speed capped at 70 m/s (stall 130 no longer = full at 140)");
+                double r4b = double.NaN, r4min = 1, r4max = 0, r4jump = 0, r4prev = double.NaN; for (int k = 0; k < 500; k++) { double yr = 3 + .3 * Math.Sin(k * .7) * (k % 2 == 0 ? 1 : -1); r4b = RolloutBrake.Smooth(r4b, 60, 70, 5, yr, .02); if (k > 100) { r4min = Math.Min(r4min, r4b); r4max = Math.Max(r4max, r4b); } if (!double.IsNaN(r4prev)) r4jump = Math.Max(r4jump, Math.Abs(r4b - r4prev)); r4prev = r4b; }
+                Check(r4max - r4min < .12 && r4min > .3 && r4jump <= .5 * .02 + 1e-9, "ROLL4: no brake flipping around yaw 3 deg/s (range " + r4min.ToString("0.00") + "-" + r4max.ToString("0.00") + ")");
+                Check(RolloutBrake.YawFactor(1) == 1 && Math.Abs(RolloutBrake.YawFactor(3) - .5) < 1e-9 && RolloutBrake.YawFactor(9) == .3, "ROLL4: proportional yaw back-off, floor 0.3");
+                Check(Math.Abs(RolloutBrake.Smooth(.15, 118, 70, 5, 0, 10) - (70.0 / 118) * (70.0 / 118)) < 1e-9, "ROLL4: 118 m/s with stall 130 = 35% brakes, not 100%");
+                double r4a = RolloutSteer.HeadingAsk(270.4, 130, 0, 110), r4c = RolloutSteer.HeadingAsk(270.4, -40, 0, 20), r4d = RolloutSteer.HeadingAsk(270.4, 10, -8, 60);
+                Check(Math.Abs(r4a - (270.4 - 6.5)) < 1e-6 && Math.Abs(r4c - 276.4) < 1e-6 && Math.Abs(RolloutSteer.HeadingAsk(270.4, -200, 0, 20) - 278.4) < 1e-6 && r4d > 270.4, "ROLL4: heading ask toward the centreline, k 0.05 at speed / 0.15 slow, capped 8, lookahead on the drift rate");
+                double r4w = double.NaN, r4wMax = 0, r4wp = 0; for (int k = 0; k < 100; k++) { r4w = RolloutSteer.Wheel(r4w, k < 50 ? -40 : 40, 0, 30, .02); r4wMax = Math.Max(r4wMax, Math.Abs(r4w - r4wp) / .02); r4wp = r4w; }
+                Check(r4wMax <= RolloutSteer.WheelRate + 1e-6 && Math.Abs(RolloutSteer.Wheel(double.NaN, 0, 0, 30, .02)) == 0, "ROLL4: wheel output rate-limited to 1/s (no spikes)");
+                double r4ws = RolloutSteer.Wheel(0, -4, 0, 110, 10), r4ru = RolloutSteer.Rudder(0, -4, 0, 110, 10);
+                Check(r4ws > .05 && r4ws <= .3 && r4ru < -.1 && RolloutSteer.Wheel(0, 0, 3, 100, 10) > 0, "ROLL4: meaningful wheel (" + r4ws.ToString("0.00") + ") + rudder at 110 m/s for a 4 deg error; yaw-rate damped");
+            }
             }
             {   // THR10: smooth energy throttle (08:18 replay + run 3)
                 var at = new ApproachThrottle(); at.Reset(.3); double atMin = 1, atMax = 0, atPrev = at.Cmd, atStep = 0;
