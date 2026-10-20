@@ -529,7 +529,7 @@ namespace KSPChatBridge
         /// <summary>Oct 12 19:13: speedbrakes only above the planned speed (retract below it); HIGH alone never holds them out.</summary>
         internal static bool BrakesWanted(bool speedHoldWants, bool high, double speed, double plan) { return speed > plan + (speedHoldWants || high ? 0 : 2); }   // Luke Oct 12: airbrakes whenever above plan
         /// <summary>Idle when high only while not slow: below plan - 5 the speed hold flies the throttle.</summary>
-        internal static bool IdleWanted(bool high, double speed, double plan, bool nearShort = false) { return (high && speed > plan - 5) || (nearShort && speed > plan + AggressiveFastM); }
+        internal static bool IdleWanted(bool high, double speed, double plan, bool nearShort = false) { return (high && speed >= plan - 3)   /* SPD2: was plan - 5 */ || (nearShort && speed > plan + AggressiveFastM); }
         /// <summary>Luke Oct 12: well over plan (> 15 m/s) inside 2x the short-final fix = idle + airbrakes + flaps together.</summary>
         internal const double AggressiveFastM = 15;
         internal static bool NearShort(string phase, double distM) { return (phase == "final" || phase == "intercept") && distM < 2 * ApproachChart.ShortFix; }
@@ -1187,6 +1187,11 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// <summary>THR9: start the flare throttle leadS before the flare (J-90 spool): (height above the flare height) / sink rate.</summary>
         internal static bool FlareLeadDue(double low, double fs, double vs, double leadS)
         { if (double.IsNaN(low) || double.IsNaN(fs)) return false; if (low < fs) return true; return vs < -.3 && (low - fs) / -vs <= leadS; }
+        /// <summary>SPD2 (run 3: HIGH, idle + speedbrakes, 157 -> 119 -> 89 vs plan 150): never idle below plan - 3; the short-final idle only while
+        /// the trend is not falling hard and 5 s ahead is not below plan - 5; fast-decay power from 5 s ahead < plan - 8 (not only at the floor).</summary>
+        internal const double EarlyDefMs = 8, StrongDecel = 1.5, HighSlackMs = 3, LastDefCap = .6; internal bool High;   // High = HIGH energy on final (set by the controller)
+        internal static bool ShortIdleOk(double accel, double predicted, double plan) { return accel >= -StrongDecel && !(predicted < plan - LockSlackMs); }
+        internal static bool EarlyDecay(double accel, double predAhead, double plan) { return accel < 0 && predAhead < plan - EarlyDefMs; }
         internal static bool Freeze(string phase, double agl, double distM) { return phase == "flare" || phase == "final" && (agl < FreezeAgl || distM < FreezeM); }
         internal int EngineSettled = -1; internal bool Frozen;
         internal double PlanRate; double prevPlan = double.NaN;
@@ -1203,24 +1208,25 @@ internal static double BounceStep(double cur, double speed, double stall, double
             double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
             {   // GROK LAND5j: FAST DECAY exception - the trend crosses the floor within the spool horizon: one step sized to the deficit, now
                 double hz = Math.Max(AheadS, SpoolS), predH = speed + Accel * hz;
-                bool decaying = !double.IsNaN(floor) && Accel < -DecayAcc && predH < floor && e < 0;
+                bool floorX = !double.IsNaN(floor) && Accel < -DecayAcc && predH < floor, early = Accel < -DecayAcc && EarlyDecay(Accel, predH, plan) && speed <= plan + IdleOver, decaying = (floorX || early) && e < 0;   // SPD2: also 5 s ahead < plan - 8
                 if (decaying && !(Ready(now, EngineSettled) || now - lastStep > hz)) return Thr;   // the sized step is spooling: no idle/back cuts on top
                 if (decaying)
                 {
-                    bool last = !double.IsNaN(distM) && distM <= LastM; double cap = last ? LastCap : 1;
-                    double need = (-Accel + (floor + FloorMarginMs - predH) / hz) / Math.Max(1, AccelPerThr), t0 = Thr;
+                    bool last = !double.IsNaN(distM) && distM <= LastM && !early; double cap = last ? LastCap : 1;   // SPD2: a real deficit is not capped at 15%
+                    double tgt = Math.Max(floorX ? floor + FloorMarginMs : double.NegativeInfinity, early ? plan - EarlyDefMs : double.NegativeInfinity), need = (-Accel + (tgt - predH) / hz) / Math.Max(1, AccelPerThr), t0 = Thr;
                     Thr = Math.Min(cap, FlightPolicy.Clamp(Thr + FlightPolicy.Clamp(need, Step, last ? LastCap : BigStep), 0, 1));
-                    if (Thr > t0 + 1e-9) { Acc += Thr - t0; Stepped(now); Why = "fast decay " + Accel.ToString("0.0") + " m/s2 crosses the floor " + Math.Round(floor) + " within " + Math.Round(hz) + " s: +" + Math.Round(100 * (Thr - t0)) + "%"; return Thr; }
+                    if (Thr > t0 + 1e-9) { Acc += Thr - t0; Stepped(now); Why = "fast decay " + Accel.ToString("0.0") + " m/s2: " + (floorX ? "crosses the floor " + Math.Round(floor) : Math.Round(hz) + " s ahead " + Math.Round(predH) + " < plan - " + EarlyDefMs) + " within " + Math.Round(hz) + " s: +" + Math.Round(100 * (Thr - t0)) + "%"; return Thr; }
                 }
             }
             if (speed > plan + IdleOver) { if (Thr > 0) { Why = "fast +" + Math.Round(speed - plan) + " m/s: idle"; Stepped(now); } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5e: > plan + 3 = idle
             if (Math.Abs(Accel) > .5 && Math.Sign(Accel) == Math.Sign(e)) sz = FlightPolicy.Clamp(.8 * Math.Abs(Accel + e / 10) / Math.Max(1, AccelPerThr), sz, MaxStep);   // a real drag/thrust step (flaps FULL + gear): half the thrust that would stop the trend, capped
             if (Acc < -1e-9 && e <= 0 && speed > plan) Acc = 0;   // GROK LAND5e: 'back' never adds power while over plan
-            if (!double.IsNaN(distM) && distM <= ShortM && e >= 0 && Thr > 0 && Acc > 1e-9) { Thr = 0; Acc = 0; Stepped(now); Why = "predicted " + Math.Round(Predicted) + " crosses plan on short final: idle"; return Thr; }   // GROK LAND5f: straight to idle (spool lag)
+            if (!double.IsNaN(distM) && distM <= ShortM && e >= 0 && Thr > 0 && Acc > 1e-9 && ShortIdleOk(Accel, Predicted, plan)) {   /* SPD2: not while decaying hard */ Thr = 0; Acc = 0; Stepped(now); Why = "predicted " + Math.Round(Predicted) + " crosses plan on short final: idle"; return Thr; }   // GROK LAND5f: straight to idle (spool lag)
             bool ready = Ready(now, EngineSettled);
             if (!double.IsNaN(distM) && distM <= LastM && e < 0)
             {   // GROK LAND5f/5i: last 2 km - hold; power only > 2 m/s below the floor with a falling trend, after the spool wait, 2% bumps, 15% cap
-                bool low = !double.IsNaN(floor) && speed < floor - FloorMarginMs && Accel < 0;
+                bool low = !double.IsNaN(floor) && speed < floor - FloorMarginMs && Accel < 0; double hz0 = Math.Max(AheadS, SpoolS);
+                if (High && speed < plan - HighSlackMs && ready && now - lastStep >= WaitS && Thr < LastDefCap) { double t0 = Thr, nd = ((plan - speed) / (hz0 + SettleS) + Math.Max(0, -Accel)) / Math.Max(1, AccelPerThr); Thr = Math.Min(LastDefCap, Math.Max(Thr + LastStep, nd)); if (Thr > t0 + 1e-9) { Acc += Thr - t0; Stepped(now); Why = "below plan " + Math.Round(plan - speed) + " m/s (last 2 km): +" + Math.Round(100 * (Thr - t0)) + "% (sized to the deficit)"; } return Thr; }   // SPD2
                 if (low && ready && Thr < LastCap) { double t0 = Thr; Thr = Math.Min(LastCap, FlightPolicy.Clamp(Thr + LastStep, 0, 1)); Acc += Thr - t0; Stepped(now); Why = "below the floor " + Math.Round(floor) + " by " + Math.Round(floor - speed) + " m/s, falling: +" + Math.Round(100 * (Thr - t0)) + "%"; }
                 return Thr;
             }
@@ -1231,7 +1237,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
             }
             // GROK LAND5g (Luke: 'throttle increases even though it's supposed to be slowing down'): on final, power up only near the floor (floor + 8);
             // elsewhere never while the plan itself is decelerating.
-            bool upOk = (HoldPlan || (!double.IsNaN(distM) && !double.IsNaN(floor) ? speed < floor + HoldOverFloor : PlanRate > -.05)) && Accel < .2;   // LAND5m: HoldPlan = hold approach_speed with power   // GROK LAND5i: current speed (the 5 s prediction stacked +5% steps at 106 vs floor 91)
+            bool upOk = (HoldPlan || High && speed < plan - HighSlackMs ||   /* SPD2: HIGH never sits at idle below plan - 3 */ (!double.IsNaN(distM) && !double.IsNaN(floor) ? speed < floor + HoldOverFloor : PlanRate > -.05)) && Accel < .2;   // LAND5m: HoldPlan = hold approach_speed with power   // GROK LAND5i: current speed (the 5 s prediction stacked +5% steps at 106 vs floor 91)
             if (!upOk && e < 0) { Why = ""; return Thr; }   // hold
             if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS && speed <= plan) {   // GROK LAND5e: config lead only at/below plan (LAND5g: and near the floor)
                  if (!ready) return Thr; Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = now; Stepped(now); Why = "config lead +3%"; return Thr; }

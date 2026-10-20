@@ -148,7 +148,7 @@ class Program
             var fd2 = new StepThrottle(); fd2.Reset(0); fd2.SpoolS = 8.3; double f1 = 0; for (double tt = 0; tt < 3; tt += .02) f1 = fd2.Update(tt, 111 - 4.5 * tt, 99, .02, double.NaN, 75, 9000);
             Check(f1 > .05 && f1 <= StepThrottle.BigStep + 1e-9, "LAND5j: the fast-decay step is sized to the deficit (" + Math.Round(100 * f1) + "%, cap 35%)");
             var fd3 = new StepThrottle(); fd3.Reset(0); fd3.SpoolS = 8.3; double f2 = 0; for (double tt = 0; tt < 3; tt += .02) f2 = fd3.Update(tt, 90 - 4.5 * tt, 96, .02, double.NaN, 80, 1500);
-            Check(f2 > 0 && f2 <= StepThrottle.LastCap + 1e-9, "LAND5j: inside 2 km the fast-decay step stays under the 15% cap");
+            Check(f2 > 0 && f2 <= StepThrottle.BigStep + 1e-9, "LAND5j/SPD2: inside 2 km a fast decay to < plan - 8 gets one sized step, <= 35% (" + Math.Round(100 * f2) + "%)");
             Check(!AirbrakeGate.DeployOk(true, -2, false) && !AirbrakeGate.DeployOk(true, 0, true) && AirbrakeGate.DeployOk(true, -.5, false), "LAND5j: no airbrake deploy while decelerating < -1.5 m/s2 or pulling up");
             var ag = new AirbrakeGate(); ag.Step(0, false, 115, 99, true, true); bool chg = ag.Step(1, true, 97, 99, true, true); Check(chg && !ag.On, "LAND5j: airbrakes retract at once when the predicted speed falls under plan (no 8 s dwell)");
             double cv = ApproachProfile.CaptureVs(400, -5.5, 15), cv2 = ApproachProfile.CaptureVs(20, -5.5, 15);
@@ -247,6 +247,15 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // SPD2 (run 3 numbers)
+                Check(!ApproachProfile.IdleWanted(true, 149, 153) && ApproachProfile.IdleWanted(true, 151, 153), "SPD2: HIGH idle only while speed >= plan - 3");
+                Check(!StepThrottle.ShortIdleOk(-3.6, 160, 160) && !StepThrottle.ShortIdleOk(0, 150, 160) && StepThrottle.ShortIdleOk(.5, 160, 160), "SPD2: short-final idle not while decaying hard or 5 s ahead < plan - 5");
+                Check(StepThrottle.EarlyDecay(-2, 140, 153) && !StepThrottle.EarlyDecay(-2, 150, 153) && !StepThrottle.EarlyDecay(.5, 140, 153), "SPD2: fast-decay power from 5 s ahead < plan - 8");
+                var sp2 = new StepThrottle(); sp2.Reset(0); sp2.EngineSettled = 1; sp2.Accel = -2.0; double sp2t = sp2.Update(0, 138, 153, .02, double.NaN, 101, 3500);
+                Check(sp2t > .2 && sp2.Why.StartsWith("fast decay"), "SPD2: 138 vs plan 153 at -2 m/s2 (5 s ahead 128, floor 101) powers up before the floor (" + sp2.Why + ")");
+                var sp3 = new StepThrottle(); sp3.Reset(0); sp3.EngineSettled = -1; sp3.High = true; double sp3t = sp3.Update(10, 109, 150, .02, double.NaN, 99, 1900);
+                Check(sp3t > .3, "SPD2: HIGH, 109 vs plan 150 in the last 2 km gets deficit-sized power (" + sp3t.ToString("0.00") + ")");
+            }
             {   // THR9
                 string ls; double lt = StepThrottle.LockThrottle(0, 113, 145, 95, -3.4, 99, 6, 4, out ls), lt2 = StepThrottle.LockThrottle(.5, 146, 145, 144, 0, 99, 6, 4, out ls), lt3 = StepThrottle.LockThrottle(0, 130, 145, 128, -1, 99, 6, 4, out ls);
                 Check(lt == 1 && lt2 == 0 && lt3 > .1 && lt3 <= StepThrottle.LockCap, "THR9: final lock idles only at/above plan; below plan power sized to the deficit, full near stall");
@@ -328,7 +337,7 @@ class Program
             var s5 = new StepThrottle(); s5.Reset(.20); s5.Frozen = true; double b9 = s5.Update(0, 80, 96, .02, double.NaN, 88, 400), b10 = s5.Update(5, 70, 96, .02, double.NaN, 88, 300);
             double thr9b = s5.Update(6, 98, 96, .02, double.NaN, 88, 250); Check(b9 > .3 && b10 == 1 && thr9b == 0 && StepThrottle.Freeze("flare", 50, 2000) && StepThrottle.Freeze("final", 25, 1500) && StepThrottle.Freeze("final", 60, 500) && !StepThrottle.Freeze("final", 60, 1500), "LAND5i/THR9: final lock below 30 m / last 600 m / flare - idle only at/above plan, deficit-sized, full near the floor (" + b9 + " " + b10 + " " + thr9b + " pred " + s5.Predicted.ToString("0") + ")");
             var s6 = new StepThrottle(); s6.Reset(0); double b11 = 0; for (double tt = 0; tt < 4.5; tt += .02) b11 = s6.Update(tt, 106 - 1.3 * tt, 120 - .2 * tt, .02, double.NaN, 91, 11700);
-            Check(b11 == 0, "LAND5i: 22:14 case (106 -> 100 vs plan 120, floor 91 = above floor + 8) holds instead of stacking +5%");
+            Check(b11 > 0 && b11 <= StepThrottle.BigStep + 1e-9, "LAND5i/SPD2: 22:14 case (106 -> 100 vs plan 120 at -1.3 m/s2) = ONE sized step, no stacking (" + Math.Round(100 * b11) + "%)");
             var s7 = new StepThrottle(); s7.Reset(0); double b12 = 0, lastB = -99; int nb = 0; double prevB = 0; for (double tt = 0; tt < 30; tt += .02) { s7.EngineSettled = tt - lastB > 4 ? 1 : 0; b12 = s7.Update(tt, 98 - .3 * tt, 120, .02, double.NaN, 91, 9000); if (b12 > prevB + 1e-9) { Check(b12 - prevB <= (nb == 0 && 98 - .3 * tt >= 91 ? .03 : StepThrottle.BigStep) + 1e-9, "LAND5i/5k: outside 2 km first bump <= 3%, persistent deficit / under floor sized (<= 35%)"); nb++; lastB = tt; } prevB = b12; }
             Check(nb >= 1 && nb <= 5, "LAND5i: outside 2 km near the floor - one bump per spool+settle wait (" + nb + " in 30 s)");
         }
