@@ -47,6 +47,16 @@ namespace KSPChatBridge
             g.startScene = GameScenes.SPACECENTER; g.Start();
         }
         internal static string LaunchPending;
+        static void ScanDir(string dir, List<string> into) { try { if (Directory.Exists(dir)) into.AddRange(Directory.GetFiles(dir, "*.craft")); } catch { } }
+        /// <summary>Every SPH / VAB craft in every save + stock SPH, sorted by name (menu picker and the in-flight Menu picker).</summary>
+        internal static List<string> ScanCrafts()
+        {
+            var crafts = new List<string>(); string root = KSPUtil.ApplicationRootPath;
+            try { foreach (string save in Directory.GetDirectories(Path.Combine(root, "saves"))) { ScanDir(Path.Combine(Path.Combine(save, "Ships"), "SPH"), crafts); ScanDir(Path.Combine(Path.Combine(save, "Ships"), "VAB"), crafts); } } catch { }
+            ScanDir(Path.Combine(Path.Combine(root, "Ships"), "SPH"), crafts);
+            crafts.Sort((a, b) => string.Compare(Path.GetFileNameWithoutExtension(a), Path.GetFileNameWithoutExtension(b), StringComparison.OrdinalIgnoreCase));
+            return crafts;
+        }
         internal static void LaunchNow()
         {
             string local = LaunchPending; LaunchPending = null; var g = HighLogic.CurrentGame;
@@ -81,10 +91,7 @@ namespace KSPChatBridge
         static void Scan(string dir, List<string> into) { try { if (Directory.Exists(dir)) into.AddRange(Directory.GetFiles(dir, "*.craft")); } catch { } }
         void Refresh()
         {
-            crafts.Clear(); string root = KSPUtil.ApplicationRootPath;
-            try { foreach (string save in Directory.GetDirectories(Path.Combine(root, "saves"))) { Scan(Path.Combine(Path.Combine(save, "Ships"), "SPH"), crafts); Scan(Path.Combine(Path.Combine(save, "Ships"), "VAB"), crafts); } } catch { }
-            Scan(Path.Combine(Path.Combine(root, "Ships"), "SPH"), crafts);
-            crafts.Sort((a, b) => string.Compare(Path.GetFileNameWithoutExtension(a), Path.GetFileNameWithoutExtension(b), StringComparison.OrdinalIgnoreCase));
+            crafts = LandingTestRun.ScanCrafts();
         }
         void OnGUI()
         {
@@ -125,7 +132,8 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class LandingTestFlight : MonoBehaviour
     {
-        Rect win = new Rect(Screen.width - 330, 120, 310, 110); bool placed, wasFlying, done, wasActive, engagedSeen, wasMissed; int interventions; int goArounds; string lastPhase = "", status = ""; double lastVs = double.NaN;
+        Rect win = new Rect(Screen.width - 330, 120, 310, 110), pickWin = new Rect(Screen.width / 2 - 280, 100, 560, 500); bool picker; Vector2 ps1, ps2; List<string> pickCrafts = new List<string>(); int pickCraft = -1, pickPreset; string pickErr = "";
+        bool placed, wasFlying, done, wasActive, engagedSeen, wasMissed; int interventions; int goArounds; string lastPhase = "", status = ""; double lastVs = double.NaN;
         bool InTest { get { return HighLogic.SaveFolder == LandingTestRun.SaveName && LandingTestRun.Preset != null; } }
         void Start() { if (InTest) { GameEvents.onCrash.Add(OnCrash); GameEvents.onCrashSplashdown.Add(OnCrash); if (LandingTestRun.PlacePending) StartCoroutine(Place()); } }
         void OnDestroy() { GameEvents.onCrash.Remove(OnCrash); GameEvents.onCrashSplashdown.Remove(OnCrash); }
@@ -193,17 +201,52 @@ namespace KSPChatBridge
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button("RETRY")) Again(LandingTestRun.PresetIndex);
                 if (GUILayout.Button("Next preset")) Again((LandingTestRun.PresetIndex + 1) % LandingTestRun.Presets.Count);
-                if (GUILayout.Button("Menu")) { if (placed && !done) End("aborted"); HighLogic.LoadScene(GameScenes.MAINMENU); }
+                if (GUILayout.Button("Menu")) { picker = !picker; if (picker) OpenPicker(); }   // TEST2: plane + start point picker in flight (Main menu inside)
                 GUILayout.EndHorizontal(); GUI.DragWindow();
             }, "Landing test");
+            if (picker) pickWin = GUILayout.Window(0x4C56, pickWin, DrawPicker, "Landing test - plane / start point");
         }
-        void Again(int idx)
+        void OpenPicker()
+        {
+            pickCrafts = LandingTestRun.ScanCrafts(); pickPreset = LandingTestRun.PresetIndex; pickErr = ""; pickCraft = -1;
+            for (int i = 0; i < pickCrafts.Count; i++) if (string.Equals(Path.GetFileNameWithoutExtension(pickCrafts[i]), LandingTestRun.CraftName, StringComparison.OrdinalIgnoreCase)) { pickCraft = i; break; }
+        }
+        void DrawPicker(int id)
+        {
+            GUILayout.Label("Plane (" + pickCrafts.Count + ", now " + LandingTestRun.CraftName + "):");
+            ps1 = GUILayout.BeginScrollView(ps1, GUILayout.Height(190));
+            for (int i = 0; i < pickCrafts.Count; i++) if (GUILayout.Toggle(pickCraft == i, Path.GetFileNameWithoutExtension(pickCrafts[i]) + "   [" + pickCrafts[i].Replace(KSPUtil.ApplicationRootPath, "").Replace('\\', '/') + "]")) pickCraft = i;
+            GUILayout.EndScrollView();
+            GUILayout.Label("Start point:");
+            ps2 = GUILayout.BeginScrollView(ps2, GUILayout.Height(170));
+            var ps = LandingTestRun.Presets;
+            for (int i = 0; i < ps.Count; i++) if (GUILayout.Toggle(pickPreset == i, ps[i].Name + "  (" + Math.Round(ps[i].AltM) + " m, " + Math.Round(ps[i].Speed) + " m/s, hdg " + Math.Round(ps[i].Heading) + ")")) pickPreset = i;
+            GUILayout.EndScrollView();
+            if (pickErr.Length > 0) GUILayout.Label(pickErr);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Fly here") && pickCraft >= 0 && pickPreset >= 0 && pickPreset < ps.Count)
+            {
+                try
+                {
+                    string path = pickCrafts[pickCraft]; bool same = string.Equals(Path.GetFileNameWithoutExtension(path), LandingTestRun.CraftName, StringComparison.OrdinalIgnoreCase);
+                    if (!same) { LandingTestRun.CraftPath = path; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(path); ChatLog.Write("TEST", "change plane -> " + LandingTestRun.CraftName); }
+                    picker = false; Again(pickPreset, !same);
+                }
+                catch (Exception ex) { pickErr = "Respawn failed: " + ex.Message; Debug.LogException(ex); }
+            }
+            if (GUILayout.Button("Close")) picker = false;
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Main menu", GUILayout.Width(110))) { picker = false; if (placed && !done) End("aborted"); HighLogic.LoadScene(GameScenes.MAINMENU); }
+            GUILayout.EndHorizontal(); GUI.DragWindow();
+        }
+        void Again(int idx) { Again(idx, false); }
+        void Again(int idx, bool newCraft)
         {
             if (placed && !done) End("aborted (retry)");
             try { ChatWindow.ToolFromMenu("plane_hold", "{\"engage\":false}"); } catch { }
             LandingTestRun.PresetIndex = idx; LandingTestRun.Preset = LandingTestRun.Presets[idx]; LandingTestRun.Run++; LandingTestRun.PlacePending = true;
             ChatLog.Write("TEST", LandingTestPresets.RunLine(LandingTestRun.Run, LandingTestRun.Preset, LandingTestRun.CraftName));
-            if (FlightDriver.CanRevertToPostInit) FlightDriver.RevertToLaunch();
+            if (FlightDriver.CanRevertToPostInit && !newCraft) FlightDriver.RevertToLaunch();   // TEST2: a new plane = new launch (revert would bring back the old one)
             else { var g = HighLogic.CurrentGame; var node = ConfigNode.Load(LandingTestRun.CraftPath); FlightDriver.StartWithNewLaunch(LandingTestRun.CraftPath, g.flagURL, "Runway", g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node))); }
         }
     }
