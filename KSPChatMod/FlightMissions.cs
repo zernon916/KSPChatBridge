@@ -966,6 +966,9 @@ namespace KSPChatBridge
         internal static bool Allowed(bool landed, double agl, double speed, double plan, bool moveControls, bool powerFloor) { return !landed && !moveControls && !powerFloor && (agl > 30 || speed > plan + OffBelow); }
         /// <summary>GROK LAND5j: no NEW deploy while decelerating harder than 1.5 m/s2 or pitching up out of a steep descent.</summary>
         internal const double NoDeployAcc = -1.5;
+        internal string Key = "";
+        /// <summary>LAND5p: true only when the logged state (direction + reason + phase) changed (was 1379x 'IN ... not allowed here, phase flare').</summary>
+        internal static bool LogOnce(ref string last, string key) { if (key == last) return false; last = key; return true; }
         internal static bool DeployOk(bool notLow, double accel, bool pullingUp) { return notLow && accel > NoDeployAcc && !pullingUp; }
         internal bool Step(double now, bool actual, double speed, double plan, bool allowed, bool deployOk = true)
         {
@@ -974,6 +977,7 @@ namespace KSPChatBridge
             bool want = allowed && (On ? speed > plan + OffBelow : deployOk && speed > plan + OnAbove);
             if (want == On) return false;
             if (allowed && now - changedAt < DwellS) return false;
+            Key = (want ? "OUT" : "IN") + (!allowed ? " not allowed" : want ? " over" : " under");
             Why = string.Format(System.Globalization.CultureInfo.InvariantCulture, "airbrakes {0}: {1:0} m/s vs plan {2:0} ({3})", want ? "OUT" : "IN", speed, plan,
                 !allowed ? "not allowed here" : want ? "> plan + " + OnAbove : "< plan + " + OffBelow);
             On = want; changedAt = now; return true;

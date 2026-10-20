@@ -222,6 +222,12 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // LAND5p
+                Check(Math.Abs(FlarePolicy.Pitch(7, 50, -2.8, -1.5) - FlarePolicy.Pitch(7, 50, -1.5, -1.5) - 2.6) < 1e-9 && Math.Abs(FlarePolicy.Pitch(7, 50, -12, -1.5) - FlarePolicy.Pitch(7, 50, -1.5, -1.5) - 8) < 1e-9 && FlarePolicy.CapPitch(FlarePolicy.Pitch(7, 50, -6, -1.5), 9) == 9, "LAND5p: flare pitch 2 deg per m/s of sink error (+-8), still capped by flare_max_pitch_deg");
+                string bk = null; int bn = 0; for (int k = 0; k < 1379; k++) if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "OUT over|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++;
+                Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
+                Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
+            }
             {   // TEST3: fuel %
                 Check(LandingTestPresets.ClampFuel(150) == 100 && LandingTestPresets.ClampFuel(-5) == 0 && LandingTestPresets.ClampFuel(double.NaN) == 100 && LandingTestPresets.ParseFuel("35%", 100) == 35 && LandingTestPresets.ParseFuel("abc", 60) == 60 && LandingTestPresets.ParseFuel("", 100) == 100, "TEST3: fuel % clamp / parse");
                 Check(LandingTestPresets.FuelResource("LiquidFuel") && LandingTestPresets.FuelResource("Oxidizer") && LandingTestPresets.FuelResource("MonoPropellant") && LandingTestPresets.FuelResource("XenonGas") && !LandingTestPresets.FuelResource("ElectricCharge") && !LandingTestPresets.FuelResource("Ablator") && !LandingTestPresets.FuelResource("Ore") && !LandingTestPresets.FuelResource("IntakeAir"), "TEST3: fuel resource filter");
