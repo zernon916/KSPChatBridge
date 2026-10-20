@@ -1838,9 +1838,9 @@ namespace KSPChatBridge
         /// autoland_auto_go_around / per-craft auto_go_around, default OFF). Off: log 'would go around: <reason>' once per reason and keep flying.
         /// The manual GO AROUND (go_around tool) does not come through here.</summary>
         internal static bool AutoGoAround; internal string WouldWhy = "";
-        internal bool GoAround(string why)
+        internal bool GoAround(string why, bool safety = false)   // LAND5l: safety = always (overflew the runway)
         {
-            if (AutoGoAround) { Phase = "go around"; Why = why; return true; }
+            if (AutoGoAround || safety) { Phase = "go around"; Why = why; return true; }
             string key = why.Split(':')[0]; if (key != WouldWhy) { WouldWhy = key; Why = "would go around: " + why + " (auto go-around OFF)"; ChatLog.Write("approach", Why); }
             return false;
         }
@@ -2211,7 +2211,7 @@ namespace KSPChatBridge
                 if (Phase == "final" && GateCooldown <= 0 && daHat > 20 && hat < daHat && hat > daHat - 40 && above > 60) { GoAround("high at DA " + daHat.ToString("0") + " m (" + above.ToString("0") + " m above the glidepath)"); }
                 // A missed threshold at height gets a go-around, never a dive back.
                 double length = NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius);
-                if (!grounded && along > length - 200 && hat > 3) { GoAround("overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)"); }
+                if (!grounded && along > length - 200 && hat > 3) { GoAround("overflew the runway (" + hat.ToString("0") + " m above threshold, " + speed.ToString("0") + " m/s)", true); }
                 if (grounded) Phase = "rollout";
             }
             if (Phase == "rollout") { double dsr = double.IsNaN(lastAlong) ? 0 : Math.Min(50, Math.Abs(along - lastAlong)); lastAlong = along; DesiredHeading = CenterlineHeading(cross, track, course, Math.Max(5, speed), ref CrossI, dsr, heading, ref Crab); { double dtR = dsr / Math.Max(1, speed), cr = double.IsNaN(lastCrossR) || dtR <= 0 ? 0 : (cross - lastCrossR) / dtR; lastCrossR = cross; DesiredHeading = DubinsPath.Norm(course + RolloutCorr(FlightPolicy.Wrap(DesiredHeading - course), cr, speed)); }   // GROK LAND5f: damped rollout steering
