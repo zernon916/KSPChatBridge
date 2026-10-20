@@ -70,12 +70,15 @@ namespace KSPChatBridge
             g.startScene = GameScenes.SPACECENTER; g.Start();
         }
         internal static string LaunchPending;
+        internal static bool RetryClear;   // TEST6
         /// <summary>FIX: the test sandbox only - drop every craft left in the save (crashed / landed / stuck on the runway) before a new launch.</summary>
         internal static int ClearLeftovers(Game g)
         {
             if (g == null || g.flightState == null || HighLogic.SaveFolder != SaveName) return 0;
             int n = g.flightState.protoVessels.RemoveAll(pv => pv != null && LandingTestPresets.LeftoverType(pv.vesselType.ToString()));
-            ChatLog.Write("TEST", "run " + Run + ": cleared " + n + " leftover vessel(s) from the test save");
+            int live = 0; foreach (var lv in FlightGlobals.Vessels.ToArray()) if (lv != null && LandingTestPresets.LeftoverType(lv.vesselType.ToString())) { try { lv.Die(); live++; } catch (Exception ex) { Debug.LogException(ex); } }   // TEST6: also the scene's live (unloaded) copies
+            n = Math.Max(n, live);   // the same craft counted once
+            ChatLog.Write("TEST", RetryClear ? "run " + Run + " retry: cleared " + n + " vessel(s)" : "run " + Run + ": cleared " + n + " leftover vessel(s) from the test save"); RetryClear = false;
             return n;
         }
         static void ScanDir(string dir, List<string> into) { try { if (Directory.Exists(dir)) into.AddRange(Directory.GetFiles(dir, "*.craft")); } catch { } }
@@ -192,6 +195,8 @@ namespace KSPChatBridge
             NavigationMath.Offset(lat, lon, p.Heading, 50, body.Radius, out la2, out lo2);
             if (v.currentStage > 0 && v.FindPartModulesImplementing<ModuleEngines>().TrueForAll(e => !e.EngineIgnited)) KSP.UI.Screens.StageManager.ActivateNextStage();
             NativeFlightController.SetGroup(v, KSPActionGroup.Brakes, false);
+            { int k6 = 0; foreach (var ov in FlightGlobals.Vessels.ToArray()) if (ov != null && ov != v && LandingTestPresets.LeftoverType(ov.vesselType.ToString())) { try { ov.Die(); k6++; } catch (Exception ex) { Debug.LogException(ex); } } if (k6 > 0) ChatLog.Write("TEST", "run " + LandingTestRun.Run + " spawn: removed " + k6 + " other vessel(s)"); }   // TEST6: only the new plane
+            if (FlightGlobals.ActiveVessel != v) FlightGlobals.SetActiveVessel(v); InputLockManager.ClearControlLocks();   // TEST6: input focus on the new plane, no lock left from the old one
             InputLocks.ClearOurs("run " + LandingTestRun.Run + " spawn"); ChatLog.Write("input", "run " + LandingTestRun.Run + " spawn: locks " + InputLocks.Dump());   // FIX: evidence for 'no controls'
             NativeFlightController.ResetBrakes(v, "run " + LandingTestRun.Run + " spawn"); NativeFlightController.ForwardReversers(v, "run " + LandingTestRun.Run + " spawn");   // AICS2: nothing left deployed from the last run
             v.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = .6f;
@@ -289,8 +294,7 @@ namespace KSPChatBridge
             try { ChatWindow.ToolFromMenu("plane_hold", "{\"engage\":false}"); } catch { }
             LandingTestRun.PresetIndex = idx; LandingTestRun.Preset = LandingTestRun.Presets[idx]; LandingTestRun.Run++; LandingTestRun.PlacePending = true;
             ChatLog.Write("TEST", LandingTestPresets.RunLine(LandingTestRun.Run, LandingTestRun.Preset, LandingTestRun.CraftName, LandingTestRun.FuelPct, LandingTestRun.StartSpeed, LandingTestRun.StartAlt));
-            if (FlightDriver.CanRevertToPostInit && !newCraft) FlightDriver.RevertToLaunch();   // TEST2: a new plane = new launch (revert would bring back the old one)
-            else
+            LandingTestRun.RetryClear = !newCraft;   // TEST6: a retry is a full new launch too (RevertToLaunch kept the old plane / debris and their control locks)
             {   // FIX: via the Space Center so the old plane is saved, then cleared (ClearLeftovers) before the launch - never spawn on top of it
                 LandingTestRun.LaunchPending = LandingTestRun.CraftPath; var g0 = HighLogic.CurrentGame;
                 GamePersistence.SaveGame(g0, "persistent", LandingTestRun.SaveName, SaveMode.OVERWRITE);
