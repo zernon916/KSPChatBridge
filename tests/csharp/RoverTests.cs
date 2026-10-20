@@ -16,6 +16,7 @@ internal static class RoverTests
         DrivePolicyTests();
         PowerPolicyTests();
         PlacesTests();
+        StatusBarTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -119,6 +120,15 @@ internal static class RoverTests
         var spots = new Dictionary<string, object> { { "Island 27", new Dictionary<string, object> { { "lat", -1.5 }, { "lon", -71.8 }, { "body", "Kerbin" }, { "mode", "H" } } }, { "bad", "x" } };
         var ls = PlacesStore.FromLandingSpots(spots); Check(ls.Count == 1 && ls[0].Name == "Island 27" && ls[0].Kind == "airport" && ls[0].Source == "landing_spots", "landing_spots migrate read-only");
         Check(PlacesStore.KindForKk("Runway") == "airport" && PlacesStore.KindForKk("RocketPad") == "site" && PlacesStore.NormalizeKind("BUILDING") == "building" && PlacesStore.NormalizeKind("x") == "site", "kinds");
+    }
+
+    static void StatusBarTests()
+    {
+        Check(StatusBarMath.Bars(false, 1) == 0 && StatusBarMath.Bars(true, 0) == 0 && StatusBarMath.Bars(true, .01) == 1 && StatusBarMath.Bars(true, .3) == 2 && StatusBarMath.Bars(true, .6) == 3 && StatusBarMath.Bars(true, .8) == 4 && StatusBarMath.Bars(true, 5) == 4 && StatusBarMath.Bars(true, double.NaN) == 0, "signal bars 0-4");
+        Check(StatusBarMath.BarHeight(0) < StatusBarMath.BarHeight(1) && StatusBarMath.BarHeight(3) == 1f, "rising bars");
+        Check(StatusBarMath.Battery(50, 100) == .5 && double.IsNaN(StatusBarMath.Battery(5, 0)) && StatusBarMath.Battery(150, 100) == 1, "battery fraction");
+        Check(StatusBarMath.BatteryBand(.51) == 2 && StatusBarMath.BatteryBand(.5) == 1 && StatusBarMath.BatteryBand(.2) == 1 && StatusBarMath.BatteryBand(.19) == 0 && StatusBarMath.BatteryBand(double.NaN) == -1, "battery colours");
+        Check(StatusBarMath.Label(true, .62, .125, true, .8) == "62% 125 ms R  80%" && StatusBarMath.Label(false, 0, 0, false, double.NaN) == "NO LINK  --", "status label");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

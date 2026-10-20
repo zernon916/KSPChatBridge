@@ -82,6 +82,10 @@ namespace KSPChatBridge
             float lw = Mathf.Max(150, tabletFont * 8.5f);
             GUI.Label(new Rect(b + 6, 6, W - 290 - lw, TabletHead - 6), "AICS TABLET  " + (homeVisible ? "HOME" : TabletTabs[tabletTab].ToUpperInvariant()), tabletHead);
             float kw = Mathf.Max(40, tabletFont * 2.4f), kh = TabletHead - 12;
+            {   // RS6: signal bars + battery, right of the title (skipped when the tablet is too narrow)
+                float sw = TabletStatusBarWidth(kh), sx = W - b - kh - 2 * kw - lw - 26 - sw - 10, tw = tabletHead != null ? tabletHead.CalcSize(new GUIContent("AICS TABLET  " + (homeVisible ? "HOME" : TabletTabs[tabletTab].ToUpperInvariant()))).x : 260;
+                if (sx > b + 6 + tw + 8) TabletStatusBar(new Rect(sx, 6, sw, kh));
+            }
             var oc = GUI.backgroundColor; GUI.backgroundColor = TabletLink ? new Color(.5f, 1f, .5f) : new Color(1f, .75f, .35f);
             if (GUI.Button(new Rect(W - b - kh - 2 * kw - lw - 26, 6, lw, kh), TabletLink ? "LIVE LINK: ON" : "LIVE LINK: OFF", TabletLink ? tabletTabOn : tabletKey)) { TabletLink = !TabletLink; Save(); }
             GUI.backgroundColor = oc;

@@ -116,6 +116,7 @@
     <Compile Include="../../KSPChatMod/RoverDrivePolicy.cs"/>
     <Compile Include="../../KSPChatMod/RoverPowerPolicy.cs"/>
     <Compile Include="../../KSPChatMod/PlacesStore.cs"/>
+    <Compile Include="../../KSPChatMod/StatusBarMath.cs"/>
     <Reference Include="System.IO.Compression"/><Reference Include="System.IO.Compression.FileSystem"/>
   </ItemGroup>
 </Project>
