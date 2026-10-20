@@ -222,6 +222,14 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // AICS1: ROLL / FLAPS flaperon droop
+                Check(FlapsPolicy.RollFlapDeg(20, 30, 3, 1, 0) == 10 && FlapsPolicy.RollFlapDeg(20, 6, 3, 1, 0) == 6 && FlapsPolicy.RollFlapDeg(20, 30, 0, 1, 0) == 0 && FlapsPolicy.RollFlapDeg(20, 30, 3, .5, 0) == 5, "AICS1: droop = min(deploy angle, half the range) x setting x factor");
+                bool inRange = true; for (double r = 0; r <= 1.0001; r += .05) { double rfq = FlapsPolicy.RollFlapDroop(r, 0, 0, 0), dd = FlapsPolicy.RollFlapDeg(20, 30, 3, rfq, r); if (dd + r * 20 > 20 + 1e-9 || dd > .6 * 20 + 1e-9) inRange = false; }
+                Check(inRange && FlapsPolicy.RollFlapDeg(20, 30, 3, 1, .8) <= 4 + 1e-9, "AICS1: droop + roll deflection never exceeds the surface range (>= 40% kept for roll)");
+                Check(FlapsPolicy.RollFlapDroop(0, 0, 0, 0) == 1 && FlapsPolicy.RollFlapDroop(0, 0, 0, 30) == 0 && FlapsPolicy.RollFlapDroop(0, 0, 0, 22.5) == .5 && FlapsPolicy.RollFlapDroop(0, 8, 0, 0) == 0 && FlapsPolicy.RollFlapDroop(0, 0, 15, 0) == 0, "AICS1: droop backs off with bank error / bank / centerline error");
+                Check(FlapsPolicy.DroopStep(1, 0, .02) == 0 && Math.Abs(FlapsPolicy.DroopStep(0, 1, .02) - .01) < 1e-12, "AICS1: fast out, smooth in (0.5/s)");
+                Check(FlapsPolicy.RollFlapSetting(true, 0, 60, 72, 0) == 3 && FlapsPolicy.RollFlapSetting(true, 0, 95, 72, 0) == 0 && FlapsPolicy.RollFlapSetting(false, 0, 60, 72, 0) == 0 && FlapsPolicy.RollFlapSetting(false, 2, 60, 72, 0) == 2 && FlapsPolicy.RollFlapPhase("flare") && !FlapsPolicy.RollFlapPhase("rollout"), "AICS1: droop only below flap_limit_speed in approach/final/flare (not frozen at 0 by the 4 km flap freeze)");
+            }
             {   // LAND5n
                 Check(FlarePolicy.SinkTarget(-2, double.NaN, double.NaN) == 0 && FlarePolicy.SinkTarget(1.2, 3, 1) == -1.2 && FlarePolicy.SinkTarget(9, double.NaN, double.NaN) == -5 && FlarePolicy.SinkTarget(double.NaN, double.NaN, 1) == -1 && FlarePolicy.SinkTarget(double.NaN, double.NaN, double.NaN) == -3, "LAND5n: flare sink target never > 0, flare_sink beats touchdown_sink/chart, default 3");
                 double fpa = FlarePolicy.Pitch(7, 55, 1.4, -1), fpb = FlarePolicy.Pitch(7, 55, -1, -1), fpc = FlarePolicy.Pitch(7, 55, 0, 2);

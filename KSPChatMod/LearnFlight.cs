@@ -1349,6 +1349,21 @@ namespace KSPChatBridge
         internal static double RollFlapDroop(double rollInput, double bankErr, double bank)
         { double dem = Math.Max(Math.Abs(rollInput) / .5, Math.Max(Math.Abs(bankErr) / 8, Math.Abs(bank) / 15)); return FlightPolicy.Clamp(2 - 2 * dem, 0, 1); }
         /// <summary>GROK RF1: droop drops instantly, comes back at 0.5 per second.</summary>
+        /// <summary>AICS1: as above, plus the centerline error (30 m = no droop... 15 m starts backing off).</summary>
+        internal static double RollFlapDroop(double rollInput, double bankErr, double bank, double cross)
+        { double c = double.IsNaN(cross) ? 0 : Math.Abs(cross) / 30; return Math.Min(RollFlapDroop(rollInput, bankErr, bank), FlightPolicy.Clamp(2 - 2 * c, 0, 1)); }
+        /// <summary>AICS1: phases where ROLL / FLAPS droop (approach / intercept / final / flare).</summary>
+        internal static bool RollFlapPhase(string phase) { return phase == "approach" || phase == "intercept" || phase == "final" || phase == "flare"; }
+        /// <summary>AICS1: droop setting - in a droop phase the speed rule alone (out below flap_limit_speed, kept to +KeepOver; no 4 km freeze), else the flap setting.</summary>
+        internal static int RollFlapSetting(bool active, int flapSet, double eas, double limit, int current) { return active ? Math.Max(flapSet, MaxAllowed(eas, limit, current)) : flapSet; }
+        /// <summary>AICS1: droop degrees = min(deploy angle, RollFlapThrow x range) x setting x droop factor, never more than (1 - |roll|) x range,
+        /// so droop + roll deflection stays inside the surface's range.</summary>
+        internal static double RollFlapDeg(double range, double deployMax, int setting, double droop, double rollInput)
+        {
+            if (!(range > 0)) return 0; double max = Math.Min(deployMax > 0 ? deployMax : range, RollFlapThrow * range);
+            double d = max * Fraction(setting) * FlightPolicy.Clamp(droop, 0, 1);
+            return Math.Max(0, Math.Min(d, (1 - Math.Min(1, Math.Abs(double.IsNaN(rollInput) ? 0 : rollInput))) * range));
+        }
         internal static double DroopStep(double cur, double target, double dt) { return target <= cur ? target : Math.Min(target, cur + .5 * Math.Max(0, dt)); }
         internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
         internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }

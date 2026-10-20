@@ -11,7 +11,8 @@ namespace KSPChatBridge
         sealed class FlapSnap { internal bool Deploy, Invert; internal float Angle; }
         readonly Dictionary<ModuleControlSurface, FlapSnap> flapOrig = new Dictionary<ModuleControlSurface, FlapSnap>();
         readonly List<ModuleControlSurface> flaps = new List<ModuleControlSurface>();
-        readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 1, rfApplied = -1; float rfLast;   // GROK RF1
+        readonly HashSet<ModuleControlSurface> rollFlaps = new HashSet<ModuleControlSurface>(); double rfDroop = 0, rfApplied = -1; float rfLast; int rfSet, rfSetApplied = -1; string rfPhase;   // GROK RF1
+        readonly Dictionary<ModuleControlSurface, bool> rfInvert = new Dictionary<ModuleControlSurface, bool>();   // AICS1: deployInvert that makes this surface droop DOWN
         float configChangedAt = -100; int flapSet, rollFlapCount; float flapNextStep, flapScanAt = -100, climbSince = -1; bool farFlaps, goAroundFlaps, takeoffFlaps; Vessel flapVessel;
         internal static int FlapSetting { get { return instance == null ? 0 : instance.flapSet; } }
         internal static bool HasFlapsNow { get { return instance != null && instance.flaps.Count > 0; } }
@@ -74,7 +75,7 @@ namespace KSPChatBridge
                 bool aero = cs is ModuleAeroSurface;
                 if (surfTagged) { role = tagged ?? SurfRole.Other; why = tagged.HasValue ? "tag '" + AicsSurfaceTag.TagOf(p) + "'" : "untagged (tags in use)"; }
                 else { role = SurfaceRoles.Classify(!cs.ignorePitch, !cs.ignoreYaw, !cs.ignoreRoll, aero, brakeAg, span01, chord, vert, defl, mainTe); why = "auto"; }
-                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) { rollFlapCount++; rollFlaps.Add(cs); } }
+                if (SurfaceRoles.HighLift(role)) { flaps.Add(cs); if (role == SurfRole.RollFlap) { rollFlapCount++; rollFlaps.Add(cs); rfInvert[cs] = defl == -1 ? !cs.deployInvert : cs.deployInvert; } }
                 else if (role == SurfRole.Brake) brakeSurfs.Add(cs);
                 log.Append(p.partInfo != null ? p.partInfo.title : p.name).Append(" @").Append(l.x.ToString("0.0")).Append("/").Append(l.y.ToString("0.0")).Append("/").Append(l.z.ToString("0.0"))
                    .Append(" span ").Append(span01.ToString("0.00")).Append(chord == 1 ? " LE" : chord == -1 ? " TE" : " mid").Append(vert == 1 ? " top" : vert == -1 ? " bottom" : "")
@@ -154,15 +155,37 @@ namespace KSPChatBridge
         {
             if (rollFlaps.Count == 0) return;
             float now = Time.realtimeSinceStartup; double dt = rfLast > 0 ? now - rfLast : 0; rfLast = now;
-            double bank = Roll(), want = FlapsPolicy.RollFlapDroop(vessel.ctrlState.roll, bankCmd - bank, bank);
+            bool act = mode == "landing" && runway != null && !vessel.LandedOrSplashed && FlapsPolicy.RollFlapPhase(runway.Phase);   // AICS1: own droop schedule on approach / final / flare
+            double lim = !double.IsNaN(CraftOverrides.L("flap_limit_speed")) ? CraftOverrides.L("flap_limit_speed") : FlapLimit();
+            rfSet = FlapsPolicy.RollFlapSetting(act, flapSet, Eas(), lim, rfSet);
+            double bank = Roll(), want = rfSet > 0 ? FlapsPolicy.RollFlapDroop(vessel.ctrlState.roll, bankCmd - bank, bank, act ? runway.Cross : 0) : 0;
             rfDroop = FlapsPolicy.DroopStep(rfDroop, want, dt);
-            if (flapSet > 0 && Math.Abs(rfDroop - rfApplied) > .02) { rfApplied = rfDroop; ApplyFlaps(); }
+            if (Math.Abs(rfDroop - rfApplied) > .02 || rfSet != rfSetApplied) { rfApplied = rfDroop; rfSetApplied = rfSet; ApplyRollFlaps(); }
+            string ph = act ? runway.Phase : mode ?? "";
+            if (ph != rfPhase)
+            {
+                rfPhase = ph; double deg = 0;
+                foreach (var cs in rollFlaps) if (cs != null) { FlapSnap o; float dmax = flapOrig.TryGetValue(cs, out o) && o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange; deg = Math.Max(deg, FlapsPolicy.RollFlapDeg(cs.ctrlSurfaceRange, dmax, rfSet, 1, 0)); }
+                ChatLog.Write("aics", "roll/flaps droop " + deg.ToString("0.0") + " deg max (phase " + (ph == "" ? "-" : ph) + ", " + rollFlaps.Count + " surfaces, limit " + lim.ToString("0") + " m/s, now " + Eas().ToString("0") + ")");
+            }
+        }
+        /// <summary>AICS1: ROLL / FLAPS surfaces droop DOWN by RollFlapDeg (roll keeps the rest of the throw).</summary>
+        void ApplyRollFlaps()
+        {
+            foreach (var cs in rollFlaps)
+            {
+                if (cs == null || !cs.ignorePitch) continue;   // NEVER deploy a pitch surface
+                FlapSnap o; if (!flapOrig.TryGetValue(cs, out o)) flapOrig[cs] = o = new FlapSnap { Deploy = cs.deploy, Invert = cs.deployInvert, Angle = cs.deployAngle };
+                float deg = (float)FlapsPolicy.RollFlapDeg(cs.ctrlSurfaceRange, o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange, rfSet, rfDroop, vessel.ctrlState.roll);
+                bool inv; cs.deployInvert = rfInvert.TryGetValue(cs, out inv) ? inv : o.Invert; cs.deployAngle = Math.Max(.01f, deg); cs.deploy = deg > .05f;
+                try { recovery.AcceptSurface(cs); } catch (Exception) { }
+            }
         }
         void ApplyFlaps()
         {
             foreach (var cs in flaps)
             {
-                if (cs == null || !cs.ignorePitch) continue;   // NEVER deploy a pitch surface
+                if (cs == null || !cs.ignorePitch || rollFlaps.Contains(cs)) continue;   // NEVER deploy a pitch surface; AICS1: ROLL / FLAPS = ApplyRollFlaps
                 FlapSnap o; if (!flapOrig.TryGetValue(cs, out o)) flapOrig[cs] = o = new FlapSnap { Deploy = cs.deploy, Invert = cs.deployInvert, Angle = cs.deployAngle };
                 float max = o.Angle > .1f ? o.Angle : cs.ctrlSurfaceRange; bool rf = rollFlaps.Contains(cs);
                 if (rf) max = Math.Min(max, (float)FlapsPolicy.RollFlapThrow * cs.ctrlSurfaceRange);   // GROK RF1: half the throw stays for roll
@@ -174,7 +197,7 @@ namespace KSPChatBridge
         void RestoreFlaps()
         {
             foreach (var kv in flapOrig) if (kv.Key != null) { kv.Key.deploy = kv.Value.Deploy; kv.Key.deployAngle = kv.Value.Angle; kv.Key.deployInvert = kv.Value.Invert; try { recovery.AcceptSurface(kv.Key); } catch (Exception) { } }
-            flapOrig.Clear(); flapSet = 0;
+            flapOrig.Clear(); flapSet = 0; rfApplied = -1; rfSetApplied = -1;
         }
     }
 }
