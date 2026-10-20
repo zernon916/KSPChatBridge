@@ -61,6 +61,14 @@ namespace KSPChatBridge
             g.startScene = GameScenes.SPACECENTER; g.Start();
         }
         internal static string LaunchPending;
+        /// <summary>FIX: the test sandbox only - drop every craft left in the save (crashed / landed / stuck on the runway) before a new launch.</summary>
+        internal static int ClearLeftovers(Game g)
+        {
+            if (g == null || g.flightState == null || HighLogic.SaveFolder != SaveName) return 0;
+            int n = g.flightState.protoVessels.RemoveAll(pv => pv != null && LandingTestPresets.LeftoverType(pv.vesselType.ToString()));
+            ChatLog.Write("TEST", "run " + Run + ": cleared " + n + " leftover vessel(s) from the test save");
+            return n;
+        }
         static void ScanDir(string dir, List<string> into) { try { if (Directory.Exists(dir)) into.AddRange(Directory.GetFiles(dir, "*.craft")); } catch { } }
         /// <summary>Every SPH / VAB craft in every save + stock SPH, sorted by name (menu picker and the in-flight Menu picker).</summary>
         internal static List<string> ScanCrafts()
@@ -74,6 +82,7 @@ namespace KSPChatBridge
         internal static void LaunchNow()
         {
             string local = LaunchPending; LaunchPending = null; var g = HighLogic.CurrentGame;
+            ClearLeftovers(g);   // FIX: a leftover test plane on the runway took every control from the new one (Luke 01:12)
             var node = ConfigNode.Load(local);
             var manifest = g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node));
             ChatLog.Write("TEST", "run " + Run + " launching from the Space Center: " + Path.GetFileName(local));
@@ -172,6 +181,7 @@ namespace KSPChatBridge
             NavigationMath.Offset(lat, lon, p.Heading, 50, body.Radius, out la2, out lo2);
             if (v.currentStage > 0 && v.FindPartModulesImplementing<ModuleEngines>().TrueForAll(e => !e.EngineIgnited)) KSP.UI.Screens.StageManager.ActivateNextStage();
             NativeFlightController.SetGroup(v, KSPActionGroup.Brakes, false);
+            InputLocks.ClearOurs("run " + LandingTestRun.Run + " spawn"); ChatLog.Write("input", "run " + LandingTestRun.Run + " spawn: locks " + InputLocks.Dump());   // FIX: evidence for 'no controls'
             NativeFlightController.ResetBrakes(v, "run " + LandingTestRun.Run + " spawn"); NativeFlightController.ForwardReversers(v, "run " + LandingTestRun.Run + " spawn");   // AICS2: nothing left deployed from the last run
             v.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = .6f;
             for (int k = 0; k < 10; k++)   // hold the state a few physics frames so the ground contact and packing settle
@@ -265,7 +275,12 @@ namespace KSPChatBridge
             LandingTestRun.PresetIndex = idx; LandingTestRun.Preset = LandingTestRun.Presets[idx]; LandingTestRun.Run++; LandingTestRun.PlacePending = true;
             ChatLog.Write("TEST", LandingTestPresets.RunLine(LandingTestRun.Run, LandingTestRun.Preset, LandingTestRun.CraftName, LandingTestRun.FuelPct));
             if (FlightDriver.CanRevertToPostInit && !newCraft) FlightDriver.RevertToLaunch();   // TEST2: a new plane = new launch (revert would bring back the old one)
-            else { var g = HighLogic.CurrentGame; var node = ConfigNode.Load(LandingTestRun.CraftPath); FlightDriver.StartWithNewLaunch(LandingTestRun.CraftPath, g.flagURL, "Runway", g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node))); }
+            else
+            {   // FIX: via the Space Center so the old plane is saved, then cleared (ClearLeftovers) before the launch - never spawn on top of it
+                LandingTestRun.LaunchPending = LandingTestRun.CraftPath; var g0 = HighLogic.CurrentGame;
+                GamePersistence.SaveGame(g0, "persistent", LandingTestRun.SaveName, SaveMode.OVERWRITE);
+                HighLogic.LoadScene(GameScenes.SPACECENTER); return;
+            }
         }
     }
 }

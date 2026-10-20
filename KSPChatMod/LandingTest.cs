@@ -98,6 +98,8 @@ namespace KSPChatBridge
         /// <summary>Log lines (one marker per run, one outcome).</summary>
         internal static string RunLine(int run, TestPreset p, string craft) { return "run " + run + " preset=" + p.Name + " craft=" + craft; }
         internal static string RunLine(int run, TestPreset p, string craft, double fuelPct) { return RunLine(run, p, craft) + (double.IsNaN(fuelPct) ? "" : " fuel=" + fuelPct.ToString("0.#", CultureInfo.InvariantCulture) + "%"); }
+        /// <summary>FIX: vessel types cleared from the test save before a launch (everything but asteroids / comets).</summary>
+        internal static bool LeftoverType(string type) { return type != "SpaceObject" && type != "Unknown"; }
         /// <summary>TEST3: fuel % 0-100 (bad / blank = 100).</summary>
         internal static double ClampFuel(double pct) { return double.IsNaN(pct) || double.IsInfinity(pct) ? 100 : Math.Max(0, Math.Min(100, pct)); }
         internal static double ParseFuel(string text, double fallback)

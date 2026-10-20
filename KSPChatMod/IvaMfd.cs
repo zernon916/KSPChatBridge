@@ -1,4 +1,4 @@
-// Native IVA AICS MFD (Phase 2, Luke 4:41 PM): a procedural cockpit screen prop. The face (bezel, 26 soft keys, screen) is
+﻿// Native IVA AICS MFD (Phase 2, Luke 4:41 PM): a procedural cockpit screen prop. The face (bezel, 26 soft keys, screen) is
 // recorded into an RtCanvas (MfdCanvas.cs) and flushed into a RenderTexture in one GL pass at 2-5 Hz, then mapped on a quad
 // built in code (no Unity/Blender assets); one MeshCollider on the face hit-tests the keys and the screen by texture
 // coordinate (IvaLayout). Same navigation as the outside MFD (MfdNav: HOME groups, paged items, BACK fixed bottom-left), and
@@ -51,7 +51,10 @@ namespace KSPChatBridge
             foreach (var g in MfdNav.Groups(Mj)) for (int pg = 0; pg < MfdNav.Pages(g); pg++) foreach (var it in MfdNav.PageItems(g, pg)) if (it.Id == id) { group = g.Id; item = id; page = pg; return; }
         }
 
-        const string LockId = "AICS_IvaTyping";
+        const string LockId = "AICS_IvaTyping"; internal const string TypingLockId = LockId;
+        /// <summary>FIX: true while an MFD field has focus or the 2-frame Esc release is pending.</summary>
+        internal static bool TypingNow { get { return typingOwner != null || releaseFrame >= 0 && Time.frameCount < releaseFrame + 5; } }
+        internal static void ResetTyping() { typingOwner = null; releaseFrame = -1; }
         static AicsIvaMfd typingOwner; static int releaseFrame = -1;
         static readonly List<AicsIvaMfd> live = new List<AicsIvaMfd>();   // every built screen: who is showing which page
         /// <summary>A built screen is showing MAP / CHART / ILS: MapWindow then keeps building its terrain bitmap even with the
@@ -190,7 +193,7 @@ namespace KSPChatBridge
         }
         void Update()
         {
-            if (releaseFrame >= 0 && Time.frameCount >= releaseFrame && !Input.GetKey(KeyCode.Escape)) { InputLockManager.RemoveControlLock(LockId); releaseFrame = -1; }
+            if (releaseFrame >= 0 && Time.frameCount >= releaseFrame && !Input.GetKey(KeyCode.Escape)) { InputLocks.Remove(LockId); releaseFrame = -1; }
             if (!built) return;
             if (focused != null && typingOwner == this)
             {
@@ -215,13 +218,13 @@ namespace KSPChatBridge
             if (typingOwner != null && typingOwner != this) typingOwner.Unfocus(false);
             focused = f; typingOwner = this; releaseFrame = -1;
             if (f == planF) planF.Set(AicsMenu.PlanText);
-            InputLockManager.SetControlLock(ControlTypes.ALLBUTCAMERAS | ControlTypes.PAUSE, LockId);   // ship keys (space = stage!) and Esc-pause blocked while typing
+            InputLocks.Set(ControlTypes.ALLBUTCAMERAS | ControlTypes.PAUSE, LockId);   // ship keys (space = stage!) and Esc-pause blocked while typing
             dirty = true;
         }
         void Unfocus(bool now)
         {
             focused = null; if (typingOwner == this) typingOwner = null;
-            if (now) InputLockManager.RemoveControlLock(LockId); else releaseFrame = Time.frameCount + 2;   // keep Esc from opening the pause menu
+            if (now) InputLocks.Remove(LockId); else releaseFrame = Time.frameCount + 2;   // keep Esc from opening the pause menu
             dirty = true;
         }
         void Submit()

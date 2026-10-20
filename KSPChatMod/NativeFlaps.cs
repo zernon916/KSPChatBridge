@@ -183,6 +183,11 @@ namespace KSPChatBridge
         void RollFlapTick()
         {
             if (rollFlaps.Count == 0) return;
+            if (mode == "idle")
+            {   // FIX: AP off = hands off the surfaces; put back what the droop changed, once
+                if (rfApplied > 0 || rfSetApplied > 0) { foreach (var cs in rollFlaps) { FlapSnap o; if (cs != null && flapOrig.TryGetValue(cs, out o)) { cs.deploy = o.Deploy; cs.deployAngle = o.Angle; cs.deployInvert = o.Invert; flapOrig.Remove(cs); } } ChatLog.Write("aics", "roll/flaps droop off (autopilot off) - surfaces restored"); }
+                rfApplied = 0; rfSetApplied = 0; rfDroop = 0; rfSet = 0; rfPhase = "idle"; rfLast = 0; return;
+            }
             float now = Time.realtimeSinceStartup; double dt = rfLast > 0 ? now - rfLast : 0; rfLast = now;
             bool act = mode == "landing" && runway != null && !vessel.LandedOrSplashed && FlapsPolicy.RollFlapPhase(runway.Phase);   // AICS1: own droop schedule on approach / final / flare
             double lim = !double.IsNaN(CraftOverrides.L("flap_limit_speed")) ? CraftOverrides.L("flap_limit_speed") : FlapLimit();

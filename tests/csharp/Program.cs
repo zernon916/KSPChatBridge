@@ -222,6 +222,9 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // FIX leftovers
+                Check(LandingTestPresets.LeftoverType("Plane") && LandingTestPresets.LeftoverType("Debris") && LandingTestPresets.LeftoverType("Ship") && !LandingTestPresets.LeftoverType("SpaceObject"), "FIX: leftover test craft cleared before a launch (asteroids kept)");
+            }
             {   // AICS2 elevons
                 Check(SurfaceRoles.Classify(true, false, true, false, false, .8, -1, 1, -1, true) == SurfRole.Pitch && SurfaceRoles.Classify(false, false, true, false, false, 1, -1, 1, -1, false) != SurfRole.Brake && SurfaceRoles.Classify(false, false, false, false, false, .5, -1, 1, -1, false) == SurfRole.Brake, "AICS2: a pitch/roll surface on top of the wing is never auto-brake (pure spoiler still is)");
             }
