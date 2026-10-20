@@ -34,6 +34,10 @@ namespace KSPChatBridge
     internal static class FinalApproachPolicy
     {
         internal const double LookAheadM = 1500;
+        /// <summary>LAT3 (run 5: +6.7 m at 2 km drifting steadily to -6.2 at touchdown, heading ask within 0.05 deg of the track): the 1500 m
+        /// centerline lookahead made a 5 m error worth 0.2 deg. It shrinks with the distance to the threshold: 0.6 x distance, 400..1500 m.</summary>
+        internal const double LatLookMin = 400, FlareBankCap = 3;
+        internal static double LateralLookAhead(double distToThr) { return double.IsNaN(distToThr) ? LookAheadM : Math.Max(LatLookMin, Math.Min(LookAheadM, .6 * distToThr)); }
         internal const double LandingBankCap = 30;
         internal static double BankCommand(double bank, bool landing) { return landing ? double.IsNaN(bank) ? 0 : FlightPolicy.Clamp(bank, -LandingBankCap, LandingBankCap) : bank; }
         /// <summary>GROK FIX2 (Oct 19: planned 55 deg, flown 30 -> real radius 7.1 km vs 2.8 planned): every route / turn / lead / feed-forward

@@ -1054,7 +1054,8 @@ namespace KSPChatBridge
                 }
                 if (mode == "landing" && runway != null && !double.IsNaN(runway.BankCap)) blim = Math.Min(blim, runway.BankCap);
                 if (mode == "landing" && !double.IsNaN(CraftOverrides.L("max_approach_bank"))) blim = Math.Min(blim, CraftOverrides.L("max_approach_bank"));   // TAB-CRAFT1
-            blim = PilotPolicy.LandBankCap(blim, mode == "landing", vessel.radarAltitude, vessel.LandedOrSplashed);   // GROK LAND5f: wings level at touchdown (16:41 wingtip strike)
+            blim = PilotPolicy.LandBankCap(blim, mode == "landing", vessel.radarAltitude, vessel.LandedOrSplashed);
+            if (mode == "landing" && runway != null && runway.Phase == "flare") blim = Math.Min(blim, FinalApproachPolicy.FlareBankCap);   // LAT3: flare keeps a small heading correction, wings near level   // GROK LAND5f: wings level at touchdown (16:41 wingtip strike)
             if (mode == "hold" && pendingLand != null) blim = PilotPolicy.FerryBank(blim, TimeWarp.CurrentRate);   // GROK LAND5f: ferry 54 deg at 235 m/s under warp   // GROK LAND5b: <= 20 deg below 500 m after a go-around
             double hdgRateL = double.IsNaN(prevHdgL) || dt <= 0 ? 0 : FlightPolicy.Wrap(FlightGlobals.ship_heading - prevHdgL) / dt; prevHdgL = FlightGlobals.ship_heading;
             double locDamp = mode == "landing" && runway != null && runway.Phase == "final" ? FlightPolicy.Clamp(PilotPolicy.FinalLatDamp * hdgRateL, -5, 5) : 0;   // GROK LAND5d: track-rate damping sized for the stronger lineup gain (no S-turns)   // GROK LAND5b: track-rate damping on the final capture (16 km wobble)

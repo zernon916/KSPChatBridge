@@ -247,6 +247,12 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // LAT3 (run 5)
+                double lc = 0, lt = 0, lb = 0;
+                double hFar = RunwayMission.CenterlineHeading(-5, 270, 270, 90, ref lc, 0, 270, ref lt, true, FinalApproachPolicy.LookAheadM), hNear = RunwayMission.CenterlineHeading(-5, 270, 270, 90, ref lb, 0, 270, ref lt, true, FinalApproachPolicy.LateralLookAhead(300));
+                Check(FinalApproachPolicy.LateralLookAhead(5000) == 1500 && FinalApproachPolicy.LateralLookAhead(1000) == 600 && FinalApproachPolicy.LateralLookAhead(100) == 400 && Math.Abs(hNear - 270) > 3 * Math.Abs(hFar - 270), "LAT3: lookahead shrinks to 400 m close in - a 5 m error asks ~3.75x the correction (" + (hFar - 270).ToString("0.00") + " -> " + (hNear - 270).ToString("0.00") + " deg)");
+                Check(FinalApproachPolicy.FlareBankCap <= 3 && FinalApproachPolicy.FlareBankCap >= 2, "LAT3: flare bank capped at ~3 deg (heading correction kept)");
+            }
             {   // SPD2 (run 3 numbers)
                 Check(!ApproachProfile.IdleWanted(true, 149, 153) && ApproachProfile.IdleWanted(true, 151, 153), "SPD2: HIGH idle only while speed >= plan - 3");
                 Check(!StepThrottle.ShortIdleOk(-3.6, 160, 160) && !StepThrottle.ShortIdleOk(0, 150, 160) && StepThrottle.ShortIdleOk(.5, 160, 160), "SPD2: short-final idle not while decaying hard or 5 s ahead < plan - 5");

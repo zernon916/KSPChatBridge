@@ -2246,7 +2246,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
                 if (!LocCoupled && Math.Abs(Ils.LocDeg) < KSPChatBridge.Ils.LocFullScale && Ils.Front && -along < LocRange) LocCoupled = true;
                 if (LocCoupled && !GsCoupled && Math.Abs(Ils.GsDeg) < KSPChatBridge.Ils.GsFullScale) GsCoupled = true;
                 double latDev = LocCoupled ? Ils.CrossM : cross;
-                DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix, FinalApproachPolicy.LookAheadM);
+                DesiredHeading = CenterlineHeading(latDev, track, course, speed, ref CrossI, ds, heading, ref Crab, Distance < ApproachChart.ShortFix, FinalApproachPolicy.LateralLookAhead(Distance));   // LAT3: shorter close in
                 DesiredAltitude = GsCoupled ? altitude - Ils.AboveGsM : Chart != null ? Math.Max(Chart.GlideAlt(-along + TouchdownM), altitude - Ils.AboveGsM) : Elevation + Math.Max(3, (TouchdownM - along) * Math.Tan(3 * Math.PI / 180));   // before GS capture: never below the ILS path
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);
                 OffLine = hat > 60 && ApproachProfile.BadlyOff(latDev, trackErr, true);
