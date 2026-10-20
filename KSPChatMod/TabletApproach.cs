@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
@@ -26,22 +27,28 @@ namespace KSPChatBridge
             y += pad + lines.Length * lh + gap;
             if (NativeFlightController.CraftReady)
             {   // TAB-CRAFT1: this craft's approach / landing speeds (the same craft_overrides as AUTOPILOT / CRAFT / DETAILS), applied live
-                Rect sc = TabletUi.CardPanel(new Rect(0, y, width, pad + 10 * row + 9 * gap), "Speeds / flare / go-around - " + NativeFlightController.CraftName + " (also in CRAFT > DETAILS)");
-                float sy = CraftOverrideRow(sc, sc.y, CraftIndex(CraftOverrides.Approach), "Approach speed", row, TabletLink) + gap;
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.Threshold), "Landing speed (at runway)", row, TabletLink) + gap;
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareStart), "Flare height (above runway)", row, TabletLink) + gap;
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareThrottle), "Flare throttle (blank = idle)", row, TabletLink) + gap;
-            sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareSpoolLead), "Flare spool-up lead (seconds before flare)", row, TabletLink) + gap;   // THR9
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareSink), "Flare sink rate (m/s)", row, TabletLink) + gap;   // LAND5n
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareMaxPitch), "Max flare pitch (deg)", row, TabletLink) + gap;
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.TouchdownAim), "Touchdown aim point (m past threshold, negative = short)", row, TabletLink) + gap;
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.RolloutPitch), "Rollout nose-down (deg)", row, TabletLink) + gap;
-            sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlapDeg), "Flap degree (full flaps, negative = trailing edge up, blank = part setting)", row, TabletLink) + gap;   // FLAP2
-                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.AutoGa), "Auto go-around (this craft)", row, TabletLink) + gap;
+                var rows = new[] {   // UI1: measured rows (long labels wrap, controls below) - the card and everything after it use the real height
+                    new KeyValuePair<string, string>(CraftOverrides.Approach, "Approach speed"),
+                    new KeyValuePair<string, string>(CraftOverrides.Threshold, "Landing speed (at runway)"),
+                    new KeyValuePair<string, string>(CraftOverrides.FlareStart, "Flare height (above runway)"),
+                    new KeyValuePair<string, string>(CraftOverrides.FlareThrottle, "Flare throttle (blank = idle)"),
+                    new KeyValuePair<string, string>(CraftOverrides.FlareSpoolLead, "Flare spool-up lead (seconds before flare)"),   // THR9
+                    new KeyValuePair<string, string>(CraftOverrides.FlareSink, "Flare sink rate (m/s)"),   // LAND5n
+                    new KeyValuePair<string, string>(CraftOverrides.FlareMaxPitch, "Max flare pitch (deg)"),
+                    new KeyValuePair<string, string>(CraftOverrides.TouchdownAim, "Touchdown aim point (m past threshold, negative = short)"),
+                    new KeyValuePair<string, string>(CraftOverrides.RolloutPitch, "Rollout nose-down (deg)"),
+                    new KeyValuePair<string, string>(CraftOverrides.FlapDeg, "Flap degree (full flaps, negative = trailing edge up, blank = part setting)"),   // FLAP2
+                    new KeyValuePair<string, string>(CraftOverrides.AutoGa, "Auto go-around (this craft)") };
+                Rect probe = new Rect(12, 0, width - 24, 0); float rowsH = 0;
+                foreach (var kv in rows) rowsH += CraftOverrideRowHeight(probe, CraftIndex(kv.Key), kv.Value, row) + gap;
+                float cardH = pad + rowsH + row + gap;
+                Rect sc = TabletUi.CardPanel(new Rect(0, y, width, cardH), "Speeds / flare / go-around - " + NativeFlightController.CraftName + " (also in CRAFT > DETAILS)");
+                float sy = sc.y;
+                foreach (var kv in rows) sy = CraftOverrideRow(sc, sy, CraftIndex(kv.Key), kv.Value, row, TabletLink) + gap;
                 bool gOn = NativeFlightController.GlobalAutoGoAround;   // LAND5k: global default (OFF); manual GO AROUND always works
                 TabletUi.Label(new Rect(sc.x, sy, Mathf.Max(260, sc.width * .36f), row), "Auto go-around (all craft): " + (gOn ? "ON" : "OFF"));
                 if (TabletUi.Button(new Rect(sc.x + Mathf.Max(260, sc.width * .36f), sy, Mathf.Max(120, tabletFont * 6f), row), gOn ? "TURN OFF" : "TURN ON", gOn, TabletLink)) NativeFlightController.GlobalAutoGoAround = !gOn;
-                y += pad + 10 * row + 9 * gap + gap;
+                y += Mathf.Max(cardH, sy + row + 8 - y) + gap;   // UI1: after the last row's real bottom
             }
             if (!TabletLink)
             {

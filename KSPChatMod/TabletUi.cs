@@ -57,8 +57,13 @@ namespace KSPChatBridge
             field = new GUIStyle { fontSize = font, alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip, padding = new RectOffset(10, 8, 4, 4) };
             field.normal.textColor = field.hover.textColor = field.focused.textColor = Text;   // this Unity's GUIStyle has no caret/selection colour, so the caret stays the engine default
             toggleCap = new GUIStyle(label) { alignment = TextAnchor.MiddleLeft };
+            wrapS = new GUIStyle(label) { wordWrap = true, clipping = TextClipping.Overflow, alignment = TextAnchor.UpperLeft };   // UI1
         }
         internal static GUIStyle TextStyle { get { return label; } }
+        static GUIStyle wrapS;   // UI1: word-wrapped label, measured height
+        internal static float TextWidth(string text) { return label == null ? 0 : label.CalcSize(new GUIContent(text ?? "")).x; }
+        internal static float WrapHeight(string text, float width) { return wrapS == null ? 0 : wrapS.CalcHeight(new GUIContent(text ?? ""), Mathf.Max(10, width)); }
+        internal static void LabelWrap(Rect r, string text, bool dim = false) { if (wrapS == null) { Label(r, text, dim); return; } var o = wrapS.normal.textColor; wrapS.normal.textColor = dim ? Dim : Text; GUI.Label(r, text, wrapS); wrapS.normal.textColor = o; }
         internal static void Fill(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, round == null ? Texture2D.whiteTexture : (Texture)round); GUI.color = o; }
         internal static void Rect(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.DrawTexture(r, Texture2D.whiteTexture); GUI.color = o; }
         static void Box(Rect r, Color c) { var o = GUI.color; GUI.color = c; GUI.Box(r, GUIContent.none, cardS); GUI.color = o; }
