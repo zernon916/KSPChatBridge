@@ -301,6 +301,25 @@ class Program
                 CraftOverrides.SetAuto(au4); bool auL = Math.Abs(CraftOverrides.L(CraftOverrides.Threshold) - au4.Landing) < 1e-9 && !CraftOverrides.IsUser(CraftOverrides.Threshold) && CraftOverrides.L(CraftOverrides.FlareMaxPitch) == 6.5 && double.IsNaN(CraftOverrides.L(CraftOverrides.FlareThrottle)); CraftOverrides.ClearAuto();
                 Check(auL && double.IsNaN(CraftOverrides.L(CraftOverrides.Threshold)), "AUTO1: blank settings read the computed defaults; flare throttle stays idle (NaN) when 0");
             }
+            {   // AUTO2: CRAFT fields auto-fill with the autopilot's value until edited; AUTO resets
+                string sh = null; bool ia;
+                string f1 = CraftOverrides.FieldText(double.NaN, 118.93, "", ref sh, out ia);
+                Check(f1 == "118.9" && ia && sh == "118.9", "AUTO2: blank field shows the auto value (dimmed, auto)");
+                string f2 = CraftOverrides.FieldText(double.NaN, 121.2, f1, ref sh, out ia);
+                Check(f2 == "121.2" && ia, "AUTO2: untouched auto field follows learning updates");
+                string f3 = CraftOverrides.FieldText(double.NaN, 125, "110", ref sh, out ia);
+                Check(f3 == "110" && !ia, "AUTO2: typed text is kept as a pending edit, not overwritten by auto");
+                string f3b = CraftOverrides.FieldText(double.NaN, 125, "", ref sh, out ia);
+                Check(f3b == "" && !ia, "AUTO2: clearing the field to type does not refill it");
+                string f4 = CraftOverrides.FieldText(110, 125, f3, ref sh, out ia);
+                Check(f4 == "110" && !ia && sh == null, "AUTO2: override shows the saved value, not auto");
+                string f5 = CraftOverrides.FieldText(110, 125, "11", ref sh, out ia);
+                Check(f5 == "11" && !ia, "AUTO2: editing an override keeps the typed text");
+                sh = null; string f6 = CraftOverrides.FieldText(double.NaN, 125, "", ref sh, out ia);
+                Check(f6 == "125" && ia, "AUTO2: reset (override cleared) shows the auto value again");
+                sh = null; string f7 = CraftOverrides.FieldText(double.NaN, double.NaN, null, ref sh, out ia);
+                Check(f7 == "" && ia, "AUTO2: no auto value = empty field, still auto");
+            }
             {   // ROLL3 (Aeris 4A run 6: 137 m/s touchdown, stall 87)
                 bool r3l = false; double r3a = RolloutBrake.Strength(137, 1.1 * 87, 0, 0, 0, ref r3l), r3b = RolloutBrake.Strength(137, 1.1 * 87, 2, 0, 0, ref r3l), r3c = RolloutBrake.Strength(80, 1.1 * 87, 5, 0, 0, ref r3l);
                 Check(Math.Abs(r3a - RolloutBrake.LightFrac) < 1e-9 && Math.Abs(r3b - Math.Pow(95.7 / 137, 2)) < 1e-9 && r3c == 1, "ROLL3: light at contact, (full speed / speed)^2 after the 1.5 s ramp (" + Math.Round(100 * r3b) + "% at 137), full below 1.1 x stall");

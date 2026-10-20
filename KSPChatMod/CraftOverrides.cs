@@ -145,6 +145,15 @@ namespace KSPChatBridge
         internal static double FlareSpoolLeadS() { double v = L(FlareSpoolLead); return double.IsNaN(v) ? 2 : Math.Max(0, Math.Min(6, v)); }
         internal static double FlareThrottleFrac() { double p = L(FlareThrottle); return double.IsNaN(p) ? double.NaN : Math.Max(0, Math.Min(100, p)) / 100; }
         internal static string Text(double v) { return double.IsNaN(v) ? "" : v.ToString("0.#", CultureInfo.InvariantCulture); }
+        /// <summary>AUTO2: what a number field shows. An override shows its value. A blank (auto) field is filled with the current
+        /// auto value (autoShown remembers what was put there) and keeps following it while the text is untouched; once Luke types
+        /// something different it is his pending edit (isAuto false) until SET saves it or AUTO resets it (caller nulls autoShown).</summary>
+        internal static string FieldText(double user, double auto, string buffer, ref string autoShown, out bool isAuto)
+        {
+            if (!double.IsNaN(user)) { isAuto = false; if (autoShown != null || buffer == null) { autoShown = null; return Text(user); } return buffer; }
+            if (autoShown == null || buffer == null || buffer == autoShown) { autoShown = Text(auto); isAuto = true; return autoShown; }
+            isAuto = false; return buffer;
+        }
         /// <summary>Apply a craft's overrides to the approach schedule (live): sets ApproachProfile.OverrideApproach / OverrideThreshold and
         /// returns the stall override (stall_override, else threshold_speed / 1.15; NaN = use learned).</summary>
         internal static double Apply(Dictionary<string, object> s, string craft, out double approach, out double threshold)

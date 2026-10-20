@@ -9,7 +9,8 @@ namespace KSPChatBridge
 {
     public partial class AicsMenu
     {
-        static int tabletCraftPage; static string tabletCraftFor; static string[] tabletCraftText; static Vector2 tabletCraftScroll; static bool tabletCraftConfirm;
+        static int tabletCraftPage; static string tabletCraftFor; static string[] tabletCraftText, tabletCraftAutoShown;   // AUTO2: auto text currently placed in each field
+        static Vector2 tabletCraftScroll; static bool tabletCraftConfirm;
 
         void TabletCraftSub(Rect area)
         {
@@ -30,7 +31,7 @@ namespace KSPChatBridge
                     foreach (var d in defs) if (d.Group != g0) { groups++; g0 = d.Group; }
                     Rect probe = new Rect(12, 0, w - 24, 0); float rowsH = 0; for (int k = 0; k < defs.Count; k++) rowsH += CraftOverrideRowHeight(probe, k, defs[k].Label, row) + gap;   // UI1: measured
                 float eh = pad + rowsH + groups * (row * .8f) + row + gap;
-                    Rect c = TabletUi.CardPanel(new Rect(0, y, w, eh), "DETAILS - " + craft + " (blank = auto)");
+                    Rect c = TabletUi.CardPanel(new Rect(0, y, w, eh), "DETAILS - " + craft + " (dim value = automatic)");
                     float ry = c.y; g0 = null;
                     for (int i = 0; i < defs.Count; i++)
                     {
@@ -58,7 +59,7 @@ namespace KSPChatBridge
         {
             var d = CraftOverrides.Defs[i]; double cur = NativeFlightController.CraftOverrideGet(d.Key), use = NativeFlightController.CraftInUse(d.Key); dim = double.IsNaN(cur);
             if (d.Bool) { bool on = dim ? use >= .5 : cur >= .5; return label + ": " + (on ? "ON" : "OFF") + (dim ? " (auto)" : ""); }
-            double shown = dim ? use : cur; return label + " " + (double.IsNaN(shown) ? "auto" : shown.ToString(d.Small < 1 ? "0.0" : "0") + " " + d.Unit) + (dim ? " (auto)" : "");
+            return string.IsNullOrEmpty(d.Unit) ? label : label + " (" + d.Unit + ")";   // AUTO2: the value lives in the field now (dim + AUTO lit = automatic)
         }
         float CraftLabelW(Rect c) { return Mathf.Max(260, c.width * .36f); }
         /// <summary>UI1: measured label height when the label does not fit its column (0 = single line, controls beside it).</summary>
@@ -80,7 +81,7 @@ namespace KSPChatBridge
         {
             var defs = CraftOverrides.Defs; string craft = NativeFlightController.CraftName;
             if (tabletCraftFor != craft || tabletCraftText == null || tabletCraftText.Length != defs.Count)
-            { tabletCraftFor = craft; tabletCraftText = new string[defs.Count]; for (int k = 0; k < defs.Count; k++) tabletCraftText[k] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(defs[k].Key)); }
+            { tabletCraftFor = craft; tabletCraftText = new string[defs.Count]; tabletCraftAutoShown = new string[defs.Count]; for (int k = 0; k < defs.Count; k++) tabletCraftText[k] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(defs[k].Key)); }
             var d = defs[i]; double cur = NativeFlightController.CraftOverrideGet(d.Key), use = NativeFlightController.CraftInUse(d.Key);
             float boxH = CraftOverrideRowHeight(c, i, label, row); TabletUi.RowBox(new Rect(c.x, ry, c.width, boxH)); float rowEnd = ry + boxH; ry += CraftBoxPad;   // UI3: each setting in its own box
             float fw = Mathf.Max(90, tabletFont * 5f), x = c.x + CraftBoxPad + CraftRowIndent;   // UI2: one layout - label line(s) full width, controls below at a fixed indent
@@ -99,11 +100,12 @@ namespace KSPChatBridge
                 return rowEnd;
             }
             foreach (double s in new[] { -d.Large, -d.Small }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
-            tabletCraftText[i] = TabletUi.Field(new Rect(x, ry, fw, row), tabletCraftText[i] ?? "", en); x += fw + 4;
+            bool isAuto; string shown = CraftOverrides.FieldText(cur, use, tabletCraftText[i], ref tabletCraftAutoShown[i], out isAuto);   // AUTO2: blank = the autopilot's live value, dimmed
+            tabletCraftText[i] = TabletUi.Field(new Rect(x, ry, fw, row), shown, en, isAuto); x += fw + 4;
             foreach (double s in new[] { d.Small, d.Large }) { if (TabletUi.ActionButton(new Rect(x, ry, bw, row), StepText(s), en, false)) CraftSet(i, CraftOverrides.Bump(cur, s, use, d.Key)); x += bw + 4; }
             double? p = CraftOverrides.Parse(d.Key, tabletCraftText[i]);
             if (TabletUi.ActionButton(new Rect(x, ry, sw, row), "SET", en && p.HasValue, false)) CraftSet(i, p.Value); x += sw + 4;
-            if (TabletUi.ActionButton(new Rect(x, ry, bw, row), "X", en && !double.IsNaN(cur), false)) CraftSet(i, double.NaN);
+            if (TabletUi.Button(new Rect(x, ry, ow, row), "AUTO", isAuto, en) && !isAuto) CraftSet(i, double.NaN);   // AUTO2: lit = following the autopilot; tap = reset to auto
             return rowEnd;
         }
         static int CraftIndex(string key) { return Array.IndexOf(CraftOverrides.Fields, key); }
@@ -112,7 +114,7 @@ namespace KSPChatBridge
         {
             string key = CraftOverrides.Fields[i];
             NativeFlightController.CraftOverrideSet(key, v);
-            if (tabletCraftText != null && i < tabletCraftText.Length) tabletCraftText[i] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(key));
+            if (tabletCraftText != null && i < tabletCraftText.Length) { tabletCraftText[i] = CraftOverrides.Text(NativeFlightController.CraftOverrideGet(key)); if (tabletCraftAutoShown != null && i < tabletCraftAutoShown.Length) tabletCraftAutoShown[i] = null; }
         }
     }
 }

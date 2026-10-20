@@ -225,10 +225,10 @@ namespace KSPChatBridge
             Rect(new Rect(cx - 1, tr.y - 2, 2, tr.height + 4), Text);   // zero marker
         }
         /// <summary>Touch text field on a rounded dark bed; disabled = dimmed bed and grey text. Returns the (possibly edited) text.</summary>
-        internal static string Field(Rect r, string text, bool enabled = true)
+        internal static string Field(Rect r, string text, bool enabled = true, bool dim = false)
         {
             Fill(r, enabled ? CardHi : Card);
-            var o = GUI.color; GUI.color = enabled ? Text : Dim; string res = GUI.TextField(r, text ?? "", field); GUI.color = o; return res;
+            var o = GUI.color; GUI.color = enabled && !dim ? Text : Dim; string res = GUI.TextField(r, text ?? "", field); GUI.color = o; return res;   // AUTO2: dim = auto-filled value
         }
         /// <summary>Touch switch row: caption left, rounded track + knob right; disabled greys out and never changes. Returns the new value.</summary>
         internal static bool Toggle(Rect r, string caption, bool on, bool enabled = true)
