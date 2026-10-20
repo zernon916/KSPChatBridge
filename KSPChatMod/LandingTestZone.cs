@@ -115,7 +115,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.MainMenu, false)]
     public class LandingTestMenu : MonoBehaviour
     {
-        bool open; Rect win = new Rect(40, 80, 560, 520); Vector2 s1, s2; List<string> crafts = new List<string>(); int craft = -1, preset = 0; string err = "", fuelText;
+        bool open; Rect win = new Rect(40, 80, 560, 520); Vector2 s1, s2; List<string> crafts = new List<string>(); int craft = -1, preset = 0; string err = "", fuelText, spdText, altText;   /* TEST5 */
         bool leaving;
         void Start() { LandingTestRun.Load(); GameEvents.onGameSceneLoadRequested.Add(OnLeave); }
         void OnDestroy() { GameEvents.onGameSceneLoadRequested.Remove(OnLeave); }
@@ -128,7 +128,7 @@ namespace KSPChatBridge
         void OnGUI()
         {
             if (leaving) return;
-            if (!open) { if (GUI.Button(new Rect(20, 20, 230, 30), "KSPChatBridge Landing Tests")) { open = true; Refresh(); LandingTestRun.Load(); fuelText = LandingTestRun.FuelPct.ToString("0.#"); } return; }
+            if (!open) { if (GUI.Button(new Rect(20, 20, 230, 30), "KSPChatBridge Landing Tests")) { open = true; Refresh(); LandingTestRun.Load(); fuelText = LandingTestRun.FuelPct.ToString("0.#"); spdText = double.IsNaN(LandingTestRun.StartSpeed) ? "" : LandingTestRun.StartSpeed.ToString("0.#"); altText = double.IsNaN(LandingTestRun.StartAlt) ? "" : LandingTestRun.StartAlt.ToString("0.#"); } return; }
             win = GUILayout.Window(0x4C54, win, Draw, "KSPChatBridge Landing Tests");
         }
         void Draw(int id)
@@ -148,11 +148,13 @@ namespace KSPChatBridge
             for (int i = 0; i < ps.Count; i++) if (GUILayout.Toggle(preset == i, ps[i].Name + "  (" + Math.Round(ps[i].AltM) + " m, " + Math.Round(ps[i].Speed) + " m/s, hdg " + Math.Round(ps[i].Heading) + ")")) preset = i;
             GUILayout.EndScrollView();
             if (err.Length > 0) GUILayout.Label(err);
-            GUILayout.BeginHorizontal(); GUILayout.Label("Fuel % (0-100):", GUILayout.Width(110)); fuelText = GUILayout.TextField(fuelText ?? "100", GUILayout.Width(60)); GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();   // TEST3
+            GUILayout.BeginHorizontal(); GUILayout.Label("Fuel % (0-100):", GUILayout.Width(110)); fuelText = GUILayout.TextField(fuelText ?? "100", GUILayout.Width(50)); { var mp = ps != null && preset >= 0 && preset < ps.Count ? ps[preset] : null;   /* TEST5: same fields as the in-flight picker, blank = preset */
+            GUILayout.Label(" Speed m/s:", GUILayout.Width(75)); spdText = GUILayout.TextField(spdText ?? "", GUILayout.Width(50)); GUILayout.Label(mp != null ? "(" + Math.Round(mp.Speed) + ")" : "", GUILayout.Width(40));
+            GUILayout.Label(" Alt m:", GUILayout.Width(50)); altText = GUILayout.TextField(altText ?? "", GUILayout.Width(55)); GUILayout.Label(mp != null ? "(" + Math.Round(mp.AltM) + ")" : "", GUILayout.Width(45)); } GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();   // TEST3
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Fly test") && craft >= 0)
             {
-                try { LandingTestRun.SaveFuel(LandingTestPresets.ParseFuel(fuelText, LandingTestRun.FuelPct)); LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; leaving = true; open = false; LandingTestRun.Launch(); }
+                try { LandingTestRun.SaveFuel(LandingTestPresets.ParseFuel(fuelText, LandingTestRun.FuelPct)); LandingTestRun.SaveStart(LandingTestPresets.ParseOpt(spdText, 30, 600), LandingTestPresets.ParseOpt(altText, 100, 20000)); LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; leaving = true; open = false; LandingTestRun.Launch(); }
                 catch (Exception ex) { leaving = false; open = true; err = "Launch failed: " + ex.Message; Debug.LogException(ex); }
             }
             if (GUILayout.Button("Close")) open = false;
