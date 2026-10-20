@@ -222,6 +222,12 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // TEST3: fuel %
+                Check(LandingTestPresets.ClampFuel(150) == 100 && LandingTestPresets.ClampFuel(-5) == 0 && LandingTestPresets.ClampFuel(double.NaN) == 100 && LandingTestPresets.ParseFuel("35%", 100) == 35 && LandingTestPresets.ParseFuel("abc", 60) == 60 && LandingTestPresets.ParseFuel("", 100) == 100, "TEST3: fuel % clamp / parse");
+                Check(LandingTestPresets.FuelResource("LiquidFuel") && LandingTestPresets.FuelResource("Oxidizer") && LandingTestPresets.FuelResource("MonoPropellant") && LandingTestPresets.FuelResource("XenonGas") && !LandingTestPresets.FuelResource("ElectricCharge") && !LandingTestPresets.FuelResource("Ablator") && !LandingTestPresets.FuelResource("Ore") && !LandingTestPresets.FuelResource("IntakeAir"), "TEST3: fuel resource filter");
+                string fj = LandingTestPresets.WriteFuel(LandingTestPresets.ToJson(LandingTestPresets.Defaults()), 40); string fwhy; var fl = LandingTestPresets.Parse(fj, out fwhy);
+                Check(LandingTestPresets.ReadFuel(fj) == 40 && fl != null && fl.Count == LandingTestPresets.Defaults().Count && LandingTestPresets.ReadFuel(LandingTestPresets.ToJson(LandingTestPresets.Defaults())) == 100 && LandingTestPresets.RunLine(2, fl[0], "Aeris 3A", 40).EndsWith(" craft=Aeris 3A fuel=40%"), "TEST3: fuel_pct remembered in landing_tests.json, presets kept, run line fuel=<n>%");
+            }
             {   // AICS1: ROLL / FLAPS flaperon droop
                 Check(FlapsPolicy.RollFlapDeg(20, 30, 3, 1, 0) == 10 && FlapsPolicy.RollFlapDeg(20, 6, 3, 1, 0) == 6 && FlapsPolicy.RollFlapDeg(20, 30, 0, 1, 0) == 0 && FlapsPolicy.RollFlapDeg(20, 30, 3, .5, 0) == 5, "AICS1: droop = min(deploy angle, half the range) x setting x factor");
                 bool inRange = true; for (double r = 0; r <= 1.0001; r += .05) { double rfq = FlapsPolicy.RollFlapDroop(r, 0, 0, 0), dd = FlapsPolicy.RollFlapDeg(20, 30, 3, rfq, r); if (dd + r * 20 > 20 + 1e-9 || dd > .6 * 20 + 1e-9) inRange = false; }

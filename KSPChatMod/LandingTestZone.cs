@@ -11,7 +11,7 @@ namespace KSPChatBridge
     {
         internal const string SaveName = "KSPChatBridge_LandingTest";
         internal static string CraftPath, CraftName; internal static TestPreset Preset; internal static int PresetIndex, Run;
-        internal static bool PlacePending;
+        internal static bool PlacePending; internal static double FuelPct = 100;   // TEST3
         internal static List<TestPreset> Presets;
         internal static string PluginData { get { return Path.Combine(Path.Combine(Path.Combine(KSPUtil.ApplicationRootPath, "GameData"), "KSPChatBridge"), "PluginData"); } }
         internal static List<TestPreset> Load()
@@ -19,11 +19,25 @@ namespace KSPChatBridge
             string f = Path.Combine(PluginData, "landing_tests.json"), why = "";
             try
             {
-                if (File.Exists(f)) { var l = LandingTestPresets.Parse(File.ReadAllText(f), out why); if (why.Length > 0) Debug.LogWarning("[KSPChatBridge] landing_tests.json: " + why); if (l != null) return Presets = l; }
+                if (File.Exists(f)) { string js = File.ReadAllText(f); FuelPct = LandingTestPresets.ReadFuel(js); var l = LandingTestPresets.Parse(js, out why); if (why.Length > 0) Debug.LogWarning("[KSPChatBridge] landing_tests.json: " + why); if (l != null) return Presets = l; }
                 else { Directory.CreateDirectory(PluginData); File.WriteAllText(f, LandingTestPresets.ToJson(LandingTestPresets.Defaults())); }   // seed an editable copy
             }
             catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] landing tests: " + ex.Message); }
             return Presets = LandingTestPresets.Defaults();
+        }
+        /// <summary>TEST3: remember the fuel % in landing_tests.json.</summary>
+        internal static void SaveFuel(double pct)
+        {
+            FuelPct = LandingTestPresets.ClampFuel(pct); string f = Path.Combine(PluginData, "landing_tests.json");
+            try { string js = File.Exists(f) ? File.ReadAllText(f) : LandingTestPresets.ToJson(LandingTestPresets.Defaults()); if (LandingTestPresets.ReadFuel(js) != FuelPct || !js.Contains("fuel_pct")) File.WriteAllText(f, LandingTestPresets.WriteFuel(js, FuelPct)); }
+            catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] landing tests fuel: " + ex.Message); }
+        }
+        /// <summary>TEST3: every propellant on the craft to FuelPct of max (not EC / ablator / ore).</summary>
+        internal static int ApplyFuel(Vessel v)
+        {
+            int n = 0; if (v == null) return 0; double f = FuelPct / 100;
+            foreach (Part p in v.parts) foreach (PartResource r in p.Resources) if (LandingTestPresets.FuelResource(r.resourceName)) { r.amount = r.maxAmount * f; n++; }
+            return n;
         }
         /// <summary>Temporary sandbox (created once, reused; never touches other saves) then a normal runway launch.</summary>
         internal static void Launch()
@@ -40,7 +54,7 @@ namespace KSPChatBridge
             var node = ConfigNode.Load(local);
             var manifest = g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node));
             Run++; PlacePending = true; LaunchPending = local;
-            ChatLog.Write("TEST", LandingTestPresets.RunLine(Run, Preset, CraftName));
+            ChatLog.Write("TEST", LandingTestPresets.RunLine(Run, Preset, CraftName, FuelPct));
             // GROK TEST1b: launching straight from the main menu NREs in FlightDriver.setStartupNewVessel ('Cannot find a transform named
             // Facility/End09/SpawnPoint on Runway' - the KSC facilities are not built yet) and KSP falls back to the Space Center.
             // Start the game into the Space Center first (stock flow); LandingTestKsc launches once the KSC scene is up.
@@ -83,7 +97,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.MainMenu, false)]
     public class LandingTestMenu : MonoBehaviour
     {
-        bool open; Rect win = new Rect(40, 80, 560, 520); Vector2 s1, s2; List<string> crafts = new List<string>(); int craft = -1, preset = 0; string err = "";
+        bool open; Rect win = new Rect(40, 80, 560, 520); Vector2 s1, s2; List<string> crafts = new List<string>(); int craft = -1, preset = 0; string err = "", fuelText;
         bool leaving;
         void Start() { LandingTestRun.Load(); GameEvents.onGameSceneLoadRequested.Add(OnLeave); }
         void OnDestroy() { GameEvents.onGameSceneLoadRequested.Remove(OnLeave); }
@@ -96,7 +110,7 @@ namespace KSPChatBridge
         void OnGUI()
         {
             if (leaving) return;
-            if (!open) { if (GUI.Button(new Rect(20, 20, 230, 30), "KSPChatBridge Landing Tests")) { open = true; Refresh(); LandingTestRun.Load(); } return; }
+            if (!open) { if (GUI.Button(new Rect(20, 20, 230, 30), "KSPChatBridge Landing Tests")) { open = true; Refresh(); LandingTestRun.Load(); fuelText = LandingTestRun.FuelPct.ToString("0.#"); } return; }
             win = GUILayout.Window(0x4C54, win, Draw, "KSPChatBridge Landing Tests");
         }
         void Draw(int id)
@@ -116,10 +130,11 @@ namespace KSPChatBridge
             for (int i = 0; i < ps.Count; i++) if (GUILayout.Toggle(preset == i, ps[i].Name + "  (" + Math.Round(ps[i].AltM) + " m, " + Math.Round(ps[i].Speed) + " m/s, hdg " + Math.Round(ps[i].Heading) + ")")) preset = i;
             GUILayout.EndScrollView();
             if (err.Length > 0) GUILayout.Label(err);
+            GUILayout.BeginHorizontal(); GUILayout.Label("Fuel % (0-100):", GUILayout.Width(110)); fuelText = GUILayout.TextField(fuelText ?? "100", GUILayout.Width(60)); GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();   // TEST3
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Fly test") && craft >= 0)
             {
-                try { LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; leaving = true; open = false; LandingTestRun.Launch(); }
+                try { LandingTestRun.SaveFuel(LandingTestPresets.ParseFuel(fuelText, LandingTestRun.FuelPct)); LandingTestRun.CraftPath = crafts[craft]; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(crafts[craft]); LandingTestRun.PresetIndex = preset; LandingTestRun.Preset = ps[preset]; leaving = true; open = false; LandingTestRun.Launch(); }
                 catch (Exception ex) { leaving = false; open = true; err = "Launch failed: " + ex.Message; Debug.LogException(ex); }
             }
             if (GUILayout.Button("Close")) open = false;
@@ -132,7 +147,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class LandingTestFlight : MonoBehaviour
     {
-        Rect win = new Rect(Screen.width - 330, 120, 310, 110), pickWin = new Rect(Screen.width / 2 - 280, 100, 560, 500); bool picker; Vector2 ps1, ps2; List<string> pickCrafts = new List<string>(); int pickCraft = -1, pickPreset; string pickErr = "";
+        Rect win = new Rect(Screen.width - 330, 120, 310, 110), pickWin = new Rect(Screen.width / 2 - 280, 100, 560, 500); bool picker; Vector2 ps1, ps2; List<string> pickCrafts = new List<string>(); int pickCraft = -1, pickPreset; string pickErr = "", pickFuel = "100";
         bool placed, wasFlying, done, wasActive, engagedSeen, wasMissed; int interventions; int goArounds; string lastPhase = "", status = ""; double lastVs = double.NaN;
         bool InTest { get { return HighLogic.SaveFolder == LandingTestRun.SaveName && LandingTestRun.Preset != null; } }
         void Start() { if (InTest) { GameEvents.onCrash.Add(OnCrash); GameEvents.onCrashSplashdown.Add(OnCrash); if (LandingTestRun.PlacePending) StartCoroutine(Place()); } }
@@ -151,6 +166,7 @@ namespace KSPChatBridge
             for (int i = 0; i < 600; i++) { v = FlightGlobals.ActiveVessel; if (v != null && v.loaded && !v.packed && FlightGlobals.ready) break; yield return new WaitForFixedUpdate(); }
             if (v == null) { status = "no vessel"; yield break; }
             for (int i = 0; i < 25; i++) yield return new WaitForFixedUpdate();   // let it settle on the runway
+            { int nr = LandingTestRun.ApplyFuel(v); ChatLog.Write("TEST", "run " + LandingTestRun.Run + " fuel " + LandingTestRun.FuelPct.ToString("0.#") + "% (" + nr + " tanks), mass " + v.GetTotalMass().ToString("0.00") + " t"); }   // TEST3
             var p = LandingTestRun.Preset; var body = v.mainBody; double lat, lon, la2, lo2;
             LandingTestPresets.Position(p, out lat, out lon, body.Radius);
             NavigationMath.Offset(lat, lon, p.Heading, 50, body.Radius, out la2, out lo2);
@@ -208,7 +224,7 @@ namespace KSPChatBridge
         }
         void OpenPicker()
         {
-            pickCrafts = LandingTestRun.ScanCrafts(); pickPreset = LandingTestRun.PresetIndex; pickErr = ""; pickCraft = -1;
+            pickCrafts = LandingTestRun.ScanCrafts(); pickPreset = LandingTestRun.PresetIndex; pickErr = ""; pickCraft = -1; pickFuel = LandingTestRun.FuelPct.ToString("0.#");
             for (int i = 0; i < pickCrafts.Count; i++) if (string.Equals(Path.GetFileNameWithoutExtension(pickCrafts[i]), LandingTestRun.CraftName, StringComparison.OrdinalIgnoreCase)) { pickCraft = i; break; }
         }
         void DrawPicker(int id)
@@ -223,6 +239,7 @@ namespace KSPChatBridge
             for (int i = 0; i < ps.Count; i++) if (GUILayout.Toggle(pickPreset == i, ps[i].Name + "  (" + Math.Round(ps[i].AltM) + " m, " + Math.Round(ps[i].Speed) + " m/s, hdg " + Math.Round(ps[i].Heading) + ")")) pickPreset = i;
             GUILayout.EndScrollView();
             if (pickErr.Length > 0) GUILayout.Label(pickErr);
+            GUILayout.BeginHorizontal(); GUILayout.Label("Fuel % (0-100):", GUILayout.Width(110)); pickFuel = GUILayout.TextField(pickFuel ?? "100", GUILayout.Width(60)); GUILayout.FlexibleSpace(); GUILayout.EndHorizontal();   // TEST3
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Fly here") && pickCraft >= 0 && pickPreset >= 0 && pickPreset < ps.Count)
             {
@@ -230,7 +247,7 @@ namespace KSPChatBridge
                 {
                     string path = pickCrafts[pickCraft]; bool same = string.Equals(Path.GetFileNameWithoutExtension(path), LandingTestRun.CraftName, StringComparison.OrdinalIgnoreCase);
                     if (!same) { LandingTestRun.CraftPath = path; LandingTestRun.CraftName = Path.GetFileNameWithoutExtension(path); ChatLog.Write("TEST", "change plane -> " + LandingTestRun.CraftName); }
-                    picker = false; Again(pickPreset, !same);
+                    LandingTestRun.SaveFuel(LandingTestPresets.ParseFuel(pickFuel, LandingTestRun.FuelPct)); picker = false; Again(pickPreset, !same);
                 }
                 catch (Exception ex) { pickErr = "Respawn failed: " + ex.Message; Debug.LogException(ex); }
             }
@@ -245,7 +262,7 @@ namespace KSPChatBridge
             if (placed && !done) End("aborted (retry)");
             try { ChatWindow.ToolFromMenu("plane_hold", "{\"engage\":false}"); } catch { }
             LandingTestRun.PresetIndex = idx; LandingTestRun.Preset = LandingTestRun.Presets[idx]; LandingTestRun.Run++; LandingTestRun.PlacePending = true;
-            ChatLog.Write("TEST", LandingTestPresets.RunLine(LandingTestRun.Run, LandingTestRun.Preset, LandingTestRun.CraftName));
+            ChatLog.Write("TEST", LandingTestPresets.RunLine(LandingTestRun.Run, LandingTestRun.Preset, LandingTestRun.CraftName, LandingTestRun.FuelPct));
             if (FlightDriver.CanRevertToPostInit && !newCraft) FlightDriver.RevertToLaunch();   // TEST2: a new plane = new launch (revert would bring back the old one)
             else { var g = HighLogic.CurrentGame; var node = ConfigNode.Load(LandingTestRun.CraftPath); FlightDriver.StartWithNewLaunch(LandingTestRun.CraftPath, g.flagURL, "Runway", g.CrewRoster.DefaultCrewForVessel(node, VesselCrewManifest.FromConfigNode(node))); }
         }

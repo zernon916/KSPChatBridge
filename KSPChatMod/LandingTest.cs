@@ -97,6 +97,30 @@ namespace KSPChatBridge
 
         /// <summary>Log lines (one marker per run, one outcome).</summary>
         internal static string RunLine(int run, TestPreset p, string craft) { return "run " + run + " preset=" + p.Name + " craft=" + craft; }
+        internal static string RunLine(int run, TestPreset p, string craft, double fuelPct) { return RunLine(run, p, craft) + (double.IsNaN(fuelPct) ? "" : " fuel=" + fuelPct.ToString("0.#", CultureInfo.InvariantCulture) + "%"); }
+        /// <summary>TEST3: fuel % 0-100 (bad / blank = 100).</summary>
+        internal static double ClampFuel(double pct) { return double.IsNaN(pct) || double.IsInfinity(pct) ? 100 : Math.Max(0, Math.Min(100, pct)); }
+        internal static double ParseFuel(string text, double fallback)
+        { double v; return double.TryParse((text ?? "").Trim().TrimEnd('%'), NumberStyles.Float, CultureInfo.InvariantCulture, out v) ? ClampFuel(v) : ClampFuel(fallback); }
+        /// <summary>TEST3: propellants the fuel % applies to (fuel / oxidizer / monoprop / xenon / solid); never ElectricCharge, Ablator, Ore, IntakeAir.</summary>
+        internal static bool FuelResource(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false; string n = name.ToLowerInvariant();
+            if (n == "electriccharge" || n.Contains("ablator") || n == "ore" || n == "intakeair" || n.Contains("intake")) return false;
+            return n.Contains("fuel") || n.Contains("oxidizer") || n.Contains("monoprop") || n.Contains("xenon") || n.StartsWith("lqd") || n.Contains("hydrazine");
+        }
+        /// <summary>TEST3: fuel_pct remembered in landing_tests.json (root {"fuel_pct": n, "presets": [...]}; a bare list = 100).</summary>
+        internal static double ReadFuel(string json)
+        {
+            try { var d = MiniJson.DeserializeObject(json) as Dictionary<string, object>; return d != null ? ClampFuel(D(d, "fuel_pct", 100)) : 100; } catch { return 100; }
+        }
+        internal static string WriteFuel(string json, double pct)
+        {
+            object root = null; try { root = MiniJson.DeserializeObject(json); } catch { }
+            var d = root as Dictionary<string, object>;
+            if (d == null) d = new Dictionary<string, object> { { "presets", root as System.Collections.IList ?? (object)new List<object>() } };
+            d["fuel_pct"] = ClampFuel(pct); return MiniJson.Serialize(d);
+        }
         internal static string Outcome(int run, string what, double sink, double speed, int goArounds)
         { return "run " + run + " outcome=" + what + (double.IsNaN(sink) ? "" : " sink=" + sink.ToString("0.0", CultureInfo.InvariantCulture) + " m/s") + (double.IsNaN(speed) ? "" : " speed=" + speed.ToString("0", CultureInfo.InvariantCulture) + " m/s") + " go-arounds=" + goArounds; }
     }
