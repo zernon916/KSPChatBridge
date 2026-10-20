@@ -1097,6 +1097,20 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// for more than AirReleaseS in a bounce, back on at the next contact; the short airborne debounce keeps a skipping gear from pulsing them.</summary>
         internal const double AirReleaseS = .2;
         internal static bool FromTouchdown(bool landed, double airS, bool was) { return landed || was && airS < AirReleaseS; }
+        /// <summary>ROLL3 (Aeris 4A run 6: full brakes at 137 m/s touchdown -> 270 -> 289 -> 65, spun): brake strength from touchdown, full only
+        /// below brake_full_speed (blank = 1.1 x stall, 60 if unknown); above it full x (full speed / speed)^2, min 0.15, ramped in over 1.5 s;
+        /// light (0.15) while |yaw rate| > 3 deg/s or |heading error| > 3 deg, until both are back under 1.5.</summary>
+        internal const double LightFrac = .15, RampInS = 1.5, YawLimit = 3, HdgLimit = 3, StraightAgain = 1.5;
+        internal static double FullSpeed(double stall) { return FullSpeed(stall, CraftOverrides.L("brake_full_speed")); }
+        internal static double FullSpeed(double stall, double ov) { return !double.IsNaN(ov) && ov > 0 ? ov : !double.IsNaN(stall) && stall > 10 ? 1.1 * stall : 60; }
+        internal static double Strength(double speed, double fullSpeed, double landedS, double yawRate, double hdgErr, ref bool light)
+        {
+            double s = speed <= fullSpeed ? 1 : Math.Max(LightFrac, (fullSpeed / speed) * (fullSpeed / speed));
+            s = LightFrac + (s - LightFrac) * FlightPolicy.Clamp(landedS / RampInS, 0, 1);
+            double yr = double.IsNaN(yawRate) ? 0 : Math.Abs(yawRate), he = double.IsNaN(hdgErr) ? 0 : Math.Abs(FlightPolicy.Wrap(hdgErr));
+            light = light ? !(yr < StraightAgain && he < StraightAgain) : yr > YawLimit || he > HdgLimit;
+            return light ? Math.Min(s, LightFrac) : s;
+        }
     }
     /// <summary>ROLL1: rollout nosewheel steering (Aeris 22:xx: 270 -> 285 -> 256 -> 283 in 6 s, ask 266-274): P on heading error + yaw-rate
     /// damping, gain scheduled down with speed (full at <= 20 m/s, 1/4 at 80+) and with the brakes on, output and slew limited.</summary>

@@ -45,7 +45,19 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        readonly ApproachThrottle appThr = new ApproachThrottle(); double appThrLogT, prevApOut = double.NaN;   /* THR10 */ bool flareThrCmd, flareThrLogged; double flareThrAuto = double.NaN;   /* THR9 */ double rollHdgPrev = double.NaN, rollHdgRate = double.NaN, rollSteer = double.NaN; /* ROLL1 */ string brakeLogKey; bool flareFastEndLogged, liftDump;   /* LAND5q */ bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; double rolloutAirS, bouncePitch = double.NaN; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
+        readonly ApproachThrottle appThr = new ApproachThrottle(); double appThrLogT, prevApOut = double.NaN;   /* THR10 */ readonly Dictionary<ModuleWheels.ModuleWheelBrakes, float> brakeOrig = new Dictionary<ModuleWheels.ModuleWheelBrakes, float>(); double brakeScale = double.NaN; bool brakeLight; double brakeLogT;   /* ROLL3 */
+        /// <summary>ROLL3: wheel-brake strength = the part's own brake setting x s (written only on a 5% change; restored after).</summary>
+        void WheelBrakeScale(double s)
+        {
+            s = Math.Round(FlightPolicy.Clamp(s, 0, 1) * 20) / 20; if (s == brakeScale) return; brakeScale = s;
+            foreach (var m in vessel.FindPartModulesImplementing<ModuleWheels.ModuleWheelBrakes>()) { if (m == null) continue; float o; if (!brakeOrig.TryGetValue(m, out o)) brakeOrig[m] = o = m.brakeTweakable; m.brakeTweakable = (float)(o * s); }
+        }
+        void WheelBrakeRestore()
+        {
+            if (brakeOrig.Count == 0) { brakeScale = double.NaN; return; }
+            foreach (var kv in brakeOrig) if (kv.Key != null) kv.Key.brakeTweakable = kv.Value; brakeOrig.Clear(); brakeScale = double.NaN; brakeLight = false;
+        }
+        bool flareThrCmd, flareThrLogged; double flareThrAuto = double.NaN;   /* THR9 */ double rollHdgPrev = double.NaN, rollHdgRate = double.NaN, rollSteer = double.NaN; /* ROLL1 */ string brakeLogKey; bool flareFastEndLogged, liftDump;   /* LAND5q */ bool fastBrakeLogged, rolloutBrakeLogged; double rolloutLandedS; double ferrySecsClear = double.NaN; bool stallEmLatch; double rolloutAirS, bouncePitch = double.NaN; readonly AutoWarpState autoWarp = new AutoWarpState(); float autoWarpNext; double overrideSince = double.NaN, overrideUntil; bool overridePending; readonly ConfigTrim cfgTrim = new ConfigTrim(); int cfgKey = -1; readonly StepThrottle stepThr = new StepThrottle(); double prevHdgL = double.NaN, prevThrCfg = double.NaN; string loggedLock = "", loggedFollow = "", stepMode = "", loggedPattern = ""; readonly AltCallouts callouts = new AltCallouts(); double lastAirVs, flareEntryPitch = double.NaN; double aoaTrim = double.NaN, vsFilt = double.NaN, vsSlow = double.NaN, loadFf, attCmd = double.NaN; bool landLawOn; float turnPitchTraceNext;   // GROK LAND3: turn pitch-attitude hold state
         bool rudderOn; double rudderHdg0 = double.NaN, rudderSince, rudderOffUntil, lastRudderHdg = double.NaN;   // T6: heading errors under 3 deg go to the rudder, not the wings (+ the heading rate for the damping term and the give-up guard)
         readonly AlertGate alertGate = new AlertGate();
         string loggedDubins = ""; string loggedRoute = ""; double lastDesiredPitch; double lastAskedSpeed = double.NaN; readonly RecoveryGate gearGate = new RecoveryGate(); bool? gearSaid;
@@ -182,7 +194,8 @@ namespace KSPChatBridge
             if (field == "decel_plan") return i.runway != null ? i.runway.EffDecelPublic : double.NaN;
             if (field == "flap_limit_speed") return ApproachProfile.FlapLimitSpeed;
             if (field == "max_approach_bank") return i.runway != null && i.runway.TurnBank > 0 ? i.runway.TurnBank : 30;
-            if (field == "flare_start_m" || field == "touchdown_sink" || field == "touchdown_aim_m" || field == "brake_start_speed") { var df = CraftOverrides.Find(field); return field == "touchdown_aim_m" && i.runway != null ? i.runway.TouchdownM : df.Default; }
+            if (field == "brake_full_speed") return RolloutBrake.FullSpeed(i.stall);   // ROLL3
+            if (field == "flare_start_m" || field == "touchdown_sink" || field == "touchdown_aim_m") { var df = CraftOverrides.Find(field); return field == "touchdown_aim_m" && i.runway != null ? i.runway.TouchdownM : df.Default; }
             if (field == "vr") return i.takeoff != null && i.takeoff.Vr > 0 ? i.takeoff.Vr : TakeoffMission.RotateSpeed(i.stall, i.liftoffSpeed);
             if (field == CraftOverrides.RotatePitch) return TakeoffMission.RotateTarget(double.NaN);
             if (field == CraftOverrides.FlareThrottle) return 0;
@@ -671,7 +684,7 @@ namespace KSPChatBridge
         }
         void Fly(FlightCtrlState c)
         {
-            if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) return;
+            if (mode == "idle" || vessel == null || vessel != FlightGlobals.ActiveVessel || vessel.packed) { if (brakeOrig.Count > 0) WheelBrakeRestore(); return; }   // ROLL3: the player's brake setting back when the AP lets go
             if (LearnPilotFlying) return;   // learn wait: pilot has the controls
             if (mode == "landing" && !double.IsNaN(overrideSince))
             {   // GROK LAND5d: pilot override - hands off the controls until OverrideResumeS after the last key, then a smooth takeover
@@ -895,7 +908,7 @@ namespace KSPChatBridge
                     if (runway.Phase == "flare" && runway.FlareFastEnded && landingPhaseBefore == "flare" && !flareFastEndLogged) { flareFastEndLogged = true; if (AirbrakesByAutopilot && vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; } ChatLog.Write("approach", "flare: fast flare over at " + Math.Round(vessel.srfSpeed) + " m/s (<= landing + 5) - airbrakes IN, normal flare (sink " + (-runway.DesiredVs).ToString("0.0") + ")"); }   // LAND5q
             if (runway.Phase != "flare") { flareFastEndLogged = false; }
             liftDump = runway.Phase == "rollout";   // LAND5q: dump lift from first wheel contact (brake surfaces + airbrakes)
-            if (runway.Phase != "rollout") { rollHdgPrev = double.NaN; rollHdgRate = double.NaN; rollSteer = double.NaN; }   /* ROLL1 */ if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; dumpedAero.Add(ab); } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
+            if (runway.Phase != "rollout") { rollHdgPrev = double.NaN; rollHdgRate = double.NaN; rollSteer = double.NaN; if (brakeOrig.Count > 0) WheelBrakeRestore(); }   /* ROLL1 */ if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; dumpedAero.Add(ab); } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
             if (runway.Phase == "rollout" && landingPhaseBefore != "rollout")
                     {
                         ChatLog.Write("approach", "touchdown sink " + Math.Abs(lastAirVs).ToString("0.0") + " m/s: " + ApproachProfile.TouchdownClass(lastAirVs) + (Math.Abs(lastAirVs) > 5 ? " (target 3)" : ""));   // GROK LAND5c
@@ -956,7 +969,10 @@ namespace KSPChatBridge
                             reversers.ApWants = CraftOverrides.On("reverser", true);   // TAB-CRAFT1   // GROK LAND5i: the whole rollout (bounces included) is the AP's own reverser use
                             c.roll = (float)FlightPolicy.Clamp(-.06 * roll - .015 * p, -1, 1);   // GROK LAND5f: firm wings level on the rollout (rudder/wheel steer, no roll)
                             if (vessel.LandedOrSplashed) rolloutLandedS += dt; else rolloutLandedS = 0;
-                            { bool wb = RolloutBrake.FromTouchdown(vessel.LandedOrSplashed, rolloutAirS, vessel.ActionGroups[KSPActionGroup.Brakes]);   /* ROLL2: from main-gear contact, released in a bounce; debounced, no pulsing */ if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on at touchdown (" + Math.Round(vessel.srfSpeed) + " m/s)"); } } }
+                            { bool wb = RolloutBrake.FromTouchdown(vessel.LandedOrSplashed, rolloutAirS, vessel.ActionGroups[KSPActionGroup.Brakes]);   /* ROLL2: from main-gear contact, released in a bounce; debounced, no pulsing */
+                      if (wb) { double bs = RolloutBrake.Strength(vessel.srfSpeed, RolloutBrake.FullSpeed(stall), rolloutLandedS, rollHdgRate, heading - FlightGlobals.ship_heading, ref brakeLight); double bPrev = brakeScale; WheelBrakeScale(bs);
+                        if (brakeScale != bPrev && Time.realtimeSinceStartup >= brakeLogT) { brakeLogT = Time.realtimeSinceStartup + 1; ChatLog.Write("approach", "rollout: brakes " + Math.Round(100 * brakeScale) + "% at " + Math.Round(vessel.srfSpeed) + " m/s" + (brakeLight ? " (light: yaw " + (double.IsNaN(rollHdgRate) ? 0 : rollHdgRate).ToString("0.0") + " deg/s)" : "")); } }   /* ROLL3 */
+                       if (wb != vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, wb); AirbrakesByAutopilot = false; if (wb && !rolloutBrakeLogged) { rolloutBrakeLogged = true; ChatLog.Write("approach", "rollout: wheel brakes on at touchdown (" + Math.Round(vessel.srfSpeed) + " m/s)"); } } }
                             { double hNow = FlightGlobals.ship_heading, hr = double.IsNaN(rollHdgPrev) || dt <= 0 ? 0 : FlightPolicy.Wrap(hNow - rollHdgPrev) / dt; rollHdgPrev = hNow; rollHdgRate = double.IsNaN(rollHdgRate) ? hr : rollHdgRate + .3 * (hr - rollHdgRate); rollSteer = RolloutSteer.Step(rollSteer, heading - hNow, rollHdgRate, vessel.srfSpeed, vessel.ActionGroups[KSPActionGroup.Brakes], dt); c.wheelSteer = (float)rollSteer; }   // ROLL1: damped, speed/brake-scheduled, slew-limited nosewheel steering
                             lateralBankAsk = 0;
                             LogLandingLateral(c);

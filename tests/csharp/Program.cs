@@ -185,9 +185,9 @@ class Program
                 Check(CraftOverrides.Parse("threshold_speed", "52") == 52 && double.IsNaN(CraftOverrides.Parse("vr", " ").Value) && !CraftOverrides.Parse("vr", "abc").HasValue && Math.Abs(CraftOverrides.Parse("decel_plan", "0.9").Value - .9) < 1e-9 && CraftOverrides.Parse("touchdown_sink", "9") == 5
                     && CraftOverrides.Bump(double.NaN, 5, 52, "threshold_speed") == 57 && CraftOverrides.Bump(100, -1, 0, CraftOverrides.Approach) == 99 && Math.Abs(CraftOverrides.Bump(double.NaN, .1, double.NaN, "touchdown_sink") - 3.1) < 1e-9, "TAB-CRAFT1: field text / -+ steps (unset starts from the value in use or the default)");
                 Check(CraftOverrides.LogLine("Aeris 3A", 100, 52, double.NaN) == "override Aeris 3A: approach=100 landing=52", "TAB-CRAFT1: '[craft] override <craft>: approach=<n> landing=<n>' log line");
-                CraftOverrides.Set(so, "Aeris 3A", "touchdown_aim_m", 500); CraftOverrides.Set(so, "Aeris 3A", "brake_start_speed", 30); CraftOverrides.Set(so, "Aeris 3A", "vr", 70);
+                CraftOverrides.Set(so, "Aeris 3A", "touchdown_aim_m", 500); CraftOverrides.Set(so, "Aeris 3A", "brake_full_speed", 30); CraftOverrides.Set(so, "Aeris 3A", "vr", 70);
                 double ap0, th0; double stO = CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0); double sch = ApproachProfile.FinalSchedule(1000, stO, 1.7); var rmo = new RunwayMission();
-                bool liveOk = Math.Abs(stO - 52 / 1.15) < 1e-9 && ApproachProfile.OverrideThreshold == 52 && Math.Abs(sch - ApproachProfile.OverrideSchedule(1000, 100, 52, 1.7)) < 1e-9 && rmo.TouchdownM == 500 && RolloutBrake.Duty(10, 40) == 0 && RolloutBrake.Duty(10, 25) > 0 && TakeoffMission.RotateSpeed(45, 160) == 70 && !CraftOverrides.On("airbrakes", false) == false;
+                bool liveOk = Math.Abs(stO - 52 / 1.15) < 1e-9 && ApproachProfile.OverrideThreshold == 52 && Math.Abs(sch - ApproachProfile.OverrideSchedule(1000, 100, 52, 1.7)) < 1e-9 && rmo.TouchdownM == 500 && RolloutBrake.FullSpeed(87) == 30 && TakeoffMission.RotateSpeed(45, 160) == 70 && !CraftOverrides.On("airbrakes", false) == false;
                 CraftOverrides.Set(so, "Aeris 3A", CraftOverrides.Threshold, 60); CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0); double sch2 = ApproachProfile.FinalSchedule(0, 60 / 1.15, 1.7);
                 CraftOverrides.Clear(so, "Aeris 3A"); CraftOverrides.Apply(so, "Aeris 3A", out ap0, out th0);
                 Check(liveOk && Math.Abs(sch2 - 60) < 1e-9 && double.IsNaN(ApproachProfile.OverrideThreshold) && double.IsNaN(CraftOverrides.L("vr")) && rmo.TouchdownM == 350, "TAB-CRAFT1: overrides apply live (schedule, aim point, brake start, Vr) and a change re-plans; clear = auto again");
@@ -246,6 +246,13 @@ class Program
                 string bk = null; int bn = 0; for (int k = 0; k < 1379; k++) if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "OUT over|flare")) bn++; if (AirbrakeGate.LogOnce(ref bk, "IN not allowed|flare")) bn++;
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
+            }
+            {   // ROLL3 (Aeris 4A run 6: 137 m/s touchdown, stall 87)
+                bool r3l = false; double r3a = RolloutBrake.Strength(137, 1.1 * 87, 0, 0, 0, ref r3l), r3b = RolloutBrake.Strength(137, 1.1 * 87, 2, 0, 0, ref r3l), r3c = RolloutBrake.Strength(80, 1.1 * 87, 5, 0, 0, ref r3l);
+                Check(Math.Abs(r3a - RolloutBrake.LightFrac) < 1e-9 && Math.Abs(r3b - Math.Pow(95.7 / 137, 2)) < 1e-9 && r3c == 1, "ROLL3: light at contact, (full speed / speed)^2 after the 1.5 s ramp (" + Math.Round(100 * r3b) + "% at 137), full below 1.1 x stall");
+                double r3d = RolloutBrake.Strength(80, 95.7, 5, 4, 0, ref r3l); bool r3dl = r3l; double r3e = RolloutBrake.Strength(80, 95.7, 5, 2, 0, ref r3l); double r3f = RolloutBrake.Strength(80, 95.7, 5, 1, .5, ref r3l);
+                Check(r3d == RolloutBrake.LightFrac && r3dl && r3e == RolloutBrake.LightFrac && r3f == 1 && RolloutBrake.Strength(200, 60, 9, 0, 0, ref r3l) == RolloutBrake.LightFrac, "ROLL3: yaw > 3 deg/s = light brakes until straight again (< 1.5); never below 15%");
+                Check(Math.Abs(RolloutBrake.FullSpeed(87, double.NaN) - 95.7) < 1e-9 && RolloutBrake.FullSpeed(double.NaN, double.NaN) == 60 && RolloutBrake.FullSpeed(87, 70) == 70, "ROLL3: brake_full_speed blank = 1.1 x stall, 60 if unknown");
             }
             {   // THR10: smooth energy throttle (08:18 replay + run 3)
                 var at = new ApproachThrottle(); at.Reset(.3); double atMin = 1, atMax = 0, atPrev = at.Cmd, atStep = 0;

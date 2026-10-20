@@ -22,11 +22,11 @@ namespace KSPChatBridge
         {
             D("SPEEDS", Approach, "Approach speed", "m/s", 1, 5, 30, 400), D("SPEEDS", Threshold, "Landing speed (at runway)", "m/s", 1, 5, 20, 300),
             D("SPEEDS", Stall, "Stall override", "m/s", 1, 5, 15, 250), D("SPEEDS", "decel_plan", "Decel for planning", "m/s2", .1, .5, .2, 5),
-            D("SPEEDS", "flap_limit_speed", "Flap limit speed", "m/s", 1, 5, 20, 400),
+            D("SPEEDS", "flap_limit_speed", "Flap limit speed", "m/s", 1, 5, 20, 400), D("SPEEDS", "brake_full_speed", "Wheel brake full speed", "m/s", 1, 5, 5, 200),   /* ROLL3: replaces the unused brake_start_speed */
             B("APPROACH", AutoGa, "Auto go-around", false), D("APPROACH", "max_approach_bank", "Max approach bank", "deg", 1, 5, 5, 45), B("APPROACH", "airbrakes", "Airbrakes allowed", true),
             D("TOUCHDOWN", "flare_start_m", "Flare start height", "m", 1, 5, 3, 60, 15), D("TOUCHDOWN", "touchdown_sink", "Touchdown sink target", "m/s", .5, 1, .5, 5, 3),
             D("TOUCHDOWN", FlareThrottle, "Flare throttle", "%", 1, 5, 0, 100), D("TOUCHDOWN", FlareSpoolLead, "Flare spool-up lead", "s", .5, 1, 0, 6, 2), D("TOUCHDOWN", FlareSink, "Flare sink rate", "m/s", .1, .5, 0, 5), D("TOUCHDOWN", FlareMaxPitch, "Max flare pitch", "deg", .5, 1, 0, 20), D("TOUCHDOWN", RolloutPitch, "Rollout nose-down", "deg", .5, 1, 0, 10), D("TOUCHDOWN", "touchdown_aim_m", "Touchdown aim distance", "m", 10, 50, -300, 1500, 350), D("TOUCHDOWN", FlapDeg, "Flap degree", "deg", .5, 5, -30, 30),
-            B("ROLLOUT", "reverser", "Reverser on rollout", true), D("ROLLOUT", "brake_start_speed", "Wheel-brake start speed", "m/s", 1, 5, 5, 150, 45),
+            B("ROLLOUT", "reverser", "Reverser on rollout", true),
             D("TAKEOFF", "vr", "Rotation speed (Vr)", "m/s", 1, 5, 15, 300), D("TAKEOFF", RotatePitch, "Rotation angle", "deg", .5, 1, TakeoffMission.RotPitchMin, TakeoffMission.RotPitchMax), D("TAKEOFF", "climb_speed", "Climb speed", "m/s", 1, 5, 20, 400),
         };
         internal static readonly string[] Fields = Defs.ConvertAll(x => x.Key).ToArray();
