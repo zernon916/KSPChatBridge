@@ -172,6 +172,7 @@ namespace KSPChatBridge
             NavigationMath.Offset(lat, lon, p.Heading, 50, body.Radius, out la2, out lo2);
             if (v.currentStage > 0 && v.FindPartModulesImplementing<ModuleEngines>().TrueForAll(e => !e.EngineIgnited)) KSP.UI.Screens.StageManager.ActivateNextStage();
             NativeFlightController.SetGroup(v, KSPActionGroup.Brakes, false);
+            NativeFlightController.ResetBrakes(v, "run " + LandingTestRun.Run + " spawn"); NativeFlightController.ForwardReversers(v, "run " + LandingTestRun.Run + " spawn");   // AICS2: nothing left deployed from the last run
             v.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = .6f;
             for (int k = 0; k < 10; k++)   // hold the state a few physics frames so the ground contact and packing settle
             {

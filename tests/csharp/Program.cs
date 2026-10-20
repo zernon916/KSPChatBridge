@@ -222,6 +222,16 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // AICS2 elevons
+                Check(SurfaceRoles.Classify(true, false, true, false, false, .8, -1, 1, -1, true) == SurfRole.Pitch && SurfaceRoles.Classify(false, false, true, false, false, 1, -1, 1, -1, false) != SurfRole.Brake && SurfaceRoles.Classify(false, false, false, false, false, .5, -1, 1, -1, false) == SurfRole.Brake, "AICS2: a pitch/roll surface on top of the wing is never auto-brake (pure spoiler still is)");
+            }
+            {   // AICS2
+                var sr = new Dictionary<string, object>(); SurfaceRoleStore.Set(sr, "Aeris 3A", 42u, "auto", "brake"); SurfaceRoleStore.Set(sr, "Aeris 3A", 43u, "auto", "auto");
+                var sr2 = SurfaceRoleStore.Parse(MiniJson.Serialize(sr));
+                Check(SurfaceRoleStore.Get(sr2, "Aeris 3A", 42u, "auto") == "brake" && SurfaceRoleStore.Get(sr2, "Aeris 3A", 42u, "flap") == null && SurfaceRoleStore.Get(sr2, "Aeris 3A", 43u, "auto") == null && SurfaceRoleStore.Get(sr2, "Other", 42u, "auto") == null, "AICS2: in-flight role kept per craft/part across respawn; an SPH role change wins");
+                SurfaceRoleStore.Set(sr2, "Aeris 3A", 42u, "auto", "auto"); Check(SurfaceRoleStore.Get(sr2, "Aeris 3A", 42u, "auto") == null, "AICS2: picking the craft-file role again clears the override (both directions)");
+                Check(FlapsPolicy.LiftDump("landing", "rollout", true, 30) && !FlapsPolicy.LiftDump("idle", "rollout", true, 30) && !FlapsPolicy.LiftDump("landing", "rollout", true, 2) && FlapsPolicy.LiftDump("landing", "rollout", true, 2.5) && !FlapsPolicy.LiftDump("landing", "stopped", true, 1) && !FlapsPolicy.LiftDump("landing", "flare", false, 60) && !FlapsPolicy.LiftDump("landing", "rollout", false, 40), "AICS2: lift dump only on an AP landing rollout, wheels down, rolling");
+            }
             {   // LAND5q
                 Check(ApproachProfile.FlareFastDone(57, 52) && !ApproachProfile.FlareFastDone(58, 52) && !ApproachProfile.FlareFastDone(40, double.NaN), "LAND5q: fast flare ends at threshold_speed + 5");
                 Check(!ApproachProfile.FlareTooLong(200, 60, 500, 350) && ApproachProfile.FlareTooLong(250, 60, 500, 350) && ApproachProfile.FlareTooLong(50, 60, 700, 350), "LAND5q: flare long after ~4 s of ground run or 300 m past the aim point");

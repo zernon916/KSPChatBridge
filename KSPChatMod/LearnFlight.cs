@@ -1319,7 +1319,7 @@ namespace KSPChatBridge
         internal static SurfRole Classify(bool pitch, bool yaw, bool roll, bool aero, bool brakeAg, double span01, int chord, int vert, int defl, bool mainWingTe = false)
         {
             if (aero || brakeAg) return SurfRole.Brake;                        // stock airbrake / spoiler wired to Brakes
-            if (vert > 0 && chord != 1) return SurfRole.Brake;                  // sits on top of the wing (ahead of the flaps): spoiler
+            if (vert > 0 && chord != 1 && !pitch && !roll && !yaw) return SurfRole.Brake;   // sits on top of the wing (ahead of the flaps): spoiler   // AICS2: never a control surface (00:50: main-wing elevons auto-'brake' -> deployed = drag + no control)
             if (pitch) return SurfRole.Pitch;                                  // elevators / canards / elevons: never deployed
             if (yaw && !roll) return SurfRole.Yaw;
             if (yaw) return SurfRole.Other;
@@ -1364,6 +1364,8 @@ namespace KSPChatBridge
             double d = max * Fraction(setting) * FlightPolicy.Clamp(droop, 0, 1);
             return Math.Max(0, Math.Min(d, (1 - Math.Min(1, Math.Abs(double.IsNaN(rollInput) ? 0 : rollInput))) * range));
         }
+        /// <summary>AICS2: lift dump only on an autopilot landing rollout, wheels down, still rolling (> 3 m/s).</summary>
+        internal static bool LiftDump(string mode, string phase, bool landed, double speed) { return mode == "landing" && phase == "rollout" && landed && speed > 2; }
         internal static double DroopStep(double cur, double target, double dt) { return target <= cur ? target : Math.Min(target, cur + .5 * Math.Max(0, dt)); }
         internal static double Fraction(int setting) { return setting <= 0 ? 0 : setting >= 3 ? 1 : setting / 3.0; }
         internal static string Name(int s) { return s <= 0 ? "UP" : s >= 3 ? "FULL" : s.ToString(); }

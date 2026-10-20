@@ -894,7 +894,7 @@ namespace KSPChatBridge
                     if (runway.Phase == "flare" && runway.FlareFastEnded && landingPhaseBefore == "flare" && !flareFastEndLogged) { flareFastEndLogged = true; if (AirbrakesByAutopilot && vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; } ChatLog.Write("approach", "flare: fast flare over at " + Math.Round(vessel.srfSpeed) + " m/s (<= landing + 5) - airbrakes IN, normal flare (sink " + (-runway.DesiredVs).ToString("0.0") + ")"); }   // LAND5q
             if (runway.Phase != "flare") { flareFastEndLogged = false; flareLongLogged = false; flareLongPitch = double.NaN; }
             liftDump = runway.Phase == "rollout";   // LAND5q: dump lift from first wheel contact (brake surfaces + airbrakes)
-            if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
+            if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; dumpedAero.Add(ab); } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
             if (runway.Phase == "rollout" && landingPhaseBefore != "rollout")
                     {
                         ChatLog.Write("approach", "touchdown sink " + Math.Abs(lastAirVs).ToString("0.0") + " m/s: " + ApproachProfile.TouchdownClass(lastAirVs) + (Math.Abs(lastAirVs) > 5 ? " (target 3)" : ""));   // GROK LAND5c

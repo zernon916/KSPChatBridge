@@ -124,4 +124,24 @@ namespace KSPChatBridge
         internal static string Outcome(int run, string what, double sink, double speed, int goArounds)
         { return "run " + run + " outcome=" + what + (double.IsNaN(sink) ? "" : " sink=" + sink.ToString("0.0", CultureInfo.InvariantCulture) + " m/s") + (double.IsNaN(speed) ? "" : " speed=" + speed.ToString("0", CultureInfo.InvariantCulture) + " m/s") + " go-arounds=" + goArounds; }
     }
+    /// <summary>AICS2: AICS role changes made IN FLIGHT, remembered per craft + part craftID (test-zone RETRY / respawn reloads the craft file
+    /// and dropped them). Entry = [role in the craft file when changed, chosen role]; ignored once the craft file's role changes (SPH edit wins).</summary>
+    internal static class SurfaceRoleStore
+    {
+        internal static string Get(Dictionary<string, object> root, string craft, uint id, string fileRole)
+        {
+            object c; if (root == null || string.IsNullOrEmpty(craft) || !root.TryGetValue(craft, out c)) return null;
+            var d = c as Dictionary<string, object>; object e; if (d == null || !d.TryGetValue(id.ToString(CultureInfo.InvariantCulture), out e)) return null;
+            var l = e as System.Collections.IList; if (l == null || l.Count < 2) return null;
+            return Convert.ToString(l[0], CultureInfo.InvariantCulture) == (fileRole ?? "") ? Convert.ToString(l[1], CultureInfo.InvariantCulture) : null;
+        }
+        internal static void Set(Dictionary<string, object> root, string craft, uint id, string fileRole, string role)
+        {
+            if (root == null || string.IsNullOrEmpty(craft)) return; object c; var d = root.TryGetValue(craft, out c) ? c as Dictionary<string, object> : null;
+            if (d == null) root[craft] = d = new Dictionary<string, object>();
+            string k = id.ToString(CultureInfo.InvariantCulture);
+            if (role == fileRole) d.Remove(k); else d[k] = new List<object> { fileRole ?? "", role ?? "auto" };
+        }
+        internal static Dictionary<string, object> Parse(string json) { try { return MiniJson.DeserializeObject(json) as Dictionary<string, object> ?? new Dictionary<string, object>(); } catch { return new Dictionary<string, object>(); } }
+    }
 }

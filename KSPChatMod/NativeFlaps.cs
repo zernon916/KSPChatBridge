@@ -26,7 +26,7 @@ namespace KSPChatBridge
         /// are brakes, never flaps; untagged leading-edge surfaces are left alone. Each part's role is logged whenever the result changes.</summary>
         void ScanFlaps()
         {
-            flaps.Clear(); rollFlaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
+            brakeWantSet = false; flaps.Clear(); rollFlaps.Clear(); brakeSurfs.Clear(); farFlaps = false; rollFlapCount = 0; flapVessel = vessel; surfTagged = false;
             var surfs = new List<ModuleControlSurface>();
             foreach (Part p in vessel.parts)
             {
@@ -88,7 +88,21 @@ namespace KSPChatBridge
         /// <summary>Brake surfaces follow the Brakes action group (deploy), so spoilers not wired to the AG still act as airbrakes; only what we deployed is retracted.</summary>
         void BrakeSurfacesTick()
         {
-            if (vessel == null) return; bool on = vessel.ActionGroups[KSPActionGroup.Brakes] && !vessel.LandedOrSplashed || liftDump && mode == "landing";   // LAND5q: lift dump on the rollout
+            if (vessel == null) return;
+            bool dump = FlapsPolicy.LiftDump(mode, runway != null ? runway.Phase : null, vessel.LandedOrSplashed, vessel.srfSpeed);   // AICS2: AP landing rollout only, ends when disengaged / stopped
+            if (dump) dumpOn = true;
+            else if (dumpOn)
+            {   // AICS2: lift dump over (stopped < 2 m/s, AP off, phase change) - retract what it put out
+                dumpOn = false; int n = 0;
+                foreach (var ab in dumpedAero) if (ab != null && ab.deploy) { ab.deploy = false; n++; }
+                dumpedAero.Clear();
+                foreach (var cs in brakeSurfs) if (cs != null && brakeOwned.Contains(cs) && cs.deploy && !vessel.ActionGroups[KSPActionGroup.Brakes]) { cs.deploy = false; n++; }
+                brakeOwned.Clear(); brakeWantSet = false;
+                ChatLog.Write("brakes", "lift dump over (" + (mode != "landing" ? "autopilot off" : vessel.srfSpeed <= 2 ? "stopped" : "rollout ended") + ") - " + n + " spoilers / airbrakes retracted");
+            }
+            bool on = mode != "idle" && (vessel.ActionGroups[KSPActionGroup.Brakes] && !vessel.LandedOrSplashed || dump);   // AICS2: only while the AP is engaged; disengage retracts what we put out
+            if (on == brakeWant && brakeWantSet) return;   // AICS2: write surfaces only when OUR wanted state changes (no per-frame fight with the pilot / PAW)
+            brakeWant = on; brakeWantSet = true;
             foreach (var cs in brakeSurfs)
             {
                 if (cs == null || flaps.Contains(cs) || cs.deploy == on) continue;
@@ -98,6 +112,21 @@ namespace KSPChatBridge
             }
         }
         readonly HashSet<ModuleControlSurface> brakeOwned = new HashSet<ModuleControlSurface>();
+        internal readonly List<ModuleAeroSurface> dumpedAero = new List<ModuleAeroSurface>(); bool brakeWant, brakeWantSet;
+        /// <summary>AICS2: a role change in the PAW rescans the surfaces now (not in up to 10 s).</summary>
+        /// <summary>AICS2: landing-test spawn / respawn - airbrakes + brake-role surfaces all retracted, lift dump state cleared.</summary>
+        internal static int ResetBrakes(Vessel v, string why)
+        {
+            if (v == null) return 0; int n = 0;
+            if (instance != null) { if (instance.vessel == v) instance.ScanFlaps(); foreach (var cs in instance.brakeSurfs) if (cs != null && cs.deploy) { cs.deploy = false; n++; } instance.brakeOwned.Clear(); instance.dumpedAero.Clear(); instance.dumpOn = false; instance.brakeWantSet = false; }
+            foreach (var ab in v.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && ab.deploy) { ab.deploy = false; n++; }
+            ChatLog.Write("brakes", why + ": airbrakes / brake surfaces retracted (" + n + " were out)"); return n;
+        }
+        bool dumpOn;
+        /// <summary>AICS2: test spawn - thrust reversers forced forward.</summary>
+        internal static void ForwardReversers(Vessel v, string why)
+        { try { if (instance != null && instance.vessel == v && instance.reversers != null) { bool ch = instance.reversers.Set(v, false); ChatLog.Write("engine", "reverser forward (" + why + (ch ? ", was reversed" : "") + ")"); } } catch (Exception ex) { ChatLog.Write("engine", "reverser forward failed: " + ex.Message); } }
+        internal static void RescanSurfaces() { if (instance != null) { instance.flapScanAt = -100; instance.brakeWantSet = false; } }
         double FlapLimit()
         {
             double learned = profile != null ? profile.FlapLimit : double.NaN;
