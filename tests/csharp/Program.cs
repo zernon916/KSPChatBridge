@@ -231,7 +231,10 @@ class Program
                 Check(FlapsPolicy.RollFlapSetting(true, 0, 60, 72, 0) == 3 && FlapsPolicy.RollFlapSetting(true, 0, 95, 72, 0) == 0 && FlapsPolicy.RollFlapSetting(false, 0, 60, 72, 0) == 0 && FlapsPolicy.RollFlapSetting(false, 2, 60, 72, 0) == 2 && FlapsPolicy.RollFlapPhase("flare") && !FlapsPolicy.RollFlapPhase("rollout"), "AICS1: droop only below flap_limit_speed in approach/final/flare (not frozen at 0 by the 4 km flap freeze)");
             }
             {   // LAND5n
-                Check(FlarePolicy.SinkTarget(-2, double.NaN, double.NaN) == 0 && FlarePolicy.SinkTarget(1.2, 3, 1) == -1.2 && FlarePolicy.SinkTarget(9, double.NaN, double.NaN) == -5 && FlarePolicy.SinkTarget(double.NaN, double.NaN, 1) == -1 && FlarePolicy.SinkTarget(double.NaN, double.NaN, double.NaN) == -3, "LAND5n: flare sink target never > 0, flare_sink beats touchdown_sink/chart, default 3");
+                Check(FlarePolicy.SinkTarget(-2, double.NaN, double.NaN) == 0 && FlarePolicy.SinkTarget(1.2, 3, 1) == -1.2 && FlarePolicy.SinkTarget(9, double.NaN, double.NaN) == -5 && FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5 && FlarePolicy.SinkTarget(double.NaN, double.NaN, double.NaN) == -1.5, "LAND5n: flare sink target never > 0, flare_sink beats touchdown_sink, default 1.5 (chart 3 ignored)");
+                var rd = new Derotation(); double rp = 6, rmax = 0; for (int k = 0; k < 400; k++) { double c0 = rd.Command; rd.Step(rp, .02, k > 100, 50 - k * .1); if (!double.IsNaN(c0)) rmax = Math.Max(rmax, (c0 - rd.Command) / .02); rp = rd.Command; }
+                var rd2 = new Derotation { NoseDownPitch = Derotation.NoseDownFor(5) }; double rp2 = 6; for (int k = 0; k < 600; k++) { rd2.Step(rp2, .02, k > 100, 50); rp2 = rd2.Command; }
+                Check(Math.Abs(rp + 3) < 1e-6 && rmax <= 2 + 1e-6 && Math.Abs(rp2 + 5) < 1e-6 && Derotation.NoseDownFor(double.NaN) == 3 && Derotation.NoseDownFor(20) == 10 && !Derotation.Airborne(.3) && Derotation.Airborne(.6), "LAND5n: rollout nose to -3 (rollout_pitch_deg) at <= 2 deg/s; only > 0.5 s off the ground is a bounce (" + rp.ToString("0.0") + ")");
                 double fpa = FlarePolicy.Pitch(7, 55, 1.4, -1), fpb = FlarePolicy.Pitch(7, 55, -1, -1), fpc = FlarePolicy.Pitch(7, 55, 0, 2);
                 Check(fpa < fpb && fpb < 7 && Math.Abs(fpc - FlarePolicy.Pitch(7, 55, 0, 0)) < 1e-9 && fpc < 7 + 1e-9, "LAND5n: climbing in the flare -> nose down, positive target clamped to 0 (" + fpa.ToString("0.0") + "/" + fpb.ToString("0.0") + ")");
                 Check(FlarePolicy.CapPitch(9, 6) == 6 && FlarePolicy.CapPitch(4, 6) == 4 && FlarePolicy.CapPitch(9, double.NaN) == 9 && FlarePolicy.CapPitch(9, 40) == 9, "LAND5n: max flare pitch cap");
@@ -380,12 +383,12 @@ class Program
             // fast flare: mission latches FlareFast (no pitch-up / idle / airbrakes / full flaps are applied by the controller on this flag), sink stays 3
             var ff = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; ff.Step(0, -.1, 130, 60, 65, false, 600000, 45);
             ff.Step(0, -.005, 80, 10, ApproachProfile.AppSpeed(45) + 15, false, 600000, 45);
-            Check(ff.Phase == "flare" && ff.FlareFast && ff.DesiredVs == -3, "LAND5c: overspeed at the flare point -> FlareFast (no pitch-up, idle + airbrakes + full flaps), sink 3");
+            Check(ff.Phase == "flare" && ff.FlareFast && ff.DesiredVs == -1.5, "LAND5c: overspeed at the flare point -> FlareFast (no pitch-up, idle + airbrakes + full flaps), sink 1.5 (LAND5n)");
             // flare sim: vs follows the mission's ask with a 0.8 s lag from a 4 m/s glide, touchdown sink in [1,5], near 3
             var fs = new RunwayMission { Lat = 0, Lon = 0, EndLat = 0, EndLon = .2, Elevation = 70, Phase = "final" }; fs.Step(0, -.1, 130, 60, 65, false, 600000, 45);
             double hF = 40, vsF = -4, lonF = -.004, spF = 60, tdF = double.NaN;
             for (int i = 0; i < 5000 && double.IsNaN(tdF); i++) { fs.Step(0, lonF, 70 + hF, hF, spF, false, 600000, 45); vsF += (fs.DesiredVs - vsF) * .02 / .8; hF += vsF * .02; lonF += spF * .02 / (600000 * Math.PI / 180); if (hF <= 0) tdF = -vsF; }
-            Check(tdF >= 1 && tdF <= 5 && Math.Abs(tdF - 3) < .8, "LAND5c: flare sim touchdown sink " + tdF.ToString("0.0") + " m/s in [1,5], ~3");
+            Check(tdF >= 1 && tdF <= 5 && Math.Abs(tdF - 1.5) < .8, "LAND5c/5n: flare sim touchdown sink " + tdF.ToString("0.0") + " m/s in [1,5], ~1.5");
             var co = new AltCallouts(); var said = new List<string>(); foreach (var a in new[] { 120.0, 99, 98, 60, 49, 45, 29, 21, 19, 9, 5, 9, 30 }) { string s = co.Step(a); if (s != null) said.Add(s); }
             Check(string.Join(",", said) == "100 m,50 m,30 m,20 m,10 m", "LAND5c: callouts 100/50/30/20/10 once each (" + string.Join(",", said) + ")"); co.Reset(); Check(co.Step(95) == "100 m", "LAND5c: callouts re-arm per approach");
             // go-around pattern from a go-around at 70 m on runway 27: climb out west 2.5 km past the threshold, then pattern
@@ -1312,7 +1315,7 @@ class Program
         var landing = new RunwayMission { Lat=0, Lon=0, EndLat=0, EndLon=.2, Elevation=70, Phase="final" };
         landing.Step(0, -.1, 130, 60, 65, false, 600000, 45);
         Check(landing.Gear && Math.Abs(landing.DesiredSpeed - ApproachProfile.Vref(45)) < .01 && landing.DesiredVs >= -4.5, "final speed/sink/gear");
-        landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -3 && !landing.FlareFast, "flare (LAND5c: 3 m/s touchdown sink)");
+        landing.Step(0, -.005, 75, 5, 50, false, 600000, 45); Check(landing.Phase == "flare" && landing.DesiredVs == -1.5 && !landing.FlareFast, "flare (LAND5n: 1.5 m/s default sink)");
         landing.Step(0, .02, 70, 0, 40, true, 600000, 45); Check(landing.Phase == "rollout" && landing.Brakes, "touchdown");
         landing.Step(0, .04, 70, 0, .5, true, 600000, 45); Check(landing.Phase == "stopped", "stopped");
         landing.Phase="final"; landing.Step(0, .2, 120, 50, 65, false, 600000, 45); Check(landing.Phase == "go around", "missed touchdown go around");
@@ -3125,9 +3128,9 @@ class Program
             double before = dr.Command; dr.Step(8, .05, false, 40);
             Check(dr.Command < before && before - dr.Command <= Derotation.Rate * .05 + 1e-9, "speed drop lowers nose at limited rate");
             for (int i = 0; i < 100; i++) dr.Step(8, .05, false, 40);
-            Check(Math.Abs(dr.Command - 3.5) < 1e-9, "half touchdown speed progressively lowers nose");
-            dr.Step(3.5, .05, false, 70);
-            Check(Math.Abs(dr.Command - 3.5) < 1e-9, "speed increase never raises nose during rollout");
+            Check(Math.Abs(dr.Command - 2.5) < 1e-9, "half touchdown speed progressively lowers nose (to -3 at 0)");
+            dr.Step(2.5, .05, false, 70);
+            Check(Math.Abs(dr.Command - 2.5) < 1e-9, "speed increase never raises nose during rollout");
             Console.WriteLine("Touchdown AoA: 11 behavior checks passed.");
         }
         {   // derotation: nose lowered at <= 2.5 deg/s, no forward-stick spike, brakes only after nose-wheel contact (Luke 4:26 PM)

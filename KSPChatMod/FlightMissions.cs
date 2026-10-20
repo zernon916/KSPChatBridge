@@ -1028,7 +1028,12 @@ namespace KSPChatBridge
     /// once the nose wheel is down. Pure; tested.</summary>
     internal sealed class Derotation
     {
-        internal const double Rate = 2.5, HoldS = .8, MinElevator = -.1;
+        internal const double Rate = 2, HoldS = .8, MinElevator = -.1, DefaultNoseDown = 3, AirborneS = .5;   // LAND5n: 2 deg/s to rollout_pitch_deg nose-down (was 2.5 to -1)
+internal double NoseDownPitch = DefaultNoseDown;
+/// <summary>LAND5n: rollout nose-down target (deg below the horizon): rollout_pitch_deg 0-10, blank = 3.</summary>
+internal static double NoseDownFor(double setting) { return double.IsNaN(setting) ? DefaultNoseDown : FlightPolicy.Clamp(setting, 0, 10); }
+/// <summary>LAND5n: only a real bounce (wheels off > 0.5 s) holds the touchdown attitude; a wheel skip keeps derotating.</summary>
+internal static bool Airborne(double airS) { return airS > AirborneS; }
         double cmd = double.NaN, held, contactSpeed, contactPitch; internal bool NoseDown;
         internal double Command { get { return cmd; } }
         internal void Reset() { cmd = double.NaN; held = 0; NoseDown = false; }
@@ -1038,8 +1043,8 @@ namespace KSPChatBridge
             if (double.IsNaN(cmd)) { cmd = pitch; contactPitch = pitch; contactSpeed = speed; }
             if (noseGrounded && held > HoldS) NoseDown = true;
             held += dt;
-            double target = contactSpeed > 10 && speed >= 0 ? -1 + (contactPitch + 1) * FlightPolicy.Clamp(speed / contactSpeed, 0, 1) : -1;
-            if (noseGrounded) target = -1;
+            double nd = -NoseDownPitch, target = contactSpeed > 10 && speed >= 0 ? nd + (contactPitch - nd) * FlightPolicy.Clamp(speed / contactSpeed, 0, 1) : nd;
+            if (noseGrounded) target = nd;
             if (held > HoldS) cmd = Math.Min(cmd, Math.Max(target, cmd - Rate * dt));
             return cmd;
         }

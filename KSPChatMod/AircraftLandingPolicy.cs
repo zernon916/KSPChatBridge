@@ -13,10 +13,10 @@ namespace KSPChatBridge
         internal static double SinkTarget(double flareSink, double touchdownSink, double chart)
         {
             if (!double.IsNaN(flareSink)) return -FlightPolicy.Clamp(flareSink, 0, 5);
-            double s = !double.IsNaN(touchdownSink) ? touchdownSink : !double.IsNaN(chart) ? chart : 3;
+            double s = !double.IsNaN(touchdownSink) ? touchdownSink : DefaultSink;   // LAND5n: blank = 1.5 (chart flare sinks defaulted to 3 -> ignored)
             return -FlightPolicy.Clamp(s, .5, 5);
         }
-        internal const double TrackK = 1, TrackMax = 5;
+        internal const double TrackK = 1, TrackMax = 5, DefaultSink = 1.5;
         /// <summary>LAND5n: flare pitch flies the TARGET path (aoa + target path angle) and corrects the vs error (1 deg per m/s, +-5),
         /// so above the target sink the nose comes down instead of holding a level / climbing path (23:43: +1.4 m/s, 1.1 km float).</summary>
         internal static double Pitch(double aoa, double speed, double vs, double targetVs)
