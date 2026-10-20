@@ -247,6 +247,20 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // REV1: rollout reverse thrust gating
+                bool rvOn = false; Func<bool, bool> rvSet = v1 => { rvOn = v1; return true; };
+                var rv = new ReverseRollout(); double rv0 = rv.Step(false, false, 130, 0, 0, 70, 25, rvSet), rv1 = rv.Step(true, false, 128, .5, 0, 70, 25, rvSet); bool rvEarly = rvOn; double rv2 = rv.Step(true, true, 125, 1, 0, 70, 25, rvSet), rv3 = rv.Step(true, true, 120, 2.5, 0, 70, 25, rvSet);
+                Check(rv0 == 0 && rv1 == 0 && !rvEarly && rv2 == 0 && rvOn && Math.Abs(rv3 - .7) < 1e-9, "REV1: reverse only after touchdown with the nose down, ramped to reverse_pct over 1.5 s");
+                double rv4 = rv.Step(true, true, 110, 3, 4, 70, 25, rvSet); bool rvBack = rv.YawBackoff; double rv5 = rv.Step(true, true, 105, 3.5, 2, 70, 25, rvSet), rv6 = rv.Step(true, true, 100, 4, 1, 70, 25, rvSet);
+                Check(rv4 == 0 && rvBack && rv5 == 0 && rv6 > 0, "REV1: yaw > 3 deg/s = reverse idle until < 1.5");
+                double rv7 = rv.Step(true, true, 24, 6, 0, 70, 25, rvSet), rv8 = rv.Step(true, true, 60, 7, 0, 70, 25, rvSet);
+                Check(rv7 == 0 && !rvOn && rv8 == 0 && !rvOn, "REV1: stowed below reverse_off_speed, no rearm");
+                var rn = new ReverseRollout(); rn.Step(true, true, 100, 0, 0, 70, 25, v1 => false);
+                Check(rn.NoReversers && !rn.Reversed && rn.Step(true, true, 99, 1, 0, 70, 25, v1 => false) == 0, "REV1: no reversers on this craft = logged once, nothing done");
+                Check(ReverseRollout.Pct(double.NaN) == 70 && ReverseRollout.OffSpeed(double.NaN) == 25 && ReverseRollout.Pct(150) == 100 && CraftOverrides.Find("reverse_pct") != null && CraftOverrides.Find("reverse_off_speed") != null, "REV1: defaults 70% / 25 m/s, settings exist");
+                var rb = new ReverseRollout(); rb.Step(true, true, 100, 0, 0, 70, 25, rvSet); rb.Step(false, true, 100, .5, 0, 70, 25, rvSet);
+                Check(!rvOn && !rb.Reversed, "REV1: a bounce stows the reversers");
+            }
             {   // ROLL3 (Aeris 4A run 6: 137 m/s touchdown, stall 87)
                 bool r3l = false; double r3a = RolloutBrake.Strength(137, 1.1 * 87, 0, 0, 0, ref r3l), r3b = RolloutBrake.Strength(137, 1.1 * 87, 2, 0, 0, ref r3l), r3c = RolloutBrake.Strength(80, 1.1 * 87, 5, 0, 0, ref r3l);
                 Check(Math.Abs(r3a - RolloutBrake.LightFrac) < 1e-9 && Math.Abs(r3b - Math.Pow(95.7 / 137, 2)) < 1e-9 && r3c == 1, "ROLL3: light at contact, (full speed / speed)^2 after the 1.5 s ramp (" + Math.Round(100 * r3b) + "% at 137), full below 1.1 x stall");

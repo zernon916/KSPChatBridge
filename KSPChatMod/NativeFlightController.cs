@@ -45,7 +45,7 @@ namespace KSPChatBridge
         NativeSpots spots;
         NativeCraftNotes craftNotes;
         float lastCapCut = -10; bool landingGearDown; int goArounds, lastAlarmSeq = -1; double bankCmd, bankPrevWant; float gTraceUntil, gTraceNext; readonly PitchShaper pitchShape = new PitchShaper(); string shapedMode = ""; double landMass0, landStall0; string loggedSmooth = "";
-        readonly ApproachThrottle appThr = new ApproachThrottle(); double appThrLogT, prevApOut = double.NaN;   /* THR10 */ readonly Dictionary<ModuleWheels.ModuleWheelBrakes, float> brakeOrig = new Dictionary<ModuleWheels.ModuleWheelBrakes, float>(); double brakeScale = double.NaN; bool brakeLight; double brakeLogT;   /* ROLL3 */
+        readonly ApproachThrottle appThr = new ApproachThrottle(); double appThrLogT, prevApOut = double.NaN;   /* THR10 */ readonly Dictionary<ModuleWheels.ModuleWheelBrakes, float> brakeOrig = new Dictionary<ModuleWheels.ModuleWheelBrakes, float>(); double brakeScale = double.NaN; bool brakeLight; double brakeLogT; bool revNoneLogged; double revLogT;   /* ROLL3 */
         /// <summary>ROLL3: wheel-brake strength = the part's own brake setting x s (written only on a 5% change; restored after).</summary>
         void WheelBrakeScale(double s)
         {
@@ -195,6 +195,7 @@ namespace KSPChatBridge
             if (field == "flap_limit_speed") return ApproachProfile.FlapLimitSpeed;
             if (field == "max_approach_bank") return i.runway != null && i.runway.TurnBank > 0 ? i.runway.TurnBank : 30;
             if (field == "brake_full_speed") return RolloutBrake.FullSpeed(i.stall);   // ROLL3
+            if (field == "reverse_pct") return ReverseRollout.DefaultPct; if (field == "reverse_off_speed") return ReverseRollout.DefaultOffSpeed;   // REV1
             if (field == "flare_start_m" || field == "touchdown_sink" || field == "touchdown_aim_m") { var df = CraftOverrides.Find(field); return field == "touchdown_aim_m" && i.runway != null ? i.runway.TouchdownM : df.Default; }
             if (field == "vr") return i.takeoff != null && i.takeoff.Vr > 0 ? i.takeoff.Vr : TakeoffMission.RotateSpeed(i.stall, i.liftoffSpeed);
             if (field == CraftOverrides.RotatePitch) return TakeoffMission.RotateTarget(double.NaN);
@@ -908,7 +909,7 @@ namespace KSPChatBridge
                     if (runway.Phase == "flare" && runway.FlareFastEnded && landingPhaseBefore == "flare" && !flareFastEndLogged) { flareFastEndLogged = true; if (AirbrakesByAutopilot && vessel.ActionGroups[KSPActionGroup.Brakes]) { SetGroup(vessel, KSPActionGroup.Brakes, false); AirbrakesByAutopilot = false; } ChatLog.Write("approach", "flare: fast flare over at " + Math.Round(vessel.srfSpeed) + " m/s (<= landing + 5) - airbrakes IN, normal flare (sink " + (-runway.DesiredVs).ToString("0.0") + ")"); }   // LAND5q
             if (runway.Phase != "flare") { flareFastEndLogged = false; }
             liftDump = runway.Phase == "rollout";   // LAND5q: dump lift from first wheel contact (brake surfaces + airbrakes)
-            if (runway.Phase != "rollout") { rollHdgPrev = double.NaN; rollHdgRate = double.NaN; rollSteer = double.NaN; if (brakeOrig.Count > 0) WheelBrakeRestore(); }   /* ROLL1 */ if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; dumpedAero.Add(ab); } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
+            if (runway.Phase != "rollout") { rollHdgPrev = double.NaN; rollHdgRate = double.NaN; rollSteer = double.NaN; if (brakeOrig.Count > 0) WheelBrakeRestore(); if (reverseRollout != null && reverseRollout.Reversed && runway.Phase == "stopped") { reverseRollout.Cancel(rv => reversers.Set(vessel, rv)); ChatLog.Write("approach", "rollout: reversers stowed (rollout ended)"); } }   /* ROLL1 */ if (runway.Phase == "rollout" && landingPhaseBefore != "rollout") { foreach (var ab in vessel.FindPartModulesImplementing<ModuleAeroSurface>()) if (ab != null && !ab.deploy) { ab.deploy = true; dumpedAero.Add(ab); } ChatLog.Write("approach", "touchdown: lift dump - spoilers / airbrakes out"); }
             if (runway.Phase == "rollout" && landingPhaseBefore != "rollout")
                     {
                         ChatLog.Write("approach", "touchdown sink " + Math.Abs(lastAirVs).ToString("0.0") + " m/s: " + ApproachProfile.TouchdownClass(lastAirVs) + (Math.Abs(lastAirVs) > 5 ? " (target 3)" : ""));   // GROK LAND5c
@@ -954,7 +955,15 @@ namespace KSPChatBridge
                         if (TouchAndGoNow(runway.Phase)) return;
                         if (runway.Phase == "rollout")
                         {
-                            c.mainThrottle = (float)reverseRollout.Tick(vessel.LandedOrSplashed, vessel.srfSpeed, Planetarium.GetUniversalTime(), reverse => (!reverse || Bool(settingsData, "autoland_reversers", true)) && reversers.Set(vessel, reverse));
+                            if (CraftOverrides.On("reverser", Bool(settingsData, "autoland_reversers", true)))
+                    {   // REV1: reverse thrust as a brake - gated on nose down, ramped, yaw back-off, stowed below reverse_off_speed
+                        bool wasRev = reverseRollout.Reversed;
+                        c.mainThrottle = (float)reverseRollout.Step(vessel.LandedOrSplashed, derot.NoseDown, vessel.srfSpeed, Planetarium.GetUniversalTime(), rollHdgRate, ReverseRollout.Pct(CraftOverrides.L("reverse_pct")), ReverseRollout.OffSpeed(CraftOverrides.L("reverse_off_speed")), reverse => reversers.Set(vessel, reverse));
+                        if (reverseRollout.NoReversers && !revNoneLogged) { revNoneLogged = true; ChatLog.Write("approach", "rollout: no reversers on this craft"); }
+                        if (reverseRollout.Reversed && Time.realtimeSinceStartup >= revLogT) { revLogT = Time.realtimeSinceStartup + 1; ChatLog.Write("approach", "rollout: reverse " + Math.Round(100 * reverseRollout.Cmd) + "% (" + reversers.Count(vessel) + " engines) at " + Math.Round(vessel.srfSpeed) + " m/s" + (reverseRollout.YawBackoff ? " (yaw back-off)" : "")); }
+                        if (wasRev && !reverseRollout.Reversed) ChatLog.Write("approach", "rollout: reversers stowed at " + Math.Round(vessel.srfSpeed) + " m/s");
+                    }
+                    else c.mainThrottle = 0;
                             if (!vessel.LandedOrSplashed) c.mainThrottle = Math.Max(.05f, c.mainThrottle);
                             c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, "ground", "rollout idle/reversers");
                     if (!vessel.LandedOrSplashed) rolloutAirS += dt; else rolloutAirS = 0;

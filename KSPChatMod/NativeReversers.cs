@@ -70,6 +70,8 @@ namespace KSPChatBridge
             return any && (!reverse || all);
         }
         internal bool ApWants;
+        /// <summary>REV1: reversible engine modules on this vessel.</summary>
+        internal int Count(Vessel vessel) { int n = 0; foreach (var item in items) if (item.Module != null && item.Module.part.vessel == vessel) n++; return n; }
         internal readonly List<string> Noticed = new List<string>();
         internal int Recover(Vessel vessel, double now, bool enabled)
         {
