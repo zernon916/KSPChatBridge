@@ -85,7 +85,7 @@ namespace KSPChatBridge
             double thrust = 0, spool = 0; int n = 0;
             foreach (Part ep in vessel.parts) foreach (PartModule pm in ep.Modules) { var en = pm as ModuleEngines; if (en == null) continue; thrust += en.maxThrust; n++; if (en.useEngineResponseTime && en.engineAccelerationSpeed > 0) spool = Math.Max(spool, 1 / en.engineAccelerationSpeed); }
             double twr = n == 0 ? double.NaN : thrust / (vessel.totalMass * 9.81);
-            shold.Configure(vessel.totalMass, twr, spool);
+            shold.Configure(vessel.totalMass, twr, spool); if (spool > 0) stepThr.SpoolS = FlightPolicy.Clamp(spool, 1, 15);   // GROK LAND5j: measured spool = the prediction horizon
             { object lo; var lc = settingsData.TryGetValue("throttle_lag", out lo) ? lo as Dictionary<string, object> : null; double ml = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); if (!double.IsNaN(ml)) shold.SetLag(ml); lagMeasured = !double.IsNaN(ml); }
             if (profile != null)
             {
@@ -839,8 +839,8 @@ namespace KSPChatBridge
             if (runway.DubinsLog != loggedDubins) { loggedDubins = runway.DubinsLog; if (loggedDubins.Length > 0) ChatLog.Write("approach", loggedDubins); }   // GROK JOIN1
                     if (runway.SmoothLog != loggedSmooth) { if (runway.JoinLog.Length > 0) ChatLog.Write("approach", runway.JoinLog); loggedSmooth = runway.SmoothLog; if (loggedSmooth.Length > 0) ChatLog.Write("approach", "plane " + Math.Round(runway.PlanSpeed) + " m/s " + runway.PlanG.ToString("0.0") + " g bank " + Math.Round(runway.PlanBank) + " r=" + Math.Round(runway.PlanRadius) + " m: " + loggedSmooth); }
                         { bool airPhase = runway.Phase == "entry" || runway.Phase == "intercept" || runway.Phase == "final" || runway.Phase == "flare", on = vessel.ActionGroups[KSPActionGroup.Brakes]; bool allowed = AirbrakeGate.Allowed(vessel.LandedOrSplashed, vessel.altitude - runway.Elevation, vessel.srfSpeed, runway.DesiredSpeed, brakesMoveControls, powerFloor);   // GROK LAND5e
-                          bool deployOk = !runway.EnergyLow && vessel.verticalSpeed > runway.DesiredVs - 5;   // GROK LAND4: no new deploy while low or sinking 5 m/s faster than the path (pitch, not drag)   // GROK FIX6: never airbrakes against floor power
-                          if (airPhase && airGate.Step(Time.time, on, vessel.srfSpeed, runway.DesiredSpeed, allowed, deployOk)) { SetGroup(vessel, KSPActionGroup.Brakes, airGate.On); AirbrakesByAutopilot = airGate.On; ChatLog.Write("brakes", airGate.Why + ", phase " + runway.Phase); }
+                          bool deployOk = AirbrakeGate.DeployOk(!runway.EnergyLow && vessel.verticalSpeed > runway.DesiredVs - 5, double.IsNaN(stepThr.Thr) ? 0 : stepThr.Accel, runway.DesiredVs > vessel.verticalSpeed + 3);   // GROK LAND5j: not while decelerating hard / pulling up   // GROK LAND4: no new deploy while low or sinking 5 m/s faster than the path (pitch, not drag)   // GROK FIX6: never airbrakes against floor power
+                          if (airPhase && airGate.Step(Time.time, on, double.IsNaN(stepThr.Thr) ? vessel.srfSpeed : stepThr.PredictOver(vessel.srfSpeed), runway.DesiredSpeed, allowed, deployOk)) { SetGroup(vessel, KSPActionGroup.Brakes, airGate.On); AirbrakesByAutopilot = airGate.On; ChatLog.Write("brakes", airGate.Why + ", phase " + runway.Phase); }
                             if ((runway.FastContinue || runway.FlareFast && runway.Phase == "flare") && !vessel.LandedOrSplashed && !on) { SetGroup(vessel, KSPActionGroup.Brakes, true); AirbrakesByAutopilot = true; if (!fastBrakeLogged) { fastBrakeLogged = true; ChatLog.Write("brakes", "airbrakes: fast at touchdown, continuing (LAND5c)"); } }
                             if (!runway.FastContinue && !runway.FlareFast) fastBrakeLogged = false; }   // GROK FIX3: +8/+2 m/s hysteresis, 3 s dwell
                         runway.Heavy = CraftClass.Gentle(CraftCls); runway.Warp = TimeWarp.CurrentRate;   // GROK LAND4f
@@ -1130,6 +1130,7 @@ namespace KSPChatBridge
             LearnApply(c);
             LogLandingLateral(c);
             if (mode == "takeoff" && vessel.LandedOrSplashed && throttleKind == "pi") { throttleKind = "test"; throttleWhy = "takeoff roll power ramp"; }
+            throttleKind = ThrottleGate.LandingKind(throttleKind, mode == "landing" && runway != null && !vessel.LandedOrSplashed, !double.IsNaN(stepThr.Thr), vessel.srfSpeed, runway != null ? runway.DesiredSpeed : double.NaN, c.mainThrottle, double.IsNaN(gate.Out) ? c.mainThrottle : gate.Out);   // GROK LAND5j
             gate.K = shold.K; c.mainThrottle = (float)gate.Step(c.mainThrottle, dt, throttleKind, throttleWhy); if (holdSpeed || learn != null || throttleKind == "emergency") FlightInputHandler.state.mainThrottle = c.mainThrottle; throttleKind = "pi"; throttleWhy = "";   // ONE smooth output path; the pilot's throttle mirrors it
                 if (props.Rotors.Count > 0 && !props.HasLift(vessel) && mode != "spool")
                 {

@@ -431,6 +431,10 @@ namespace KSPChatBridge
         /// have AT the turn - the entry/plan speed, plus at most TurnFastMs - never the current overspeed (idle + speedbrakes decelerate toward plan;
         /// a plane still fast in the turn banks steeper, up to the 30 deg cap, via the path follower's curvature feed-forward).</summary>
         internal const double TurnFastMs = 10;
+        /// <summary>GROK LAND5j (22:37: the pull-up from +400 m bled 35 m/s in 8 s): the steepest sink that can still be blended onto the glidepath
+        /// with at most CaptureAcc of vertical deceleration - so the pull-out starts early and the flight-path change is limited.</summary>
+        internal const double CaptureAcc = .4;
+        internal static double CaptureVs(double aboveM, double pathVs, double maxSink) { return Math.Max(-Math.Max(1, maxSink), pathVs - Math.Sqrt(2 * CaptureAcc * Math.Max(0, aboveM))); }
         internal static double TurnSpeed(double entry, double speed, double distToTurnM = 0, double decel = double.NaN)
         {
             double e = !double.IsNaN(entry) && entry > 40 ? entry : 150;
@@ -907,9 +911,13 @@ namespace KSPChatBridge
         /// <summary>deployOk = soft block (GROK LAND4: low, or sinking faster than the path): no NEW deploy; allowed = hard block: retract at once.</summary>
         /// <summary>GROK LAND5e: airbrakes allowed all the way down to the flare whenever over plan (no 'not allowed here' toggle on short final).</summary>
         internal static bool Allowed(bool landed, double agl, double speed, double plan, bool moveControls, bool powerFloor) { return !landed && !moveControls && !powerFloor && (agl > 30 || speed > plan + OffBelow); }
+        /// <summary>GROK LAND5j: no NEW deploy while decelerating harder than 1.5 m/s2 or pitching up out of a steep descent.</summary>
+        internal const double NoDeployAcc = -1.5;
+        internal static bool DeployOk(bool notLow, double accel, bool pullingUp) { return notLow && accel > NoDeployAcc && !pullingUp; }
         internal bool Step(double now, bool actual, double speed, double plan, bool allowed, bool deployOk = true)
         {
             On = actual;
+            if (On && allowed && speed < plan) { changedAt = double.NegativeInfinity; }   // GROK LAND5j: predicted under plan = retract at once (no dwell)
             bool want = allowed && (On ? speed > plan + OffBelow : deployOk && speed > plan + OnAbove);
             if (want == On) return false;
             if (allowed && now - changedAt < DwellS) return false;
@@ -1048,6 +1056,9 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5i (Luke: 'any throttle change NEEDS TO WAIT for the engines to SPOOL, then TINY BUMPS'): after a change, wait until the
         /// engines report settled (measured; fallback FallbackWaitS), then SettleS for the speed to answer. Last 2 km: 2% bumps, 15% cap, only
         /// > FloorMarginMs below the floor with a falling trend. Freeze (< 30 m / last 600 m / flare): idle and locked.</summary>
+        internal const double DecayAcc = 1.0, BigStep = .35;
+        /// <summary>GROK LAND5j: speed predicted over the spool horizon (airbrake decisions).</summary>
+        internal double PredictOver(double speed) { return speed + Accel * Math.Max(AheadS, SpoolS); }
         internal const double SettleS = 3, FallbackWaitS = 7, LastStep = .02, LastCap = .15, FloorMarginMs = 2, FreezeAgl = 30, FreezeM = 600;
         double settledAt = double.NaN; bool frozenLogged;
         /// <summary>engineSettled: 1 = the engines' actual throttle matches the command, 0 = still spooling, -1 = no engine data.</summary>
@@ -1072,6 +1083,18 @@ namespace KSPChatBridge
             if (Frozen) { if (Thr > 0 || !frozenLogged) { Why = Thr > 0 ? "final lock: idle, no more throttle changes" : "final lock: held at idle"; frozenLogged = true; } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5i
             frozenLogged = false;
             double e = Predicted - plan, sz = Math.Abs(speed - plan) <= NearMs ? NearStep : Step; Why = "";
+            {   // GROK LAND5j: FAST DECAY exception - the trend crosses the floor within the spool horizon: one step sized to the deficit, now
+                double hz = Math.Max(AheadS, SpoolS), predH = speed + Accel * hz;
+                bool decaying = !double.IsNaN(floor) && Accel < -DecayAcc && predH < floor && e < 0;
+                if (decaying && !(Ready(now, EngineSettled) || now - lastStep > hz)) return Thr;   // the sized step is spooling: no idle/back cuts on top
+                if (decaying)
+                {
+                    bool last = !double.IsNaN(distM) && distM <= LastM; double cap = last ? LastCap : 1;
+                    double need = (-Accel + (floor + FloorMarginMs - predH) / hz) / Math.Max(1, AccelPerThr), t0 = Thr;
+                    Thr = Math.Min(cap, FlightPolicy.Clamp(Thr + FlightPolicy.Clamp(need, Step, last ? LastCap : BigStep), 0, 1));
+                    if (Thr > t0 + 1e-9) { Acc += Thr - t0; Stepped(now); Why = "fast decay " + Accel.ToString("0.0") + " m/s2 crosses the floor " + Math.Round(floor) + " within " + Math.Round(hz) + " s: +" + Math.Round(100 * (Thr - t0)) + "%"; return Thr; }
+                }
+            }
             if (speed > plan + IdleOver) { if (Thr > 0) { Why = "fast +" + Math.Round(speed - plan) + " m/s: idle"; Stepped(now); } Thr = 0; Acc = 0; return Thr; }   // GROK LAND5e: > plan + 3 = idle
             if (Math.Abs(Accel) > .5 && Math.Sign(Accel) == Math.Sign(e)) sz = FlightPolicy.Clamp(.8 * Math.Abs(Accel + e / 10) / Math.Max(1, AccelPerThr), sz, MaxStep);   // a real drag/thrust step (flaps FULL + gear): half the thrust that would stop the trend, capped
             if (Acc < -1e-9 && e <= 0 && speed > plan) Acc = 0;   // GROK LAND5e: 'back' never adds power while over plan
@@ -2105,6 +2128,7 @@ namespace KSPChatBridge
                 double pointVs = FinalApproachPolicy.VerticalSpeed(targetAlt, altitude, speed, latDev);
                 bool outsideFaf = Distance > (Chart != null ? Chart.FafD : FafDistance); if (outsideFaf && targetAlt > altitude) belowGs = true;   // GROK LAND5b: below the path outside the FAF = hold altitude until it meets us
                 DesiredVs = FlightPolicy.Clamp(OffLine ? Math.Max(0, pointVs) : pointVs, belowGs ? 0 : -maxSink, belowGs ? (outsideFaf ? 0 : 10) : 3);
+                if (above > 0) DesiredVs = Math.Max(DesiredVs, ApproachProfile.CaptureVs(above, -speed * Math.Tan(FinalSlope * Math.PI / 180), maxSink));   // GROK LAND5j: early, blended pull-out onto the glidepath
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
                 double fs = Override != null ? Override.FlareStartM : 15;
                 

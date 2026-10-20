@@ -20,12 +20,16 @@ namespace KSPChatBridge
         internal const double NormalRate = .04, FastRate = 1.0, EmergencyRate = 2.0;
         internal double Out = double.NaN, K = 1, MaxStep; internal string Reason = "";
         internal Action<string> Log;
-        internal static double RateOf(string kind, double k) { return kind == "emergency" ? EmergencyRate : kind == "test" || kind == "ground" ? FastRate : NormalRate / Math.Max(1, k); }
+        internal static double RateOf(string kind, double k) { return kind == "emergency" ? EmergencyRate : kind == "test" || kind == "ground" || kind == "step" ? FastRate : NormalRate / Math.Max(1, k); }
+        /// <summary>GROK LAND5j (22:38: idle commanded at 153 m/s, output crawled down from 100% at 4%/s -> 308 m/s): on an approach the step
+        /// throttle is its own rate limiter, and any cut while over plan goes through at the fast rate.</summary>
+        internal static string LandingKind(string kind, bool landingAir, bool stepActive, double speed, double plan, double target, double outv)
+        { if (kind != "pi" || !landingAir) return kind; return stepActive || speed > plan + 3 && target < outv ? "step" : kind; }
         internal double Step(double target, double dt, string kind = "pi", string reason = "")
         {
             if (double.IsNaN(target)) target = double.IsNaN(Out) ? 0 : Out;
             target = FlightPolicy.Clamp(target, 0, 1); if (double.IsNaN(Out)) Out = target;
-            if (kind != "pi") { string r = kind + ": " + reason; if (r != Reason) { Reason = r; if (Log != null) Log("throttle " + r + " (target " + Math.Round(target * 100) + "%, " + RateOf(kind, K).ToString("0.##") + "/s)"); } }
+            if (kind != "pi" && kind != "step") { string r = kind + ": " + reason; if (r != Reason) { Reason = r; if (Log != null) Log("throttle " + r + " (target " + Math.Round(target * 100) + "%, " + RateOf(kind, K).ToString("0.##") + "/s)"); } }
             else Reason = "";
             double lim = RateOf(kind, K) * Math.Max(0, dt), d = FlightPolicy.Clamp(target - Out, -lim, lim);
             MaxStep = Math.Max(MaxStep, Math.Abs(d)); Out += d; return Out;

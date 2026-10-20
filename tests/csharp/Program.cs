@@ -129,6 +129,30 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5j
+            // go-around: emergency 100% released, then idle at 153 m/s - the output gate must follow fast (was 4%/s -> 308 m/s)
+            var gg = new ThrottleGate(); gg.Seed(1); double vG = 153, outT = 1;
+            for (double tt = 0; tt < 30; tt += .02) { string k = ThrottleGate.LandingKind("pi", true, true, vG, 150, 0, gg.Out); outT = gg.Step(0, .02, k); vG += (outT * 12 - 2.5) * .02; }
+            Check(vG <= 150 + 20 && outT == 0, "LAND5j: after the go-around emergency, idle reaches the engines at once - speed stays under the pattern cap + 20 (" + Math.Round(vG) + ")");
+            Check(ThrottleGate.LandingKind("pi", true, false, 160, 150, .2, .9) == "step" && ThrottleGate.LandingKind("pi", true, false, 140, 150, .5, .4) == "pi" && ThrottleGate.LandingKind("emergency", true, true, 160, 150, 1, .5) == "emergency", "LAND5j: fast gate only for step throttle / cuts while over plan");
+            // fast decay: 111 m/s, trend -4.5 m/s2, floor 75, spool 8.3 s -> power early, no go-around
+            var fd = new StepThrottle(); fd.Reset(0); fd.SpoolS = 8.3; fd.EngineSettled = 1; double sp = 111, acc = -4.5, eff = 0, thF = 0, minV = 999; int below = 0;
+            for (double tt = 0; tt < 40; tt += .02)
+            {
+                thF = fd.Update(tt, sp, 99, .02, double.NaN, 75, 9000);
+                eff += (thF - eff) * .02 / 8.3; double a = acc + 9 * eff; if (tt > 8) acc = Math.Min(-1.0, acc + .02 * .1); sp += a * .02; minV = Math.Min(minV, sp);
+                below = sp < 75 ? below + 1 : 0; if (below * .02 >= 10) break;
+            }
+            Check(below * .02 < 10 && minV > 70, "LAND5j: 111 m/s at -4.5 m/s2 adds power early (one sized step) and does not go around (min " + Math.Round(minV) + ", thr " + Math.Round(100 * thF) + "%)");
+            var fd2 = new StepThrottle(); fd2.Reset(0); fd2.SpoolS = 8.3; double f1 = 0; for (double tt = 0; tt < 3; tt += .02) f1 = fd2.Update(tt, 111 - 4.5 * tt, 99, .02, double.NaN, 75, 9000);
+            Check(f1 > .05 && f1 <= StepThrottle.BigStep + 1e-9, "LAND5j: the fast-decay step is sized to the deficit (" + Math.Round(100 * f1) + "%, cap 35%)");
+            var fd3 = new StepThrottle(); fd3.Reset(0); fd3.SpoolS = 8.3; double f2 = 0; for (double tt = 0; tt < 3; tt += .02) f2 = fd3.Update(tt, 90 - 4.5 * tt, 96, .02, double.NaN, 80, 1500);
+            Check(f2 > 0 && f2 <= StepThrottle.LastCap + 1e-9, "LAND5j: inside 2 km the fast-decay step stays under the 15% cap");
+            Check(!AirbrakeGate.DeployOk(true, -2, false) && !AirbrakeGate.DeployOk(true, 0, true) && AirbrakeGate.DeployOk(true, -.5, false), "LAND5j: no airbrake deploy while decelerating < -1.5 m/s2 or pulling up");
+            var ag = new AirbrakeGate(); ag.Step(0, false, 115, 99, true, true); bool chg = ag.Step(1, true, 97, 99, true, true); Check(chg && !ag.On, "LAND5j: airbrakes retract at once when the predicted speed falls under plan (no 8 s dwell)");
+            double cv = ApproachProfile.CaptureVs(400, -5.5, 15), cv2 = ApproachProfile.CaptureVs(20, -5.5, 15);
+            Check(cv == -15 && cv2 > -10 && cv2 < -5.5, "LAND5j: glidepath capture from high blends: full sink far above, pull-out starts early (" + cv2.ToString("0.0") + " m/s at 20 m above)");
+        }
         {   // GROK LAND5i: spool-aware tiny bumps, final lock
             Func<StepThrottle, double, double, double, int, double> run = (st, t0, t1, v0, set) => { double th = st.Thr; st.EngineSettled = set; for (double tt = t0; tt < t1; tt += .02) th = st.Update(tt, v0 - .5 * (tt - t0), 96, .02, double.NaN, 88, 1500); return th; };
             var s1 = new StepThrottle(); s1.Reset(.10); double b1 = run(s1, 0, 2, 86, 0);
