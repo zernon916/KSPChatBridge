@@ -244,7 +244,10 @@ namespace KSPChatBridge
             scienceTourRouteIndex = 0;
             SetGroup(vessel, KSPActionGroup.Brakes, true);
             int experimentCount; double scienceValue = ScienceValueAt(vessel.latitude, vessel.longitude, out experimentCount, RoverMinScience(), ScienceBiomeHere());
-            string blocker; List<string> ran = RunExperiments(false, out blocker, RoverMinScience());
+            string blocker; List<string> ran;
+            if (RoverMode && !RoverPowerPolicy.WeRunScience(RoverAssMode(true))) { ran = new List<string>(); blocker = "left to AutomatedScienceSampler (CRAFT: OTHER MODS)"; sciTransmitAt = Time.realtimeSinceStartup + 4; }   // RS4: we only drive and transmit
+            else ran = RunExperiments(false, out blocker, RoverMinScience());
+            if (RoverMode && HasScientist()) StartCoroutine(RoverResetLater());   // RS4: reset used one-shots once the data is safe
             if (ran.Count > 0) sciTransmitAt = Time.realtimeSinceStartup + 2;
             string log = "stop " + stop.Name + " / " + ScienceBiomeHere()
                 + " | " + (blocker == null ? ran.Count.ToString(CultureInfo.InvariantCulture) + " experiment(s), "
@@ -260,6 +263,12 @@ namespace KSPChatBridge
             tourWaitUntil = Time.realtimeSinceStartup + 6;
         }
 
+        System.Collections.IEnumerator RoverResetLater()
+        {
+            yield return new WaitForSeconds(8);   // after the transmit (sciTransmitAt + 2 s) finished
+            try { if (vessel != null) RoverResetExperiments(); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover reset: " + ex.Message); }
+        }
+
         static IEnumerable<int> Range(int n) { for (int i = 0; i < n; i++) yield return i; }
 
         string NextLeg()
@@ -273,6 +282,7 @@ namespace KSPChatBridge
 
         partial void RoverTourTick()
         {
+            try { RoverScienceTick(); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover science tick: " + ex.Message); }   // RS4
             if (scienceTouring) { ScienceTourTick(); return; }
             if (!touring || Time.realtimeSinceStartup < tourWaitUntil) return;
             if (tour.Count == 0) { touring = false; ChatWindow.Notice(Voice().Key + ": Tour done, Captain."); return; }

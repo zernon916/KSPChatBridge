@@ -14,6 +14,7 @@ internal static class RoverTests
         VehicleClassTests();
         ScienceInventoryTests();
         DrivePolicyTests();
+        PowerPolicyTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -72,6 +73,30 @@ internal static class RoverTests
         ln.Sample(40, RoverSurface.Road, lc, false, 12.5, 25, 20, true); Check(lc.Road == 11, "safety event drops the cap");
         for (double t = 41; t < 120; t += 1) ln.Sample(t, RoverSurface.Road, lc, false, 11, 2, 20, false); Check(lc.Road == 11, "no more raising after a safety event");
         var uc = new RoverCaps(); var lu = new RoverSpeedLearner(); for (double t = 0; t < 100; t += 1) lu.Sample(t, RoverSurface.Road, uc, true, 12, 0, 20, false); Check(uc.Road == 12, "user cap never learned over");
+    }
+
+    static void PowerPolicyTests()
+    {
+        Check(RoverPowerPolicy.ShouldTransmit(0, .3, true) && !RoverPowerPolicy.ShouldTransmit(0, .3, false), "ALWAYS transmits when linked only");
+        Check(RoverPowerPolicy.ShouldTransmit(1, .6, true) && !RoverPowerPolicy.ShouldTransmit(1, .5, true), "IF >= 60%");
+        Check(RoverPowerPolicy.ShouldTransmit(2, .4, true) && !RoverPowerPolicy.ShouldTransmit(2, .35, true), "IF >= 40%");
+        Check(!RoverPowerPolicy.ShouldTransmit(3, 1, true), "SAVE keeps everything");
+        Check(!RoverPowerPolicy.ShouldTransmit(0, 0, true), "never transmit non-transmittable data");
+        Check(RoverPowerPolicy.PolicyText(2, true, false).Contains("Science-Full-Transmit") && RoverPowerPolicy.PolicyText(3, false, true).Contains("ScienceRelay"), "effective policy text");
+        var l = RoverPowerPolicy.Ladder(true, true, 3); Check(string.Join(",", l.ToArray()) == "stop,solar,converters,wait,warp x4", "power ladder order");
+        Check(string.Join(",", RoverPowerPolicy.Ladder(false, false, 0).ToArray()) == "stop,wait", "ladder without sources, warp off by default");
+        Check(RoverPowerPolicy.Charging(false, 20, 25, 80) && !RoverPowerPolicy.Charging(false, 30, 25, 80) && RoverPowerPolicy.Charging(true, 60, 25, 80) && !RoverPowerPolicy.Charging(true, 81, 25, 80), "charging hysteresis");
+        Check(Math.Abs(RoverPowerPolicy.ReserveNeed(1000, .5, .01, 20) - 6) < 1e-9 && RoverPowerPolicy.ReserveNeed(1000, double.NaN, .01, 20) == 0, "reserve maths");
+        Check(RoverPowerPolicy.MayBurnFuel(7, 6) && !RoverPowerPolicy.MayBurnFuel(5, 6), "fuel kept for the drive home");
+        Check(RoverPowerPolicy.ConverterOk(new List<string> { "ElectricCharge", "Water" }, new List<double> { 3, 1 }) && !RoverPowerPolicy.ConverterOk(new List<string> { "LiquidFuel" }, new List<double> { 3 })
+            && !RoverPowerPolicy.ConverterOk(new List<string> { "ElectricCharge" }, new List<double> { 3, 0 }), "only EC converters with their inputs");
+        Check(RoverPowerPolicy.WarpIndex(3) == 3 && RoverPowerPolicy.WarpIndex(9) == 3 && RoverPowerPolicy.WarpIndex(0) == 0, "physics warp up to x4");
+        Check(RoverPowerPolicy.ResetAction(true, true, true, true, false) == null && RoverPowerPolicy.ResetAction(false, true, true, true, false) == "scientist reset"
+            && RoverPowerPolicy.ResetAction(false, true, true, true, true) == "lab clean" && RoverPowerPolicy.ResetAction(false, true, false, true, false).StartsWith("keep")
+            && RoverPowerPolicy.ResetAction(false, true, true, false, false).Contains("EVA"), "scientist reset decisions");
+        Check(RoverPowerPolicy.Ass(true, 0, true) == AssMode.OursAssPaused && RoverPowerPolicy.Ass(true, 0, false) == AssMode.OursRunFirst && RoverPowerPolicy.Ass(true, 1, true) == AssMode.LeftToOther
+            && RoverPowerPolicy.Ass(false, 0, false) == AssMode.None, "ASS detection flag");
+        Check(RoverPowerPolicy.WeRunScience(AssMode.OursRunFirst) && !RoverPowerPolicy.WeRunScience(AssMode.LeftToOther), "no double runs: other mods mode leaves science to ASS");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

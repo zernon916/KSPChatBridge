@@ -28,6 +28,11 @@ namespace KSPChatBridge
                 if (generator != null && generator.resHandler.outputResources.Exists(r => r.name == "ElectricCharge")) generators.Add(generator);
             }
         }
+        static bool InputsOnBoard(Vessel vessel, BaseConverter cell)
+        {
+            foreach (var r in cell.inputList) { var def = PartResourceLibrary.Instance.GetDefinition(r.ResourceName); double a = 0, m = 0; if (def != null) vessel.GetConnectedResourceTotals(def.id, out a, out m); if (!(a > 1e-6)) return false; }
+            return true;
+        }
         internal void Tick(Vessel vessel, double now)
         {
             if (now < nextTick || vessel.packed) return;
@@ -54,7 +59,7 @@ namespace KSPChatBridge
                     ChatLog.Write("power", "EXTEND " + panel.part.partInfo.title + " (low charge, q " + Q(vessel) + " kPa is safe; stowed again if the airstream turns)");
                 }
             if (blocked != null) ChatLog.Write("power", "solar panel not extended - " + blocked + " (q " + Q(vessel) + " kPa)");
-            foreach (var cell in cells) if (cell != null && !cell.IsActivated) { cell.StartResourceConverter(); changed++; }
+            foreach (var cell in cells) if (cell != null && !cell.IsActivated && InputsOnBoard(vessel, cell)) { cell.StartResourceConverter(); changed++; }   // RS4: only converters that have their inputs
             foreach (var generator in generators) if (generator != null && !generator.generatorIsActive) { generator.Activate(); changed++; }
             if (changed > 0 && now >= nextNotice)
             { nextNotice = now + 90; ChatWindow.Notice("Low electric charge: power sources enabled; spare wheels/lights off."); }

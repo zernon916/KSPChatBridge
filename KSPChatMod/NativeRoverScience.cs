@@ -67,8 +67,5 @@ namespace KSPChatBridge
             sciInvLines = r; return r;
         }
 
-        /// <summary>RS4 fills this in (transmit / who-runs-science policy summary).</summary>
-        string RoverSciencePolicyText() { return "transmit " + CraftOverrides.Find(CraftOverrides.RoverTransmit).Choices[RoverTransmitChoice()]; }
-        static int RoverTransmitChoice() { double v = CraftOverrides.L(CraftOverrides.RoverTransmit); return double.IsNaN(v) ? 2 : Math.Max(0, Math.Min(3, (int)Math.Round(v))); }
     }
 }

@@ -325,6 +325,7 @@ namespace KSPChatBridge
                     try { var sub = ResearchAndDevelopment.GetSubjectByID(d.subjectID); if (sub != null) sci += ResearchAndDevelopment.GetScienceValue(d.dataAmount, sub); } catch (Exception) { }
                 }
                 string id = e.experimentID ?? "?";
+                if (RoverMode && !RoverTransmitOk(e, data)) continue;   // RS4: CRAFT transmit policy (kept on board, no retry loop)
                 if (tx == null) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (no usable antenna)"); continue; }
                 double need = mits * tx.DataResourceCost;
                 if (amt - need < reserve) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (low EC: need " + need.ToString("0") + " + reserve " + reserve.ToString("0") + ", have " + amt.ToString("0") + ")"); continue; }

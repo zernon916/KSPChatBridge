@@ -60,6 +60,7 @@ namespace KSPChatBridge
                 if (ch != null) { ChatLog.Write("rover", "[" + vessel.vesselName + "] learned " + ch); roverCapsSaveAt = now + 5; }
             }
             if (roverCapsSaveAt > 0 && now >= roverCapsSaveAt) { roverCapsSaveAt = 0; SaveRoverCaps(); }
+            if (roverCharging) { roverIntegral = 0; c.wheelThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); roverStuck.Reset(); return true; }   // RS4: parked while charging
             if (roverGuardBrake && vessel.srfSpeed < .5 && !roverStuck.Backing) { roverStuck.ForceBack(now); roverGuardBrake = false; roverDetour = -roverDetour; roverDetourUntil = now + 8; roverGuardWhy = "blocked: backing up"; }
             if (roverStuck.Count >= 3)
             {
