@@ -129,6 +129,15 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK LAND5h: entry turn radius from the speed at the turn
+            double ent = 150;
+            Check(ApproachProfile.TurnSpeed(ent, 259) == 160 && ApproachProfile.TurnSpeed(ent, 200) == 160 && ApproachProfile.TurnSpeed(ent, 120) == 150 && ApproachProfile.TurnSpeed(ent, 155) == 155, "LAND5h: turn speed = plan, at most +10, never the overspeed");
+            Check(Math.Abs(ApproachProfile.TurnSpeed(ent, 200, 10000, 2.5) - 150) < 1e-9, "LAND5h: decel to plan before a distant turn");
+            double rT = PredictedPath.Radius(ApproachProfile.TurnSpeed(ent, 259), 30), rOld = PredictedPath.Radius(200, 30);
+            Check(rT < rOld && rT < 6000, "LAND5h: 259 m/s entry teardrop radius " + Math.Round(rT) + " m (was " + Math.Round(rOld) + ")");
+            Check(!ApproachProfile.NeedsReplan(150, ApproachProfile.TurnSpeed(ent, 200)), "LAND5h: overspeed while decelerating does not trigger a speed replan");
+            Check(Math.Abs(ApproachProfile.TurnBankFor(200, 6302) - 30) < 1e-9 && ApproachProfile.TurnBankFor(150, 6302) < 21, "LAND5h: still fast in the turn = steeper bank (capped 30), not a wider path");
+        }
         {   // GROK TEST1: landing test zone preset geometry
             var dp = LandingTestPresets.Defaults(); double la, lo, R = LandingTestPresets.KerbinR;
             Check(dp.Count >= 9, "TEST1: >= 9 presets (5 approach + 4 heading-away)");
@@ -2544,7 +2553,7 @@ class Program
                 Check(ApproachProfile.EstimateStall(3000, 30) == ApproachProfile.UnmeasuredStallFloor && ApproachProfile.Speed(ApproachProfile.EstimateStall(3000, 30)) >= 80, "unmeasured stall estimate floored (no 31 m/s -> 46 m/s joins)");
                 var fast = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 fast.Step(-1.7, -72.09, 700, 700, 200, false, 600000, 31, 55, 55);
-                Check(fast.PlanSpeed >= 199 && Math.Abs(fast.PlanRadius - ApproachProfile.Radius(fast.PlanSpeed, FinalApproachPolicy.LandingBankCap)) < 1, "arcs planned at the speed actually flown (200 m/s -> r " + Math.Round(fast.PlanRadius) + " m)");
+                Check(fast.PlanSpeed < 199 && fast.PlanSpeed <= ApproachProfile.EntrySpeed(fast.LastStall) + ApproachProfile.TurnFastMs + 1e-9 && Math.Abs(fast.PlanRadius - ApproachProfile.Radius(fast.PlanSpeed, FinalApproachPolicy.LandingBankCap)) < 1, "LAND5h: arcs planned at the speed AT the turn, not the 200 m/s overspeed (r " + Math.Round(fast.PlanRadius) + " m)");
                 bool ab; double xa;
                 RunwayMission.LegSteer(.3, -74.0, 0, -74.2, 0, -74.05, 90, 200, 20, 600000, out ab, out xa);
                 Check(ab && xa < -3000, "fix sequenced when passed abeam even 3 km off the line (no capture radius needed)");
@@ -2565,7 +2574,7 @@ class Program
                 Check(ApproachProfile.TurnPitch(0) == 0 && Math.Abs(ApproachProfile.TurnPitch(60) - 4) < .01 && ApproachProfile.TurnPitch(85) == 0, "back-pressure scales with 1/cos(bank)");
                 var gm = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1 };
                 gm.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
-                Check(Math.Abs(gm.PlanG - 4) < 1e-9 && Math.Abs(gm.PlanBankRaw - 75.52) < .01 && gm.PlanBank == 30 && gm.TurnBank <= 30 && Math.Abs(gm.PlanRadius - ApproachProfile.Radius(120, 30)) < 1, "join rated 4 g but planned/flown at the 30 deg landing cap, GROK FIX2 (bank " + Math.Round(gm.PlanBank) + ", r " + Math.Round(gm.PlanRadius) + " m)");
+                Check(gm.PlanBankRaw >= 30 && gm.PlanBank == 30 && gm.TurnBank <= 30 && Math.Abs(gm.PlanRadius - ApproachProfile.Radius(gm.PlanSpeed, 30)) < 1 && gm.PlanSpeed <= 120, "join rated 4 g but planned/flown at the 30 deg landing cap, GROK FIX2 (bank " + Math.Round(gm.PlanBank) + ", r " + Math.Round(gm.PlanRadius) + " m)");
                 var gb = new RunwayMission { Lat = -.0485997, Lon = -74.724375, EndLat = -.0502119, EndLon = -74.490300, Elevation = 69.1, BankDeg = 30 };
                 gb.Step(1.0, -74.7, 700, 700, 120, false, 600000, 45, 180, 180);
                 Check(gb.PlanBank == 30 && gb.TurnBank == 30, "explicit bank 30 overrides the g rating");

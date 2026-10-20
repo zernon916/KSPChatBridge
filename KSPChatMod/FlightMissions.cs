@@ -427,6 +427,19 @@ namespace KSPChatBridge
         /// threshold. Slow above it never goes around (path position first); below it a gentle power-up; go around only if it cannot recover.</summary>
         /// GROK LAND5g (Luke: 4% over stall is fine; 94 = 1.12x went around at 4 km): 1.10x at/outside the FAF, linear to 1.04x at the threshold.
         internal const double FloorAtFaf = 1.10, FloorAtThr = 1.04, FloorRecoverS = 10;
+        /// <summary>GROK LAND5h (22:07: 259 m/s entry sized the teardrop for 200 m/s -> r 7062): turns are sized for the speed the plane will
+        /// have AT the turn - the entry/plan speed, plus at most TurnFastMs - never the current overspeed (idle + speedbrakes decelerate toward plan;
+        /// a plane still fast in the turn banks steeper, up to the 30 deg cap, via the path follower's curvature feed-forward).</summary>
+        internal const double TurnFastMs = 10;
+        internal static double TurnSpeed(double entry, double speed, double distToTurnM = 0, double decel = double.NaN)
+        {
+            double e = !double.IsNaN(entry) && entry > 40 ? entry : 150;
+            if (double.IsNaN(speed) || speed <= e) return e;
+            double a = !double.IsNaN(decel) && decel > .2 ? decel : 2.0, v = Math.Sqrt(Math.Max(e * e, speed * speed - 2 * a * Math.Max(0, distToTurnM)));
+            return Math.Min(Math.Min(v, e + TurnFastMs), MaxSpeed);
+        }
+        /// <summary>Bank needed to fly radius r at speed v, capped (30 = the approach/ferry cap).</summary>
+        internal static double TurnBankFor(double v, double r, double cap = 30) { return Math.Min(cap, Math.Atan(v * v / (9.81 * Math.Max(1, r))) * 180 / Math.PI); }
         internal static double FloorK(double distM, double faf)
         {
             double f = Math.Max(faf, 1000);
@@ -1905,11 +1918,11 @@ namespace KSPChatBridge
                             }
                         }
                     }
-                    RawRoute = Route; Plan(course, radius, Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed)), -1, finalJoinRoute ? double.NaN : lat, finalJoinRoute ? double.NaN : lon);   // GROK LAND4: a Dubins final join is flown by the Dubins guidance alone (no smoother arc from here)
+                    RawRoute = Route; Plan(course, radius, ApproachProfile.TurnSpeed(ApproachProfile.EntrySpeed(stall), speed), -1, finalJoinRoute ? double.NaN : lat, finalJoinRoute ? double.NaN : lon);   // GROK LAND4: a Dubins final join is flown by the Dubins guidance alone (no smoother arc from here)
                     Why = Why.Length > 0 ? Why : ""; RouteLog = Chart.Describe(Route);
                 }
                 // fuel burn / mass change moved the craft's join speed: recompute arcs + lead points for THIS plane
-                double nowV = Math.Max(ApproachProfile.EntrySpeed(stall), Math.Min(speed, ApproachProfile.MaxSpeed));   // turns are flown at the speed we actually have
+                double nowV = ApproachProfile.TurnSpeed(ApproachProfile.EntrySpeed(stall), speed);   // GROK LAND5h: turns sized for the speed AT the turn (no inflation while decelerating)
                 replanHold = RawRoute != null && ApproachProfile.NeedsReplan(PlanSpeed, nowV) ? replanHold + 1 : 0;   // no replans on transient speed: must persist ~20 s
                 sinceReplan++;
                 if (warpHoldSteps > 0) replanHold = 0;   // GROK LAND4f: no speed replans during warp / position jumps
