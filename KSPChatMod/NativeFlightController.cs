@@ -186,6 +186,8 @@ namespace KSPChatBridge
             if (field == "vr") return i.takeoff != null && i.takeoff.Vr > 0 ? i.takeoff.Vr : TakeoffMission.RotateSpeed(i.stall, i.liftoffSpeed);
             if (field == CraftOverrides.RotatePitch) return TakeoffMission.RotateTarget(double.NaN);
             if (field == CraftOverrides.FlareThrottle) return 0;
+            if (field == CraftOverrides.FlareSink) return -FlarePolicy.SinkTarget(double.NaN, CraftOverrides.L("touchdown_sink"), i.runway != null && i.runway.Override != null ? i.runway.Override.FlareSinkMs : double.NaN);
+            if (field == CraftOverrides.FlareMaxPitch) return i.CpMax;
             if (field == "climb_speed") return i.vessel != null ? i.ClimbSpeedTarget() : double.NaN;
             if (field == CraftOverrides.Threshold) return ApproachProfile.Vref(i.stall);
             return ApproachProfile.HiSpeed(i.stall);
@@ -1119,10 +1121,11 @@ namespace KSPChatBridge
                 }   // T4: the vs error becomes a pitch ANGLE atan(err / true airspeed), so the hold behaves the same at 40 m/s and at 250 m/s
                 if (mode == "landing" && runway != null && runway.Phase == "flare" && !vessel.LandedOrSplashed && profileTrusted && profile != null)
                 {
-                    double flarePitch = FlarePolicy.Pitch(profile.TouchdownAoa, vessel.srfSpeed, vessel.verticalSpeed);
+                    double flarePitch = FlarePolicy.Pitch(profile.TouchdownAoa, vessel.srfSpeed, vessel.verticalSpeed, runway.DesiredVs);   // LAND5n: track the target sink
                     if (!double.IsNaN(flarePitch)) desiredPitch = FlightPolicy.Clamp(flarePitch, descentPitchMin, CpMax);
                 }
                 if (mode == "landing" && runway != null && runway.Phase == "flare" && runway.FlareFast && !double.IsNaN(flareEntryPitch) && !vessel.LandedOrSplashed) desiredPitch = Math.Min(desiredPitch, flareEntryPitch + 1);   // GROK LAND5c: fast flare = no pitch-up
+                if (mode == "landing" && runway != null && runway.Phase == "flare" && !vessel.LandedOrSplashed) desiredPitch = FlarePolicy.CapPitch(desiredPitch, CraftOverrides.L(CraftOverrides.FlareMaxPitch));   // LAND5n: max flare pitch
                 if ((landFloor || lowEnergy) && !directPitch.HasValue && vessel.radarAltitude < 300) { desiredPitch = Math.Max(desiredPitch, vessel.srfSpeed > 1.3 * stall ? 8 : 3); vsIntegral = Math.Max(0, vsIntegral); pitchIntegral = Math.Max(0, pitchIntegral); }   // sink arrest: nose up unless near the stall (then power does it)
                 bool missedClimb = mode == "landing" && runway != null && runway.MissedClimb && !vessel.LandedOrSplashed;
                 if (missedClimb && !directPitch.HasValue) desiredPitch = FlightPolicy.Clamp(PitchAttitude.GoAroundPitch(vessel.srfSpeed, stall, runway.DesiredSpeed), 0, CpMax);   // GROK LAND5b: tracked go-around nose (was 15-17 vs tgt 0-3)

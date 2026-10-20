@@ -9,6 +9,26 @@ namespace KSPChatBridge
         { return speed > 10 && !double.IsInfinity(speed) && !double.IsNaN(vs) && !double.IsInfinity(vs) ? Math.Asin(FlightPolicy.Clamp(vs / speed, -1, 1)) * 180 / Math.PI : double.NaN; }
         internal static double Pitch(double aoa, double speed, double vs)
         { return ValidAoa(aoa) ? aoa + PathAngle(speed, vs) : double.NaN; }
+        /// <summary>LAND5n: flare sink target (m/s, always <= 0): flare_sink (0-5), else touchdown_sink / chart / 3 (0.5-5). The flare never asks for a climb.</summary>
+        internal static double SinkTarget(double flareSink, double touchdownSink, double chart)
+        {
+            if (!double.IsNaN(flareSink)) return -FlightPolicy.Clamp(flareSink, 0, 5);
+            double s = !double.IsNaN(touchdownSink) ? touchdownSink : !double.IsNaN(chart) ? chart : 3;
+            return -FlightPolicy.Clamp(s, .5, 5);
+        }
+        internal const double TrackK = 1, TrackMax = 5;
+        /// <summary>LAND5n: flare pitch flies the TARGET path (aoa + target path angle) and corrects the vs error (1 deg per m/s, +-5),
+        /// so above the target sink the nose comes down instead of holding a level / climbing path (23:43: +1.4 m/s, 1.1 km float).</summary>
+        internal static double Pitch(double aoa, double speed, double vs, double targetVs)
+        {
+            if (double.IsNaN(targetVs)) return Pitch(aoa, speed, vs);
+            double t = Math.Min(0, targetVs), p = PathAngle(speed, t);
+            if (!ValidAoa(aoa) || double.IsNaN(p) || double.IsNaN(vs)) return double.NaN;
+            return aoa + p + FlightPolicy.Clamp(TrackK * (t - vs), -TrackMax, TrackMax);
+        }
+        /// <summary>LAND5n: flare_max_pitch_deg cap (NaN = no cap, 0-20).</summary>
+        internal static double CapPitch(double pitch, double maxPitch)
+        { return double.IsNaN(maxPitch) || double.IsNaN(pitch) ? pitch : Math.Min(pitch, FlightPolicy.Clamp(maxPitch, 0, 20)); }
     }
 
     internal static class FinalApproachPolicy

@@ -222,6 +222,13 @@ class Program
                 var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
                 Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
             }
+            {   // LAND5n
+                Check(FlarePolicy.SinkTarget(-2, double.NaN, double.NaN) == 0 && FlarePolicy.SinkTarget(1.2, 3, 1) == -1.2 && FlarePolicy.SinkTarget(9, double.NaN, double.NaN) == -5 && FlarePolicy.SinkTarget(double.NaN, double.NaN, 1) == -1 && FlarePolicy.SinkTarget(double.NaN, double.NaN, double.NaN) == -3, "LAND5n: flare sink target never > 0, flare_sink beats touchdown_sink/chart, default 3");
+                double fpa = FlarePolicy.Pitch(7, 55, 1.4, -1), fpb = FlarePolicy.Pitch(7, 55, -1, -1), fpc = FlarePolicy.Pitch(7, 55, 0, 2);
+                Check(fpa < fpb && fpb < 7 && Math.Abs(fpc - FlarePolicy.Pitch(7, 55, 0, 0)) < 1e-9 && fpc < 7 + 1e-9, "LAND5n: climbing in the flare -> nose down, positive target clamped to 0 (" + fpa.ToString("0.0") + "/" + fpb.ToString("0.0") + ")");
+                Check(FlarePolicy.CapPitch(9, 6) == 6 && FlarePolicy.CapPitch(4, 6) == 4 && FlarePolicy.CapPitch(9, double.NaN) == 9 && FlarePolicy.CapPitch(9, 40) == 9, "LAND5n: max flare pitch cap");
+                Check(CraftOverrides.Parse(CraftOverrides.FlareSink, "1.5") == 1.5 && CraftOverrides.Parse(CraftOverrides.FlareSink, "-2") == 0 && CraftOverrides.Parse(CraftOverrides.FlareSink, "8") == 5 && !(CraftOverrides.Parse(CraftOverrides.FlareSink, "") > -1) && CraftOverrides.Parse(CraftOverrides.FlareMaxPitch, "25") == 20 && CraftOverrides.Parse(CraftOverrides.FlareMaxPitch, "6.5") == 6.5 && CraftOverrides.Parse(CraftOverrides.TouchdownAim, "-100") == -100, "LAND5n: flare_sink / flare_max_pitch_deg / touchdown_aim_m parsing + range");
+            }
             Check(LandingTestPresets.Outcome(1, "landed (pilot intervened x1)", 2.5, 70, 0).Contains("pilot intervened"), "LAND5k: the [TEST] outcome names a pilot intervention");
         }
         {   // GROK LAND5i: spool-aware tiny bumps, final lock
