@@ -1101,12 +1101,45 @@ internal static double BounceStep(double cur, double speed, double stall, double
         /// below brake_full_speed (blank = 1.1 x stall, 60 if unknown); above it full x (full speed / speed)^2, min 0.15, ramped in over 1.5 s;
         /// light (0.15) while |yaw rate| > 3 deg/s or |heading error| > 3 deg, until both are back under 1.5.</summary>
         internal const double LightFrac = .15, RampInS = 1.5, YawLimit = 3, HdgLimit = 3, StraightAgain = 1.5;
-        internal static double FullSpeed(double stall) { return FullSpeed(stall, CraftOverrides.L("brake_full_speed")); }
-        internal static double FullSpeed(double stall, double ov) { return !double.IsNaN(ov) && ov > 0 ? ov : !double.IsNaN(stall) && stall > 10 ? Math.Min(1.1 * stall, FullCapMs) : 60; }
+        /// <summary>ROLL5 (Luke): three live speed bands replace brake_full_speed and the speed falloff - brake_high_pct (60) above brake_high_speed
+        /// (max(stall, 90)), brake_low_pct (100) below brake_low_speed (40), brake_mid_pct (80) at the midpoint; linear in between (no steps).
+        /// Read from the craft overrides every frame.</summary>
+        internal const double HighPctDef = 60, MidPctDef = 80, LowPctDef = 100, HighSpeedMin = 90, LowSpeedDef = 40;
+        internal static double HighSpeed(double stall) { return HighSpeed(stall, CraftOverrides.L("brake_high_speed")); }
+        internal static double HighSpeed(double stall, double ov) { return !double.IsNaN(ov) && ov > 0 ? ov : Math.Max(double.IsNaN(stall) ? 0 : stall, HighSpeedMin); }
+        internal static double LowSpeed(double ov) { return !double.IsNaN(ov) && ov >= 0 ? ov : LowSpeedDef; }
+        static double P(double ov, double def) { return (double.IsNaN(ov) ? def : FlightPolicy.Clamp(ov, 0, 100)) / 100; }
+        internal static double Band(double speed, double hiPct, double midPct, double loPct, double hiSpd, double loSpd, out string band)
+        {
+            double hi = P(hiPct, HighPctDef), mid = P(midPct, MidPctDef), lo = P(loPct, LowPctDef); if (hiSpd < loSpd + 2) hiSpd = loSpd + 2; double ms = (hiSpd + loSpd) / 2;
+            band = speed >= hiSpd ? "high" : speed <= loSpd ? "low" : "mid";
+            return speed >= hiSpd ? hi : speed <= loSpd ? lo : speed >= ms ? mid + (hi - mid) * (speed - ms) / (hiSpd - ms) : lo + (mid - lo) * (speed - loSpd) / (ms - loSpd);
+        }
+        internal static double Band(double speed, double stall, out string band) { return Band(speed, CraftOverrides.L("brake_high_pct"), CraftOverrides.L("brake_mid_pct"), CraftOverrides.L("brake_low_pct"), HighSpeed(stall), LowSpeed(CraftOverrides.L("brake_low_speed")), out band); }
+        /* ROLL5: FullSpeed removed (speed bands) */
         /// <summary>ROLL4 (Aeris 4A run 2, stall override 130: full brakes at 118 m/s, then 100/15/100/15 at yaw 3.1-3.3): blank full-brake speed
         /// capped at 70 m/s; the yaw back-off is proportional - base x clamp(1 - (|yaw| - 1.5) / 3, 0.3, 1) - and the strength moves at most
         /// 50%/s, so it can never flip between full and light.</summary>
-        internal const double FullCapMs = 70, YawFree = 1.5, YawSpan = 3, YawMinFrac = .3, SlewPerS = .5;
+        internal const double FullCapMs = 90, YawFree = 1.5,   /* ROLL5: 90 (was 70) */ YawSpan = 3, YawMinFrac = .3, SlewPerS = .5;
+        /// <summary>ROLL5 (Aeris 4A run 3: 124 m/s touchdown, 15/10% for 3 s, 40 -> 80% at 2.4 m/s2, off the end at 78 m/s): linear, at least 60%
+        /// once the nose wheel is down (40% before), 100% when the runway left needs more decel than measured (MustStop, latched); the yaw
+        /// back-off ignores |yaw| > 30 deg/s (impossible contact/bounce spikes) and the first 0.5 s after contact, floor 50% (70% must-stop);
+        /// strength from the speed bands. Rate-limited 1/s up, 0.5/s down.</summary>
+        internal const double MinFrac = .6, NoseUpFrac = .4, YawSpikeMax = 30, ContactIgnoreS = .5, YawFloor = .5, YawFloorMustStop = .7, StopMarginM = 150, UpPerS = 1.0;
+        internal static double NeedDecel(double speed, double remainingM) { return speed <= 0 ? 0 : speed * speed / (2 * Math.Max(1, remainingM - StopMarginM)); }
+        internal static bool MustStop(bool was, double speed, double remainingM, double measuredDecel) { return was || !double.IsNaN(remainingM) && NeedDecel(speed, remainingM) > (double.IsNaN(measuredDecel) ? 0 : measuredDecel); }
+        /* ROLL5: brake_pct replaced by the speed bands */
+        internal static double YawFactor5(double yawRate, double contactS, bool mustStop)
+        {
+            double yr = double.IsNaN(yawRate) ? 0 : Math.Abs(yawRate); if (yr > YawSpikeMax || contactS < ContactIgnoreS) yr = 0;
+            return FlightPolicy.Clamp(1 - (yr - YawFree) / YawSpan, mustStop ? YawFloorMustStop : YawFloor, 1);
+        }
+        internal static double Step(double prev, double bandFrac, bool noseDown, double contactS, double yawRate, bool mustStop, double dt)
+        {
+            double s = mustStop ? 1 : !noseDown ? NoseUpFrac : FlightPolicy.Clamp(bandFrac, 0, 1);
+            double want = s * YawFactor5(yawRate, contactS, mustStop); if (double.IsNaN(prev)) prev = NoseUpFrac;
+            double d = Math.Max(0, dt); return FlightPolicy.Clamp(want, prev - SlewPerS * d, prev + UpPerS * d);
+        }
         internal static double YawFactor(double yawRate) { double yr = double.IsNaN(yawRate) ? 0 : Math.Abs(yawRate); return FlightPolicy.Clamp(1 - (yr - YawFree) / YawSpan, YawMinFrac, 1); }
         internal static double Smooth(double prev, double speed, double fullSpeed, double landedS, double yawRate, double dt)
         {
