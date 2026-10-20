@@ -60,7 +60,7 @@ namespace KSPChatBridge
             return o;
         }
 
-        List<string> RunExperiments(bool onlyRerunnable, out string blocker)
+        List<string> RunExperiments(bool onlyRerunnable, out string blocker, double minValue = double.NaN)
         {
             var ran = new List<string>();
             blocker = SciencePolicy.RunBlocker(EcPct());
@@ -88,7 +88,7 @@ namespace KSPChatBridge
                 {
                     try
                     {
-                        science = ScienceAt(expId, sit, body, vessel.latitude, vessel.longitude);
+                        science = ScienceAt(expId, sit, body, vessel.latitude, vessel.longitude, ScienceBiomeHere());   // RS2: KSC mini-biome (landedAt) like stock gatherData
                     }
                     catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science value: " + ex.Message); }
                 }
@@ -106,7 +106,7 @@ namespace KSPChatBridge
                             Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, "requirements"));
                             continue;
                         }
-                        string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable);
+                        string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable, minValue);
                         if (skip != null) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, skip)); continue; }
                         DeploySilent(e);   // Luke Oct 12 22:41: no stock results dialog mid-flight; transmit/store handled by TransmitAll
                         ranThisType = true; ran.Add(e.part.partInfo.title);
@@ -119,7 +119,7 @@ namespace KSPChatBridge
             return ran;
         }
 
-        double ScienceValueAt(double latitude, double longitude, out int experimentCount)
+        double ScienceValueAt(double latitude, double longitude, out int experimentCount, double minValue = double.NaN, string biomeName = null)
         {
             experimentCount = 0;
             if (vessel == null || vessel.mainBody == null || SciencePolicy.RunBlocker(EcPct()) != null) return 0;
@@ -141,7 +141,7 @@ namespace KSPChatBridge
             foreach (var group in groups)
             {
                 AvailableScience experiment;
-                try { experiment = ScienceAt(group.Key, sit, body, latitude, longitude); }
+                try { experiment = ScienceAt(group.Key, sit, body, latitude, longitude, biomeName); }
                 catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] science route estimate: " + ex.Message); continue; }
                 if (experiment.Experiment == null) continue;
                 bool storedOnboard = experiment.SubjectId.Length > 0 && stored.Contains(experiment.SubjectId);
@@ -150,7 +150,7 @@ namespace KSPChatBridge
                     if (!SciencePolicy.CanRun(module.usageReqMaskInternal, crew, module.part.protoModuleCrew.Count,
                         scientist, controllable, experiment.Experiment.requireAtmosphere, inAtmo)) continue;
                     string skip = SciencePolicy.AutoSkipReason(module.Inoperable, module.GetScienceCount() > 0,
-                        experiment.Available, storedOnboard, experiment.Value, false, false, module.rerunnable);
+                        experiment.Available, storedOnboard, experiment.Value, false, false, module.rerunnable, minValue);
                     if (skip != null) continue;
                     totalValue += experiment.Value;
                     experimentCount++;
@@ -164,12 +164,12 @@ namespace KSPChatBridge
         {
             internal ScienceExperiment Experiment;
             internal string Biome = "";
-            internal string SubjectId;
+            internal string SubjectId = "";
             internal double Value;
             internal bool Available;
         }
 
-        static AvailableScience ScienceAt(string experimentId, ExperimentSituations situation, CelestialBody body, double latitude, double longitude)
+        static AvailableScience ScienceAt(string experimentId, ExperimentSituations situation, CelestialBody body, double latitude, double longitude, string biomeName = null)
         {
             var result = new AvailableScience();
             result.Experiment = ResearchAndDevelopment.GetExperiment(experimentId);
@@ -177,7 +177,7 @@ namespace KSPChatBridge
             result.Available = result.Experiment.IsAvailableWhile(situation, body);
             try
             {
-                result.Biome = result.Experiment.BiomeIsRelevantWhile(situation) ? ScienceUtil.GetExperimentBiome(body, latitude, longitude) : "";
+                result.Biome = result.Experiment.BiomeIsRelevantWhile(situation) ? (string.IsNullOrEmpty(biomeName) ? ScienceUtil.GetExperimentBiome(body, latitude, longitude) : biomeName) : "";
                 var subject = ResearchAndDevelopment.GetExperimentSubject(result.Experiment, situation, body, result.Biome, result.Biome);
                 if (subject != null)
                 {
@@ -193,6 +193,10 @@ namespace KSPChatBridge
         /// via reflection; fallback = DeployExperiment and close the dialog a moment later.</summary>
         void DeploySilent(ModuleScienceExperiment e)
         {
+            if (e.GetType() != typeof(ModuleScienceExperiment))
+            {   // RS2: DMagic / StationScience / other mod subclasses run their own DeployExperiment (animations, custom data)
+                ChatLog.Write("science", "[science] " + e.experimentID + ": " + e.GetType().Name + " DeployExperiment (mod experiment)"); e.DeployExperiment(); StartCoroutine(CloseResultsDialog()); return;
+            }
             try
             {
                 var m = typeof(ModuleScienceExperiment).GetMethod("gatherData", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);

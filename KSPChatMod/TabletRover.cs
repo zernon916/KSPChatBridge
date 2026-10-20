@@ -102,6 +102,7 @@ namespace KSPChatBridge
                 {
                     float w = body.width - 26, y = 0;
                     if (!string.IsNullOrEmpty(tabletRoverNote)) y += TextCard(new Rect(0, y, w, 0), "LAST COMMAND", new List<string> { tabletRoverNote }) + gap;
+                    y += TextCard(new Rect(0, y, w, 0), "SCIENCE ON BOARD (worth here)", NativeFlightController.ScienceInventoryLines()) + gap;
                     GUILayout.Space(y);
                 }
                 finally { GUILayout.EndScrollView(); }

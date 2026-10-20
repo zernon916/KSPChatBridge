@@ -45,13 +45,13 @@ namespace KSPChatBridge
 
         /// <summary>Why this module must not run, or null to RUN. One module per experimentID per situation;
         /// spare copies stay sealed for the next biome/situation.</summary>
-        internal static string AutoSkipReason(bool inoperable, bool hasData, bool available, bool storedOnboard, double subjectValue, bool ranThisType, bool onlyRerunnable, bool rerunnable)
+        internal static string AutoSkipReason(bool inoperable, bool hasData, bool available, bool storedOnboard, double subjectValue, bool ranThisType, bool onlyRerunnable, bool rerunnable, double minValue = double.NaN)
         {
             if (ranThisType) return "spare copy";
             if (inoperable) return "inoperable";
             if (hasData || storedOnboard) return "already have";
             if (!available) return "not available";
-            if (subjectValue <= MinSubjectValue) return "0 sci";
+            if (subjectValue <= (double.IsNaN(minValue) ? MinSubjectValue : Math.Max(0, minValue))) return "0 sci";   // RS2: the rover runs anything above its own minimum (default 0)
             if (onlyRerunnable && !rerunnable) return "one-shot";
             return null;
         }

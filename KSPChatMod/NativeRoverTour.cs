@@ -139,9 +139,12 @@ namespace KSPChatBridge
             {
                 if (!IsFlatApproach(waypoint)) continue;
                 string biome = ScienceUtil.GetExperimentBiome(vessel.mainBody, waypoint.ApproachLat, waypoint.ApproachLon);
+                string mini = ScienceInventory.KscMiniBiome(waypoint.Biome);   // RS2: KSC stops are worth their mini-biome subject
+                if (scienceTourVisited.Contains(waypoint.Name) || (mini != null && scienceTourVisited.Contains(mini))) continue;
+                if (mini != null) biome = mini;
                 if (string.IsNullOrEmpty(biome) || scienceTourVisited.Contains(biome)) continue;
-                int count; double value = ScienceValueAt(waypoint.ApproachLat, waypoint.ApproachLon, out count);
-                if (count == 0 || value <= SciencePolicy.MinSubjectValue) continue;
+                int count; double value = ScienceValueAt(waypoint.ApproachLat, waypoint.ApproachLon, out count, RoverMinScience(), mini);
+                if (count == 0 || value <= RoverMinScience()) continue;
                 double oldValue;
                 if (!valueByBiome.TryGetValue(biome, out oldValue) || value > oldValue)
                 {
@@ -232,14 +235,14 @@ namespace KSPChatBridge
 
             KscRoverWaypoint stop = scienceTourStops[0];
             scienceTourStops.RemoveAt(0);
-            scienceTourVisited.Add(ScienceUtil.GetExperimentBiome(vessel.mainBody, vessel.latitude, vessel.longitude));
+            scienceTourVisited.Add(ScienceBiomeHere()); scienceTourVisited.Add(stop.Name); if (ScienceInventory.KscMiniBiome(stop.Biome) != null) scienceTourVisited.Add(ScienceInventory.KscMiniBiome(stop.Biome));
             scienceTourRoute.Clear();
             scienceTourRouteIndex = 0;
             SetGroup(vessel, KSPActionGroup.Brakes, true);
-            int experimentCount; double scienceValue = ScienceValueAt(vessel.latitude, vessel.longitude, out experimentCount);
-            string blocker; List<string> ran = RunExperiments(false, out blocker);
+            int experimentCount; double scienceValue = ScienceValueAt(vessel.latitude, vessel.longitude, out experimentCount, RoverMinScience(), ScienceBiomeHere());
+            string blocker; List<string> ran = RunExperiments(false, out blocker, RoverMinScience());
             if (ran.Count > 0) sciTransmitAt = Time.realtimeSinceStartup + 2;
-            string log = "stop " + stop.Name + " / " + ScienceUtil.GetExperimentBiome(vessel.mainBody, vessel.latitude, vessel.longitude)
+            string log = "stop " + stop.Name + " / " + ScienceBiomeHere()
                 + " | " + (blocker == null ? ran.Count.ToString(CultureInfo.InvariantCulture) + " experiment(s), "
                     + (ran.Count == 0 ? 0 : scienceValue).ToString("0.0", CultureInfo.InvariantCulture) + " estimated science value" : "science blocked: " + blocker)
                 + " | " + (ran.Count == 0 ? "none run" : string.Join(", ", ran.ToArray()));
@@ -277,7 +280,7 @@ namespace KSPChatBridge
             string sci = "";
             if (tourScience)
             {
-                string blocker; var ran = RunExperiments(false, out blocker);
+                string blocker; var ran = RunExperiments(false, out blocker, RoverMinScience());
                 sci = blocker != null ? " No science: " + blocker + "." : ran.Count > 0 ? " Science: " + string.Join(", ", ran.ToArray()) + "." : " Nothing new to run here.";
                 if (ran.Count > 0) sciTransmitAt = Time.realtimeSinceStartup + 2;
             }
