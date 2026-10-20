@@ -26,14 +26,16 @@ namespace KSPChatBridge
             y += pad + lines.Length * lh + gap;
             if (NativeFlightController.CraftReady)
             {   // TAB-CRAFT1: this craft's approach / landing speeds (the same craft_overrides as AUTOPILOT / CRAFT / DETAILS), applied live
-                Rect sc = TabletUi.CardPanel(new Rect(0, y, width, pad + 4 * row + 3 * gap), "Speeds / go-around - " + NativeFlightController.CraftName + " (also in CRAFT > DETAILS)");
+                Rect sc = TabletUi.CardPanel(new Rect(0, y, width, pad + 6 * row + 5 * gap), "Speeds / flare / go-around - " + NativeFlightController.CraftName + " (also in CRAFT > DETAILS)");
                 float sy = CraftOverrideRow(sc, sc.y, CraftIndex(CraftOverrides.Approach), "Approach speed", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.Threshold), "Landing speed (at runway)", row, TabletLink) + gap;
+                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareStart), "Flare height (above runway)", row, TabletLink) + gap;
+                sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.FlareThrottle), "Flare throttle (blank = idle)", row, TabletLink) + gap;
                 sy = CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.AutoGa), "Auto go-around (this craft)", row, TabletLink) + gap;
                 bool gOn = NativeFlightController.GlobalAutoGoAround;   // LAND5k: global default (OFF); manual GO AROUND always works
                 TabletUi.Label(new Rect(sc.x, sy, Mathf.Max(260, sc.width * .36f), row), "Auto go-around (all craft): " + (gOn ? "ON" : "OFF"));
                 if (TabletUi.Button(new Rect(sc.x + Mathf.Max(260, sc.width * .36f), sy, Mathf.Max(120, tabletFont * 6f), row), gOn ? "TURN OFF" : "TURN ON", gOn, TabletLink)) NativeFlightController.GlobalAutoGoAround = !gOn;
-                y += pad + 4 * row + 3 * gap + gap;
+                y += pad + 6 * row + 5 * gap + gap;
             }
             if (!TabletLink)
             {

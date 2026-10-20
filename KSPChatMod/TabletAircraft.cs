@@ -72,6 +72,14 @@ namespace KSPChatBridge
             lines.Add(FuelReadout(v) + "   Flaps: " + (NativeFlightController.HasFlapsNow ? "available" : "none found"));
             float y = area.y + TextCard(area, "Takeoff", lines) + 10;
             bool can = TabletLink && v != null && v.LandedOrSplashed;
+            if (NativeFlightController.CraftReady)
+            {   // TAB-TAKEOFF2: rotation speed / angle (same craft_overrides as CRAFT > DETAILS), live during the roll
+                float pad = 16 + tabletFont * 1.6f, rr = Mathf.Max(44, tabletFont * 2.5f);
+                Rect sc = TabletUi.CardPanel(new Rect(area.x, y, area.width, pad + 2 * rr + 8), "Rotation - " + NativeFlightController.CraftName + " (also in CRAFT > DETAILS)");
+                float sy = CraftOverrideRow(sc, sc.y, CraftIndex(CraftOverrides.Vr), "Rotation speed", rr, TabletLink) + 8;
+                CraftOverrideRow(sc, sy, CraftIndex(CraftOverrides.RotatePitch), "Rotation angle", rr, TabletLink);
+                y += pad + 2 * rr + 8 + 10;
+            }
             {   // GROK TO2: takeoff settings (persisted; sent with ENGAGE TAKEOFF)
                 float lh = Mathf.Max(30, tabletFont * 1.7f), lw = Mathf.Min(260, area.width * .45f), fw = Mathf.Min(160, area.width - lw - 10);
                 string[] caps = { "Altitude above runway (m)", "Climb rate (m/s, blank = auto)", "Heading after takeoff (blank = runway)", "Max climb pitch (deg)" };

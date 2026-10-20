@@ -280,7 +280,7 @@ namespace KSPChatBridge
         internal TakeoffMission(double now) { start = now; }
         /// <summary>Oct 12: gear up after a positive climb (VS > 1 m/s, clear of the ground).</summary>
         internal static bool GearUp(double agl, double vs) { return agl > 10 && vs > 1; }
-        internal const double RotPitch = 10;   // nose-up the rotation has to reach before the wheels unstick
+        internal const double RotPitch = 10, RotPitchMin = 2, RotPitchMax = 20, RotRampEnd = 9;   // TAB-TAKEOFF2: rotate_pitch_deg clamp   // nose-up the rotation has to reach before the wheels unstick
         /// <summary>Vr: 1.15x stall, or the measured liftoff speed (bounded). Batch 1: with a learned pitch rate + accel, start rotating early by
         /// the speed gained while the nose comes up (accel x RotPitch / pitch rate) - the Aeris lifted at 164 m/s because rotation started at Vr.</summary>
         internal static double RotateSpeed(double stall, double liftoff, double pitchRate = double.NaN, double accel = double.NaN)
@@ -315,17 +315,22 @@ namespace KSPChatBridge
             if (speed < v2) return FlightPolicy.Clamp(ShallowPitch - .5 * (v2 - speed), 1, ShallowPitch);
             return ShallowPitch + (mp - ShallowPitch) * FlightPolicy.Clamp((speed - v2) / 25, 0, 1);
         }
+        /// <summary>TAB-TAKEOFF2: rotation pitch target - the craft's rotate_pitch_deg clamped 2-20 deg, else the 9 deg ramp end (tail-strike /
+        /// AoA protections downstream are unchanged).</summary>
+        internal static double RotateTarget(double asked) { return double.IsNaN(asked) ? RotRampEnd : FlightPolicy.Clamp(asked, RotPitchMin, RotPitchMax); }
         internal double Step(double now, double speed, double agl, bool grounded, double stall, double liftoff = double.NaN, double pitchRate = double.NaN, double accel = double.NaN, double liftStall = double.NaN)
         {
             double vmin = MinRotateSpeed(liftStall);
-            if (!double.IsNaN(vmin)) { Vr = vmin; RotStart = Vr; VrSource = "lift scan +12%"; }
+            double vrO = CraftOverrides.L(CraftOverrides.Vr);
+            if (!double.IsNaN(vrO)) { Vr = vrO; RotStart = vrO; VrSource = "craft override"; }   // TAB-TAKEOFF2: live, beats the lift scan
+            else if (!double.IsNaN(vmin)) { Vr = vmin; RotStart = Vr; VrSource = "lift scan +12%"; }
             else { Vr = RotateSpeed(stall, liftoff, pitchRate, accel); RotStart = .85 * Vr; VrSource = "stall/liftoff fallback"; }
             V2 = ClimbSpeed(liftStall, Vr);
             if (!grounded && double.IsNaN(LiftoffSpeed) && agl > 3) LiftoffSpeed = speed;
             if (!grounded && (agl >= 100 && speed >= V2 || agl >= 400)) { Phase = "climbout complete"; return ClimbPitch(speed, V2, MaxPitch); }
             if (grounded && now - start > 120) { Phase = "takeoff timeout"; return 0; }
             if (grounded && speed < RotStart) { Phase = "roll"; return 0; }
-            if (grounded) { Phase = "rotate"; double span = Math.Max(1, Vr - RotStart) > 1 ? Vr - RotStart : .1 * Vr; return speed > 1.3 * Vr ? 12 : 2 + 7 * FlightPolicy.Clamp((speed - RotStart) / span, 0, 1); }
+            if (grounded) { Phase = "rotate"; double span = Math.Max(1, Vr - RotStart) > 1 ? Vr - RotStart : .1 * Vr, top = RotateTarget(CraftOverrides.L(CraftOverrides.RotatePitch)); return speed > 1.3 * Vr ? Math.Max(12, top) : 2 + (top - 2) * FlightPolicy.Clamp((speed - RotStart) / span, 0, 1); }
             Phase = "climbout";
             return ClimbPitch(speed, V2, MaxPitch);
         }
@@ -583,13 +588,21 @@ namespace KSPChatBridge
         internal const double OverrideDecelMax = .9;
         internal static double OverrideDecel(double a) { return FlightPolicy.Clamp((double.IsNaN(a) || a <= 0 ? OverrideDecelDefault / OverrideMargin : a) * OverrideMargin, .3, OverrideDecelMax); }
         internal static double OverrideStartM(double app, double thr, double a) { return Math.Max(0, (app * app - thr * thr) / (2 * OverrideDecel(a))); }
+        /// <summary>GROK LAND5m (23:20: 100 plan, 59 actual at 6 km - slow over the water): the decel is planned from the measured IDLE decel
+        /// without airbrakes (RunwayMission sets OverrideIdleDecel = DecelA x IdleK), reaching the threshold speed exactly at the threshold (d = 0).</summary>
+        internal static double OverrideIdleDecel = double.NaN; internal const double IdleK = .85, IdleMin = .3, IdleMax = 1.2, IdleDefault = .8, BrakeOverThr = 5, BrakeInThr = 2, PowerUnderThr = 3;
+        internal static double IdlePlanDecel(double rawIdle) { return double.IsNaN(rawIdle) || rawIdle <= 0 ? IdleDefault : FlightPolicy.Clamp(rawIdle * IdleK, IdleMin, IdleMax); }
+        internal static double ScheduleA(double d, double app, double thr, double a) { if (d <= 0) return thr; return Math.Min(app, Math.Sqrt(thr * thr + 2 * Math.Max(.1, a) * d)); }
+        internal static double StartA(double app, double thr, double a) { return Math.Max(0, (app * app - thr * thr) / (2 * Math.Max(.1, a))); }
+        /// <summary>Closed loop: speed at the threshold if the idle decel continued from here.</summary>
+        internal static double PredictAtThreshold(double v, double d, double a) { return Math.Sqrt(Math.Max(0, v * v - 2 * Math.Max(.1, a) * Math.Max(0, d))); }
         internal static double OverrideSchedule(double d, double app, double thr, double a)
         {
             if (d <= 0) return thr; double v = Math.Sqrt(thr * thr + 2 * OverrideDecel(a) * d); return Math.Min(app, v);
         }
         internal static double FinalSchedule(double distToThreshold, double stall, double decelA = double.NaN, double faf = double.NaN)
         {
-            if (!double.IsNaN(OverrideApproach) && !double.IsNaN(OverrideThreshold)) return OverrideSchedule(distToThreshold, OverrideApproach, OverrideThreshold, decelA);
+            if (!double.IsNaN(OverrideApproach) && !double.IsNaN(OverrideThreshold)) return !double.IsNaN(OverrideIdleDecel) ? ScheduleA(distToThreshold, OverrideApproach, OverrideThreshold, OverrideIdleDecel) : OverrideSchedule(distToThreshold, OverrideApproach, OverrideThreshold, decelA);
             double hi = HiSpeed(stall), app = Vref(stall), s1 = D14Speed(stall), s2 = Math.Min(s1, app + FafOver), start = DecelStartDist(stall, decelA), d = distToThreshold;
             double fa = FlightPolicy.Clamp(double.IsNaN(faf) ? DefaultFaf : faf, DecelEnd + 1000, D14 - 1000);
             Func<double, double, double, double, double> blend = (v0, v1, d0, d1) => Math.Sqrt(v1 * v1 + (v0 * v0 - v1 * v1) * FlightPolicy.Clamp((d - d1) / (d0 - d1), 0, 1));   // constant decel
@@ -1096,7 +1109,7 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5i (Luke: 'any throttle change NEEDS TO WAIT for the engines to SPOOL, then TINY BUMPS'): after a change, wait until the
         /// engines report settled (measured; fallback FallbackWaitS), then SettleS for the speed to answer. Last 2 km: 2% bumps, 15% cap, only
         /// > FloorMarginMs below the floor with a falling trend. Freeze (< 30 m / last 600 m / flare): idle and locked.</summary>
-        internal const double DecayAcc = 1.0, BigStep = .35, DeficitMs = 5, DeficitDamp = .5;
+        internal const double DecayAcc = 1.0, BigStep = .35, DeficitMs = 5, DeficitDamp = .5; internal bool HoldPlan;
         /// <summary>GROK LAND5k (test zone: 90 -> 51 m/s on +3% bumps): after the spool wait, still > 5 m/s under plan and not rising, or under the
         /// floor at all (outside the last 2 km) - the step is sized to the deficit (close it over spool + settle), not a fixed 3%.</summary>
         internal double DeficitStep(double sz, double speed, double plan, double floor, double distM)
@@ -1163,7 +1176,7 @@ namespace KSPChatBridge
             }
             // GROK LAND5g (Luke: 'throttle increases even though it's supposed to be slowing down'): on final, power up only near the floor (floor + 8);
             // elsewhere never while the plan itself is decelerating.
-            bool upOk = (!double.IsNaN(distM) && !double.IsNaN(floor) ? speed < floor + HoldOverFloor : PlanRate > -.05) && Accel < .2;   // GROK LAND5i: current speed (the 5 s prediction stacked +5% steps at 106 vs floor 91)
+            bool upOk = (HoldPlan || (!double.IsNaN(distM) && !double.IsNaN(floor) ? speed < floor + HoldOverFloor : PlanRate > -.05)) && Accel < .2;   // LAND5m: HoldPlan = hold approach_speed with power   // GROK LAND5i: current speed (the 5 s prediction stacked +5% steps at 106 vs floor 91)
             if (!upOk && e < 0) { Why = ""; return Thr; }   // hold
             if (!double.IsNaN(leadIn) && leadIn > 0 && leadIn <= LeadS && now - lastLead > 2 * LeadS && speed <= plan) {   // GROK LAND5e: config lead only at/below plan (LAND5g: and near the floor)
                  if (!ready) return Thr; Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = now; Stepped(now); Why = "config lead +3%"; return Thr; }
@@ -1837,7 +1850,7 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5k (Luke: 'Turn off GO AROUND. IT WAS PERFECT!'): automatic go-arounds only when Auto go-around is ON (global
         /// autoland_auto_go_around / per-craft auto_go_around, default OFF). Off: log 'would go around: <reason>' once per reason and keep flying.
         /// The manual GO AROUND (go_around tool) does not come through here.</summary>
-        internal static bool AutoGoAround; internal string WouldWhy = "";
+        internal static bool AutoGoAround; internal string WouldWhy = ""; internal bool OverrideActive, OverridePowerOk, OverrideBrakes; internal double PredThr = double.NaN;
         internal bool GoAround(string why, bool safety = false)   // LAND5l: safety = always (overflew the runway)
         {
             if (AutoGoAround || safety) { Phase = "go around"; Why = why; return true; }
@@ -2177,7 +2190,17 @@ namespace KSPChatBridge
                 double hat = altitude - Elevation, low = Math.Min(hat, agl);
                 OffLine = hat > 60 && ApproachProfile.BadlyOff(latDev, trackErr, true);
                 if (OffLine) DesiredAltitude = Math.Max(DesiredAltitude, altitude);   // Oct 12: hold altitude until re-established on the line (A300 nearly hit the water off the line)   // Luke: glide path/flare vs the RUNWAY THRESHOLD, terrain under the plane only for clearance
-                DesiredSpeed = hat < 30 ? ApproachProfile.Vref(stall) : ApproachProfile.FinalSchedule(Distance, stall, EffDecel, Chart != null ? Chart.FafD : double.NaN);   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
+                OverrideActive = !double.IsNaN(ApproachProfile.OverrideApproach) && !double.IsNaN(ApproachProfile.OverrideThreshold);   // GROK LAND5m
+            ApproachProfile.OverrideIdleDecel = OverrideActive ? (!double.IsNaN(CraftOverrides.L("decel_plan")) ? CraftOverrides.L("decel_plan") : ApproachProfile.IdlePlanDecel(DecelA)) : double.NaN;
+            DesiredSpeed = hat < 30 ? ApproachProfile.Vref(stall) : ApproachProfile.FinalSchedule(Distance, stall, EffDecel, Chart != null ? Chart.FafD : double.NaN);
+            if (OverrideActive)
+            {
+                double th = ApproachProfile.OverrideThreshold, st = ApproachProfile.StartA(ApproachProfile.OverrideApproach, th, ApproachProfile.OverrideIdleDecel);
+                PredThr = ApproachProfile.PredictAtThreshold(speed, Distance, ApproachProfile.OverrideIdleDecel);
+                OverridePowerOk = Distance > st || PredThr < th - ApproachProfile.PowerUnderThr;   // hold approach_speed with power to the decel start; after it only if idle would arrive slow
+                if (PredThr > th + ApproachProfile.BrakeOverThr) OverrideBrakes = true; else if (PredThr < th + ApproachProfile.BrakeInThr) OverrideBrakes = false;
+            }
+            else { PredThr = double.NaN; OverridePowerOk = OverrideBrakes = false; }   // Luke: ~2.3x stall 12->4 km, smooth decel to 1.35x by 2 km
                 double maxSink = Math.Max(4.5, 2 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052));   // shallow GS capture: at most ~2x path sink, no diving
                 if (speed > DesiredSpeed + 10) maxSink = Math.Min(maxSink, Math.Max(4.5, speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // fast: never trade height for more speed
                 if (Heavy) maxSink = Math.Min(maxSink, Math.Max(4.5, 1.3 * speed * Math.Max(Chart != null ? Chart.Slope : .052, .052)));   // heavy: gentler GS capture
@@ -2197,7 +2220,7 @@ namespace KSPChatBridge
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
                 double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
                 PredictedNow = predSpd; AppNow = double.IsNaN(ApproachProfile.OverrideThreshold) ? ApproachProfile.AppSpeed(stall) : ApproachProfile.OverrideThreshold;   // GROK LAND5k: 'landing 66' ignored threshold_speed 52
-                int sg = ApproachProfile.SpeedGate(ApproachProfile.GateSpeed(predSpd, speed, Distance), AppNow, double.NaN, double.NaN); predFast = sg == 2; FastContinue = Phase == "final" && sg == 1 && Distance < ApproachChart.ShortFix;   // GROK LAND5c: no stopping estimate yet -> plain +20
+                int sg = ApproachProfile.SpeedGate(ApproachProfile.GateSpeed(predSpd, speed, Distance), AppNow, double.NaN, double.NaN); predFast = sg == 2; FastContinue = Phase == "final" && sg == 1 && Distance < ApproachChart.ShortFix && !OverrideActive;   // LAND5m: override craft = predicted-threshold airbrakes instead   // GROK LAND5c: no stopping estimate yet -> plain +20
                 if (!FastContinue) fastLogged = false; if (FastContinue && !fastLogged) { fastLogged = true; Why = "fast: " + predSpd.ToString("0") + " m/s predicted at touchdown (landing " + AppNow.ToString("0") + ", <= +20): airbrakes + idle, continuing"; }
                 {   // GROK LAND5c item 5: shrinking speed floor; slow above it is fine; below it power, and go around only if it cannot recover
                     bool overRwy = along >= 0 && along <= NavigationMath.Distance(Lat, Lon, EndLat, EndLon, radius) && hat < 10; double fa = double.IsNaN(slowPrevV) ? 0 : (speed - slowPrevV) * 50; slowPrevV = speed; slowAcc += (fa - slowAcc) * .02;

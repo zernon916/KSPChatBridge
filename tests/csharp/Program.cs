@@ -198,6 +198,30 @@ class Program
                 Check(!g1 && w1.StartsWith("would go around: too slow") && g2 && ga.Phase == "go around", "LAND5k: auto go-around OFF logs 'would go around' and keeps flying; ON goes around");
                 var dz = new StepThrottle(); dz.Reset(0); dz.AccelPerThr = 8; double dzs = dz.DeficitStep(.03, 59, 100, 50, 7000); Check(dzs <= .5 * ((100 - 59) / (Math.Max(StepThrottle.AheadS, dz.SpoolS) + StepThrottle.SettleS)) / 8 + 1e-9 || dzs <= .03 + 1e-9, "LAND5k: deficit steps sized to half the deficit (" + Math.Round(100 * dzs) + "%)");
             }
+            {   // TAB-ILS3 / TAB-TAKEOFF2 / LAND5m
+                Check(Ils.Template("SPD  97 / 100  ias 63") == "SPD  88 / 888  ias 88", "TAB-ILS3: fixed-width templates (digits -> 8)");
+                var tp = new List<string> { "ILS KSC 27", "SPD  88 / 888  ias 88", "VS  -8.8 / -8.8" };
+                int fp = Ils.FitLines((tq, px) => tq.Length * px * .6f, px => px * 1.2f, tp, 200, 400, 10, 40);
+                Check(fp == 15 && Ils.FitLines((tq, px) => tq.Length * px * .6f, px => px * 1.2f, tp, 2000, 60, 10, 40) == 16, "TAB-ILS3: one line per row, fits width and height (" + fp + ")");
+                var fh = new Ils.FontHold(); int a1 = fh.Update(0, 20, "a"), a2 = fh.Update(.1, 21, "a"), a3 = fh.Update(.2, 24, "a"), a4 = fh.Update(.9, 24, "a"), a5 = fh.Update(1.3, 24, "a"), a6 = fh.Update(1.4, 30, "b");
+                int f0 = fh.Update(2, 26, "b"), f1 = fh.Update(2.05, 34, "b"), f2 = fh.Update(2.1, 26, "b"), f3 = fh.Update(2.15, 34, "b");
+                Check(a1 == 20 && a2 == 20 && a3 == 20 && a4 == 20 && a5 == 24 && a6 == 30 && f0 == 30 && f1 == 30 && f2 == 30 && f3 == 30, "TAB-ILS3: size hysteresis - <2 px ignored, >=2 px only after 1 s steady, flapping never applies, a panel resize applies at once");
+                Check(TakeoffMission.RotateTarget(double.NaN) == 9 && TakeoffMission.RotateTarget(30) == 20 && TakeoffMission.RotateTarget(1) == 2 && TakeoffMission.RotateTarget(7.5) == 7.5, "TAB-TAKEOFF2: rotation angle clamp 2-20 (auto = 9 deg ramp end)");
+                var tso = new Dictionary<string, object>(); CraftOverrides.Set(tso, "T", CraftOverrides.Vr, 70); CraftOverrides.Set(tso, "T", CraftOverrides.RotatePitch, 6.5); double ta, tt2; CraftOverrides.Apply(tso, "T", out ta, out tt2);
+                var tko = new TakeoffMission(0); double pr1 = tko.Step(1, 60, 0, true, 45, 160, double.NaN, double.NaN, 50); string ph1 = tko.Phase; double pr2 = tko.Step(2, 77, 0, true, 45, 160, double.NaN, double.NaN, 50);
+                CraftOverrides.Set(tso, "T", CraftOverrides.Vr, 60); CraftOverrides.Apply(tso, "T", out ta, out tt2); double pr3 = tko.Step(3, 61, 0, true, 45, 160, double.NaN, double.NaN, 50);
+                Check(ph1 == "roll" && pr1 == 0 && Math.Abs(pr2 - 6.5) < 1e-9 && tko.Vr == 60 && tko.VrSource == "craft override" && pr3 > 2, "TAB-TAKEOFF2: vr beats the lift scan, rotation pitch target = rotate_pitch_deg, live during the roll (" + pr2.ToString("0.0") + ")");
+                Check(CraftOverrides.TakeoffLogLine("Aeris 3A", 60, 6.5) == "override Aeris 3A: vr=60 rotate=6.5", "TAB-TAKEOFF2: '[craft] override <craft>: vr=<n> rotate=<n>'");
+                CraftOverrides.Set(tso, "T", CraftOverrides.FlareThrottle, 20); CraftOverrides.Apply(tso, "T", out ta, out tt2); double ftf = CraftOverrides.FlareThrottleFrac();
+                CraftOverrides.Clear(tso, "T"); CraftOverrides.Apply(tso, "T", out ta, out tt2);
+                Check(Math.Abs(ftf - .2) < 1e-9 && double.IsNaN(CraftOverrides.FlareThrottleFrac()) && CraftOverrides.Parse(CraftOverrides.FlareThrottle, "150") == 100, "LAND5m: flare_throttle_pct 0-100 (blank = idle)");
+                double ia = ApproachProfile.IdlePlanDecel(.98), ist = ApproachProfile.StartA(100, 52, ia);
+                Check(Math.Abs(ia - .833) < .001 && ist > 4000 && ist < 4800 && ApproachProfile.ScheduleA(ist + 100, 100, 52, ia) == 100 && Math.Abs(ApproachProfile.ScheduleA(0, 100, 52, ia) - 52) < 1e-9 && Math.Abs(ApproachProfile.ScheduleA(ist / 2, 100, 52, ia) - Math.Sqrt(52 * 52 + ia * ist)) < 1e-9, "LAND5m: hold 100 to the idle-decel start (" + Math.Round(ist) + " m), 52 exactly at the threshold");
+                Check(Math.Abs(ApproachProfile.PredictAtThreshold(100, ist, ia) - 52) < 1e-6 && ApproachProfile.PredictAtThreshold(80, ist, ia) < 52 - 5, "LAND5m: closed-loop threshold prediction (80 at the decel start would arrive slow)");
+                var hp = new StepThrottle(); hp.Reset(0); double h0 = 0; for (double tt = 0; tt < 6; tt += .02) h0 = hp.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
+                var hq = new StepThrottle(); hq.Reset(0); hq.HoldPlan = true; double h1 = 0; for (double tt = 0; tt < 6; tt += .02) h1 = hq.Update(tt, 87 - .2 * tt, 100, .02, double.NaN, 50, 8000);
+                Check(h0 == 0 && h1 > 0, "LAND5m: holding approach_speed - 87 vs plan 100 above floor + 8 gets power (was held at idle -> 59 m/s at 6 km)");
+            }
             Check(LandingTestPresets.Outcome(1, "landed (pilot intervened x1)", 2.5, 70, 0).Contains("pilot intervened"), "LAND5k: the [TEST] outcome names a pilot intervention");
         }
         {   // GROK LAND5i: spool-aware tiny bumps, final lock
