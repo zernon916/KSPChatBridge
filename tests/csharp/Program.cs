@@ -237,7 +237,6 @@ class Program
             }
             {   // LAND5q
                 Check(ApproachProfile.FlareFastDone(57, 52) && !ApproachProfile.FlareFastDone(58, 52) && !ApproachProfile.FlareFastDone(40, double.NaN), "LAND5q: fast flare ends at threshold_speed + 5");
-                Check(!ApproachProfile.FlareTooLong(200, 60, 500, 350) && ApproachProfile.FlareTooLong(250, 60, 500, 350) && ApproachProfile.FlareTooLong(50, 60, 700, 350), "LAND5q: flare long after ~4 s of ground run or 300 m past the aim point");
                 Check(Derotation.BounceStart(8, 62, 45) == 8 && Derotation.BounceStart(3, 62, 45) == 3 && Derotation.BounceStart(0, 50, 45) == 2 && Derotation.BounceStart(12, 50, 45) == 8 && Math.Abs(Derotation.BounceStep(3, 62, 45, .5) - 2.5) < 1e-9 && Derotation.BounceStep(.2, 62, 45, 1) == 0 && Derotation.BounceStep(-1, 62, 45, 1) == -1 && Derotation.BounceStep(5, 50, 45, 1) == 5, "LAND5q: fast bounce never pitches up (current pitch, lowering 1 deg/s to 0); near stall holds 2-8");
                 var dq = new Derotation(); double qp = 6; dq.Step(qp, .02, false, 60); for (int k = 0; k < 60; k++) { dq.Step(qp, .02, false, 60); qp = dq.Command; } double q1 = qp; for (int k = 0; k < 500; k++) { dq.Step(qp, .02, false, 60); qp = dq.Command; }
                 Check(Math.Abs(q1 - (6 - 2 * (61 * .02 - Derotation.HoldS))) < .05 && Math.Abs(qp + 3) < 1e-6, "LAND5q: first contact = straight 2 deg/s ramp to -rollout_pitch_deg even at constant speed (" + q1.ToString("0.00") + ")");
@@ -264,9 +263,6 @@ class Program
                 Check(RolloutBrake.FromTouchdown(true, 0, false) && RolloutBrake.FromTouchdown(false, .1, true) && !RolloutBrake.FromTouchdown(false, .3, true) && !RolloutBrake.FromTouchdown(false, 0, false), "ROLL2: wheel brakes on at touchdown, off in a real bounce, debounced, back on at contact");
                 Check(!RolloutBrake.Hold(.4, false) && RolloutBrake.Hold(.5, false) && RolloutBrake.Hold(.35, true) && !RolloutBrake.Hold(.25, true), "ROLL1: wheel brakes with hysteresis (no 2 Hz pulsing)");
                 Check(LandingTestPresets.StoppedOff(true, 1) && !LandingTestPresets.StoppedOff(true, 20) && !LandingTestPresets.StoppedOff(false, 1), "ROLL1: AP off after the stop logs 'stopped', not 'pilot intervened'");
-            }
-            {   // LAND5r
-                Check(FlarePolicy.LongCapStart(-5.1, -5.1) == FlarePolicy.LongFloor && FlarePolicy.LongCapStart(3, 4) == 3 && FlarePolicy.LongCap(-1.5, -2, -1.5) == -1.5 && double.IsPositiveInfinity(FlarePolicy.LongCap(-1.5, -3.2, -1.5)) && double.IsPositiveInfinity(FlarePolicy.LongCap(0, -8.2, -1.5)), "LAND5r: long flare caps the nose no lower than -1.5 and lifts the cap when sinking > 2x flare_sink");
             }
             {   // TEST4
                 var tp4 = LandingTestPresets.Defaults()[0];

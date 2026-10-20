@@ -26,12 +26,6 @@ namespace KSPChatBridge
             if (!ValidAoa(aoa) || double.IsNaN(p) || double.IsNaN(vs)) return double.NaN;
             return aoa + p + FlightPolicy.Clamp(TrackK * (t - vs), -TrackMax, TrackMax);
         }
-        /// <summary>LAND5r: long-flare nose cap - no more pitch-up, but never below -1.5 deg (Stearwing 02:0x: capped at -5.1 -> 8.2 m/s into the runway).</summary>
-        internal const double LongFloor = -1.5;
-        internal static double LongCapStart(double pitch, double desired) { double p = Math.Min(pitch, desired); return double.IsNaN(p) ? LongFloor : Math.Max(p, LongFloor); }
-        /// <summary>LAND5r: sinking faster than 2x the flare sink -> the cap is lifted (the sink tracking may pitch up again).</summary>
-        internal static double LongCap(double cap, double vs, double targetVs)
-        { double t = Math.Min(-.5, double.IsNaN(targetVs) ? -1.5 : targetVs); return !double.IsNaN(vs) && vs < 2 * t ? double.PositiveInfinity : cap; }
         /// <summary>LAND5n: flare_max_pitch_deg cap (NaN = no cap, 0-20).</summary>
         internal static double CapPitch(double pitch, double maxPitch)
         { return double.IsNaN(maxPitch) || double.IsNaN(pitch) ? pitch : Math.Min(pitch, FlightPolicy.Clamp(maxPitch, 0, 20)); }

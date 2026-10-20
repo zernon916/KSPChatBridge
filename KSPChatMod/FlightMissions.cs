@@ -493,11 +493,8 @@ namespace KSPChatBridge
         internal static string TouchdownClass(double sink) { double s = Math.Abs(sink); return s <= 5 ? "normal" : s <= 8 ? "firm" : "hard"; }
         internal static bool FlareFast(double speed, double app) { return !double.IsNaN(app) && speed > app + FlareFastOver; }
         /// <summary>LAND5q: the fast flare ends at threshold_speed + 5 (00:30/00:33: idle + airbrakes all flare, 82 -> 32 m/s, stalled in at 5 m/s).</summary>
-        internal const double FlareFastEnd = 5, FlareMaxS = 4, FlarePastAimM = 300;
+        internal const double FlareFastEnd = 5;
         internal static bool FlareFastDone(double speed, double app) { return !double.IsNaN(app) && speed <= app + FlareFastEnd; }
-        /// <summary>LAND5q: short flare - after ~4 s of flare ground run, or 300 m past the aim point, no more pitch-up (keep descending at flare_sink).</summary>
-        internal static bool FlareTooLong(double flareRunM, double entrySpeed, double along, double aimM)
-        { return flareRunM > FlareMaxS * Math.Max(20, entrySpeed) || along > aimM + FlarePastAimM; }
         internal static double LandingPitchMin(double desiredVs) { return desiredVs < -6 ? -12 : -5; }
         internal static double SinkLimit(double learnedSink, double fallback) { return double.IsNaN(learnedSink) || learnedSink <= 1 ? fallback : learnedSink; }
         internal const double HighM = 50, FastMs = 10;
@@ -1864,7 +1861,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
         internal const double RolloutMaxCorr = 4, RolloutDampK = 1.0;
         internal static double RolloutCorr(double corrDeg, double crossRateMs, double speed) { return FlightPolicy.Clamp(corrDeg - RolloutDampK * Math.Atan2(crossRateMs, Math.Max(5, speed)) * 180 / Math.PI, -RolloutMaxCorr, RolloutMaxCorr); }
         double lastCrossR = double.NaN;
-        internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor, FlareFastEnded, FlareLong; internal double FlareStartAlong = double.NaN, FlareEntrySpeed;   /* LAND5q */ internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
+        internal int missedSteps, belowFloorSteps; bool goAroundLow, fastLogged; internal bool FastContinue, FlareFast, BelowFloor, FlareFastEnded; internal double FlareStartAlong = double.NaN, FlareEntrySpeed;   /* LAND5q */ internal double SpeedFloor = double.NaN; double slowPrevV = double.NaN, slowAcc; internal LockedPath Pattern; internal string PatternLog = ""; internal double BankCap = double.NaN;   // GROK LAND5b/5c
         internal bool MissedClimb; internal const double MissedAgl = 300, RejoinSlack = .85;   // GROK LAND3: rejoin corners need a 15% margin, never "shrunk"
         /// <summary>GROK LAND2: the route as the smoother flies it - from the plane's position, through the fixes, to the threshold - must be flyable
         /// at radius r (the 2 km "TIGHT 166 deg long final 6 km" rejoin turned into a figure-8 and a crash).</summary>
@@ -2257,7 +2254,7 @@ internal static double BounceStep(double cur, double speed, double stall, double
                 Gear = Distance <= FlapsPolicy.GearDistance(Chart != null ? Chart.FafD : FafDistance) || (Distance < 3000 && Math.Abs(cross) < AlignCross) || low < 80;   // GROK LAND5b: gear at/before the FAF (was 3 km)
                 double fs = !double.IsNaN(CraftOverrides.L("flare_start_m")) ? CraftOverrides.L("flare_start_m") : Override != null ? Override.FlareStartM : 15;   // TAB-CRAFT1
                 
-                if (low < fs) { if (Phase != "flare") { FlareFast = ApproachProfile.FlareFast(speed, AppNow); FlareFastEnded = false; FlareLong = false; FlareStartAlong = along; FlareEntrySpeed = speed; } Phase = "flare"; if (FlareFast && ApproachProfile.FlareFastDone(speed, AppNow)) { FlareFast = false; FlareFastEnded = true; } FlareLong = FlareLong || ApproachProfile.FlareTooLong(along - FlareStartAlong, FlareEntrySpeed, along, TouchdownM); DesiredVs = FlarePolicy.SinkTarget(CraftOverrides.L(CraftOverrides.FlareSink), CraftOverrides.L("touchdown_sink"), Override != null ? Override.FlareSinkMs : double.NaN); }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
+                if (low < fs) { if (Phase != "flare") { FlareFast = ApproachProfile.FlareFast(speed, AppNow); FlareFastEnded = false; FlareStartAlong = along; FlareEntrySpeed = speed; } Phase = "flare"; if (FlareFast && ApproachProfile.FlareFastDone(speed, AppNow)) { FlareFast = false; FlareFastEnded = true; } /* LAND5s: no long-flare rule - hold flare_sink to touchdown */ DesiredVs = FlarePolicy.SinkTarget(CraftOverrides.L(CraftOverrides.FlareSink), CraftOverrides.L("touchdown_sink"), Override != null ? Override.FlareSinkMs : double.NaN); }   // GROK LAND5c: touchdown sink 3 m/s (was 1.5-1.9); fast = no flare pitch-up
                 // Oct 12: predictive soft gate - learned decel + flap steps still to come + airbrakes, to touchdown; no learned decel -> never a speed go-around
                 double predSpd; bool predFast = ApproachProfile.PredictTooFast(speed, Distance, stall, LearnedDecel, FlapStepsLeft, HasAirbrakes, FastAtGate, out predSpd);
                 PredictedNow = predSpd; AppNow = double.IsNaN(ApproachProfile.OverrideThreshold) ? ApproachProfile.AppSpeed(stall) : ApproachProfile.OverrideThreshold;   // GROK LAND5k: 'landing 66' ignored threshold_speed 52
