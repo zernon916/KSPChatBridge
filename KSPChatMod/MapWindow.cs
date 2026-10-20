@@ -472,11 +472,15 @@ namespace KSPChatBridge
                 var co = Ils.Callouts(r, hat, gear, ias, tgt, RunwayMission.PredictedNow, RunwayMission.AppNow); if (co.Count > 0) rows.Add(new KeyValuePair<string, Color>(string.Join(" ", co.ToArray()), new Color(1, .7f, 0)));
             }
             else rows.Add(new KeyValuePair<string, Color>("FD   " + (guidance ? "no signal" : "off (GUIDE)"), Text));
-            int ip = IlsPx(area); float wd = dw - 8, rx = area.width - dw + 6, ry = 2;
+            float wd = dw - 8, rx = area.width - dw + 6, ry = 2;
+            // GROK TAB-ILS2: scale the font so the rows fill the whole tall panel (was fixed 10-15 px -> top half only), then spread the slack
+            Func<int, float> total = px => { float t = 0; foreach (var row in rows) t += cv.TextHeight(row.Key, wd, px, true); return t; };
+            int ip = Ils.FitPx(total, area.height - 4, IlsPx(area), Ils.MaxPx);
+            float gap = rows.Count > 1 ? Mathf.Max(0, (area.height - 4 - total(ip)) / rows.Count) : 0;
             foreach (var row in rows)
             {   // each row is sized by the canvas (a wrapped row takes the height it needs); drawing stops at the bottom edge
                 float h = cv.TextHeight(row.Key, wd, ip, true); if (ry + h > area.height) break;
-                cv.Text(new Rect(rx, ry, wd, h), row.Key, ip, row.Value, TextAnchor.UpperLeft, true); ry += h;
+                cv.Text(new Rect(rx, ry, wd, h), row.Key, ip, row.Value, TextAnchor.UpperLeft, true); ry += h + gap;
             }
         }
         /// <summary>ILS data-block text size for a page size (the same clamp the CHART data block uses).</summary>

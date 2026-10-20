@@ -129,6 +129,11 @@ class Program
             Check(lift <= 1.2 * 70 + 1, "heavier craft lifts off by ~1.2 x stall (" + lift.ToString("0") + ")");
             Check(tk.Step(60, 1.35 * 80.5, 0, true, 70) == 12, "still on the ground well past Vr: more back-pressure");
             Check(Math.Abs(TakeoffMission.RotateSpeed(70, 75) - 72.75) < .01 && TakeoffMission.RotateSpeed(70, 300) <= 1.2 * 80.5 + 1e-9, "measured liftoff speed refines Vr (bounded)");
+        {   // GROK TAB-ILS2: ILS text scales to fill the panel
+            Func<int, float> tot = px => 15 * px * 1.25f;   // 15 rows, line height 1.25x px
+            int fp = Ils.FitPx(tot, 526, 15, Ils.MaxPx); Check(fp == 28 && tot(fp) <= 526 && tot(fp + 1) > 526, "TAB-ILS2: 15 rows fill a 530 px panel at " + fp + " px (was 15)");
+            Check(Ils.FitPx(tot, 100, 10, 40) == 10 && Ils.FitPx(px => 2 * px, 1000, 10, 40) == 40, "TAB-ILS2: clamps to min/max");
+        }
         {   // GROK LAND5h: entry turn radius from the speed at the turn
             double ent = 150;
             Check(ApproachProfile.TurnSpeed(ent, 259) == 160 && ApproachProfile.TurnSpeed(ent, 200) == 160 && ApproachProfile.TurnSpeed(ent, 120) == 150 && ApproachProfile.TurnSpeed(ent, 155) == 155, "LAND5h: turn speed = plan, at most +10, never the overspeed");

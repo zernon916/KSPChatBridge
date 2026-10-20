@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -143,6 +143,15 @@ namespace KSPChatBridge
         /// <summary>GROK TAB-ILS1: deviation bar - pixel offset of the marker from the centre line (+ = up), clamped to +/-halfPx; clamped = arrow.</summary>
         internal const double SpdBarScale = 30, VsBarScale = 10;
         /// <summary>GROK LAND5e: the speed row shows the speed the autopilot controls against (surface speed), IAS small.</summary>
+        /// <summary>GROK TAB-ILS2: the largest font px in [min, max] whose wrapped rows fit maxH (total = summed row height at a px).</summary>
+        internal const int MaxPx = 40;
+        internal static int FitPx(Func<int, float> total, float maxH, int min, int max)
+        {
+            int lo = Math.Max(6, min), hi = Math.Max(lo, max);
+            if (total(lo) > maxH) return lo;
+            while (lo < hi) { int mid = (lo + hi + 1) / 2; if (total(mid) <= maxH) lo = mid; else hi = mid - 1; }
+            return lo;
+        }
         internal static string SpdLine(double spd, double target, double ias) { return "SPD  " + Math.Round(spd) + " / " + Math.Round(target) + "  ias " + Math.Round(ias); }
         internal static double BarOffset(double dev, double scale, double halfPx, out bool clamped)
         {
