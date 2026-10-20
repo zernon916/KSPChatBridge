@@ -13,7 +13,7 @@ namespace KSPChatBridge
         readonly List<KscRoverWaypoint> scienceTourStops = new List<KscRoverWaypoint>();
         readonly HashSet<string> scienceTourVisited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         readonly List<KscRoverPolicy.P> scienceTourRoute = new List<KscRoverPolicy.P>();
-        bool scienceTouring, scienceTourDriving; int scienceTourStopN;
+        bool scienceTouring, scienceTourDriving, scienceTourKsc = true; int scienceTourStopN;
         int scienceTourRouteIndex;
         double scienceTourSpeed = 10;
         KscRoverPolicy.P scienceTourHub;
@@ -63,14 +63,18 @@ namespace KSPChatBridge
         string RoverScienceTour(Dictionary<string, object> a)
         {
             if (vessel == null || !vessel.LandedOrSplashed) return "Rover science tours start with a landed rover.";
-            if (vessel.mainBody == null || vessel.mainBody.bodyName != "Kerbin") return "The KSC rover science tour is only available on Kerbin.";
             if (!HasPoweredWheels()) return "Rover science tours require powered wheels.";
-            if (KscRoverMap.Points.Count == 0) return "KSC map data is not available yet; load the rover at the Space Center and try again.";
+            bool kerbin = vessel.mainBody != null && vessel.mainBody.bodyName == "Kerbin";   // RS5: KSC biomes near KSC, PLACES marked as stops anywhere
             double midLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5;
-            double kscDistance = NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.LatAt(midLon),
-                midLon, vessel.mainBody.Radius);
-            if (kscDistance > 12000) return "Drive the rover within 12 km of KSC before starting the science tour.";
-            if (!TourHub(out scienceTourHub)) return "No flat Crawlerway or runway waypoint is available for a safe rover route.";
+            double kscDistance = kerbin ? NavigationMath.Distance(vessel.latitude, vessel.longitude, KscRunway.LatAt(midLon),
+                midLon, vessel.mainBody.Radius) : double.PositiveInfinity;
+            bool hub = kerbin && KscRoverMap.Points.Count > 0 && kscDistance <= 12000 && TourHub(out scienceTourHub);
+            scienceTourKsc = hub;
+            if (!hub && PlaceStopsHere().Count == 0)
+                return !kerbin ? "Mark places on this body as tour stops (tablet ROVER / PLACES: STOP) to tour here."
+                    : KscRoverMap.Points.Count == 0 ? "KSC map data is not available yet; load the rover at the Space Center and try again."
+                    : kscDistance > 12000 ? "Drive the rover within 12 km of KSC, or mark PLACES as tour stops, before starting the science tour."
+                    : "No flat Crawlerway or runway waypoint is available for a safe rover route.";
 
             touring = false;
             scienceTouring = true;
@@ -135,7 +139,7 @@ namespace KSPChatBridge
             scienceTourStops.Clear();
             var bestByBiome = new Dictionary<string, KscRoverWaypoint>(StringComparer.OrdinalIgnoreCase);
             var valueByBiome = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-            foreach (KscRoverWaypoint waypoint in KscRoverMap.Points)
+            foreach (KscRoverWaypoint waypoint in scienceTourKsc ? KscRoverMap.Points : (IList<KscRoverWaypoint>)new KscRoverWaypoint[0])
             {
                 if (!IsFlatApproach(waypoint)) continue;
                 string biome = ScienceUtil.GetExperimentBiome(vessel.mainBody, waypoint.ApproachLat, waypoint.ApproachLon);
@@ -154,11 +158,21 @@ namespace KSPChatBridge
             }
 
             var candidates = new List<KscRoverWaypoint>(bestByBiome.Values);
+            foreach (Place pl in PlaceStopsHere())   // RS5: marked places (science there if any, else just drive to it)
+                if (!scienceTourVisited.Contains(pl.Name))
+                    candidates.Add(new KscRoverWaypoint { Name = pl.Name, Biome = "", Lat = pl.Lat, Lon = pl.Lon, ApproachLat = pl.Lat, ApproachLon = pl.Lon, Source = "place" });
             var coordinates = new List<KscRoverPolicy.P>();
             foreach (KscRoverWaypoint stop in candidates)
                 coordinates.Add(new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon));
-            List<int> order = KscRoverPolicy.ShortestOrder(new KscRoverPolicy.P(vessel.latitude, vessel.longitude),
+            List<int> order;
+            if (scienceTourKsc) order = KscRoverPolicy.ShortestOrder(new KscRoverPolicy.P(vessel.latitude, vessel.longitude),
                 coordinates, scienceTourHub, vessel.mainBody.Radius);
+            else
+            {   // RS3/RS5: away from KSC - nearest neighbour weighted by science value, straight legs
+                var weighted = new List<double[]>(); int n0;
+                foreach (KscRoverWaypoint w in candidates) weighted.Add(new[] { w.ApproachLat, w.ApproachLon, ScienceValueAt(w.ApproachLat, w.ApproachLon, out n0, RoverMinScience()) });
+                order = RoverDrivePolicy.WeightedOrder(vessel.latitude, vessel.longitude, weighted, vessel.mainBody.Radius);
+            }
             foreach (int index in order) scienceTourStops.Add(candidates[index]);
         }
 
@@ -168,7 +182,8 @@ namespace KSPChatBridge
             KscRoverWaypoint stop = scienceTourStops[0];
             if (scienceTourRoute.Count == 0)
             {
-                scienceTourRoute.AddRange(KscRoverPolicy.GroundRoute(
+                if (!scienceTourKsc) scienceTourRoute.Add(new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon));
+                else scienceTourRoute.AddRange(KscRoverPolicy.GroundRoute(
                     new KscRoverPolicy.P(vessel.latitude, vessel.longitude),
                     new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon),
                     scienceTourHub, vessel.mainBody.Radius));

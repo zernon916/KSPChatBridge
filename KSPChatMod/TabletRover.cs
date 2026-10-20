@@ -86,7 +86,42 @@ namespace KSPChatBridge
             if (!string.IsNullOrEmpty(tabletRoverNote)) TabletUi.LabelWrap(new Rect(area.x, y, area.width, Mathf.Max(row, area.yMax - y)), tabletRoverNote, true);
         }
 
-        void TabletRoverPlaces(Rect area) { TabletUi.LabelWrap(area, "Named places: not available yet.", true); }
+        static string tabletPlaceName = "";
+        /// <summary>RS5: PLACES - pin here (name field; blank = nearest building), list with STOP / KIND / RENAME / DELETE / DRIVE.</summary>
+        void TabletRoverPlaces(Rect area)
+        {
+            float row = Mathf.Max(44, tabletFont * 2.5f), gap = 8, bw = Mathf.Max(110, tabletFont * 5.5f); bool en = TabletLink;
+            float fw = Mathf.Max(220, area.width - 2 * bw - 3 * gap - 20);
+            tabletPlaceName = TabletUi.Field(new Rect(area.x, area.y, fw, row), tabletPlaceName, en);
+            if (TabletUi.ActionButton(new Rect(area.x + fw + gap, area.y, bw * 1.4f, row), "PIN HERE", en)) { tabletRoverNote = NativeFlightController.PlacePinHere(tabletPlaceName, null); tabletPlaceName = ""; }
+            Rect body = new Rect(area.x, area.y + row + gap, area.width, Mathf.Max(60, area.height - row - gap));
+            GUILayout.BeginArea(body);
+            try
+            {
+                roverScroll = GUILayout.BeginScrollView(roverScroll);
+                try
+                {
+                    float w = body.width - 26, y = 0, sb = Mathf.Max(90, tabletFont * 4.5f);
+                    if (!string.IsNullOrEmpty(tabletRoverNote)) { TabletUi.LabelWrap(new Rect(0, y, w, row), tabletRoverNote, true); y += row; }
+                    TabletUi.SmallWrap(new Rect(0, y, w, row), "Type a name, then PIN HERE (blank = nearest building) or RENAME on a row. STOP = visit on the rover science tour."); y += row;
+                    string body0 = NativeFlightController.CraftReady && FlightGlobals.ActiveVessel != null ? FlightGlobals.ActiveVessel.mainBody.bodyName : "";
+                    foreach (var p in NativeFlightController.AllPlaces())
+                    {
+                        if (p.Body != body0) continue;
+                        float bh = row * 2 + 3 * 4; TabletUi.RowBox(new Rect(0, y, w, bh)); TabletUi.Label(new Rect(8, y + 4, w - 16, row), p.Line()); float x = 8, by = y + row + 8;
+                        if (TabletUi.Button(new Rect(x, by, sb, row), "STOP", p.Stop, en)) NativeFlightController.PlaceToggleStop(p.Name); x += sb + 4;
+                        if (TabletUi.Button(new Rect(x, by, sb * 1.3f, row), p.Kind.ToUpperInvariant(), false, en)) NativeFlightController.PlaceCycleKind(p.Name); x += sb * 1.3f + 4;
+                        if (TabletUi.ActionButton(new Rect(x, by, sb * 1.2f, row), "RENAME", en && tabletPlaceName.Trim().Length > 0, false)) { tabletRoverNote = NativeFlightController.PlaceRename(p.Name, tabletPlaceName.Trim()); tabletPlaceName = ""; } x += sb * 1.2f + 4;
+                        if (NativeFlightController.PlaceIsManual(p.Name) && TabletUi.ActionButton(new Rect(x, by, sb, row), "DELETE", en, false)) NativeFlightController.PlaceDelete(p.Name); x += sb + 4;
+                        if (TabletUi.ActionButton(new Rect(x, by, sb, row), "DRIVE", en, false)) RoverRun("drive_to", "{\"name\":" + Q(p.Lat.ToString("0.000000", CultureInfo.InvariantCulture) + "," + p.Lon.ToString("0.000000", CultureInfo.InvariantCulture)) + "}");
+                        y += bh + gap;
+                    }
+                    GUILayout.Space(y);
+                }
+                finally { GUILayout.EndScrollView(); }
+            }
+            finally { GUILayout.EndArea(); }
+        }
 
         void TabletRoverTour(Rect area)
         {

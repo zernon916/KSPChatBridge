@@ -15,6 +15,7 @@ internal static class RoverTests
         ScienceInventoryTests();
         DrivePolicyTests();
         PowerPolicyTests();
+        PlacesTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -97,6 +98,27 @@ internal static class RoverTests
         Check(RoverPowerPolicy.Ass(true, 0, true) == AssMode.OursAssPaused && RoverPowerPolicy.Ass(true, 0, false) == AssMode.OursRunFirst && RoverPowerPolicy.Ass(true, 1, true) == AssMode.LeftToOther
             && RoverPowerPolicy.Ass(false, 0, false) == AssMode.None, "ASS detection flag");
         Check(RoverPowerPolicy.WeRunScience(AssMode.OursRunFirst) && !RoverPowerPolicy.WeRunScience(AssMode.LeftToOther), "no double runs: other mods mode leaves science to ASS");
+    }
+
+    static void PlacesTests()
+    {
+        var s = new PlacesStore();
+        var a = s.Add("Island Tower", "building", "Kerbin", -1.52, -71.9, 130, 90); var b = s.Add("", null, "Mun", 3, 4, double.NaN, double.NaN); var c = s.Add("Island Tower", "airport", "Kerbin", 1, 2, 0, 0);
+        Check(a.Name == "Island Tower" && b.Name == "Pin 1" && c.Name == "Island Tower 1" && b.Kind == "site", "pin naming");
+        a.Stop = true; a.Notes = "check";
+        var r = PlacesStore.FromJson(s.ToJson()); var ra = r.Find("island tower");
+        Check(r.Manual.Count == 3 && ra != null && ra.Stop && ra.Kind == "building" && Math.Abs(ra.Lat + 1.52) < 1e-9 && ra.Heading == 90 && ra.Notes == "check" && double.IsNaN(r.Find("Pin 1").Alt), "store round-trip");
+        Check(PlacesStore.FromJson("not json").Manual.Count == 0 && PlacesStore.FromJson(null).Manual.Count == 0, "bad file = empty store");
+        Check(r.Rename("Pin 1", "Mun Arch") && r.Find("Mun Arch") != null && !r.Rename("Mun Arch", "Island Tower") && !r.Rename("nope", "x"), "rename (no clash)");
+        Check(r.Delete("Mun Arch") && r.Find("Mun Arch") == null && !r.Delete("Mun Arch"), "delete");
+        var kk = new List<Place> { new Place { Name = "Island Tower", Lat = 9, Lon = 9, Source = "KerbalKonstructs" }, new Place { Name = "KSC2", Lat = 1, Lon = 1, Source = "KerbalKonstructs", Kind = "airport" }, new Place { Name = "ksc2", Lat = 2, Lon = 2 } };
+        var m = r.Merged(kk); var it = m.Find(p => p.Name == "Island Tower");
+        Check(m.Count == 3 && it.Source == "manual" && it.Lat == -1.52 && m.Exists(p => p.Name == "KSC2"), "merge: manual wins on name clash");
+        Check(r.Merged(null).Count == 2, "merge without KK");
+        var stops = PlacesStore.Stops(m, "Kerbin"); Check(stops.Count == 1 && stops[0].Name == "Island Tower" && PlacesStore.Stops(m, "Mun").Count == 0, "stop selection per body");
+        var spots = new Dictionary<string, object> { { "Island 27", new Dictionary<string, object> { { "lat", -1.5 }, { "lon", -71.8 }, { "body", "Kerbin" }, { "mode", "H" } } }, { "bad", "x" } };
+        var ls = PlacesStore.FromLandingSpots(spots); Check(ls.Count == 1 && ls[0].Name == "Island 27" && ls[0].Kind == "airport" && ls[0].Source == "landing_spots", "landing_spots migrate read-only");
+        Check(PlacesStore.KindForKk("Runway") == "airport" && PlacesStore.KindForKk("RocketPad") == "site" && PlacesStore.NormalizeKind("BUILDING") == "building" && PlacesStore.NormalizeKind("x") == "site", "kinds");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)
