@@ -153,6 +153,29 @@ class Program
             double cv = ApproachProfile.CaptureVs(400, -5.5, 15), cv2 = ApproachProfile.CaptureVs(20, -5.5, 15);
             Check(cv == -15 && cv2 > -10 && cv2 < -5.5, "LAND5j: glidepath capture from high blends: full sink far above, pull-out starts early (" + cv2.ToString("0.0") + " m/s at 20 m above)");
         }
+        {   // GROK LAND5k: test-zone 'no throttle' - conservative stall, profile key, deficit-sized steps, pilot intervened
+            Check(Math.Abs(StallLearner.Conservative(45.7, double.NaN) - 64) < .1 && Math.Abs(StallLearner.Conservative(45.7, 140) - 77) < .1, "LAND5k: unmeasured stall = max(est x 1.4, liftoff x 0.55)");
+            Check(StallLearner.ProfileKey("#autoLOC_501174", "#autoLOC_501174", "Aeris 3A") == "Aeris 3A" && StallLearner.ProfileKey("Aeris 3A", "x", "y") == "Aeris 3A" && StallLearner.ProfileKey("#autoLOC_1", "Untitled", "z") == "Untitled", "LAND5k: unresolved #autoLOC vessel names fall back to the localized / craft file name for the profile key");
+            var dk = new StepThrottle(); dk.Reset(0); dk.AccelPerThr = 8;
+            Check(dk.DeficitStep(.03, 98, 100, 80, 9000) == .03 && dk.DeficitStep(.02, 70, 100, 80, 1500) == .02, "LAND5k: near plan and in the last 2 km the tiny bumps stay");
+            double big = dk.DeficitStep(.03, 75, 100, 80, 9000); Check(big > .1 && big <= StepThrottle.BigStep + 1e-9, "LAND5k: under the floor outside 2 km the step is sized to the deficit (" + Math.Round(100 * big) + "%)");
+            var ds = new StepThrottle(); ds.Reset(0); ds.SpoolS = 3; ds.AccelPerThr = 8; double vk = 90, eff = 0, thr = 0, thrP = 0, first = double.NaN, minV = vk;
+            for (double tt = 0; tt < 60; tt += .02) { thr = ds.Update(tt, vk, 100, .02, double.NaN, 85, 12000); if (thr - thrP > .031) first = Math.Max(double.IsNaN(first) ? 0 : first, thr - thrP); thrP = thr; eff += (thr - eff) * .02 / 3; vk += (-.6 + 8 * eff) * .02; minV = Math.Min(minV, vk); }
+            Check(first > .031 && minV > 80 && vk > 88, "LAND5k: persistent deficit after a spool wait gets a deficit-sized step, not +3% bumps (sized +" + Math.Round(100 * first) + "%, min " + Math.Round(minV) + ", end " + Math.Round(vk) + ")");
+            Check(double.IsNaN(StallLearner.Accept(31, 46, double.NaN)) && StallLearner.Accept(69, 46, double.NaN) == 69 && StallLearner.Accept(60, 46, 69) == 60 && double.IsNaN(StallLearner.Accept(45, 46, 69)), "LAND5k: a stall fit > 30% under the estimate / stored profile is rejected");
+            var sl = new StallLearner(); for (int i = 0; i < 400; i++) sl.Add(-1 + 8 * (i % 40) / 40.0, 3000, 5500, 1, 26, 0, 0); var sl2 = new StallLearner(); for (int i = 0; i < 400; i++) sl2.Add(2 + 12 * (i % 40) / 40.0, 3000, 5500, 1, 26, 0, 0);
+            Check(sl.Confidence <= StallLearner.UnsignedCap + 1e-9 && sl.Confidence < StallLearner.ConfidentAt && sl2.Confidence > StallLearner.ConfidentAt, "LAND5k: no samples near the stall AoA = never trusted (" + sl.Confidence.ToString("0.00") + " vs " + sl2.Confidence.ToString("0.00") + ")");
+            Check(Math.Abs(StallLearner.OverrideStall(double.NaN, 52) - 52 / 1.15) < 1e-9 && StallLearner.OverrideStall(40, 52) == 40 && double.IsNaN(StallLearner.OverrideStall(double.NaN, double.NaN)), "LAND5k: stall_override wins, else threshold_speed / 1.15");
+            double st0 = ApproachProfile.OverrideStartM(100, 52, 1.74);
+            Check(ApproachProfile.OverrideSchedule(20000, 100, 52, 1.74) == 100 && ApproachProfile.OverrideSchedule(st0 + 10, 100, 52, 1.74) == 100 && Math.Abs(ApproachProfile.OverrideSchedule(0, 100, 52, 1.74) - 52) < 1e-9 && ApproachProfile.OverrideSchedule(2000, 100, 52, 1.74) < 100 && st0 > 3000 && st0 < 6000, "LAND5k: approach 100 held to the decel point (" + Math.Round(st0) + " m), 52 m/s exactly at the threshold");
+            ApproachProfile.OverrideApproach = 100; ApproachProfile.OverrideThreshold = 52; double fs = ApproachProfile.FinalSchedule(1000, 45.2, 1.74), hs = ApproachProfile.HiSpeed(45.2); ApproachProfile.OverrideApproach = ApproachProfile.OverrideThreshold = double.NaN;
+            Check(Math.Abs(fs - ApproachProfile.OverrideSchedule(1000, 100, 52, 1.74)) < 1e-9 && hs == 100 && Math.Abs(ApproachProfile.Vref(52 / 1.15) - 52) < 1e-6, "LAND5k: the overrides drive the final schedule / entry speed, flare plan = threshold speed");
+            var cs = new Dictionary<string, object> { { "stall_learn", new Dictionary<string, object> { { "#autoLOC_501174", 1 }, { "Aeris 3A", 2 } } }, { "throttle_lag", new Dictionary<string, object> { { "#autoLOC_501174", 1.88 } } } };
+            int dr = NativeSettings.CleanProfiles(cs); var cov = cs["craft_overrides"] as Dictionary<string, object>; var aer = cov["Aeris 3A"] as Dictionary<string, object>;
+            cov.Remove("Aeris 3A"); NativeSettings.CleanProfiles(cs);
+            Check(dr == 2 && ((Dictionary<string, object>)cs["stall_learn"]).ContainsKey("Aeris 3A") && (double)aer["approach_speed"] == 100 && (double)aer["threshold_speed"] == 52 && !cov.ContainsKey("Aeris 3A"), "LAND5k: '#autoLOC' profile entries dropped, real ones kept, Aeris 3A override seeded once");
+            Check(LandingTestPresets.Outcome(1, "landed (pilot intervened x1)", 2.5, 70, 0).Contains("pilot intervened"), "LAND5k: the [TEST] outcome names a pilot intervention");
+        }
         {   // GROK LAND5i: spool-aware tiny bumps, final lock
             Func<StepThrottle, double, double, double, int, double> run = (st, t0, t1, v0, set) => { double th = st.Thr; st.EngineSettled = set; for (double tt = t0; tt < t1; tt += .02) th = st.Update(tt, v0 - .5 * (tt - t0), 96, .02, double.NaN, 88, 1500); return th; };
             var s1 = new StepThrottle(); s1.Reset(.10); double b1 = run(s1, 0, 2, 86, 0);
@@ -168,7 +191,7 @@ class Program
             Check(b9 == 0 && b10 == 0 && StepThrottle.Freeze("flare", 50, 2000) && StepThrottle.Freeze("final", 25, 1500) && StepThrottle.Freeze("final", 60, 500) && !StepThrottle.Freeze("final", 60, 1500), "LAND5i: final lock - idle below 30 m / last 600 m / flare");
             var s6 = new StepThrottle(); s6.Reset(0); double b11 = 0; for (double tt = 0; tt < 4.5; tt += .02) b11 = s6.Update(tt, 106 - 1.3 * tt, 120 - .2 * tt, .02, double.NaN, 91, 11700);
             Check(b11 == 0, "LAND5i: 22:14 case (106 -> 100 vs plan 120, floor 91 = above floor + 8) holds instead of stacking +5%");
-            var s7 = new StepThrottle(); s7.Reset(0); double b12 = 0, lastB = -99; int nb = 0; double prevB = 0; for (double tt = 0; tt < 30; tt += .02) { s7.EngineSettled = tt - lastB > 4 ? 1 : 0; b12 = s7.Update(tt, 98 - .3 * tt, 120, .02, double.NaN, 91, 9000); if (b12 > prevB + 1e-9) { Check(b12 - prevB <= .03 + 1e-9, "LAND5i: outside 2 km bump <= 3%"); nb++; lastB = tt; } prevB = b12; }
+            var s7 = new StepThrottle(); s7.Reset(0); double b12 = 0, lastB = -99; int nb = 0; double prevB = 0; for (double tt = 0; tt < 30; tt += .02) { s7.EngineSettled = tt - lastB > 4 ? 1 : 0; b12 = s7.Update(tt, 98 - .3 * tt, 120, .02, double.NaN, 91, 9000); if (b12 > prevB + 1e-9) { Check(b12 - prevB <= (nb == 0 && 98 - .3 * tt >= 91 ? .03 : StepThrottle.BigStep) + 1e-9, "LAND5i/5k: outside 2 km first bump <= 3%, persistent deficit / under floor sized (<= 35%)"); nb++; lastB = tt; } prevB = b12; }
             Check(nb >= 1 && nb <= 5, "LAND5i: outside 2 km near the floor - one bump per spool+settle wait (" + nb + " in 30 s)");
         }
         {   // GROK TAB-ILS2: ILS text scales to fill the panel
@@ -812,7 +835,7 @@ class Program
                 var L = new StallLearner(); var rnd = new Random(1);
                 for (int i = 0; i < 300; i++) { double a = 1 + 5 * rnd.NextDouble(), cl = .08 * a + .1, q = m * 9.81 / (A * cl); L.Add(sgn * a, q, m, 1, A, 2, .5); }
                 double ms = L.MeasuredStall(m, A);
-                Check(Math.Abs(ms - trueVs) / trueVs < .01 && L.Confidence > .99, "stall learned from level flight (" + ms.ToString("0.0") + " vs " + trueVs.ToString("0.0") + " m/s, sign " + sgn + ")");
+                Check(Math.Abs(ms - trueVs) / trueVs < .01 && Math.Abs(L.Confidence - StallLearner.UnsignedCap) < 1e-9, "stall learned from level flight, capped untrusted without near-stall AoA (LAND5k) (" + ms.ToString("0.0") + " vs " + trueVs.ToString("0.0") + " m/s, sign " + sgn + ")");
                 var L2 = StallLearner.Load(L.Save()); Check(Math.Abs(L2.MeasuredStall(m, A) - ms) < 1e-6, "stall learning persists per craft");
             }
             var few = new StallLearner(); for (int i = 0; i < 5; i++) few.Add(3, 5000, m, 1, A, 0, 0);

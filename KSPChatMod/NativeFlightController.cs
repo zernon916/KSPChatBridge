@@ -85,7 +85,8 @@ namespace KSPChatBridge
             double thrust = 0, spool = 0; int n = 0;
             foreach (Part ep in vessel.parts) foreach (PartModule pm in ep.Modules) { var en = pm as ModuleEngines; if (en == null) continue; thrust += en.maxThrust; n++; if (en.useEngineResponseTime && en.engineAccelerationSpeed > 0) spool = Math.Max(spool, 1 / en.engineAccelerationSpeed); }
             double twr = n == 0 ? double.NaN : thrust / (vessel.totalMass * 9.81);
-            shold.Configure(vessel.totalMass, twr, spool); if (spool > 0) stepThr.SpoolS = FlightPolicy.Clamp(spool, 1, 15);   // GROK LAND5j: measured spool = the prediction horizon
+            shold.Configure(vessel.totalMass, twr, spool); if (spool > 0) stepThr.SpoolS = FlightPolicy.Clamp(spool, 1, 15);
+            if (!double.IsNaN(twr)) stepThr.AccelPerThr = FlightPolicy.Clamp(.5 * twr * 9.81, 2, 15);   // GROK LAND5k: deficit steps sized from the thrust (half the static TWR, drag/spool margin)   // GROK LAND5j: measured spool = the prediction horizon
             { object lo; var lc = settingsData.TryGetValue("throttle_lag", out lo) ? lo as Dictionary<string, object> : null; double ml = lc == null ? double.NaN : Num(lc, vessel.vesselName, double.NaN); if (!double.IsNaN(ml)) shold.SetLag(ml); lagMeasured = !double.IsNaN(ml); }
             if (profile != null)
             {
@@ -139,7 +140,9 @@ namespace KSPChatBridge
         }
         /// <summary>Equivalent airspeed (from dynamic pressure): the ONE speed every stall comparison uses.</summary>
         double Eas() { return vessel == null ? double.NaN : PilotPolicy.Eas(vessel.dynamicPressurekPa, vessel.srfSpeed); }
-        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; double s0 = StallLearner.Effective(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess; s0 = CraftClass.ConservativeStall(s0, UsableLiftoff); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
+        bool stallCached, stallConservative; double stallOverride = double.NaN;
+        double LearnedStall() { if (learner == null || vessel == null) return stallGuess; if (!double.IsNaN(stallOverride)) return stallOverride; double ms0 = StallLearner.Accept(learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), stallEstimate, profile != null ? profile.Stall : double.NaN), s0 = StallLearner.Effective(stallGuess, ms0, learner.Confidence); if (double.IsNaN(s0) || s0 <= 0) s0 = stallGuess;
+            stallConservative = double.IsNaN(ms0) && !stallCached && (profile == null || double.IsNaN(profile.Stall)); if (stallConservative) s0 = StallLearner.Conservative(s0, UsableLiftoff);   /* GROK LAND5k */ s0 = CraftClass.ConservativeStall(s0, UsableLiftoff); s0 = PilotPolicy.SaneStall(s0, StallEstimate()); if (vessel != null && CraftClass.Gentle(CraftCls)) s0 = Math.Max(s0, ApproachProfile.HeavyStallFloor(vessel.totalMass)); s0 = FlightPolicy.Clamp(s0, 20, 200); DecisionLog.Use("stall", profile != null && !double.IsNaN(profile.Stall) ? "learned stall (sanity-checked)" : "default estimate", s0); return s0; }
         double stallEstimate = double.NaN; bool rotateStalled;   // GROK TO3
         /// <summary>Lift-based stall estimate (liftoff/1.25 floor); the fallback whenever the learned/measured stall is missing or implausible.</summary>
         double StallEstimate() { return PilotPolicy.StallEstimate(double.IsNaN(stallEstimate) ? stallGuess : stallEstimate, UsableLiftoff); }
@@ -227,6 +230,7 @@ namespace KSPChatBridge
                 }
                 band = FlightPolicy.Clamp(Num(settingsData, "altitude_band_m", 150), 10, 500);
                 foreach (string key in new List<string>(auto.Keys)) auto[key] = Bool(settingsData, "auto_" + key, true);
+                NativeSettings.CleanProfiles(settingsData);   // GROK LAND5k
                 Save();
             }
             catch (Exception) { settingsWritable = false; ChatWindow.Notice("Local settings could not be loaded. Originals preserved; saving disabled for this flight."); }
@@ -253,6 +257,11 @@ namespace KSPChatBridge
             if (vessel != null) vessel.OnFlyByWire -= Fly;
             vessel = active; originals.Clear(); parkingSet = parkingReleased = false; ResetLearnState();   // revert / reload / switch: no Learn state or menu cursor survives onto another vessel object
             if (vessel == null) return;
+            {   // GROK LAND5k: a launched .craft can carry an unresolved '#autoLOC_...' ship name - profiles are keyed by name, so resolve it
+                string raw = vessel.vesselName, loc = raw; try { loc = KSP.Localization.Localizer.Format(raw); } catch (Exception) { }
+                string key = StallLearner.ProfileKey(raw, loc, HighLogic.SaveFolder == LandingTestRun.SaveName ? LandingTestRun.CraftName : null);
+                if (key != raw && key.Length > 0) { vessel.vesselName = key; ChatLog.Write("vessel", "renamed '" + raw + "' -> '" + key + "' (profile key)"); }
+            }
             ChatLog.Write("vessel", "switched to " + vessel.vesselName + " (" + vessel.GetTotalMass().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " t, " + vessel.parts.Count + " parts)");
             vessel.OnFlyByWire += Fly;
             props = new NativePropulsion(vessel);
@@ -275,7 +284,21 @@ namespace KSPChatBridge
             ChatLog.Write("vessel", string.Format(System.Globalization.CultureInfo.InvariantCulture, "stall inputs: m={0:0.0} t, liftCoeff={1:0.00} -> S={2:0.0} m2, rho={3}, CLmax={4}, Vs est={5:0.0} m/s, heavy floor={6:0}, liftoff={7:0}",
                 vessel.totalMass, liftSum, liftSum * ApproachProfile.AreaPerCoeff, ApproachProfile.RhoSea, ApproachProfile.ClMaxConservative, estStall, ApproachProfile.HeavyStallFloor(vessel.totalMass), liftoffSpeed));
             ConfigureInertia(); LoadProfile();
-            stall = LearnedStall(); ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
+            { object sc0; var stc = settingsData.TryGetValue("stall_speeds", out sc0) ? sc0 as Dictionary<string, object> : null; object v0 = null; stallCached = stc != null && stc.TryGetValue(vessel.vesselName, out v0) && v0 != null; }
+            {   // GROK LAND5k: per-craft manual overrides (craft_overrides.<name>: stall_override, approach_speed, threshold_speed) beat learned/estimated stall
+                stallOverride = double.NaN; ApproachProfile.OverrideApproach = ApproachProfile.OverrideThreshold = double.NaN;
+                object co; var cd = settingsData.TryGetValue("craft_overrides", out co) ? co as Dictionary<string, object> : null; object me = null;
+                var ov = cd != null && cd.TryGetValue(vessel.vesselName, out me) ? me as Dictionary<string, object> : null;
+                if (ov != null)
+                {
+                    double so = Num(ov, "stall_override", double.NaN), ap = Num(ov, "approach_speed", double.NaN), th = Num(ov, "threshold_speed", double.NaN);
+                    if (!double.IsNaN(th) && th > 20) ApproachProfile.OverrideThreshold = th; if (!double.IsNaN(ap) && ap > 30) ApproachProfile.OverrideApproach = ap;
+                    stallOverride = StallLearner.OverrideStall(so, ApproachProfile.OverrideThreshold);
+                    ChatLog.Write("vessel", "craft override: stall " + (double.IsNaN(stallOverride) ? "-" : Math.Round(stallOverride).ToString()) + ", approach " + (double.IsNaN(ap) ? "-" : Math.Round(ap).ToString()) + ", threshold " + (double.IsNaN(th) ? "-" : Math.Round(th).ToString()) + " m/s (learned stall ignored)");
+                }
+            }
+            stall = LearnedStall(); if (stallConservative) ChatLog.Write("vessel", "stall: no measurement, no learned profile - conservative estimate " + Math.Round(stall) + " (aero " + Math.Round(stallGuess) + " x " + StallLearner.UnmeasuredK + (double.IsNaN(UsableLiftoff) ? "" : ", liftoff " + Math.Round(UsableLiftoff) + " x " + StallLearner.LiftoffK) + ")");
+            ChatLog.Write("vessel", "stall " + StallLearner.Label(stallGuess, learner.MeasuredStall(vessel.GetTotalMass() * 1000, liftArea), learner.Confidence));
             { double lo = 0, hi = 0; Vector3 rt = vessel.ReferenceTransform.right; foreach (Part sp in vessel.parts) { double x = Vector3.Dot(sp.transform.position - vessel.rootPart.transform.position, rt); lo = Math.Min(lo, x); hi = Math.Max(hi, x); }
               craftAuto = CraftClass.Classify(vessel.GetTotalMass(), hi - lo, vessel.parts.Count); craftOverride = Str(settingsData, "craft_class", "auto");
               ApproachProfile.JoinG = CraftClass.JoinG(CraftCls, ApproachProfile.JoinG); ApproachProfile.FinalG = CraftClass.JoinG(CraftCls, ApproachProfile.FinalG);
@@ -307,6 +330,7 @@ namespace KSPChatBridge
         internal static bool FerryTarget(out double lat, out double lon) { lat = lon = 0; if (instance == null || instance.pendingLand == null) return false; lat = instance.ferryLat; lon = instance.ferryLon; return true; }
         internal static bool HoldsEngaged { get { return instance != null && instance.mode == "hold" && instance.pendingLand == null; } }   // ferry = landing job, not holds
         internal static bool FerryPending { get { return instance != null && instance.mode == "hold" && instance.pendingLand != null; } }
+        internal static bool RunwayMissed { get { return instance != null && instance.runway != null && instance.runway.MissedClimb; } }
         internal static string RunwayPhase { get { return instance == null || instance.runway == null ? null : instance.runway.Phase; } }
         internal static string TakeoffPhase { get { return instance == null || instance.takeoff == null ? null : instance.takeoff.Phase; } }
         /// <summary>GROK TAB2: plain-words job for the tablet ("LANDING - FINAL").</summary>
@@ -1099,6 +1123,8 @@ namespace KSPChatBridge
                     if (stepThr.Why.Length > 0) ChatLog.Write("throttle", "approach step: " + stepThr.Why + " -> " + Math.Round(100 * throttle) + "% (" + Math.Round(vessel.srfSpeed) + " vs plan " + Math.Round(runway.DesiredSpeed) + ", trend " + stepThr.Accel.ToString("0.0") + " m/s2, 5 s ahead " + Math.Round(stepThr.Predicted) + ")");
                 }
                 else { throttle = shold.Step(ApproachSpeedLocked ? runway.DesiredSpeed : speed, vessel.srfSpeed, dt, throttle); stepThr.Thr = double.NaN; }
+                if (mode == "landing" && runway != null && runway.MissedClimb && !vessel.LandedOrSplashed && vessel.srfSpeed < runway.DesiredSpeed - 5)
+                { throttle = 1; throttleWhy = "go-around climb: full power (" + Math.Round(vessel.srfSpeed) + " vs " + Math.Round(runway.DesiredSpeed) + ")"; }   // GROK LAND5k: test run 1 climbed out at 8% / 44 m/s
                 if (mode == "landing" && runway != null && runway.PatternActive && !vessel.LandedOrSplashed && vessel.srfSpeed > runway.DesiredSpeed + 10)
                 { throttle = vessel.srfSpeed > runway.DesiredSpeed + 25 ? 0 : Math.Min(throttle, .3); throttleWhy = "go-around pattern overspeed (" + Math.Round(vessel.srfSpeed) + " vs " + Math.Round(runway.DesiredSpeed) + ")"; }   // GROK LAND5d
                 // GROK LAND5i: the LAND5c 'below the floor: gentle power-up' ramp (+5%/s, written back into the step throttle) is gone - it turned each

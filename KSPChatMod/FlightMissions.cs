@@ -172,7 +172,16 @@ namespace KSPChatBridge
             return true;
         }
         internal double Spread { get { return N < 2 ? 0 : Xmax - Xmin; } }
-        internal double Confidence { get { return FlightPolicy.Clamp(N / 200, 0, 1) * FlightPolicy.Clamp(Spread / 4, 0, 1); } }
+        /// <summary>GROK LAND5k: the CL fit only extrapolates to CLmax - without samples near the stall AoA (>= AoaMax - 3) it never reaches the
+        /// trusted level (so a low fit can only raise, never lower, the stall).</summary>
+        internal const double SignatureAoa = AoaMax - 3, UnsignedCap = .6, RejectBelow = .7;
+        internal double Confidence { get { double c = FlightPolicy.Clamp(N / 200, 0, 1) * FlightPolicy.Clamp(Spread / 4, 0, 1); return Xmax >= SignatureAoa ? c : Math.Min(c, UnsignedCap); } }
+        /// <summary>GROK LAND5k (test zone learned 31 vs est 46): a measurement more than 30% under the estimate or the stored profile stall is rejected (NaN).</summary>
+        internal static double Accept(double measured, double estimate, double profileStall)
+        {
+            if (double.IsNaN(measured)) return measured; double r = Math.Max(double.IsNaN(estimate) ? 0 : estimate, double.IsNaN(profileStall) ? 0 : profileStall);
+            return r > 0 && measured < RejectBelow * r ? double.NaN : measured;
+        }
         /// <summary>CL = Slope * aoa + Intercept (aoa sign normalised so lift rises with AoA).</summary>
         internal bool Fit(out double slope, out double intercept)
         {
@@ -187,6 +196,23 @@ namespace KSPChatBridge
             double c = ClMax; return double.IsNaN(c) || area <= 0 ? double.NaN : Math.Sqrt(2 * massKg * G0 / (Rho0 * area * c));
         }
         /// <summary>Speed to fly by: the higher (conservative) until confident, then the measured value.</summary>
+        /// <summary>GROK LAND5k (test zone: aero estimate 46 vs measured 69): with NO measurement and no learned/cached stall, the estimate alone
+        /// is not trusted - stall = max(estimate x 1.4, liftoff x 0.55 when known). Any measurement overrides this.</summary>
+        internal const double UnmeasuredK = 1.4, LiftoffK = .55;
+        internal static double Conservative(double estimate, double liftoff) { double s = estimate * UnmeasuredK; if (!double.IsNaN(liftoff) && liftoff > 0) s = Math.Max(s, liftoff * LiftoffK); return s; }
+        /// <summary>GROK LAND5k: profile key for a craft - an unresolved '#autoLOC_...' vessel name falls back to the localized name, then the craft file name.</summary>
+        internal static string ProfileKey(string raw, string localized, string craftFile)
+        {
+            if (!string.IsNullOrEmpty(raw) && !raw.StartsWith("#")) return raw;
+            if (!string.IsNullOrEmpty(localized) && !localized.StartsWith("#")) return localized;
+            return !string.IsNullOrEmpty(craftFile) ? craftFile : raw ?? "";
+        }
+        /// <summary>GROK LAND5k: stall_override wins; else threshold_speed / VrefK (the flare's landing speed = 1.15x stall).</summary>
+        internal static double OverrideStall(double stallOverride, double thresholdSpeed)
+        {
+            if (!double.IsNaN(stallOverride) && stallOverride > 15) return stallOverride;
+            return !double.IsNaN(thresholdSpeed) && thresholdSpeed > 20 ? thresholdSpeed / ApproachProfile.VrefK : double.NaN;
+        }
         internal static double Effective(double guess, double measured, double confidence)
         {
             if (double.IsNaN(measured)) return guess;
@@ -527,6 +553,7 @@ namespace KSPChatBridge
         /// <summary>Final speed schedule: 12->4 km ~2.3x stall (cap 150, or 1.1x join when LEARN'd fast), linear decel to 1.35x stall by 2 km.</summary>
         internal static double HiSpeed(double stall)
         {
+            if (!double.IsNaN(OverrideApproach)) return OverrideApproach;   // GROK LAND5k: per-craft approach_speed
             double s = SaneStall(stall), app = AppSpeed(stall), hi = 2.3 * s;
             double cap = TrustedStall ? Math.Max(150, Math.Min(MaxSpeed, 1.1 * JoinFactor * s)) : 150;
             double stallHi = Math.Max(app, Math.Min(cap, hi));   // GROK LAND2: stall-based top; cruise below it only
@@ -548,8 +575,18 @@ namespace KSPChatBridge
         internal static double Vref(double stall) { return VrefK * SaneStall(stall); }
         internal static double D14Speed(double stall) { double hi = HiSpeed(stall), app = Vref(stall); return FlightPolicy.Clamp(double.IsNaN(FlapLimitSpeed) ? app + 2 * FafOver : FlapLimitSpeed - FlapUnderM, app + FafOver, hi); }   // unknown flap limit: landing + 30 at D14
         internal static double DecelStartDist(double stall, double a) { return D14 + DecelStartM(HiSpeed(stall), D14Speed(stall), a); }
+        /// <summary>GROK LAND5k (Luke, Aeris 3A): per-craft approach_speed / threshold_speed overrides - hold the approach speed, then a constant
+        /// decel (the measured idle+airbrake decel x OverrideMargin) that reaches the threshold speed exactly at the threshold.</summary>
+        internal static double OverrideApproach = double.NaN, OverrideThreshold = double.NaN; internal const double OverrideMargin = .5, OverrideDecelDefault = .8;
+        internal static double OverrideDecel(double a) { return Math.Max(.3, (double.IsNaN(a) || a <= 0 ? OverrideDecelDefault / OverrideMargin : a) * OverrideMargin); }
+        internal static double OverrideStartM(double app, double thr, double a) { return Math.Max(0, (app * app - thr * thr) / (2 * OverrideDecel(a))); }
+        internal static double OverrideSchedule(double d, double app, double thr, double a)
+        {
+            if (d <= 0) return thr; double v = Math.Sqrt(thr * thr + 2 * OverrideDecel(a) * d); return Math.Min(app, v);
+        }
         internal static double FinalSchedule(double distToThreshold, double stall, double decelA = double.NaN, double faf = double.NaN)
         {
+            if (!double.IsNaN(OverrideApproach) && !double.IsNaN(OverrideThreshold)) return OverrideSchedule(distToThreshold, OverrideApproach, OverrideThreshold, decelA);
             double hi = HiSpeed(stall), app = Vref(stall), s1 = D14Speed(stall), s2 = Math.Min(s1, app + FafOver), start = DecelStartDist(stall, decelA), d = distToThreshold;
             double fa = FlightPolicy.Clamp(double.IsNaN(faf) ? DefaultFaf : faf, DecelEnd + 1000, D14 - 1000);
             Func<double, double, double, double, double> blend = (v0, v1, d0, d1) => Math.Sqrt(v1 * v1 + (v0 * v0 - v1 * v1) * FlightPolicy.Clamp((d - d1) / (d0 - d1), 0, 1));   // constant decel
@@ -1056,7 +1093,17 @@ namespace KSPChatBridge
         /// <summary>GROK LAND5i (Luke: 'any throttle change NEEDS TO WAIT for the engines to SPOOL, then TINY BUMPS'): after a change, wait until the
         /// engines report settled (measured; fallback FallbackWaitS), then SettleS for the speed to answer. Last 2 km: 2% bumps, 15% cap, only
         /// > FloorMarginMs below the floor with a falling trend. Freeze (< 30 m / last 600 m / flare): idle and locked.</summary>
-        internal const double DecayAcc = 1.0, BigStep = .35;
+        internal const double DecayAcc = 1.0, BigStep = .35, DeficitMs = 5;
+        /// <summary>GROK LAND5k (test zone: 90 -> 51 m/s on +3% bumps): after the spool wait, still > 5 m/s under plan and not rising, or under the
+        /// floor at all (outside the last 2 km) - the step is sized to the deficit (close it over spool + settle), not a fixed 3%.</summary>
+        internal double DeficitStep(double sz, double speed, double plan, double floor, double distM)
+        {
+            if (!double.IsNaN(distM) && distM <= LastM) return sz;
+            bool persist = Acc > 1e-6 && speed < plan - DeficitMs && Accel <= 0, low = !double.IsNaN(floor) && speed < floor;
+            if (!persist && !low) return sz;
+            double need = ((plan - speed) / (Math.Max(AheadS, SpoolS) + SettleS) + Math.Max(0, -Accel)) / Math.Max(1, AccelPerThr);
+            return FlightPolicy.Clamp(need, sz, BigStep);
+        }
         /// <summary>GROK LAND5j: speed predicted over the spool horizon (airbrake decisions).</summary>
         internal double PredictOver(double speed) { return speed + Accel * Math.Max(AheadS, SpoolS); }
         internal const double SettleS = 3, FallbackWaitS = 7, LastStep = .02, LastCap = .15, FloorMarginMs = 2, FreezeAgl = 30, FreezeM = 600;
@@ -1119,7 +1166,7 @@ namespace KSPChatBridge
                  if (!ready) return Thr; Thr = FlightPolicy.Clamp(Thr + LeadStep, 0, 1); Acc += LeadStep; lastLead = now; Stepped(now); Why = "config lead +3%"; return Thr; }
             if (now - lastStep < WaitS || !ready) return Thr;   // GROK LAND5i: one bump, then wait for the spool + response
             bool improving = !double.IsNaN(accelAtStep) && now - lastStep < 3 * WaitS;
-            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += Thr - t0; Stepped(now); Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * sz) + "%"; }
+            if (e < -Below && Accel <= .2 && !(improving && Accel - accelAtStep > .5)) { double t0 = Thr; sz = DeficitStep(sz, speed, plan, floor, distM); Thr = FlightPolicy.Clamp(Thr + sz, 0, 1); Acc += Thr - t0; Stepped(now); Why = "pred slow " + Math.Round(e) + " m/s: +" + Math.Round(100 * (Thr - t0)) + "%" + (Thr - t0 > NearStep + 1e-9 ? " (sized to the deficit)" : ""); }
             else if (e > Above && Accel >= -.2 && !(improving && accelAtStep - Accel > .5)) { double t0 = Thr; Thr = FlightPolicy.Clamp(Thr - sz, 0, 1); Acc += Thr - t0; Stepped(now); Why = "pred fast +" + Math.Round(e) + " m/s: -" + Math.Round(100 * sz) + "%"; }
             return Thr;
         }

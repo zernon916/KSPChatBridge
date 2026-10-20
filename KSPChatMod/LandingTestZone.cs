@@ -125,7 +125,7 @@ namespace KSPChatBridge
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class LandingTestFlight : MonoBehaviour
     {
-        Rect win = new Rect(Screen.width - 330, 120, 310, 110); bool placed, wasFlying, done; int goArounds; string lastPhase = "", status = ""; double lastVs = double.NaN;
+        Rect win = new Rect(Screen.width - 330, 120, 310, 110); bool placed, wasFlying, done, wasActive, engagedSeen, wasMissed; int interventions; int goArounds; string lastPhase = "", status = ""; double lastVs = double.NaN;
         bool InTest { get { return HighLogic.SaveFolder == LandingTestRun.SaveName && LandingTestRun.Preset != null; } }
         void Start() { if (InTest) { GameEvents.onCrash.Add(OnCrash); GameEvents.onCrashSplashdown.Add(OnCrash); if (LandingTestRun.PlacePending) StartCoroutine(Place()); } }
         void OnDestroy() { GameEvents.onCrash.Remove(OnCrash); GameEvents.onCrashSplashdown.Remove(OnCrash); }
@@ -133,7 +133,7 @@ namespace KSPChatBridge
         void End(string what)
         {
             done = true; var v = FlightGlobals.ActiveVessel;
-            string line = LandingTestPresets.Outcome(LandingTestRun.Run, what, lastVs, v != null ? v.srfSpeed : double.NaN, goArounds);
+            string line = LandingTestPresets.Outcome(LandingTestRun.Run, what + (interventions > 0 ? " (pilot intervened x" + interventions + ")" : ""), lastVs, v != null ? v.srfSpeed : double.NaN, goArounds);
             ChatLog.Write("TEST", line); status = line;
         }
         IEnumerator Place()
@@ -172,8 +172,12 @@ namespace KSPChatBridge
         {
             if (!InTest || !placed || done) return;
             var v = FlightGlobals.ActiveVessel; if (v == null) return;
+            bool act = NativeFlightController.Active;   // GROK LAND5k: pilot disengage / re-engage = an intervention in the run summary
+            if (engagedSeen && wasActive && !act) { interventions++; ChatLog.Write("TEST", "run " + LandingTestRun.Run + " pilot intervened: autopilot disengaged"); }
+            if (engagedSeen && !wasActive && act) ChatLog.Write("TEST", "run " + LandingTestRun.Run + " autopilot re-engaged");
+            if (act) engagedSeen = true; wasActive = act;
             string ph = NativeFlightController.RunwayPhase ?? "";
-            if (ph == "go around" && lastPhase != "go around") goArounds++;
+            bool missed = NativeFlightController.RunwayMissed; if (ph == "go around" && lastPhase != "go around" || missed && !wasMissed) goArounds++; wasMissed = missed;   // GROK LAND5k: the go-around sets MissedClimb, not a phase
             lastPhase = ph;
             if (!v.LandedOrSplashed) { lastVs = -v.verticalSpeed; wasFlying = true; }
             else if (wasFlying) { wasFlying = false; ChatLog.Write("TEST", "run " + LandingTestRun.Run + " touchdown sink=" + lastVs.ToString("0.0") + " m/s speed=" + v.srfSpeed.ToString("0") + " m/s"); }
