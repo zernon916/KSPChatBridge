@@ -248,6 +248,9 @@ class Program
                 Check(bn == 3, "LAND5p: airbrake log once per state change (" + bn + ")");
                 Check(FlarePolicy.SinkTarget(double.NaN, double.NaN, 3) == -1.5, "LAND5p: fast flare uses flare_sink (default 1.5)");
             }
+            {   // LAND5r
+                Check(FlarePolicy.LongCapStart(-5.1, -5.1) == FlarePolicy.LongFloor && FlarePolicy.LongCapStart(3, 4) == 3 && FlarePolicy.LongCap(-1.5, -2, -1.5) == -1.5 && double.IsPositiveInfinity(FlarePolicy.LongCap(-1.5, -3.2, -1.5)) && double.IsPositiveInfinity(FlarePolicy.LongCap(0, -8.2, -1.5)), "LAND5r: long flare caps the nose no lower than -1.5 and lifts the cap when sinking > 2x flare_sink");
+            }
             {   // TEST4
                 var tp4 = LandingTestPresets.Defaults()[0];
                 Check(double.IsNaN(LandingTestPresets.ParseOpt("", 30, 600)) && LandingTestPresets.ParseOpt("165", 30, 600) == 165 && LandingTestPresets.ParseOpt("900", 30, 600) == 600 && LandingTestPresets.Eff(double.NaN, 125) == 125 && LandingTestPresets.Eff(165, 125) == 165, "TEST4: blank = preset, clamped");
