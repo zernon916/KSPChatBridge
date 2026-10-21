@@ -135,7 +135,7 @@ namespace KSPChatBridge
             {
                 var s = route[i];
                 scienceTourStops.Add(new KscRoverWaypoint { Name = s.Name, Biome = "", Lat = s.Lat, Lon = s.Lon, ApproachLat = s.Lat, ApproachLon = s.Lon, Source = s.Source });
-                scienceTourOnly[s.Name] = TourChecklist.RunIds(s);
+                scienceTourOnly[s.Name] = TourChecklist.StopIds(s);   // RS7c: also the zero-predicted rows (real biome may differ)
                 labels.Add(s.Name); km += prev < 0 ? st[i] : d[prev, i]; prev = i; sci += s.Checked;
             }
             scienceTouring = true;

@@ -23,6 +23,40 @@ namespace KSPChatBridge
         internal void Connect(int a, int b, string kind) { if (a < 0 || b < 0 || a == b) return; if (!Edges.Exists(e => (e.A == a && e.B == b) || (e.A == b && e.B == a))) Edges.Add(new Edge { A = a, B = b, Kind = kind ?? "road" }); }
         internal void Connect(string a, string b, string kind) { Connect(Find(a), Find(b), kind); }
 
+        /// <summary>RS7d (Luke Oct 21: the rover drove the Mission Control -> hub spoke straight into the VAB): connect a to b, but when the
+        /// straight segment passes inside a building footprint (radius m) add a bypass node FootprintMarginM outside it, on the side the
+        /// segment already passes, and connect through it (recursive, depth 4). Buildings containing an endpoint are ignored.</summary>
+        internal void ConnectAround(string a, string b, string kind, IList<KeyValuePair<KscRoverPolicy.P, double>> buildings, int depth)
+        {
+            int ia = Find(a), ib = Find(b); if (ia < 0 || ib < 0) return;
+            if (buildings != null && depth < 4)
+            {
+                double k = Radius * Math.PI / 180, c = Math.Cos(Nodes[ia].Lat * Math.PI / 180);
+                double ax = Nodes[ia].Lon * k * c, ay = Nodes[ia].Lat * k, bx = Nodes[ib].Lon * k * c, by = Nodes[ib].Lat * k;
+                double worst = 0; double px = 0, py = 0, ox = 0, oy = 0, orad = 0;
+                foreach (var bl in buildings)
+                {
+                    double cx = bl.Key.Lon * k * c, cy = bl.Key.Lat * k, r = bl.Value;
+                    if (Math.Sqrt((ax - cx) * (ax - cx) + (ay - cy) * (ay - cy)) < r || Math.Sqrt((bx - cx) * (bx - cx) + (by - cy) * (by - cy)) < r) continue;
+                    double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, t = l2 > 0 ? Math.Max(0, Math.Min(1, ((cx - ax) * dx + (cy - ay) * dy) / l2)) : 0;
+                    double qx = ax + t * dx, qy = ay + t * dy, d = Math.Sqrt((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy));
+                    if (d < r && r - d > worst) { worst = r - d; px = qx; py = qy; ox = cx; oy = cy; orad = r; }
+                }
+                if (worst > 0)
+                {
+                    double vx = px - ox, vy = py - oy, vl = Math.Sqrt(vx * vx + vy * vy);
+                    if (vl < 1e-6) { vx = -(by - ay); vy = bx - ax; vl = Math.Sqrt(vx * vx + vy * vy); }   // through the centre: go round on the left
+                    double s = (orad + FootprintMarginM) / vl, nx = ox + vx * s, ny = oy + vy * s;
+                    string mid = a + " ~ " + b; Add(mid, ny / k, nx / (k * c));
+                    ConnectAround(a, mid, kind, buildings, depth + 1); ConnectAround(mid, b, kind, buildings, depth + 1); return;
+                }
+            }
+            Connect(ia, ib, kind);
+        }
+        internal const double FootprintMarginM = 15;
+        /// <summary>RS7d: footprint radius of a KSC building from its centre and its front (approach) point: 90% of that distance, 25..80 m.</summary>
+        internal static double FootprintRadius(double centreToFrontM) { return Math.Max(25, Math.Min(80, centreToFrontM * .9)); }
+
         double D(KscRoverPolicy.P a, KscRoverPolicy.P b) { return NavigationMath.Distance(a.Lat, a.Lon, b.Lat, b.Lon, Radius); }
         KscRoverPolicy.P Pt(int i) { return new KscRoverPolicy.P(Nodes[i].Lat, Nodes[i].Lon); }
 
@@ -121,14 +155,15 @@ namespace KSPChatBridge
 
         /// <summary>KSC default network from in-game positions: runway centreline (09 end - exit - 27 end), exit taxiway to the hub, hub spokes
         /// to each facility front (fronts = KscRoverMap approach points), Crawlerway VAB front - crawler - pad front.</summary>
-        internal static RoadNet Ksc(KscRoverPolicy.P hub, IList<KeyValuePair<string, KscRoverPolicy.P>> fronts, double radius)
+        internal static RoadNet Ksc(KscRoverPolicy.P hub, IList<KeyValuePair<string, KscRoverPolicy.P>> fronts, double radius,
+            IList<KeyValuePair<KscRoverPolicy.P, double>> buildings = null)   // RS7d: building centres + footprint radius (m); spokes bend around them
         {
             var net = new RoadNet { Radius = radius };
             double exitLat = KscRunway.LatAt(TaxiRoute.ExitLon);
             net.Add("RWY 09", KscRunway.LatAt(KscRunway.Lon09 + .002), KscRunway.Lon09 + .002); net.Add("RWY EXIT", exitLat, TaxiRoute.ExitLon); net.Add("RWY 27", KscRunway.LatAt(KscRunway.Lon27 - .002), KscRunway.Lon27 - .002);
             net.Connect("RWY 09", "RWY EXIT", "runway"); net.Connect("RWY EXIT", "RWY 27", "runway");
             net.Add("TWY", exitLat + (hub.Lat - exitLat) * .5, TaxiRoute.ExitLon + (hub.Lon - TaxiRoute.ExitLon) * .5); net.Add("HUB", hub.Lat, hub.Lon);
-            net.Connect("RWY EXIT", "TWY", "road"); net.Connect("TWY", "HUB", "road");
+            net.ConnectAround("RWY EXIT", "TWY", "road", buildings, 0); net.ConnectAround("TWY", "HUB", "road", buildings, 0);   // RS7d: the exit taxiway also cut the VAB
             KscRoverPolicy.P vab = new KscRoverPolicy.P(double.NaN, 0), pad = vab, crawler = vab;
             foreach (var f in fronts)
             {
@@ -136,13 +171,13 @@ namespace KSPChatBridge
                 if (f.Key == "Launch Pad") { pad = f.Value; continue; }
                 if (f.Key == "Crawlerway") { crawler = f.Value; continue; }
                 if (f.Key == "VAB") vab = f.Value;
-                net.Add(f.Key, f.Value.Lat, f.Value.Lon); net.Connect("HUB", f.Key, "road");
+                net.Add(f.Key, f.Value.Lat, f.Value.Lon); net.ConnectAround("HUB", f.Key, "road", buildings, 0);
             }
             if (!double.IsNaN(vab.Lat) && !double.IsNaN(pad.Lat))
             {
                 net.Add("Launch Pad", pad.Lat, pad.Lon);
-                if (!double.IsNaN(crawler.Lat)) { net.Add("Crawlerway", crawler.Lat, crawler.Lon); net.Connect("VAB", "Crawlerway", "crawlerway"); net.Connect("Crawlerway", "Launch Pad", "crawlerway"); }
-                else net.Connect("VAB", "Launch Pad", "crawlerway");
+                if (!double.IsNaN(crawler.Lat)) { net.Add("Crawlerway", crawler.Lat, crawler.Lon); net.ConnectAround("VAB", "Crawlerway", "crawlerway", buildings, 0); net.ConnectAround("Crawlerway", "Launch Pad", "crawlerway", buildings, 0); }
+                else net.ConnectAround("VAB", "Launch Pad", "crawlerway", buildings, 0);
             }
             return net;
         }

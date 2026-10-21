@@ -14,6 +14,7 @@ namespace KSPChatBridge
         internal double Gain;
         internal bool On, OneShot, Blocked;   // Blocked: one-shot that runs at a better checked site instead
         internal bool Ran;                    // RS7b: ran on this tour - check mark on the right, gain shown as 0
+        internal bool UserOff;                // RS7c: unticked by the player (zero-gain rows are off without being unticked)
         internal double LiveGain;             // R&D value before the ran zeroing
         internal int Modules = 1;             // unused one-shot modules on board
         internal string RunsAt = "";
@@ -66,7 +67,7 @@ namespace KSPChatBridge
             {
                 foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = sel.Ran.Contains(TourSelection.K(s, e)); }
                 bool on; s.On = sel.Sites.TryGetValue(s.Key, out on) ? on : s.Total > 0;
-                foreach (var e in s.Exps) { e.On = s.On && e.Gain > 0 && !sel.Off.Contains(TourSelection.K(s, e)); if (e.Ran) e.Gain = 0; }   // RS7b: ran rows count 0 (totals, sorting)
+                foreach (var e in s.Exps) { e.UserOff = sel.Off.Contains(TourSelection.K(s, e)); e.On = s.On && e.Gain > 0 && !e.UserOff; if (e.Ran) e.Gain = 0; }   // RS7b: ran rows count 0 (totals, sorting)
             }
             OneShots(sites); Sort(sites);
         }
@@ -136,6 +137,14 @@ namespace KSPChatBridge
         internal static List<TourSite> RouteSites(IEnumerable<TourSite> sites) { return sites.Where(s => s.Visit).ToList(); }
         /// <summary>Experiment ids to run at a site.</summary>
         internal static HashSet<string> RunIds(TourSite s) { return new HashSet<string>(s.Exps.Where(e => s.On && e.Runnable).Select(e => e.Id)); }
+        /// <summary>RS7c: experiments tried at the stop: the ticked rows plus rows that are only off because their PREDICTED gain was 0 (not
+        /// unticked, not run, not a one-shot saved for elsewhere). The rover parks in the real biome, which can differ from the site's
+        /// nominal one (Oct 21: "KSC Grass" parked on Runway, "Runway" parked on Shores, so Goo / EVA report predicted 0 were never tried
+        /// where they were worth science); the live value check in RunExperiments still skips anything worth 0 there.</summary>
+        internal static HashSet<string> StopIds(TourSite s)
+        {
+            return new HashSet<string>(s.Exps.Where(e => s.On && (e.Runnable || (e.Gain <= 0 && !e.Ran && !e.UserOff && !e.Blocked && !e.OneShot))).Select(e => e.Id));
+        }
 
         /// <summary>Shortest open driving path: start[i] = start -> site i, d[i,j] = site i -> site j (driving distances). Exact up to 12 sites.</summary>
         internal static List<int> Order(double[] start, double[,] d)

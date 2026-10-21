@@ -45,8 +45,14 @@ namespace KSPChatBridge
             if (roadNet == null)
             {
                 var fronts = new List<KeyValuePair<string, KscRoverPolicy.P>>();
-                foreach (var w in KscRoverMap.Points) fronts.Add(new KeyValuePair<string, KscRoverPolicy.P>(w.Name, new KscRoverPolicy.P(w.ApproachLat, w.ApproachLon)));
-                roadNet = RoadNet.Ksc(new KscRoverPolicy.P(KscRoverMap.HubLat, KscRoverMap.HubLon), fronts, body.Radius);
+                var buildings = new List<KeyValuePair<KscRoverPolicy.P, double>>();   // RS7d: footprints the hub spokes must bend around
+                foreach (var w in KscRoverMap.Points)
+                {
+                    fronts.Add(new KeyValuePair<string, KscRoverPolicy.P>(w.Name, new KscRoverPolicy.P(w.ApproachLat, w.ApproachLon)));
+                    if (w.Name == "Runway" || w.Name == "KSC Grass" || w.Name == "Shores" || w.Name == "Crawlerway" || w.Name == "Launch Pad" || w.Source == "place") continue;
+                    buildings.Add(new KeyValuePair<KscRoverPolicy.P, double>(new KscRoverPolicy.P(w.Lat, w.Lon), RoadNet.FootprintRadius(NavigationMath.Distance(w.Lat, w.Lon, w.ApproachLat, w.ApproachLon, body.Radius))));
+                }
+                roadNet = RoadNet.Ksc(new KscRoverPolicy.P(KscRoverMap.HubLat, KscRoverMap.HubLon), fronts, body.Radius, buildings);
                 try { Directory.CreateDirectory(RoadsDir); File.WriteAllText(Path.Combine(RoadsDir, "ROADS_KSC_generated.json"), roadNet.ToJson()); } catch (Exception) { }
                 ChatLog.Write("roads", "generated KSC road network: " + roadNet.Nodes.Count + " nodes, " + roadNet.Edges.Count + " edges (copy ROADS_KSC_generated.json to ROADS_KSC.json to edit)");
             }

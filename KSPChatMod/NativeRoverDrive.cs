@@ -81,6 +81,13 @@ namespace KSPChatBridge
             if (roverStuck.Sample(now, want, vessel.srfSpeed, dt))
             {
                 if (roverStuck.Count > 0 && roverGuardWhy != "stuck: backing up" && roverGuardWhy != "circling: backing up") { roverGuardWhy = "stuck: backing up"; roverEscapeWhy = "stuck"; roverDetour = roverStuck.Count % 2 == 0 ? -40 : 40; roverDetourUntil = now + 8; }
+                // RS7d: never reverse into a building / vessel: one ray straight behind before every backing frame
+                Vector3d upv = (vessel.CoMD - vessel.mainBody.position).normalized, rear = -Vector3d.Exclude(upv, (Vector3d)vessel.ReferenceTransform.up).normalized; string behind;
+                if (RoverDrivePolicy.RearBlocked(Ray((Vector3)(vessel.CoMD + upv * .6), (Vector3)rear, RoverStuck.BackMetres + 8, upv, out behind)))
+                {
+                    roverStuck.EndBack(); ChatLog.Write("rover", "guard: obstacle behind (" + behind + "): not backing up"); roverGuardWhy = "obstacle behind";
+                    SetGroup(vessel, KSPActionGroup.Brakes, true); roverIntegral = 0; c.wheelThrottle = 0; roverWasBacking = true; return true;
+                }
                 // RS7b: reverse with the nose turning toward the next road waypoint (reversing flips the steering)
                 double err = FlightPolicy.Wrap(roverHeading - FlightGlobals.ship_heading);
                 SetGroup(vessel, KSPActionGroup.Brakes, false); roverIntegral = 0; c.wheelThrottle = -.5f;
@@ -127,6 +134,11 @@ namespace KSPChatBridge
                 Vector3d up = (vessel.CoMD - body.position).normalized, fwd = Vector3d.Exclude(up, vessel.srf_velocity).normalized; Vector3 o = (Vector3)(vessel.CoMD + up * .6);
                 string what; double ce = Ray(o, fwd, look, up, out what), le = Ray(o, Quaternion.AngleAxis(-25, up) * (Vector3)fwd, look, up, out string _l), ri = Ray(o, Quaternion.AngleAxis(25, up) * (Vector3)fwd, look, up, out string _r);
                 bool brake; double bias = RoverDrivePolicy.Detour(ce, le, ri, vessel.srfSpeed, out brake);
+                if (brake && roverNavigating)
+                {   // RS7d: the building behind the stop we are pulling up to is no reason to brake early (the arrival slows us)
+                    double left = RoverRoadActive && !double.IsNaN(roverRoadLeft) ? roverRoadLeft : NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, r);
+                    if (RoverDrivePolicy.BeyondGoal(ce, left)) brake = false;
+                }
                 if (!double.IsNaN(ce))
                 {
                     roverGuardBrake = brake; cap = Math.Min(cap, 4);

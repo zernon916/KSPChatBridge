@@ -22,6 +22,7 @@ internal static class RoverTests
         TourTests();
         CirclingTests();
         RanTests();
+        Rs7cdTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -208,6 +209,54 @@ internal static class RoverTests
     }
 
     // RS7: checklist sorting, site/experiment linkage, zero-gain rows, one-shot rule, saved selections, route from checked items only
+    // RS7c: rows predicted 0 at a site are still tried at the stop (real biome differs); RS7d: spokes avoid the VAB, braking / rear checks
+    static void Rs7cdTests()
+    {
+        var s = new TourSite { Key = "Runway", Name = "Runway" };
+        s.Exps.Add(new TourExp { Id = "crew", Title = "crew", Gain = 8 });
+        s.Exps.Add(new TourExp { Id = "mysteryGoo", Title = "goo", Gain = 0 });
+        s.Exps.Add(new TourExp { Id = "evaReport", Title = "eva", Gain = 0 });
+        s.Exps.Add(new TourExp { Id = "baro", Title = "baro", Gain = 0 });
+        s.Exps.Add(new TourExp { Id = "oneshot", Title = "one", Gain = 0, OneShot = true });
+        var sites = new List<TourSite> { s }; var sel = new TourSelection(); sel.Off.Add("Runway|baro");
+        TourChecklist.Apply(sites, sel);
+        Check(TourChecklist.RunIds(s).SetEquals(new[] { "crew" }), "rs7c: run ids keep the ticked rows only");
+        Check(TourChecklist.StopIds(s).SetEquals(new[] { "crew", "mysteryGoo", "evaReport" }), "rs7c: stop tries zero-predicted Goo / EVA report, not unticked rows or one-shots");
+        TourChecklist.MarkRan(sites, "Runway", new[] { "mysteryGoo" }, sel); TourChecklist.Apply(sites, sel);
+        Check(!TourChecklist.StopIds(s).Contains("mysteryGoo"), "rs7c: a row that ran at this site is not rerun there");
+
+        // Oct 21 log: Mission Control front -0.079329,-74.616739 -> hub (VAB front) -0.0994242,-74.6231261 ran into VAB_lev1 (VAB -0.096836,-74.619480)
+        const double R = 600000; var vab = Pp(-0.096836, -74.619480); var vabFront = Pp(-0.0995998, -74.6233735);
+        double vr = RoadNet.FootprintRadius(NavigationMath.Distance(vab.Lat, vab.Lon, vabFront.Lat, vabFront.Lon, R));
+        var fronts = new List<KeyValuePair<string, KscRoverPolicy.P>> {
+            new KeyValuePair<string, KscRoverPolicy.P>("VAB", vabFront), new KeyValuePair<string, KscRoverPolicy.P>("Mission Control", Pp(-0.0793293, -74.6167389)),
+            new KeyValuePair<string, KscRoverPolicy.P>("SPH", Pp(-0.0763315, -74.6319315)), new KeyValuePair<string, KscRoverPolicy.P>("Tracking Station", Pp(-0.1231466, -74.6089843)) };
+        var blds = new List<KeyValuePair<KscRoverPolicy.P, double>> { new KeyValuePair<KscRoverPolicy.P, double>(vab, vr) };
+        var plain = RoadNet.Ksc(Pp(-0.0994242, -74.6231261), fronts, R); var net = RoadNet.Ksc(Pp(-0.0994242, -74.6231261), fronts, R, blds);
+        Func<RoadNet, double> closest = n => n.Edges.Min(e => SegDist(n.Nodes[e.A].Lat, n.Nodes[e.A].Lon, n.Nodes[e.B].Lat, n.Nodes[e.B].Lon, vab, R));
+        Check(vr > 25 && vr < 80 && closest(plain) < vr, "rs7d: old straight Mission Control spoke cut through the VAB footprint");
+        Check(closest(net) >= vr - 1e-6 && net.Nodes.Count > plain.Nodes.Count, "rs7d: spokes bend around the VAB footprint");
+        var route = net.Route(Pp(-0.0793293, -74.6167389), Pp(-0.1231466, -74.6089843)); var pts = new List<KscRoverPolicy.P> { Pp(-0.0793293, -74.6167389) }; pts.AddRange(route);
+        bool clear = true; for (int i = 1; i < pts.Count; i++) clear &= SegDist(pts[i - 1].Lat, pts[i - 1].Lon, pts[i].Lat, pts[i].Lon, vab, R) >= vr - 1e-6;
+        Check(route.Count >= 2 && clear, "rs7d: Mission Control -> Tracking Station route stays outside the VAB");
+
+        for (double v = 1; v <= 25; v += .5) Check(RoverDrivePolicy.LookAhead(v) > RoverDrivePolicy.BrakeDistance(v) + RoverDrivePolicy.BrakeMarginM, "rs7d: ray longer than braking distance at " + v + " m/s");
+        bool brake; RoverDrivePolicy.Detour(36, double.NaN, 40, 14, out brake);
+        Check(brake, "rs7d: VAB 36 m ahead at 14 m/s brakes (old rule only steered right)");
+        Check(RoverDrivePolicy.LookAhead(14) >= 36, "rs7d: the ray sees the VAB at 36 m when doing 14 m/s");
+        Check(RoverDrivePolicy.BeyondGoal(60, 20) && !RoverDrivePolicy.BeyondGoal(25, 20) && !RoverDrivePolicy.BeyondGoal(25, double.NaN), "rs7d: obstacle beyond the stop does not brake early");
+        Check(RoverDrivePolicy.RearBlocked(4) && !RoverDrivePolicy.RearBlocked(20) && !RoverDrivePolicy.RearBlocked(double.NaN), "rs7d: back-up stops for an obstacle behind");
+        var st = new RoverStuck(); st.ForceBack(0); Check(st.Backing, "rs7d: backing"); st.EndBack(); Check(!st.Backing, "rs7d: EndBack ends the back-up");
+    }
+
+    static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)
+    {
+        double k = radius * Math.PI / 180, cs = Math.Cos(aLat * Math.PI / 180);
+        double ax = aLon * k * cs, ay = aLat * k, bx = bLon * k * cs, by = bLat * k, cx = c.Lon * k * cs, cy = c.Lat * k, dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        double t = l2 > 0 ? Math.Max(0, Math.Min(1, ((cx - ax) * dx + (cy - ay) * dy) / l2)) : 0, qx = ax + t * dx - cx, qy = ay + t * dy - cy;
+        return Math.Sqrt(qx * qx + qy * qy);
+    }
+
     static void TourTests()
     {
         var sites = TourSample(); var sel = new TourSelection();

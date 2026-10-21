@@ -66,12 +66,20 @@ namespace KSPChatBridge
         {
             return !onRunway && runwayAhead && aircraftDist <= AircraftRange && aircraftAlt <= AircraftAlt;
         }
-        /// <summary>Braking distance (m) at decel 3 m/s2 plus a margin.</summary>
-        internal static double LookAhead(double speed) { return Math.Max(15, speed * speed / 6 + 10); }
+        /// <summary>RS7d: a 5.8 t rover only managed ~1.5 m/s2 on brakes (Oct 21: 14 -> 12 m/s over the last 33 m into the VAB), so the
+        /// braking distance assumes BrakeDecel; the ray looks LookMarginM beyond it.</summary>
+        internal const double BrakeDecel = 1.5, BrakeMarginM = 8, LookMarginM = 15;
+        internal static double BrakeDistance(double speed) { return speed * speed / (2 * BrakeDecel); }
+        /// <summary>Obstacle ray length (m): braking distance plus a margin, at least 15 m.</summary>
+        internal static double LookAhead(double speed) { return Math.Max(15, BrakeDistance(speed) + LookMarginM); }
+        /// <summary>RS7d: an obstacle well beyond the goal (the stop's own building) does not need a brake stop.</summary>
+        internal static bool BeyondGoal(double hit, double goalLeft) { return !double.IsNaN(goalLeft) && hit > goalLeft + 10; }
+        /// <summary>RS7d: something this close behind (m from the centre of mass) stops a back-up escape.</summary>
+        internal static bool RearBlocked(double rearHit) { return !double.IsNaN(rearHit) && rearHit < RoverStuck.BackMetres + 4; }
         /// <summary>Obstacle ray result -> steer bias (deg, + = right) or 0; brake when inside the braking distance.</summary>
         internal static double Detour(double centerHit, double leftHit, double rightHit, double speed, out bool brake)
         {
-            brake = !double.IsNaN(centerHit) && centerHit < speed * speed / 6 + 4;
+            brake = !double.IsNaN(centerHit) && centerHit < BrakeDistance(speed) + BrakeMarginM;
             if (double.IsNaN(centerHit)) return 0;
             double l = double.IsNaN(leftHit) ? double.MaxValue : leftHit, r = double.IsNaN(rightHit) ? double.MaxValue : rightHit;
             return r >= l ? 35 : -35;
@@ -106,6 +114,8 @@ namespace KSPChatBridge
         internal void Reset() { slowSince = backSince = double.NaN; backDist = 0; }
         /// <summary>Blocked by an obstacle at a standstill: back up now.</summary>
         internal void ForceBack(double now) { backSince = now; backDist = 0; slowSince = double.NaN; Count++; }
+        /// <summary>RS7d: end a back-up early (obstacle behind).</summary>
+        internal void EndBack() { backSince = double.NaN; slowSince = double.NaN; }
         /// <summary>Returns true while backing up (the caller drives in reverse).</summary>
         internal bool Sample(double now, double wantSpeed, double speed, double dt)
         {
