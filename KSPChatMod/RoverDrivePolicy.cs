@@ -104,6 +104,26 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>RS7i (Luke Oct 21 02:37: rover hung on the VAB scaffolding poles, front wheels in the air, guard flipping detour/brake, never
+    /// "stuck"): while the autopilot drives, at least half the wheels off the ground and slow for HungS, or no progress toward the goal for
+    /// NoProgressS = stop the autopilot and the tour with an alert instead of grinding the wheels and battery.</summary>
+    internal sealed class RoverHang
+    {
+        internal const double HungS = 3, NoProgressS = 20, ProgressM = 2, HungSpeed = 1;
+        double hungSince = double.NaN, since = double.NaN, bestLeft = double.NaN;
+        internal void Reset() { hungSince = since = bestLeft = double.NaN; }
+        internal string Sample(double now, int wheels, int grounded, double speed, double goalLeft)
+        {
+            bool hung = wheels > 0 && grounded * 2 <= wheels && speed < HungSpeed;
+            if (!hung) hungSince = double.NaN; else if (double.IsNaN(hungSince)) hungSince = now;
+            if (hung && now - hungSince >= HungS) return (wheels - grounded) + " of " + wheels + " wheels off the ground";
+            if (double.IsNaN(goalLeft)) { since = bestLeft = double.NaN; return null; }
+            if (double.IsNaN(since) || goalLeft < bestLeft - ProgressM) { since = now; bestLeft = goalLeft; return null; }
+            if (now - since >= NoProgressS) return "no progress for " + NoProgressS.ToString("0") + " s with the autopilot driving";
+            return null;
+        }
+    }
+
     /// <summary>No progress for 10 s while the autopilot wants to move = stuck: back up 5 m (max 8 s), then re-route with a side bias.</summary>
     internal sealed class RoverStuck
     {

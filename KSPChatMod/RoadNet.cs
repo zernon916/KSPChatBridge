@@ -55,7 +55,7 @@ namespace KSPChatBridge
         }
         internal const double FootprintMarginM = 15;
         /// <summary>RS7d: footprint radius of a KSC building from its centre and its front (approach) point: 90% of that distance, 25..80 m.</summary>
-        internal static double FootprintRadius(double centreToFrontM) { return Math.Max(25, Math.Min(80, centreToFrontM * .9)); }
+        internal static double FootprintRadius(double centreToFrontM) { return Math.Max(25, Math.Min(100, centreToFrontM * .9)); }   // RS7i: up to 100 m (VAB stop 95 m out -> 85 m)
 
         double D(KscRoverPolicy.P a, KscRoverPolicy.P b) { return NavigationMath.Distance(a.Lat, a.Lon, b.Lat, b.Lon, Radius); }
         KscRoverPolicy.P Pt(int i) { return new KscRoverPolicy.P(Nodes[i].Lat, Nodes[i].Lon); }

@@ -49,6 +49,7 @@ namespace KSPChatBridge
                 double gdt = roverGuardNext > 0 ? Math.Max(.05, now - roverGuardNext + .25) : .25; roverGuardNext = now + .25f;
                 try { RoverGuardSample(gdt); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover guard: " + ex.Message); }
                 try { RoverCirclingCheck(now); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover circling: " + ex.Message); }
+                try { if (RoverHangCheck(now)) { c.wheelThrottle = 0; return true; } } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover hang: " + ex.Message); }
             }
             double want = targetSpeed;
             targetSpeed = Math.Min(targetSpeed, roverGuardCap);
@@ -114,6 +115,26 @@ namespace KSPChatBridge
             roverCircling.Reset(); roverEscapeWhy = "circling"; roverGuardWhy = "circling: backing up"; roverDetourUntil = 0;
             roverStuck.ForceBack(now);
         }
+
+        /// <summary>RS7i (4 Hz): hung on an obstacle (wheels off the ground) or no progress while the autopilot drives -> stop with an alert.</summary>
+        bool RoverHangCheck(float now)
+        {
+            if (!roverNavigating || roverStuck.Backing || roverCharging || roverHoldShort) { roverHang.Reset(); return false; }
+            int wheels = 0, grounded = 0;
+            foreach (var w in vessel.FindPartModulesImplementing<ModuleWheelBase>()) { wheels++; if (w.isGrounded) grounded++; }
+            double left = RoverRoadActive && !double.IsNaN(roverRoadLeft) ? roverRoadLeft
+                : NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
+            string why = roverHang.Sample(now, wheels, grounded, vessel.srfSpeed, left);
+            if (why == null) return false;
+            roverHang.Reset();
+            RoverAlert = "Rover stopped: " + why + " near " + vessel.latitude.ToString("0.0000", CultureInfo.InvariantCulture) + "," + vessel.longitude.ToString("0.0000", CultureInfo.InvariantCulture)
+                + (roverGuardWhy.Length > 0 ? " (" + roverGuardWhy + ")" : "") + ". Drive it clear and start the tour again.";
+            ChatLog.Write("rover", "guard: " + why + " at " + vessel.latitude.ToString("0.000000", CultureInfo.InvariantCulture) + "," + vessel.longitude.ToString("0.000000", CultureInfo.InvariantCulture) + " - autopilot and tour stopped");
+            ChatWindow.Notice(RoverAlert);
+            SetGroup(vessel, KSPActionGroup.Brakes, true); scienceTouring = false; touring = false; Stop();
+            return true;
+        }
+        readonly RoverHang roverHang = new RoverHang();
 
         void RoverGuardSample(double gdt)
         {

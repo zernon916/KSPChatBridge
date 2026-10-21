@@ -81,6 +81,27 @@ namespace KSPChatBridge
         /// <summary>RS7g (Luke Oct 21: "KSC Grass" parked on the runway - it was 300 m west of the runway midpoint ON the centreline, approach
         /// 40 m north on the shoulder): open grass 180 m south of the runway centreline and 500 m west of its midpoint, i.e. between the
         /// runway and the Astronaut Complex / Admin, 200+ m from every building and road.</summary>
+        /// <summary>RS7i: the VAB with its scaffolding / tower poles reaches ~50 m+ from its centroid (Oct 21 02:37 the rover hung on the poles
+        /// beside the VAB front, 50 m SW of the centroid, where the hub and the VAB stop were): the VAB stop is VabStopM out, nothing else
+        /// (hub, road junctions) within VabKeepOutM; other buildings keep BuildingKeepOutM.</summary>
+        internal const double VabStopM = 95, VabKeepOutM = 100, BuildingKeepOutM = 45;
+        internal static double KeepOut(string facility) { return facility == "VehicleAssemblyBuilding" ? VabKeepOutM : BuildingKeepOutM; }
+        /// <summary>RS7i: move p radially out of every keep-out circle (centre, radius m) it is inside, 10 m beyond the edge (3 passes).</summary>
+        internal static P ClearOf(P p, IList<KeyValuePair<P, double>> keepOuts, double radius)
+        {
+            for (int pass = 0; pass < 3; pass++)
+            {
+                bool moved = false;
+                foreach (var k in keepOuts)
+                {
+                    double d = D(p, k.Key, radius); if (d >= k.Value) continue;
+                    double b = d < 1 ? 180 : NavigationMath.Bearing(k.Key.Lat, k.Key.Lon, p.Lat, p.Lon), la, lo;
+                    NavigationMath.Offset(k.Key.Lat, k.Key.Lon, b, k.Value + 10, radius, out la, out lo); p = new P(la, lo); moved = true;
+                }
+                if (!moved) break;
+            }
+            return p;
+        }
         internal const double GrassSouthM = 180, GrassWestM = 500, CreepStepM = 35;
         internal const int CreepTries = 2;
         internal static P GrassPoint(double radius)

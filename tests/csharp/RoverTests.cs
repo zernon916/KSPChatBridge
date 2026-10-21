@@ -25,6 +25,7 @@ internal static class RoverTests
         Rs7cdTests();
         Rs7fgTests();
         RoverEvaTests();
+        Rs7iTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -316,6 +317,46 @@ internal static class RoverTests
         Check(r.Resume(false) && !r.Busy, "eva: Resume once nobody is outside");
         r = new RoverEvaRun(); r.Spawned(0, true, null);
         Check(r.Tick(2, false, false, 0, false) == EvaAction.None && r.Tick(3.5, false, false, 0, false) == EvaAction.Alert, "eva: kerbal never found -> manual");
+    }
+
+    // RS7i: hub, VAB stop and roads clear of the VAB scaffolding; hung / no-progress detection
+    static void Rs7iTests()
+    {
+        const double R = 600000; var vab = Pp(-0.096836, -74.619480); var oldHub = Pp(-0.0994242, -74.6231261);
+        Check(NavigationMath.Distance(vab.Lat, vab.Lon, oldHub.Lat, oldHub.Lon, R) < 60, "rs7i: the Oct 21 hub sat 50 m from the VAB centroid (in the scaffolding)");
+        var keep = new List<KeyValuePair<KscRoverPolicy.P, double>> {
+            new KeyValuePair<KscRoverPolicy.P, double>(vab, KscRoverPolicy.KeepOut("VehicleAssemblyBuilding")),
+            new KeyValuePair<KscRoverPolicy.P, double>(Pp(-0.071870, -74.633633), KscRoverPolicy.KeepOut("SpaceplaneHangar")),
+            new KeyValuePair<KscRoverPolicy.P, double>(Pp(-0.112020, -74.640149), KscRoverPolicy.KeepOut("ResearchAndDevelopment")) };
+        var hub = KscRoverPolicy.ClearOf(oldHub, keep, R);
+        Check(keep.All(k => NavigationMath.Distance(hub.Lat, hub.Lon, k.Key.Lat, k.Key.Lon, R) >= k.Value) && NavigationMath.Distance(hub.Lat, hub.Lon, oldHub.Lat, oldHub.Lon, R) < 70, "rs7i: hub pushed out of every keep-out (VAB 100 m), nearby");
+        var far = Pp(-0.0500, -74.7000); Check(KscRoverPolicy.ClearOf(far, keep, R).Lat == far.Lat, "rs7i: a clear point is not moved");
+        double vabFrontLat, vabFrontLon; NavigationMath.Offset(vab.Lat, vab.Lon, NavigationMath.Bearing(vab.Lat, vab.Lon, hub.Lat, hub.Lon), KscRoverPolicy.VabStopM, R, out vabFrontLat, out vabFrontLon);
+        var vabFront = Pp(vabFrontLat, vabFrontLon); double vr = RoadNet.FootprintRadius(KscRoverPolicy.VabStopM);
+        Check(vr >= 85 && NavigationMath.Distance(vab.Lat, vab.Lon, vabFront.Lat, vabFront.Lon, R) > vr, "rs7i: VAB stop 95 m out, footprint 85 m");
+        var fronts = new List<KeyValuePair<string, KscRoverPolicy.P>> {
+            new KeyValuePair<string, KscRoverPolicy.P>("VAB", vabFront), new KeyValuePair<string, KscRoverPolicy.P>("SPH", Pp(-0.0763315, -74.6319315)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Mission Control", Pp(-0.0793293, -74.6167389)), new KeyValuePair<string, KscRoverPolicy.P>("R&D", Pp(-0.1091805, -74.6363112)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Tracking Station", Pp(-0.1231466, -74.6089843)), new KeyValuePair<string, KscRoverPolicy.P>("Astronaut Complex", Pp(-0.0889679, -74.6478437)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Launch Pad", Pp(-0.0916944, -74.5696217)), new KeyValuePair<string, KscRoverPolicy.P>("Crawlerway", Pp(-0.0953442, -74.5886699)) };
+        var net = RoadNet.Ksc(hub, fronts, R, new List<KeyValuePair<KscRoverPolicy.P, double>> { new KeyValuePair<KscRoverPolicy.P, double>(vab, vr) });
+        double worst = net.Edges.Min(e => SegDist(net.Nodes[e.A].Lat, net.Nodes[e.A].Lon, net.Nodes[e.B].Lat, net.Nodes[e.B].Lon, vab, R));
+        Check(worst >= vr - 1e-6, "rs7i: every road (runway exit -> SPH included) stays 85+ m from the VAB centroid (" + worst.ToString("0") + " m)");
+        var route = net.Route(Pp(-0.057194, -74.607395), Pp(-0.0763315, -74.6319315)); var pts = new List<KscRoverPolicy.P> { Pp(-0.057194, -74.607395) }; pts.AddRange(route);
+        bool clear = true; for (int i = 1; i < pts.Count; i++) clear &= SegDist(pts[i - 1].Lat, pts[i - 1].Lon, pts[i].Lat, pts[i].Lon, vab, R) >= vr - 1e-6;
+        Check(clear, "rs7i: the 02:36 Runway -> SPH leg no longer passes the VAB scaffolding");
+
+        var h = new RoverHang(); string w = null;
+        for (double t = 0; t <= 3.25 && w == null; t += .25) w = h.Sample(t, 4, 2, .2, 300);
+        Check(w != null && w.Contains("2 of 4 wheels off the ground"), "rs7i: front wheels hung on the poles -> stop");
+        h = new RoverHang(); w = null; for (double t = 0; t <= 10 && w == null; t += .25) w = h.Sample(t, 4, 3, .2, 300);
+        Check(w == null, "rs7i: one wheel off the ground is not hung");
+        h = new RoverHang(); w = null; for (double t = 0; t <= 10 && w == null; t += .25) w = h.Sample(t, 4, 2, 8, 300 - t * 8);
+        Check(w == null, "rs7i: wheels off at speed (bump) is not hung");
+        h = new RoverHang(); w = null; double hit = double.NaN; for (double t = 0; t <= 25 && w == null; t += .25) { w = h.Sample(t, 4, 4, .3, 300 + Math.Sin(t) * .5); if (w != null) hit = t; }
+        Check(w != null && w.Contains("no progress") && hit >= RoverHang.NoProgressS, "rs7i: grinding in place for 20 s -> stop");
+        h = new RoverHang(); w = null; for (double t = 0; t <= 60 && w == null; t += .25) w = h.Sample(t, 4, 4, 1, 300 - t * .2);
+        Check(w == null, "rs7i: slow steady progress is fine");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

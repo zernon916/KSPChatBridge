@@ -81,6 +81,16 @@ namespace KSPChatBridge
             }
             if (hubCount == 0) { hubLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5; hubLat = KscRunway.LatAt(hubLon); }
             else { hubLat /= hubCount; hubLon /= hubCount; }
+            {   // RS7i (Luke Oct 21 02:37: rover jammed in the VAB scaffolding): the building centroid hub landed 50 m SW of the VAB, inside
+                // its scaffolding - push it out of every building keep-out (VAB 100 m) so no road junction sits against a building
+                var keep = new List<KeyValuePair<KscRoverPolicy.P, double>>();
+                foreach (var kv in buildings) if (kv.Value.Count > 0)
+                {
+                    double la = 0, lo = 0; foreach (Building b in kv.Value) { la += b.Lat; lo += b.Lon; }
+                    keep.Add(new KeyValuePair<KscRoverPolicy.P, double>(new KscRoverPolicy.P(la / kv.Value.Count, lo / kv.Value.Count), KscRoverPolicy.KeepOut(kv.Key)));
+                }
+                var hp = KscRoverPolicy.ClearOf(new KscRoverPolicy.P(hubLat, hubLon), keep, body.Radius); hubLat = hp.Lat; hubLon = hp.Lon;
+            }
             HubLat = hubLat; HubLon = hubLon; Version++;   // RS3b: road network anchor
 
             var facilityPoints = new Dictionary<string, KscRoverWaypoint>(StringComparer.OrdinalIgnoreCase);
@@ -179,6 +189,7 @@ namespace KSPChatBridge
         {
             if (name == "Launch Pad") return 120;
             if (name == "Runway") return 80;
+            if (name == "VAB") return KscRoverPolicy.VabStopM;   // RS7i: 50 m was inside the VAB scaffolding
             return 50;
         }
 
