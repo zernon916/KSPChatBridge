@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using KSPChatBridge;
 
 /// <summary>ROVER_SCIENCE_PLAN RS1-RS6 pure-policy tests.</summary>
@@ -18,6 +19,7 @@ internal static class RoverTests
         PlacesTests();
         StatusBarTests();
         RoadTests();
+        TourTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -184,6 +186,70 @@ internal static class RoverTests
         Check(back != null && back.Nodes.Count == net.Nodes.Count && back.Edges.Count == net.Edges.Count && back.Edges[back.Edges.Count - 1].Kind == net.Edges[net.Edges.Count - 1].Kind, "roads: json round trip");
         Check(new RoadNet().Route(onRunway, vab) == null, "roads: no network -> null route");
         Check(Math.Abs(RoadNet.CornerSpeed(20, 90, 0) - 6) < 1e-9 && RoadNet.CornerSpeed(20, 10, 0) == 20 && RoadNet.CornerSpeed(20, 90, 500) == 20, "roads: corner speed");
+    }
+
+    static TourSite Site(string name, double dist, params object[] exps)
+    {
+        var s = new TourSite { Key = name, Name = name, Distance = dist };
+        for (int i = 0; i + 2 < exps.Length; i += 3) s.Exps.Add(new TourExp { Id = (string)exps[i], Title = (string)exps[i], Gain = (double)exps[i + 1], OneShot = (bool)exps[i + 2] });
+        return s;
+    }
+    static List<TourSite> TourSample()
+    {
+        return new List<TourSite>
+        {
+            Site("Runway", 300, "goo", 4.2, true, "temp", 0.0, false, "baro", 1.5, false),
+            Site("VAB", 900, "goo", 6.0, true, "temp", 2.0, false),
+            Site("Nothing", 100, "temp", 0.0, false),
+            Site("Pad", 2000, "goo", 5.0, true, "crew", 9.0, false),
+        };
+    }
+
+    // RS7: checklist sorting, site/experiment linkage, zero-gain rows, one-shot rule, saved selections, route from checked items only
+    static void TourTests()
+    {
+        var sites = TourSample(); var sel = new TourSelection();
+        TourChecklist.Apply(sites, sel);
+        Check(sites[0].Name == "Pad" && sites[1].Name == "VAB" && sites[2].Name == "Runway" && sites[3].Name == "Nothing", "tour: sites sorted by total, zero-total last");
+        var rw = sites[2];
+        Check(rw.Exps[0].Id == "goo" && rw.Exps[1].Id == "baro" && rw.Exps[2].Id == "temp", "tour: experiments sorted by gain, zero row last");
+        Check(!rw.Exps[2].On && rw.Exps[2].Dim, "tour: zero-gain row unchecked and dimmed");
+        Check(sites[3].On == false && sites.Take(3).All(s => s.On), "tour: new sites default checked when worth anything");
+        // one-shot goo (one module): only at VAB (6.0), dimmed at Pad and Runway
+        var gooPad = sites[0].Exps.First(e => e.Id == "goo"); var gooVab = sites[1].Exps.First(e => e.Id == "goo"); var gooRw = rw.Exps[0];
+        Check(!gooVab.Blocked && gooPad.Blocked && gooRw.Blocked && gooRw.Dim && gooRw.RunsAt == "VAB", "tour: one-shot runs only at the checked site where it is worth most");
+        Check(Math.Abs(TourChecklist.CheckedTotal(sites) - (9 + 6 + 2 + 1.5)) < 1e-9, "tour: checked total counts each one-shot once");
+        TourChecklist.SetSite(sites, sites[1], false, sel);
+        Check(!gooPad.Blocked && gooRw.Blocked && sites[1].Exps.All(e => !e.On), "tour: unchecking a site moves the one-shot to the next best site");
+        Check(!TourChecklist.RouteSites(sites).Exists(s => s.Name == "VAB") && !TourChecklist.RouteSites(sites).Exists(s => s.Name == "Nothing"), "tour: route only from checked sites with something to run");
+        TourChecklist.SetExp(sites, rw, rw.Exps[1], false, sel);
+        Check(rw.On && !rw.Exps[1].On && sel.Off.Contains("Runway|baro"), "tour: unticking one experiment keeps the site");
+        Check(!TourChecklist.RouteSites(sites).Exists(s => s.Name == "Runway"), "tour: site with only blocked/unticked rows is not visited");
+        TourChecklist.SetSite(sites, rw, true, sel);
+        Check(rw.Exps[1].On && !rw.Exps[2].On && !sel.Off.Contains("Runway|baro"), "tour: checking a site checks all its >0 experiments");
+        Check(TourChecklist.RunIds(sites[0]).SetEquals(new[] { "goo", "crew" }), "tour: run ids = checked runnable experiments");
+        TourChecklist.SetExp(sites, sites[1], sites[1].Exps.First(e => e.Id == "temp"), true, sel);
+        Check(sites[1].On && sites[1].Exps.First(e => e.Id == "temp").On && !sites[1].Exps.First(e => e.Id == "goo").On, "tour: ticking a row of an unchecked site checks just that row");
+        TourChecklist.SetAll(sites, false, sel);
+        Check(TourChecklist.RouteSites(sites).Count == 0 && TourChecklist.CheckedTotal(sites) == 0, "tour: select none");
+        TourChecklist.SetAll(sites, true, sel);
+        Check(TourChecklist.RouteSites(sites).Count == 3, "tour: select all");
+        // saved selections survive a round trip through the settings json
+        TourChecklist.SetSite(sites, sites[0], false, sel); TourChecklist.SetExp(sites, rw, rw.Exps[0], false, sel);
+        var back = TourSelection.FromData(MiniJson.Deserialize(MiniJson.Serialize(new Dictionary<string, object> { { "x", sel.ToData() } }))["x"]);
+        var again = TourSample(); TourChecklist.Apply(again, back);
+        Check(!again.First(s => s.Name == "Pad").On && !again.First(s => s.Name == "Runway").Exps.First(e => e.Id == "goo").On && again.First(s => s.Name == "VAB").On, "tour: saved selections restored");
+        var fresh = TourSample(); fresh.Add(Site("New place", 50, "temp", 3.0, false)); TourChecklist.Apply(fresh, back);
+        Check(fresh.First(s => s.Name == "New place").On, "tour: newly appearing site defaults to checked");
+        // shortest drive order: start -> A(100) ... B is near C
+        var st = new double[] { 100, 1000, 1100 }; var d = new double[,] { { 0, 900, 1000 }, { 900, 0, 100 }, { 1000, 100, 0 } };
+        var o = TourChecklist.Order(st, d);
+        Check(o.SequenceEqual(new[] { 0, 1, 2 }), "tour: shortest drive order");
+        var st2 = new double[] { 500, 100, 400 }; var d2 = new double[,] { { 0, 600, 100 }, { 600, 0, 300 }, { 100, 300, 0 } };
+        Check(TourChecklist.Order(st2, d2).SequenceEqual(new[] { 1, 2, 0 }), "tour: order uses driving distances, not list order");
+        int big = 14; var sb = new double[big]; var db = new double[big, big];
+        for (int i = 0; i < big; i++) { sb[i] = (i + 1) * 100; for (int j = 0; j < big; j++) db[i, j] = Math.Abs(i - j) * 100; }
+        Check(TourChecklist.Order(sb, db).SequenceEqual(Enumerable.Range(0, big)), "tour: large tours ordered by nearest neighbour + 2-opt");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

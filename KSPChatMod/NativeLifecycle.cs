@@ -60,7 +60,7 @@ namespace KSPChatBridge
             return o;
         }
 
-        List<string> RunExperiments(bool onlyRerunnable, out string blocker, double minValue = double.NaN)
+        List<string> RunExperiments(bool onlyRerunnable, out string blocker, double minValue = double.NaN, HashSet<string> onlyIds = null)   // RS7: onlyIds = checklist rows
         {
             var ran = new List<string>();
             blocker = SciencePolicy.RunBlocker(EcPct());
@@ -82,6 +82,7 @@ namespace KSPChatBridge
             foreach (var kv in groups)
             {
                 string expId = kv.Key;
+                if (onlyIds != null && !onlyIds.Contains(expId)) continue;
                 var exp = ResearchAndDevelopment.GetExperiment(expId);
                 var science = new AvailableScience { Experiment = exp };
                 if (exp != null && body != null)

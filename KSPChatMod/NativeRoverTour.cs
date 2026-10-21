@@ -77,6 +77,7 @@ namespace KSPChatBridge
                     : "No flat Crawlerway or runway waypoint is available for a safe rover route.";
 
             touring = false;
+            scienceTourOnly = null;   // RS7: chat tool = full automatic tour
             scienceTouring = true;
             scienceTourDriving = false;
             scienceTourStops.Clear();
@@ -205,10 +206,10 @@ namespace KSPChatBridge
             if (!scienceTouring || Time.realtimeSinceStartup < tourWaitUntil) return;
             if (!scienceTourDriving)
             {
-                BuildScienceTourStops();
+                if (scienceTourOnly == null) BuildScienceTourStops();   // RS7: a checklist tour keeps its fixed stop list
                 if (scienceTourStops.Count == 0)
                 {
-                    scienceTouring = false;
+                    scienceTouring = false; scienceTourOnly = null; checklistDirty = true;
                     ChatLog.Write("rover-tour", "science tour complete");
                     ChatWindow.Notice(Voice().Key + ": Rover science tour complete.");
                     return;
@@ -261,7 +262,12 @@ namespace KSPChatBridge
             int experimentCount; double scienceValue = ScienceValueAt(vessel.latitude, vessel.longitude, out experimentCount, RoverMinScience(), ScienceBiomeHere());
             string blocker; List<string> ran;
             if (RoverMode && !RoverPowerPolicy.WeRunScience(RoverAssMode(true))) { ran = new List<string>(); blocker = "left to AutomatedScienceSampler (CRAFT: OTHER MODS)"; sciTransmitAt = Time.realtimeSinceStartup + 4; }   // RS4: we only drive and transmit
-            else ran = RunExperiments(false, out blocker, RoverMinScience());
+            else
+            {
+                HashSet<string> only = null; if (scienceTourOnly != null && !scienceTourOnly.TryGetValue(stop.Name, out only)) only = new HashSet<string>();
+                ran = RunExperiments(false, out blocker, RoverMinScience(), only);   // RS7: checklist tour runs only the ticked rows
+            }
+            checklistDirty = true;
             if (RoverMode && HasScientist()) StartCoroutine(RoverResetLater());   // RS4: reset used one-shots once the data is safe
             if (ran.Count > 0) sciTransmitAt = Time.realtimeSinceStartup + 2;
             string log = "stop " + stop.Name + " / " + ScienceBiomeHere()

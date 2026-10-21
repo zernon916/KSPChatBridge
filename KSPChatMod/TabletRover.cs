@@ -126,8 +126,18 @@ namespace KSPChatBridge
         void TabletRoverTour(Rect area)
         {
             float row = Mathf.Max(44, tabletFont * 2.5f), gap = 8, bw = Mathf.Max(200, tabletFont * 10f); bool en = TabletLink;
-            if (TabletUi.ActionButton(new Rect(area.x, area.y, bw, row), "START SCIENCE TOUR", en)) RoverRun("rover_science_tour", "{}");
-            if (TabletUi.ActionButton(new Rect(area.x + bw + 8, area.y, bw * .6f, row), "STOP", en)) RoverRun("stop_current", "{}");
+            // RS7: science tour checklist - top bar ALL / NONE / checked total / START TOUR / STOP, then one box per site
+            var sites = NativeFlightController.RoverChecklist();
+            float sb = Mathf.Max(90, tabletFont * 4.5f), x0 = area.x;
+            if (TabletUi.Button(new Rect(x0, area.y, sb, row), "ALL", false, en && sites.Count > 0)) NativeFlightController.RoverChecklistAll(true);
+            if (TabletUi.Button(new Rect(x0 + sb + 6, area.y, sb, row), "NONE", false, en && sites.Count > 0)) NativeFlightController.RoverChecklistAll(false);
+            float tx = x0 + 2 * (sb + 6) + 4, sw = Mathf.Max(150, tabletFont * 7f);
+            float rightW = bw + 8 + bw * .6f;
+            TabletUi.Label(new Rect(tx, area.y, Mathf.Max(60, area.width - (tx - area.x) - rightW - 8), row), "Checked: " + TourChecklist.CheckedTotal(sites).ToString("0.0", CultureInfo.InvariantCulture) + " science");
+            float bx = area.xMax - rightW;
+            if (TabletUi.ActionButton(new Rect(bx, area.y, bw, row), NativeFlightController.RoverChecklistRunning ? "TOUR RUNNING" : "START TOUR", en && TourChecklist.RouteSites(sites).Count > 0))
+            { tabletRoverNote = NativeFlightController.RoverChecklistStart(20); }   // same 20 m/s cap as the old tablet tour; the guard limits per surface
+            if (TabletUi.ActionButton(new Rect(bx + bw + 8, area.y, bw * .6f, row), "STOP", en)) RoverRun("stop_current", "{}");
             Rect body = new Rect(area.x, area.y + row + gap, area.width, Mathf.Max(60, area.height - row - gap));
             GUILayout.BeginArea(body);
             try
@@ -137,6 +147,27 @@ namespace KSPChatBridge
                 {
                     float w = body.width - 26, y = 0;
                     if (!string.IsNullOrEmpty(tabletRoverNote)) y += TextCard(new Rect(0, y, w, 0), "LAST COMMAND", new List<string> { tabletRoverNote }) + gap;
+                    float rh = Mathf.Max(34, tabletFont * 2f), cb = rh - 6;
+                    if (sites.Count == 0) y += TextCard(new Rect(0, y, w, 0), "SCIENCE SITES", new List<string> { "No sites here: land the rover near KSC or mark PLACES on this body." }) + gap;
+                    foreach (var s in sites)
+                    {
+                        float h = rh * (1 + s.Exps.Count) + 8;
+                        TabletUi.RowBox(new Rect(0, y, w, h));
+                        float yy = y + 4;
+                        if (TabletUi.Button(new Rect(6, yy + 3, cb, cb), s.On ? "X" : "", s.On, en && s.Total > 0)) NativeFlightController.RoverChecklistSite(s, !s.On);
+                        string dist = double.IsNaN(s.Distance) ? "?" : s.Distance < 1000 ? s.Distance.ToString("0", CultureInfo.InvariantCulture) + " m" : (s.Distance / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " km";
+                        TabletUi.Label(new Rect(cb + 14, yy, w * .55f, rh), s.Name, s.Total <= 0 || !s.On);
+                        TabletUi.Label(new Rect(w * .55f, yy, w * .45f - 8, rh), dist + "   " + s.Total.ToString("0.0", CultureInfo.InvariantCulture) + " sci", s.Total <= 0 || !s.On);
+                        yy += rh;
+                        foreach (var e in s.Exps)
+                        {
+                            if (TabletUi.Button(new Rect(cb + 14, yy + 3, cb, cb), e.On ? "X" : "", e.On && !e.Blocked, en && e.Gain > 0)) NativeFlightController.RoverChecklistExp(s, e, !e.On);
+                            string t = e.Title + "  +" + e.Gain.ToString("0.0", CultureInfo.InvariantCulture) + (e.Blocked ? "   (one-shot: runs at " + e.RunsAt + ")" : "");
+                            TabletUi.Label(new Rect(2 * cb + 24, yy, w - 2 * cb - 30, rh), t, e.Dim);
+                            yy += rh;
+                        }
+                        y += h + gap;
+                    }
                     y += TextCard(new Rect(0, y, w, 0), "SCIENCE ON BOARD (worth here)", NativeFlightController.ScienceInventoryLines()) + gap;
                     GUILayout.Space(y);
                 }
