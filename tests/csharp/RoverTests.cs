@@ -26,6 +26,7 @@ internal static class RoverTests
         Rs7fgTests();
         RoverEvaTests();
         Rs7iTests();
+        Rs7jTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -357,6 +358,25 @@ internal static class RoverTests
         Check(w != null && w.Contains("no progress") && hit >= RoverHang.NoProgressS, "rs7i: grinding in place for 20 s -> stop");
         h = new RoverHang(); w = null; for (double t = 0; t <= 60 && w == null; t += .25) w = h.Sample(t, 4, 4, 1, 300 - t * .2);
         Check(w == null, "rs7i: slow steady progress is fine");
+    }
+
+    // RS7j: a site's rows use the biome the science really lands in (Oct 21 02:34: KSC Grass parked in Shores, rows looked up ...KSC)
+    static void Rs7jTests()
+    {
+        string grassMini = ScienceInventory.KscMiniBiome("KSC");
+        string b = TourChecklist.SiteBiome(null, grassMini, "Shores");
+        Check(b == "Shores" && TourChecklist.SubjectId("evaReport", "Kerbin", "SrfLanded", b) == "evaReport@KerbinSrfLandedShores", "rs7j: KSC Grass rows use the terrain biome there (the save files the EVA report under ...SrfLandedShores)");
+        Check(TourChecklist.SubjectId("evaReport", "Kerbin", "SrfLanded", TourChecklist.SiteBiome(null, grassMini, "Shores")) != "evaReport@KerbinSrfLandedKSC", "rs7j: never the KSC-grounds subject the rover cannot reach");
+        Check(TourChecklist.SiteBiome("Shores", "Runway", "Shores") == "Shores" && TourChecklist.SiteBiome(null, "Runway", "Shores") == "Runway" && TourChecklist.SiteBiome(null, "VAB", "KSC") == "VAB", "rs7j: learned biome wins, else facility mini-biome");
+        Check(TourChecklist.SiteLabel("KSC Grass", "KSC", "Shores") == "KSC Grass (Shores)" && TourChecklist.SiteLabel("VAB", "VAB", "VAB") == "VAB" && TourChecklist.SiteLabel("Shores", null, "Shores") == "Shores", "rs7j: label shows the real biome when it differs");
+        // rows derived live: data on board for the Shores subject -> checked; after a revert (nothing held / earned) -> unchecked again
+        var s = new TourSite { Key = "KSC Grass", Name = "KSC Grass (Shores)" };
+        s.Exps.Add(new TourExp { Id = "evaReport", Title = "EVA Report", Gain = 0, Done = TourChecklist.DoneFrom(double.NaN, 0, true) });
+        s.Exps.Add(new TourExp { Id = "mysteryGoo", Title = "Goo", Gain = 9.6, Done = false });
+        var sites = new List<TourSite> { s }; TourChecklist.Apply(sites, new TourSelection());
+        Check(s.Exps.First(e => e.Id == "evaReport").Ran && !s.Exps.First(e => e.Id == "mysteryGoo").Ran, "rs7j: held Shores data checks the KSC Grass row");
+        TourChecklist.MarkRan(sites, "KSC Grass", new[] { "mysteryGoo" });
+        Check(s.Exps.First(e => e.Id == "mysteryGoo").Ran, "rs7j: stop marks by site key even when the label carries the biome");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

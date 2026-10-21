@@ -273,6 +273,7 @@ namespace KSPChatBridge
             }
             KscRoverWaypoint stop = scienceTourStops[0];
             scienceTourStops.RemoveAt(0);
+            RecordStopBiome(stop.Name, ScienceBiomeHere());   // RS7j: the checklist rows of this stop use the biome really seen here
             scienceTourVisited.Add(ScienceBiomeHere()); scienceTourVisited.Add(stop.Name); if (ScienceInventory.KscMiniBiome(stop.Biome) != null) scienceTourVisited.Add(ScienceInventory.KscMiniBiome(stop.Biome));
             scienceTourRoute.Clear();
             scienceTourRouteIndex = 0;

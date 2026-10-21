@@ -76,7 +76,12 @@ namespace KSPChatBridge
             {
                 var site = new TourSite { Key = c.Name, Name = c.Name, Source = c.Source ?? "", Lat = c.ApproachLat, Lon = c.ApproachLon,
                     Distance = RoverDriveDistance(vessel.latitude, vessel.longitude, c.ApproachLat, c.ApproachLon) };
-                string mini = c.Source == "place" ? null : ScienceInventory.KscMiniBiome(c.Biome);
+                string mini = c.Source == "place" ? null : ScienceInventory.KscMiniBiome(c.Biome), terrain = "";
+                try { terrain = ScienceUtil.GetExperimentBiome(body, c.ApproachLat, c.ApproachLon); } catch (Exception) { }
+                string learned; StopBiomes().TryGetValue(c.Name, out learned);
+                string siteBiome = TourChecklist.SiteBiome(learned, mini, terrain);   // RS7j: the biome the science really lands in
+                if (c.Source != "place") site.Name = TourChecklist.SiteLabel(c.Name, mini, siteBiome);
+                mini = siteBiome.Length > 0 ? siteBiome : null;
                 foreach (var g in groups)
                 {
                     AvailableScience sci;
@@ -107,6 +112,28 @@ namespace KSPChatBridge
             TourChecklist.MarkRan(checklist, site, ids); checklistDirty = true;   // RS7e: not saved - the next refresh derives it from the game
             ChatLog.Write("rover", "checklist: ran at " + site + ": " + string.Join(", ", ids.ToArray()));
         }
+        /// <summary>RS7j: biome seen at each stop (site name -> biome), learned on arrival and saved in settings ("rover_stop_biome") - geography,
+        /// not progress, so reverts do not touch it; the check marks themselves stay derived from R&D + data on board.</summary>
+        Dictionary<string, string> StopBiomes()
+        {
+            if (stopBiomes == null)
+            {
+                stopBiomes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); object o;
+                if (settingsData.TryGetValue("rover_stop_biome", out o) && o is Dictionary<string, object>)
+                    foreach (var kv in (Dictionary<string, object>)o) if (kv.Value is string) stopBiomes[kv.Key] = (string)kv.Value;
+            }
+            return stopBiomes;
+        }
+        Dictionary<string, string> stopBiomes;
+        void RecordStopBiome(string site, string biome)
+        {
+            if (string.IsNullOrEmpty(site) || string.IsNullOrEmpty(biome) || vessel == null || vessel.mainBody == null || vessel.mainBody.bodyName != "Kerbin") return;
+            string old; if (StopBiomes().TryGetValue(site, out old) && old == biome) return;
+            stopBiomes[site] = biome; var d = new Dictionary<string, object>(); foreach (var kv in stopBiomes) d[kv.Key] = kv.Value;
+            settingsData["rover_stop_biome"] = d; try { Save(); } catch (Exception) { }
+            ChatLog.Write("rover", "stop " + site + " biome learned: " + biome + (old != null ? " (was " + old + ")" : "")); checklistDirty = true;
+        }
+
         void ChecklistClearRan() { if (vessel == null) return; TourChecklist.ClearRan(checklist); checklistDirty = true; }
 
         /// <summary>RS7e: revert / quickload / scene load / vessel switch - drop every in-memory check mark and tour visit, reload the saved
@@ -152,8 +179,8 @@ namespace KSPChatBridge
             foreach (int i in order)
             {
                 var s = route[i];
-                scienceTourStops.Add(new KscRoverWaypoint { Name = s.Name, Biome = "", Lat = s.Lat, Lon = s.Lon, ApproachLat = s.Lat, ApproachLon = s.Lon, Source = s.Source });
-                scienceTourOnly[s.Name] = TourChecklist.StopIds(s);   // RS7c: also the zero-predicted rows (real biome may differ)
+                scienceTourStops.Add(new KscRoverWaypoint { Name = s.Key, Biome = "", Lat = s.Lat, Lon = s.Lon, ApproachLat = s.Lat, ApproachLon = s.Lon, Source = s.Source });   // RS7j: Key (Name may carry the biome)
+                scienceTourOnly[s.Key] = TourChecklist.StopIds(s);   // RS7c: also the zero-predicted rows (real biome may differ)
                 labels.Add(s.Name); km += prev < 0 ? st[i] : d[prev, i]; prev = i; sci += s.Checked;
             }
             scienceTouring = true;

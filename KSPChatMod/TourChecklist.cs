@@ -121,6 +121,22 @@ namespace KSPChatBridge
         }
         /// <summary>RS7f: the stock subject id: experiment@Body + Situation + biome without spaces (biome-agnostic experiments: no biome),
         /// e.g. mysteryGoo@KerbinSrfLandedLaunchPad, crewReport@KerbinSrfLandedR&D, bd_oso@KerbinSrfLanded.</summary>
+        /// <summary>RS7j (Luke Oct 21 02:38: KSC Grass showed no checks although science ran there - the rows looked up ...SrfLandedKSC
+        /// while the rover parked on terrain and filed everything under ...SrfLandedShores): the biome a site's rows use = the biome
+        /// actually seen when the rover stopped there (learned), else the facility mini-biome, else the terrain biome at the stop point.
+        /// "KSC" (KSC grounds) is never predicted: only landedAt on the KSC ground collider gives it.</summary>
+        internal static string SiteBiome(string learned, string mini, string terrain)
+        {
+            if (!string.IsNullOrEmpty(learned)) return learned;
+            if (!string.IsNullOrEmpty(mini) && mini != "KSC") return mini;
+            return terrain ?? "";
+        }
+        /// <summary>RS7j: row label = site name, plus the biome when it is not the facility's own (e.g. "KSC Grass (Shores)").</summary>
+        internal static string SiteLabel(string name, string mini, string biome)
+        {
+            if (string.IsNullOrEmpty(biome) || string.Equals(biome, mini, StringComparison.OrdinalIgnoreCase) || string.Equals(biome, name, StringComparison.OrdinalIgnoreCase)) return name;
+            return name + " (" + biome + ")";
+        }
         internal static string SubjectId(string expId, string body, string situation, string biome)
         {
             return expId + "@" + body + situation + (biome ?? "").Replace(" ", "");
