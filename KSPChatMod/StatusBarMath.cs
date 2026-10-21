@@ -25,8 +25,11 @@ namespace KSPChatBridge
         internal static int BatteryBand(double frac) { if (double.IsNaN(frac)) return -1; return frac > .5 ? 2 : frac >= .2 ? 1 : 0; }
         internal static string Label(bool connected, double signal, double delayS, bool relay, double batt)
         {
-            string s = connected ? CommsStatus.SignalPercent(signal) + (delayS > 0 ? " " + CommsStatus.FormatDelay(delayS) : "") + (relay ? " R" : "") : "NO LINK";
-            return s + "  " + (double.IsNaN(batt) ? "--" : (100 * batt).ToString("0", CultureInfo.InvariantCulture) + "%");
+            // RS7m (Luke Oct 21: "100%  28%" - the signal strength shows as the bars only): battery % first, right after the battery icon,
+            // then the light-time delay / relay flag, or NO LINK
+            string b = double.IsNaN(batt) ? "--" : (100 * batt).ToString("0", CultureInfo.InvariantCulture) + "%";
+            string s = connected ? (delayS > 0 ? CommsStatus.FormatDelay(delayS) : "") + (relay ? (delayS > 0 ? " R" : "R") : "") : "NO LINK";
+            return s.Length > 0 ? b + "  " + s : b;
         }
     }
 }

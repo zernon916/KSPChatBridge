@@ -140,7 +140,8 @@ internal static class RoverTests
         Check(StatusBarMath.BarHeight(0) < StatusBarMath.BarHeight(1) && StatusBarMath.BarHeight(3) == 1f, "rising bars");
         Check(StatusBarMath.Battery(50, 100) == .5 && double.IsNaN(StatusBarMath.Battery(5, 0)) && StatusBarMath.Battery(150, 100) == 1, "battery fraction");
         Check(StatusBarMath.BatteryBand(.51) == 2 && StatusBarMath.BatteryBand(.5) == 1 && StatusBarMath.BatteryBand(.2) == 1 && StatusBarMath.BatteryBand(.19) == 0 && StatusBarMath.BatteryBand(double.NaN) == -1, "battery colours");
-        Check(StatusBarMath.Label(true, .62, .125, true, .8) == "62% 125 ms R  80%" && StatusBarMath.Label(false, 0, 0, false, double.NaN) == "NO LINK  --", "status label");
+        Check(StatusBarMath.Label(true, .62, .125, true, .8) == "80%  125 ms R" && StatusBarMath.Label(false, 0, 0, false, double.NaN) == "--  NO LINK", "status label");
+        Check(StatusBarMath.Label(true, 1, 0, false, .28) == "28%" && !StatusBarMath.Label(true, .62, 0, true, .8).Contains("62"), "rs7m: no signal % text (bars only), battery % next to its icon");
     }
 
     static KscRoverPolicy.P Pp(double lat, double lon) { return new KscRoverPolicy.P(lat, lon); }
