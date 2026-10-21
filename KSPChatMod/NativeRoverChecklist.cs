@@ -122,7 +122,7 @@ namespace KSPChatBridge
         bool SubjectEarned(string subjectId)
         {
             if (string.IsNullOrEmpty(subjectId) || ResearchAndDevelopment.Instance == null) return false;
-            var sub = ResearchAndDevelopment.GetSubjectByID(subjectId); if (sub == null) return false;
+            var sub = ResearchAndDevelopment.GetSubjectByID(subjectId); if (sub == null) return false;   // RS7f: the loaded save's R&D, no cache
             return TourChecklist.DoneFrom(sub.science, sub.scienceCap, false);
         }
 
@@ -144,7 +144,7 @@ namespace KSPChatBridge
             double hubD; bool ksc = NearKsc(out hubD);
             touring = false; scienceTourDriving = false;
             scienceTourStops.Clear(); scienceTourVisited.Clear(); scienceTourRoute.Clear();
-            scienceTourRouteIndex = 0; scienceTourStopN = 0; tourWaitUntil = 0;
+            scienceTourRouteIndex = 0; scienceTourStopN = 0; scienceTourCreeps = 0; tourWaitUntil = 0;
             scienceTourSpeed = Math.Max(2, Math.Min(RoverCaps.Ceiling, speed > 0 ? speed : 20));
             scienceTourKsc = ksc && TourHub(out scienceTourHub);
             scienceTourOnly = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);

@@ -13,7 +13,7 @@ namespace KSPChatBridge
         readonly List<KscRoverWaypoint> scienceTourStops = new List<KscRoverWaypoint>();
         readonly HashSet<string> scienceTourVisited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         readonly List<KscRoverPolicy.P> scienceTourRoute = new List<KscRoverPolicy.P>();
-        bool scienceTouring, scienceTourDriving, scienceTourKsc = true; int scienceTourStopN;
+        bool scienceTouring, scienceTourDriving, scienceTourKsc = true; int scienceTourStopN, scienceTourCreeps;
         int scienceTourRouteIndex;
         double scienceTourSpeed = 10;
         KscRoverPolicy.P scienceTourHub;
@@ -84,7 +84,7 @@ namespace KSPChatBridge
             scienceTourStops.Clear();
             scienceTourVisited.Clear();
             scienceTourRoute.Clear();
-            scienceTourRouteIndex = 0; scienceTourStopN = 0;
+            scienceTourRouteIndex = 0; scienceTourStopN = 0; scienceTourCreeps = 0;
             tourWaitUntil = 0;
             scienceTourSpeed = Math.Max(2, Math.Min(RoverCaps.Ceiling, Num(a, "speed", 20)));   // RS3: the guard caps per surface (learned per rover)
             BuildScienceTourStops();
@@ -254,6 +254,22 @@ namespace KSPChatBridge
                 return;
             }
 
+            {   // RS7g: parked in the stop's biome? If not, creep toward it (CreepTries) before running science
+                KscRoverWaypoint want = scienceTourStops[0]; string wantMini = want.Source == "place" ? null : ScienceInventory.KscMiniBiome(want.Biome), got = ScienceBiomeHere();
+                if (!KscRoverPolicy.StopBiomeOk(wantMini, got))
+                {
+                    double r = vessel.mainBody.Radius, keep = want.Name == "KSC Grass" || want.Name == "Shores" ? 0 : RoadNet.FootprintRadius(NavigationMath.Distance(want.Lat, want.Lon, want.ApproachLat, want.ApproachLon, r));
+                    KscRoverPolicy.P creep = new KscRoverPolicy.P(vessel.latitude, vessel.longitude); bool can = scienceTourCreeps < KscRoverPolicy.CreepTries && KscRoverPolicy.CreepTarget(new KscRoverPolicy.P(vessel.latitude, vessel.longitude), new KscRoverPolicy.P(want.Lat, want.Lon), keep, r, out creep);
+                    ChatLog.Write("rover", "stop " + (scienceTourStopN + 1) + " wanted " + wantMini + " got " + (got.Length > 0 ? got : "?") + (can ? " - creeping " + KscRoverPolicy.CreepStepM.ToString("0", CultureInfo.InvariantCulture) + " m toward " + want.Name + " (try " + (scienceTourCreeps + 1) + "/" + KscRoverPolicy.CreepTries + ")" : " - running science here"));
+                    if (can)
+                    {
+                        scienceTourCreeps++; scienceTourRoute.Clear(); scienceTourRoute.Add(creep); scienceTourRouteIndex = 0;
+                        string res = StartScienceTourLeg(); if (!scienceTourDriving) { scienceTouring = false; ChatLog.Write("rover-tour", "science tour stopped: " + res); ChatWindow.Notice("Rover science tour stopped: " + res); }
+                        return;
+                    }
+                }
+                scienceTourCreeps = 0;
+            }
             KscRoverWaypoint stop = scienceTourStops[0];
             scienceTourStops.RemoveAt(0);
             scienceTourVisited.Add(ScienceBiomeHere()); scienceTourVisited.Add(stop.Name); if (ScienceInventory.KscMiniBiome(stop.Biome) != null) scienceTourVisited.Add(ScienceInventory.KscMiniBiome(stop.Biome));

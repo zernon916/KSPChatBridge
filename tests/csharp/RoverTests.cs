@@ -23,6 +23,7 @@ internal static class RoverTests
         CirclingTests();
         RanTests();
         Rs7cdTests();
+        Rs7fgTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -249,6 +250,44 @@ internal static class RoverTests
         var st = new RoverStuck(); st.ForceBack(0); Check(st.Backing, "rs7d: backing"); st.EndBack(); Check(!st.Backing, "rs7d: EndBack ends the back-up");
     }
 
+    // RS7f: partly earned => checked with the reduced gain; maxed => checked, +0, dimmed, bottom, unticked; stock subject id format
+    // RS7g: the KSC Grass stop is on open grass, clear of runway, roads and buildings; stop biome check + creep
+    static void Rs7fgTests()
+    {
+        var s = new TourSite { Key = "Runway", Name = "Runway" };
+        s.Exps.Add(new TourExp { Id = "bd_GeigerCounter", Title = "geiger", Gain = 5.6, Done = true });   // save: 2.4 of 8 earned
+        s.Exps.Add(new TourExp { Id = "mysteryGoo", Title = "goo", Gain = 0, Done = true });              // save: 9.6 of 9.6
+        s.Exps.Add(new TourExp { Id = "crewReport", Title = "crew", Gain = 8 });
+        var sites = new List<TourSite> { s }; TourChecklist.Apply(sites, new TourSelection());
+        var gei = s.Exps.First(e => e.Id == "bd_GeigerCounter"); var goo = s.Exps.First(e => e.Id == "mysteryGoo");
+        Check(gei.Ran && gei.Gain == 5.6 && gei.On && gei.Runnable, "rs7f: partly earned: checked, reduced gain, default ticked");
+        Check(goo.Ran && goo.Gain == 0 && !goo.On && goo.Dim && s.Exps.Last().Id == "mysteryGoo", "rs7f: maxed: checked, +0, dimmed, at the bottom, not ticked");
+        Check(TourChecklist.RunIds(s).SetEquals(new[] { "crewReport", "bd_GeigerCounter" }) && !TourChecklist.StopIds(s).Contains("mysteryGoo"), "rs7f: maxed rows are not run");
+        Check(TourChecklist.SubjectId("mysteryGoo", "Kerbin", "SrfLanded", "LaunchPad") == "mysteryGoo@KerbinSrfLandedLaunchPad"
+            && TourChecklist.SubjectId("crewReport", "Kerbin", "SrfLanded", ScienceInventory.KscMiniBiome("ResearchAndDevelopment")) == "crewReport@KerbinSrfLandedR&D"
+            && TourChecklist.SubjectId("evaReport", "Kerbin", "SrfLanded", ScienceInventory.KscMiniBiome("AstronautComplex")) == "evaReport@KerbinSrfLandedAstronautComplex"
+            && TourChecklist.SubjectId("bd_oso", "Kerbin", "SrfLanded", "") == "bd_oso@KerbinSrfLanded"
+            && TourChecklist.SubjectId("temperatureScan", "Kerbin", "FlyingLow", "Ice Caps") == "temperatureScan@KerbinFlyingLowIceCaps", "rs7f: subject ids match the save (mini-biomes, biome-agnostic, spaces stripped)");
+
+        const double R = 600000; var g = KscRoverPolicy.GrassPoint(R);
+        double rw = SegDist(KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27, g, R);
+        Check(rw > 35 + 60, "rs7g: grass point 60+ m off the runway edge (" + rw.ToString("0") + " m from centreline)");
+        var blds = new[] { Pp(-0.096836, -74.619480), Pp(-0.071870, -74.633633), Pp(-0.112020, -74.640149), Pp(-0.129298, -74.605317), Pp(-0.087108, -74.652241), Pp(-0.074779, -74.615293), Pp(-0.090955, -74.661401), Pp(-0.090056, -74.558280), Pp(-0.093446, -74.588880) };
+        Check(blds.All(b => NavigationMath.Distance(g.Lat, g.Lon, b.Lat, b.Lon, R) > 100), "rs7g: grass point 100+ m from every KSC building / pad / crawlerway");
+        var fronts = new List<KeyValuePair<string, KscRoverPolicy.P>> {
+            new KeyValuePair<string, KscRoverPolicy.P>("VAB", Pp(-0.0995998, -74.6233735)), new KeyValuePair<string, KscRoverPolicy.P>("SPH", Pp(-0.0763315, -74.6319315)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Astronaut Complex", Pp(-0.0889679, -74.6478437)), new KeyValuePair<string, KscRoverPolicy.P>("Admin", Pp(-0.0919869, -74.6567395)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Mission Control", Pp(-0.0793293, -74.6167389)), new KeyValuePair<string, KscRoverPolicy.P>("R&D", Pp(-0.1091805, -74.6363112)) };
+        var net = RoadNet.Ksc(Pp(-0.0994242, -74.6231261), fronts, R);
+        Check(net.Edges.Where(e => e.Kind != "runway").All(e => SegDist(net.Nodes[e.A].Lat, net.Nodes[e.A].Lon, net.Nodes[e.B].Lat, net.Nodes[e.B].Lon, g, R) > 60), "rs7g: grass point 60+ m from every road");
+        Check(KscRoverPolicy.StopBiomeOk("KSC", "") && KscRoverPolicy.StopBiomeOk("KSC", "KSC") && KscRoverPolicy.StopBiomeOk("KSC", "Grasslands") && !KscRoverPolicy.StopBiomeOk("KSC", "Runway") && !KscRoverPolicy.StopBiomeOk("KSC", "SPHMainBuilding"),
+            "rs7g: grass stop accepts grass only");
+        Check(KscRoverPolicy.StopBiomeOk("VAB", "VABPodMemorial") && !KscRoverPolicy.StopBiomeOk("Runway", "Shores") && KscRoverPolicy.StopBiomeOk(null, "Shores"), "rs7g: facility sub-biomes ok, wrong biome not");
+        KscRoverPolicy.P c; var here = Pp(-0.0793, -74.6167); var vab = Pp(-0.096836, -74.619480);
+        Check(KscRoverPolicy.CreepTarget(here, vab, 45, R, out c) && Math.Abs(NavigationMath.Distance(here.Lat, here.Lon, c.Lat, c.Lon, R) - KscRoverPolicy.CreepStepM) < 1 && NavigationMath.Distance(c.Lat, c.Lon, vab.Lat, vab.Lon, R) > 45, "rs7g: creep 35 m toward the stop, outside its footprint");
+        Check(!KscRoverPolicy.CreepTarget(Pp(-0.0993, -74.6232), vab, 45, R, out c), "rs7g: no creep into a building footprint");
+    }
+
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)
     {
         double k = radius * Math.PI / 180, cs = Math.Cos(aLat * Math.PI / 180);
@@ -355,11 +394,11 @@ internal static class RoverTests
         var old = TourSample(); TourChecklist.Apply(old, legacy);
         Check(!old.Any(s => s.Exps.Any(e => e.Ran)) && legacy.Off.Contains("VAB|baro") && !legacy.ToData().ContainsKey("ran"), "rs7e: an old saved ran set is ignored, unticks kept");
         // derived from the game: earned in R&D or held on board
-        Check(TourChecklist.DoneFrom(9.6, 9.6, false) && TourChecklist.DoneFrom(9.58, 9.6, false) && !TourChecklist.DoneFrom(4, 9.6, false) && !TourChecklist.DoneFrom(0, 0, false)
-            && TourChecklist.DoneFrom(0, 9.6, true) && TourChecklist.DoneFrom(double.NaN, 0, true) && !TourChecklist.DoneFrom(double.NaN, 9.6, false), "rs7e: done = earned to the cap or held on board");
+        Check(TourChecklist.DoneFrom(9.6, 9.6, false) && TourChecklist.DoneFrom(9.58, 9.6, false) && TourChecklist.DoneFrom(2.4, 8, false) && !TourChecklist.DoneFrom(0, 9.6, false) && !TourChecklist.DoneFrom(0, 0, false)
+            && TourChecklist.DoneFrom(0, 9.6, true) && TourChecklist.DoneFrom(double.NaN, 0, true) && !TourChecklist.DoneFrom(double.NaN, 9.6, false), "rs7f: done = any science earned (partly too) or held on board");
         var live = TourSample(); live.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp").Done = true; TourChecklist.Apply(live, back);
         var t3 = live.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp");
-        Check(t3.Ran && t3.Gain == 0 && t3.LiveGain == 2, "rs7e: done subject shows the check mark, gain 0");
+        Check(t3.Ran && t3.Gain == 2 && t3.LiveGain == 2 && t3.On && t3.Runnable && !t3.Dim, "rs7f: partly earned row: check mark, reduced remaining gain, still ticked and runnable");
         TourChecklist.ClearRan(live); Check(t3.Ran, "rs7e: a new tour keeps marks the game says are done");
         var reverted = TourSample(); TourChecklist.Apply(reverted, back);
         Check(!reverted.Any(s => s.Exps.Any(e => e.Ran)), "rs7e: same rover after a revert (nothing earned / held) shows no marks");

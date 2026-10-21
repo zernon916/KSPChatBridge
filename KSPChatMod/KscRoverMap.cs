@@ -124,9 +124,9 @@ namespace KSPChatBridge
 
             double grassLat, grassLon, shoresLat, shoresLon;
             double kscLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5, kscLat = KscRunway.LatAt(kscLon);
-            NavigationMath.Offset(kscLat, kscLon, 270, 300, body.Radius, out grassLat, out grassLon);
+            var grass = KscRoverPolicy.GrassPoint(body.Radius); grassLat = grass.Lat; grassLon = grass.Lon;   // RS7g: open grass, not the runway
             NavigationMath.Offset(kscLat, kscLon, 180, 1000, body.Radius, out shoresLat, out shoresLon);
-            Add("KSC Grass", "KSC", grassLat, grassLon, 0, 40, body.Radius, "fallback offset from KSC center", obstacles);
+            Add("KSC Grass", "KSC", grassLat, grassLon, 0, 0, body.Radius, "open grass south-west of the runway", obstacles);
             Add("Shores", "Shores", shoresLat, shoresLon, 0, 75, body.Radius, "fallback offset beyond KSC", obstacles);
             return true;
         }

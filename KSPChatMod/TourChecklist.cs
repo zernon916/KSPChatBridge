@@ -19,8 +19,8 @@ namespace KSPChatBridge
         internal double LiveGain;             // R&D value before the ran zeroing
         internal int Modules = 1;             // unused one-shot modules on board
         internal string RunsAt = "";
-        internal bool Runnable { get { return On && !Blocked && !Ran && Gain > 0; } }
-        internal bool Dim { get { return Gain <= 0 || Blocked || !On || Ran; } }
+        internal bool Runnable { get { return On && !Blocked && Gain > 0; } }   // RS7f: a checked (partly earned) row with gain left still runs when ticked
+        internal bool Dim { get { return Gain <= 0 || Blocked || !On; } }
     }
 
     internal sealed class TourSite
@@ -64,9 +64,9 @@ namespace KSPChatBridge
         {
             foreach (var s in sites)
             {
-                foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = e.Done; }   // RS7e: derived, not saved
+                foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = e.Done; }   // RS7e: derived, not saved; RS7f: Gain stays the live REMAINING value
                 bool on; s.On = sel.Sites.TryGetValue(s.Key, out on) ? on : s.Total > 0;
-                foreach (var e in s.Exps) { e.UserOff = sel.Off.Contains(TourSelection.K(s, e)); e.On = s.On && e.Gain > 0 && !e.UserOff; if (e.Ran) e.Gain = 0; }   // RS7b: ran rows count 0 (totals, sorting)
+                foreach (var e in s.Exps) { e.UserOff = sel.Off.Contains(TourSelection.K(s, e)); e.On = s.On && e.Gain > 0 && !e.UserOff; }   // RS7f: done rows keep their remaining gain (maxed = 0, dimmed, bottom)   // RS7b: ran rows count 0 (totals, sorting)
             }
             OneShots(sites); Sort(sites);
         }
@@ -113,10 +113,17 @@ namespace KSPChatBridge
         }
         internal static void SetAll(List<TourSite> sites, bool on, TourSelection sel) { foreach (var s in sites) SetSite(sites, s, on, sel); }
 
-        /// <summary>RS7e: subject done = science already earned in R&D (within 1% / 0.05 of the cap) or its data held on board.</summary>
+        /// <summary>RS7f (Luke Oct 21: science earned in the career before the mod showed no check): done = ANY science earned for the subject
+        /// in R&D (subject.science > 0, partly earned included - the row still shows the reduced remaining gain) or its data held on board.</summary>
         internal static bool DoneFrom(double earned, double cap, bool heldOnBoard)
         {
-            return heldOnBoard || (cap > 0 && !double.IsNaN(earned) && earned >= cap - Math.Max(.05, cap * .01));
+            return heldOnBoard || (!double.IsNaN(earned) && earned > 1e-4);
+        }
+        /// <summary>RS7f: the stock subject id: experiment@Body + Situation + biome without spaces (biome-agnostic experiments: no biome),
+        /// e.g. mysteryGoo@KerbinSrfLandedLaunchPad, crewReport@KerbinSrfLandedR&D, bd_oso@KerbinSrfLanded.</summary>
+        internal static string SubjectId(string expId, string body, string situation, string biome)
+        {
+            return expId + "@" + body + situation + (biome ?? "").Replace(" ", "");
         }
         /// <summary>RS7b: experiments that ran at a site on the tour: check mark, gain 0, out of the totals. RS7e: in memory only, until the
         /// next refresh derives it again from the game (held data / R&D).</summary>
@@ -131,7 +138,7 @@ namespace KSPChatBridge
         /// <summary>A new tour starts with no check marks.</summary>
         internal static void ClearRan(List<TourSite> sites)
         {
-            foreach (var s in sites) foreach (var e in s.Exps) if (e.Ran && !e.Done) { e.Ran = false; e.Gain = e.LiveGain; }
+            foreach (var s in sites) foreach (var e in s.Exps) if (e.Ran) { e.Ran = e.Done; e.Gain = e.LiveGain; }
             OneShots(sites);
         }
 

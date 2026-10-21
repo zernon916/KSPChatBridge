@@ -77,6 +77,38 @@ namespace KSPChatBridge
         }
 
         internal struct P { internal double Lat, Lon; internal P(double a, double b) { Lat = a; Lon = b; } }
+
+        /// <summary>RS7g (Luke Oct 21: "KSC Grass" parked on the runway - it was 300 m west of the runway midpoint ON the centreline, approach
+        /// 40 m north on the shoulder): open grass 180 m south of the runway centreline and 500 m west of its midpoint, i.e. between the
+        /// runway and the Astronaut Complex / Admin, 200+ m from every building and road.</summary>
+        internal const double GrassSouthM = 180, GrassWestM = 500, CreepStepM = 35;
+        internal const int CreepTries = 2;
+        internal static P GrassPoint(double radius)
+        {
+            double mLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5, mLat = KscRunway.LatAt(mLon), la, lo, la2, lo2;
+            NavigationMath.Offset(mLat, mLon, 180, GrassSouthM, radius, out la, out lo);
+            NavigationMath.Offset(la, lo, 270, GrassWestM, radius, out la2, out lo2);
+            return new P(la2, lo2);
+        }
+        static readonly string[] Paved = { "Runway", "LaunchPad", "Crawlerway", "VAB", "SPH", "R&D", "TrackingStation", "AstronautComplex", "MissionControl", "Administration", "FlagPole", "Helipad" };
+        /// <summary>RS7g: did the rover park in the stop's biome? Stock KSC sub-biomes share the facility prefix (VABMainBuilding, R&DWindTunnel ...);
+        /// "KSC" (grass) is any landedAt / biome that is not pavement or a building. No wanted biome (places) = always fine.</summary>
+        internal static bool StopBiomeOk(string wanted, string got)
+        {
+            if (string.IsNullOrEmpty(wanted)) return true;
+            got = (got ?? "").Replace(" ", "");
+            if (wanted == "KSC") { foreach (var p in Paved) if (got.StartsWith(p, StringComparison.OrdinalIgnoreCase)) return false; return true; }
+            return got.StartsWith(wanted, StringComparison.OrdinalIgnoreCase);
+        }
+        /// <summary>RS7g: one creep toward the stop's anchor (building centre / grass point), at most CreepStepM, never inside keepOutM of it
+        /// (building footprint). False when there is nothing useful left to creep (under 5 m).</summary>
+        internal static bool CreepTarget(P here, P anchor, double keepOutM, double radius, out P target)
+        {
+            target = here; double d = D(here, anchor, radius), step = Math.Min(CreepStepM, d - Math.Max(0, keepOutM));
+            if (step < 5) return false;
+            double la, lo; NavigationMath.Offset(here.Lat, here.Lon, NavigationMath.Bearing(here.Lat, here.Lon, anchor.Lat, anchor.Lon), step, radius, out la, out lo);
+            target = new P(la, lo); return true;
+        }
         static double D(P a, P b, double r) { return NavigationMath.Distance(a.Lat, a.Lon, b.Lat, b.Lon, r); }
 
         /// <summary>Waypoints from here to a building: via the KSC hub unless close, ending in front of the building (hub side).</summary>
