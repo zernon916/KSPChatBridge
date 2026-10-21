@@ -182,7 +182,7 @@ namespace KSPChatBridge
             KscRoverWaypoint stop = scienceTourStops[0];
             if (scienceTourRoute.Count == 0)
             {
-                if (!scienceTourKsc) scienceTourRoute.Add(new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon));
+                if (!scienceTourKsc || RoverRoadRoute(stop.ApproachLat, stop.ApproachLon) != null) scienceTourRoute.Add(new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon));   // RS3b: drive_to follows the roads itself
                 else scienceTourRoute.AddRange(KscRoverPolicy.GroundRoute(
                     new KscRoverPolicy.P(vessel.latitude, vessel.longitude),
                     new KscRoverPolicy.P(stop.ApproachLat, stop.ApproachLon),
@@ -289,7 +289,7 @@ namespace KSPChatBridge
         string NextLeg()
         {
             var to = tour[0].Value;
-            var pts = KscRoverPolicy.Route(new KscRoverPolicy.P(vessel.latitude, vessel.longitude), to, tourHub, vessel.mainBody.Radius);
+            var pts = RoverRoadRoute(to.Lat, to.Lon) ?? KscRoverPolicy.Route(new KscRoverPolicy.P(vessel.latitude, vessel.longitude), to, tourHub, vessel.mainBody.Radius);   // RS3b: road polyline
             var parts = new List<string>(); foreach (var p in pts) parts.Add(p.Lat.ToString("0.000000", CultureInfo.InvariantCulture) + "," + p.Lon.ToString("0.000000", CultureInfo.InvariantCulture));
             tourDriving = true;
             return Command("taxi_to", Args("name", string.Join(";", parts.ToArray()), "speed", tourSpeed));

@@ -17,6 +17,7 @@ internal static class RoverTests
         PowerPolicyTests();
         PlacesTests();
         StatusBarTests();
+        RoadTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -129,6 +130,60 @@ internal static class RoverTests
         Check(StatusBarMath.Battery(50, 100) == .5 && double.IsNaN(StatusBarMath.Battery(5, 0)) && StatusBarMath.Battery(150, 100) == 1, "battery fraction");
         Check(StatusBarMath.BatteryBand(.51) == 2 && StatusBarMath.BatteryBand(.5) == 1 && StatusBarMath.BatteryBand(.2) == 1 && StatusBarMath.BatteryBand(.19) == 0 && StatusBarMath.BatteryBand(double.NaN) == -1, "battery colours");
         Check(StatusBarMath.Label(true, .62, .125, true, .8) == "62% 125 ms R  80%" && StatusBarMath.Label(false, 0, 0, false, double.NaN) == "NO LINK  --", "status label");
+    }
+
+    static KscRoverPolicy.P Pp(double lat, double lon) { return new KscRoverPolicy.P(lat, lon); }
+
+    static RoadNet TestRoads()
+    {
+        var fronts = new List<KeyValuePair<string, KscRoverPolicy.P>>
+        {
+            new KeyValuePair<string, KscRoverPolicy.P>("VAB", Pp(-0.0968, -74.6175)),
+            new KeyValuePair<string, KscRoverPolicy.P>("SPH", Pp(-0.0890, -74.6110)),
+            new KeyValuePair<string, KscRoverPolicy.P>("R&D", Pp(-0.1040, -74.6290)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Launch Pad", Pp(-0.0972, -74.5577)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Crawlerway", Pp(-0.0970, -74.5880)),
+            new KeyValuePair<string, KscRoverPolicy.P>("Runway", Pp(KscRunway.LatAt(-74.65), -74.65)),
+            new KeyValuePair<string, KscRoverPolicy.P>("R&D - Wind Tunnel", Pp(-0.1050, -74.6300)),
+        };
+        return RoadNet.Ksc(Pp(-0.0920, -74.6180), fronts, 600000);
+    }
+
+    // RS3b: every driven segment lies on the road network; only the final leg (to an off-road goal) and the first leg (from an off-road start) leave it
+    static void RoadTests()
+    {
+        var net = TestRoads();
+        Check(net.Edges.Count == 2 + 2 + 3 + 2 && net.Edges.Exists(e => e.Kind == "crawlerway") && net.Edges.Exists(e => e.Kind == "runway"), "roads: runway + taxiway + spokes + crawlerway");
+        Check(net.Find("R&D - Wind Tunnel") < 0 && net.Find("Runway") < 0, "roads: R&D sub-buildings and Runway are no nodes");
+        var onRunway = Pp(KscRunway.LatAt(-74.70), -74.70); var vab = Pp(-0.0968, -74.6175);
+        var r = net.Route(onRunway, vab);
+        Check(r != null && Math.Abs(r[r.Count - 1].Lat - vab.Lat) < 1e-9 && Math.Abs(r[r.Count - 1].Lon - vab.Lon) < 1e-9, "roads: runway -> VAB ends at the VAB front");
+        bool all = true; var prev = onRunway;
+        foreach (var q in r) { if (!net.OnRoad(q, 1)) all = false; if (!net.OnRoad(Pp((prev.Lat + q.Lat) / 2, (prev.Lon + q.Lon) / 2), 1)) all = false; prev = q; }
+        Check(all, "roads: runway -> VAB every point and segment on the road");
+        Check(r.Exists(q => Math.Abs(q.Lon - TaxiRoute.ExitLon) < 1e-9) && r.Exists(q => Math.Abs(q.Lat + 0.0920) < 1e-9 && Math.Abs(q.Lon + 74.6180) < 1e-9), "roads: runway -> VAB goes via the runway exit and the hub");
+        double straight = NavigationMath.Distance(onRunway.Lat, onRunway.Lon, vab.Lat, vab.Lon, 600000), drive = net.DriveDistance(onRunway, vab);
+        Check(drive > straight && Math.Abs(drive - net.Length(onRunway, r)) < 1e-6, "roads: driving distance longer than straight line");
+        // off-road goal: 150 m south of the R&D front -> only the final leg leaves the road
+        var site = Pp(-0.1040 - 150 / 10471.98, -74.6290);
+        r = net.Route(onRunway, site);
+        all = true; prev = onRunway;
+        for (int i = 0; i < r.Count - 1; i++) { var q = r[i]; if (!net.OnRoad(q, 1) || !net.OnRoad(Pp((prev.Lat + q.Lat) / 2, (prev.Lon + q.Lon) / 2), 1)) all = false; prev = q; }
+        double last = NavigationMath.Distance(r[r.Count - 2].Lat, r[r.Count - 2].Lon, site.Lat, site.Lon, 600000);
+        Check(all && !net.OnRoad(site, 3), "roads: off-road site - all legs but the last on the road");
+        Check(last > 100 && last < 200, "roads: off-road site - last leg short (~150 m)");
+        // off-road start: first point is the projection onto the road
+        var grass = Pp(-0.0990, -74.6400);
+        r = net.Route(grass, vab);
+        Check(net.OnRoad(r[0], 1) && !net.OnRoad(grass, 3), "roads: off-road start joins the nearest road first");
+        // shortest path: VAB -> pad along the crawlerway, not back through the hub
+        r = net.Route(vab, Pp(-0.0972, -74.5577));
+        Check(r.Exists(q => Math.Abs(q.Lon + 74.5880) < 1e-9) && !r.Exists(q => Math.Abs(q.Lon + 74.6180) < 1e-9), "roads: VAB -> pad via the crawlerway");
+        Check(net.Route(vab, Pp(vab.Lat + 30 / 10471.98, vab.Lon)).Count == 1, "roads: close goal drives straight");
+        var back = RoadNet.FromJson(net.ToJson(), 600000);
+        Check(back != null && back.Nodes.Count == net.Nodes.Count && back.Edges.Count == net.Edges.Count && back.Edges[back.Edges.Count - 1].Kind == net.Edges[net.Edges.Count - 1].Kind, "roads: json round trip");
+        Check(new RoadNet().Route(onRunway, vab) == null, "roads: no network -> null route");
+        Check(Math.Abs(RoadNet.CornerSpeed(20, 90, 0) - 6) < 1e-9 && RoadNet.CornerSpeed(20, 10, 0) == 20 && RoadNet.CornerSpeed(20, 90, 500) == 20, "roads: corner speed");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

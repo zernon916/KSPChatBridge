@@ -45,6 +45,8 @@ namespace KSPChatBridge
 
         static readonly List<KscRoverWaypoint> points = new List<KscRoverWaypoint>();
         internal static IList<KscRoverWaypoint> Points { get { return points.AsReadOnly(); } }
+        /// <summary>RS3b: KSC hub (facility centroid) of the last Refresh; Version bumps on every Refresh.</summary>
+        internal static double HubLat = double.NaN, HubLon = double.NaN; internal static int Version;
 
         internal static bool Refresh(CelestialBody body)
         {
@@ -79,6 +81,7 @@ namespace KSPChatBridge
             }
             if (hubCount == 0) { hubLon = (KscRunway.Lon09 + KscRunway.Lon27) * .5; hubLat = KscRunway.LatAt(hubLon); }
             else { hubLat /= hubCount; hubLon /= hubCount; }
+            HubLat = hubLat; HubLon = hubLon; Version++;   // RS3b: road network anchor
 
             var facilityPoints = new Dictionary<string, KscRoverWaypoint>(StringComparer.OrdinalIgnoreCase);
             foreach (Site site in Facilities)

@@ -759,6 +759,8 @@ namespace KSPChatBridge
                         }
                         targetSpeed = KscRoverPolicy.ApproachSpeed(targetSpeed, distance);
                         roverHeading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon);
+                        double roadLeft;   // RS3b: on a KSC road route steer along the centreline instead of straight at the goal
+                        if (RoverRoadSteer(out roadLeft)) { destinationDistance = roadLeft; targetSpeed = Math.Min(KscRoverPolicy.ApproachSpeed(roverTargetSpeed, roadLeft), roverRoadCap); }
                         roverHeadingEnabled = true;
                     }
                     RoverProfile learnedRover = CurrentRoverProfile();
@@ -1625,7 +1627,8 @@ namespace KSPChatBridge
                     vessel.ctrlState.mainThrottle = FlightInputHandler.state.mainThrottle = 0;
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     ChatLog.Write("rover", "drive to " + roverDestination + " at " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
-                    return "Rover driving to " + roverDestination + " at up to " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s.";
+                    string roadNote = RoverRoadAttach(roverDestinationLat, roverDestinationLon);   // RS3b: KSC roads
+                    return "Rover driving to " + roverDestination + " at up to " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s." + roadNote;
                 case "abort":
                     if (plan != null) plan.Pause();
                     bool descending = mode == "vertical landing";
