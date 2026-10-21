@@ -25,6 +25,18 @@ namespace KSPChatBridge
 
         /// <summary>Experiment requirements (ExperimentUsageReqs: 1 control, 2 crew in vessel, 4 crew in part, 8 scientist) and
         /// atmosphere; unrunnable ones are skipped silently (no "cab needs to be manned" spam).</summary>
+        /// <summary>RS7n (Luke Oct 21 03:44: every transmission "R&D received ... +0.0 sci, subject now 0.0/8.0", stock "+10 data on Crew
+        /// Report from Runway." with no reward): stock gatherData builds ScienceData with transmitBonus = 0 and only the results dialog page
+        /// (ExperimentResultDialogPage) sets it to 1 + comm bonus. Our silent gather never opens that page, and the transmitter credits
+        /// dataAmount x scienceValueRatio at xmit = baseTransmitValue x transmitBonus = 1.0 (Science-Full-Transmit) x 0 = nothing.
+        /// Before transmitting: bonus 0 -> 1, base 0 -> the module's xmitDataScalar (Science-Full-Transmit makes that 1.0 = full value).</summary>
+        internal static bool FixTransmit(ref float baseTransmit, ref float bonus, float moduleXmit)
+        {
+            bool changed = false;
+            if (!(baseTransmit > 0) && moduleXmit > 0) { baseTransmit = moduleXmit; changed = true; }
+            if (!(bonus > 0)) { bonus = 1f; changed = true; }
+            return changed;
+        }
         internal static bool CanRun(int usageMask, int vesselCrew, int partCrew, bool scientist, bool controllable, bool needAtmo, bool inAtmo)
         {
             if (needAtmo && !inAtmo) return false;

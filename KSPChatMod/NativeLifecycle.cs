@@ -342,6 +342,12 @@ namespace KSPChatBridge
                 if (tx == null) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (no usable antenna)"); continue; }
                 double need = mits * tx.DataResourceCost;
                 if (amt - need < reserve) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (low EC: need " + need.ToString("0") + " + reserve " + reserve.ToString("0") + ", have " + amt.ToString("0") + ")"); continue; }
+                foreach (var d in data)   // RS7n: silent-gathered data has transmitBonus 0 (only the stock dialog sets it) -> transmits for 0 science
+                {
+                    if (d == null) continue; float b0 = d.baseTransmitValue, x0 = d.transmitBonus;
+                    if (SciencePolicy.FixTransmit(ref d.baseTransmitValue, ref d.transmitBonus, e.xmitDataScalar))
+                        ChatLog.Write("science", "[science] " + id + ": transmit value fixed (base " + b0.ToString("0.##") + "->" + d.baseTransmitValue.ToString("0.##") + ", bonus " + x0.ToString("0.##") + "->" + d.transmitBonus.ToString("0.##") + ")");
+                }
                 tx.TransmitData(new List<ScienceData>(data));
                 foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) sentSubjects.Add(d.subjectID);   // RS7l
                 checklistDirty = true;

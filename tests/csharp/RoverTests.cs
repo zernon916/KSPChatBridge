@@ -29,6 +29,7 @@ internal static class RoverTests
         Rs7jTests();
         Rs7kTests();
         Rs7lTests();
+        Rs7nTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -429,6 +430,17 @@ internal static class RoverTests
         var sites = new List<TourSite> { new TourSite { Key = "Runway", Name = "Runway" }, new TourSite { Key = "KSC Grass", Name = "KSC Grass (Shores)" } };
         var left = TourChecklist.NotRun(sites, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "runway" });
         Check(left.Count == 1 && left[0].Key == "KSC Grass", "rs7l: a restarted tour skips sites already run");
+    }
+
+    // RS7n: silent-gathered ScienceData (transmitBonus 0) must transmit at full value (Science-Full-Transmit xmit 1.0)
+    static void Rs7nTests()
+    {
+        float b = 1f, x = 0f; bool ch = SciencePolicy.FixTransmit(ref b, ref x, 1f);
+        Check(ch && b == 1f && x == 1f && b * x == 1f, "rs7n: stock gatherData bonus 0 -> transmitter xmit 1.0 (full value with Science-Full-Transmit)");
+        b = 0f; x = 0f; SciencePolicy.FixTransmit(ref b, ref x, .5f);
+        Check(b == .5f && x == 1f, "rs7n: base 0 -> the module's xmitDataScalar");
+        b = 1f; x = 1.2f; ch = SciencePolicy.FixTransmit(ref b, ref x, 1f);
+        Check(!ch && x == 1.2f, "rs7n: a dialog-set bonus is kept");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)
