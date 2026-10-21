@@ -162,6 +162,12 @@ namespace KSPChatBridge
                     float w = body.width - 26, y = 0;
                     if (!string.IsNullOrEmpty(tabletRoverNote)) y += TextCard(new Rect(0, y, w, 0), "LAST COMMAND", new List<string> { tabletRoverNote }) + gap;
                     if (!string.IsNullOrEmpty(NativeFlightController.RoverAlert)) y += TextCard(new Rect(0, y, w, 0), "ROVER ALERT", new List<string> { NativeFlightController.RoverAlert }) + gap;   // RS7b
+                    if (NativeFlightController.RoverEvaWaiting)
+                    {   // RS7h: the EVA kerbal could not board by itself
+                        float bh = Mathf.Max(34, tabletFont * 2f);
+                        if (TabletUi.Button(new Rect(0, y, w * .5f, bh), "RESUME TOUR", false, true)) tabletRoverNote = NativeFlightController.RoverEvaResume();
+                        y += bh + gap;
+                    }
                     float rh = Mathf.Max(34, tabletFont * 2f), cb = rh - 6;
                     if (sites.Count == 0) y += TextCard(new Rect(0, y, w, 0), "SCIENCE SITES", new List<string> { "No sites here: land the rover near KSC or mark PLACES on this body." }) + gap;
                     foreach (var s in sites)

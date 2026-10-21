@@ -24,6 +24,7 @@ internal static class RoverTests
         RanTests();
         Rs7cdTests();
         Rs7fgTests();
+        RoverEvaTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -286,6 +287,35 @@ internal static class RoverTests
         KscRoverPolicy.P c; var here = Pp(-0.0793, -74.6167); var vab = Pp(-0.096836, -74.619480);
         Check(KscRoverPolicy.CreepTarget(here, vab, 45, R, out c) && Math.Abs(NavigationMath.Distance(here.Lat, here.Lon, c.Lat, c.Lon, R) - KscRoverPolicy.CreepStepM) < 1 && NavigationMath.Distance(c.Lat, c.Lon, vab.Lat, vab.Lon, R) > 45, "rs7g: creep 35 m toward the stop, outside its footprint");
         Check(!KscRoverPolicy.CreepTarget(Pp(-0.0993, -74.6232), vab, 45, R, out c), "rs7g: no creep into a building footprint");
+    }
+
+    // RS7h: auto-EVA science - when to EVA, who goes, settle / science / boarding timing, manual fallback, never leave a kerbal outside
+    static void RoverEvaTests()
+    {
+        Check(RoverEvaPolicy.ShouldEva(true, 1, 24, 0, true) && RoverEvaPolicy.ShouldEva(true, 1, 0, 11.2, false) && !RoverEvaPolicy.ShouldEva(true, 1, 24, 0, false), "eva: sample needs R&D, report alone is enough");
+        Check(!RoverEvaPolicy.ShouldEva(false, 1, 24, 11.2, true) && !RoverEvaPolicy.ShouldEva(true, 0, 24, 11.2, true) && !RoverEvaPolicy.ShouldEva(true, 2, 0, 0, true), "eva: off / no cabin crew / nothing left = skip");
+        Check(RoverEvaPolicy.PickCrew(new[] { "Pilot", "Engineer", "Scientist" }) == 2 && RoverEvaPolicy.PickCrew(new[] { "Pilot" }) == 0 && RoverEvaPolicy.PickCrew(new string[0]) == -1, "eva: scientist first, else anyone");
+        var r = new RoverEvaRun(); r.Spawned(0, false, "hatch obstructed");
+        Check(!r.Busy && r.Why == "hatch obstructed", "eva: spawn failure keeps nobody outside, tour goes on");
+        r = new RoverEvaRun(); r.Spawned(0, true, null);
+        Check(r.Busy && r.Tick(.5, true, true, 2, false) == EvaAction.None, "eva: waits a moment even when settled");
+        Check(r.Tick(1.2, true, true, 2, false) == EvaAction.RunScience && r.Phase == EvaPhase.Science, "eva: settled -> science");
+        Check(r.Tick(1.3, true, true, 2, false) == EvaAction.None, "eva: science phase waits for the caller");
+        r.ScienceDone(1.3);
+        Check(r.Tick(2, true, true, 2, false) == EvaAction.None && r.Tick(2.9, true, true, 2, false) == EvaAction.TryBoard && r.BoardAttempts == 1, "eva: first boarding try after the data is in");
+        Check(r.Tick(3.5, true, true, 2, true) == EvaAction.Finish && !r.Busy, "eva: aboard -> finish");
+        r = new RoverEvaRun(); r.Spawned(0, true, null);
+        Check(r.Tick(9, true, false, 2, false) == EvaAction.None && r.Tick(10.1, true, false, 2, false) == EvaAction.RunScience, "eva: settle timeout runs the science anyway");
+        r.ScienceDone(10.1); int tries = 0; EvaAction a = EvaAction.None;
+        for (double t = 10.2; t < 20 && a != EvaAction.Alert; t += .25) { a = r.Tick(t, true, true, 2, false); if (a == EvaAction.TryBoard) tries++; }
+        Check(a == EvaAction.Alert && tries == RoverEvaRun.BoardTries && r.Phase == EvaPhase.Manual && r.Busy && r.Why.Contains("boarding"), "eva: 3 failed boardings -> manual alert, rover stays parked");
+        Check(!r.Resume(true) && r.Busy, "eva: Resume refused while the kerbal is outside");
+        Check(r.Tick(30, true, true, 2, true) == EvaAction.Finish && !r.Busy, "eva: player boarded by hand -> tour resumes");
+        r = new RoverEvaRun(); r.Spawned(0, true, null);
+        Check(r.Tick(2, true, false, 12, false) == EvaAction.Alert && r.Why.Contains("drifted"), "eva: kerbal drifting > 10 m -> manual");
+        Check(r.Resume(false) && !r.Busy, "eva: Resume once nobody is outside");
+        r = new RoverEvaRun(); r.Spawned(0, true, null);
+        Check(r.Tick(2, false, false, 0, false) == EvaAction.None && r.Tick(3.5, false, false, 0, false) == EvaAction.Alert, "eva: kerbal never found -> manual");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

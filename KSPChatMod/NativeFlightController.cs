@@ -378,6 +378,7 @@ namespace KSPChatBridge
         {
             Vessel active = FlightGlobals.ActiveVessel;
             if (vessel == active) return;
+            if (RoverEvaHoldsBind(active)) return;   // RS7h: our kerbal is out on EVA - stay on the rover (tour + parking)
             Stop();
             if (vessel != null) vessel.OnFlyByWire -= Fly;
             vessel = active; originals.Clear(); liftMeter = new LiftMeter(); dtMeter = new DragThrustMeter(); autoLiftDone = autoThrustDone = false; autoPrevSpd = autoAcc = autoPrevVs = double.NaN; autoLand = null;   /* AUTO1 */ parkingSet = parkingReleased = false; ResetLearnState();   // revert / reload / switch: no Learn state or menu cursor survives onto another vessel object

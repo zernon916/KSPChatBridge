@@ -21,7 +21,7 @@ namespace KSPChatBridge
         static Def B(string g, string k, string l, bool def) { return new Def { Group = g, Key = k, Label = l, Unit = "", Bool = true, Min = 0, Max = 1, Default = def ? 1 : 0 }; }
         static Def C(string g, string k, string l, double def, params string[] choices) { return new Def { Group = g, Key = k, Label = l, Unit = "", Choices = choices, Small = 1, Large = 1, Min = 0, Max = choices.Length - 1, Default = def }; }
         /// <summary>RS1: per-craft ROVER switch (drawn at the top of AUTOPILOT / CRAFT, not as a row). OFF/unset = plane pages (unchanged).</summary>
-        internal const string RoverKey = "vehicle_rover", RoverTransmit = "rover_transmit", RoverScienceBy = "rover_science_by", RoverChargeWarp = "rover_charge_warp", RoverMinScience = "rover_min_science";
+        internal const string RoverKey = "vehicle_rover", RoverTransmit = "rover_transmit", RoverScienceBy = "rover_science_by", RoverChargeWarp = "rover_charge_warp", RoverMinScience = "rover_min_science", RoverAutoEva = "rover_auto_eva";
         /// <summary>RS1: rows shown on CRAFT / DETAILS - plane groups when the ROVER switch is off, ROVER groups when on (VEHICLE is the header switch).</summary>
         internal static bool Visible(Def d, bool rover) { return d != null && d.Group != "VEHICLE" && d.Rover == rover; }
         /// <summary>TAB-CRAFT1 per-craft tuning (blank = auto). Groups SPEEDS / APPROACH / TOUCHDOWN / ROLLOUT / TAKEOFF.</summary>
@@ -38,7 +38,7 @@ namespace KSPChatBridge
             B("VEHICLE", RoverKey, "Rover", false),   /* RS1 */
             D("ROVER DRIVE", "rover_max_speed", "Off-road speed cap", "m/s", .5, 2, 1, 40, 6), D("ROVER DRIVE", "rover_road_speed", "KSC road speed cap", "m/s", .5, 2, 1, 40, 12), D("ROVER DRIVE", "rover_runway_speed", "Runway speed cap", "m/s", .5, 2, 1, 40, 20),
             D("ROVER DRIVE", "rover_slope_deg", "Max slope", "deg", 1, 5, 3, 40, 15), D("ROVER DRIVE", "rover_roll_slow_deg", "Slow down above roll", "deg", 1, 5, 5, 30, 20), B("ROVER DRIVE", "rover_learn_speed", "Learn faster safe speeds", true),
-            D("ROVER SCIENCE", RoverMinScience, "Min science per experiment", "sci", .1, 1, 0, 50, 0), C("ROVER SCIENCE", RoverTransmit, "Transmit science", 2, "ALWAYS", "IF >= 60%", "IF >= 40%", "SAVE"), C("ROVER SCIENCE", RoverScienceBy, "Who runs the experiments", 0, "OURS", "OTHER MODS"),
+            D("ROVER SCIENCE", RoverMinScience, "Min science per experiment", "sci", .1, 1, 0, 50, 0), C("ROVER SCIENCE", RoverTransmit, "Transmit science", 2, "ALWAYS", "IF >= 60%", "IF >= 40%", "SAVE"), C("ROVER SCIENCE", RoverScienceBy, "Who runs the experiments", 0, "OURS", "OTHER MODS"), B("ROVER SCIENCE", RoverAutoEva, "Auto EVA science", true),   /* RS7h */
             D("ROVER POWER", "rover_low_ec_pct", "Stop and charge below", "%", 1, 5, 5, 90, 25), D("ROVER POWER", "rover_resume_ec_pct", "Resume driving at", "%", 1, 5, 20, 100, 80), D("ROVER POWER", "rover_reserve_pct", "Fuel reserve margin", "%", 1, 5, 0, 100, 20),
             C("ROVER POWER", RoverChargeWarp, "Time warp while charging", 0, "OFF", "x2", "x3", "x4"),
         };
@@ -93,6 +93,7 @@ namespace KSPChatBridge
             { RotatePitch, "Nose-up pitch held during the takeoff rotation." },
             { "climb_speed", "Speed held in the climb after takeoff." },
             { RoverKey, "ROVER = rover pages (Drive, Science tour, Places) and rover settings; PLANE = the plane pages." },
+            { RoverAutoEva, "At each tour stop a crew member (scientist first) steps out, takes the surface sample and EVA report, and boards again. OFF = EVA science is skipped." },
             { "rover_max_speed", "Speed cap off-road while the autopilot drives (raised by itself when the rover proves stable; never limits manual driving)." },
             { "rover_road_speed", "Speed cap on KSC roads and the Crawlerway while the autopilot drives." },
             { "rover_runway_speed", "Speed cap on runways while the autopilot drives." },
