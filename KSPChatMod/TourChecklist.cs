@@ -15,6 +15,7 @@ namespace KSPChatBridge
         internal bool On, OneShot, Blocked;   // Blocked: one-shot that runs at a better checked site instead
         internal bool Ran;                    // RS7b: ran on this tour - check mark on the right, gain shown as 0
         internal bool UserOff;                // RS7c: unticked by the player (zero-gain rows are off without being unticked)
+        internal bool Done;                   // RS7e: live game state - subject already earned in R&D or its data held on board (never saved)
         internal double LiveGain;             // R&D value before the ran zeroing
         internal int Modules = 1;             // unused one-shot modules on board
         internal string RunsAt = "";
@@ -38,23 +39,21 @@ namespace KSPChatBridge
     {
         internal readonly Dictionary<string, bool> Sites = new Dictionary<string, bool>();
         internal readonly HashSet<string> Off = new HashSet<string>();
-        internal readonly HashSet<string> Ran = new HashSet<string>();   // RS7b: "site|exp" run on this rover's tour
+        // RS7e: no "ran" set any more - check marks are derived from the game every refresh, so a revert / quickload cannot leave stale marks
         internal static string K(TourSite s, TourExp e) { return s.Key + "|" + e.Id; }
 
         internal Dictionary<string, object> ToData()
         {
             var s = new Dictionary<string, object>(); foreach (var kv in Sites) s[kv.Key] = kv.Value;
             var o = new Dictionary<string, object>(); foreach (var k in Off) o[k] = true;
-            var rn = new Dictionary<string, object>(); foreach (var k in Ran) rn[k] = true;
-            return new Dictionary<string, object> { { "sites", s }, { "off", o }, { "ran", rn } };
+            return new Dictionary<string, object> { { "sites", s }, { "off", o } };
         }
         internal static TourSelection FromData(object data)
         {
             var r = new TourSelection(); var d = data as Dictionary<string, object>; if (d == null) return r; object o;
             if (d.TryGetValue("sites", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) if (kv.Value is bool) r.Sites[kv.Key] = (bool)kv.Value;
             if (d.TryGetValue("off", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) r.Off.Add(kv.Key);
-            if (d.TryGetValue("ran", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) r.Ran.Add(kv.Key);
-            return r;
+            return r;   // RS7e: an old saved "ran" key is ignored (dropped on the next save)
         }
     }
 
@@ -65,7 +64,7 @@ namespace KSPChatBridge
         {
             foreach (var s in sites)
             {
-                foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = sel.Ran.Contains(TourSelection.K(s, e)); }
+                foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = e.Done; }   // RS7e: derived, not saved
                 bool on; s.On = sel.Sites.TryGetValue(s.Key, out on) ? on : s.Total > 0;
                 foreach (var e in s.Exps) { e.UserOff = sel.Off.Contains(TourSelection.K(s, e)); e.On = s.On && e.Gain > 0 && !e.UserOff; if (e.Ran) e.Gain = 0; }   // RS7b: ran rows count 0 (totals, sorting)
             }
@@ -114,21 +113,25 @@ namespace KSPChatBridge
         }
         internal static void SetAll(List<TourSite> sites, bool on, TourSelection sel) { foreach (var s in sites) SetSite(sites, s, on, sel); }
 
-        /// <summary>RS7b: experiments that ran at a site on the tour: check mark, gain 0, out of the totals; saved in the selection.</summary>
-        internal static void MarkRan(List<TourSite> sites, string siteKey, IEnumerable<string> expIds, TourSelection sel)
+        /// <summary>RS7e: subject done = science already earned in R&D (within 1% / 0.05 of the cap) or its data held on board.</summary>
+        internal static bool DoneFrom(double earned, double cap, bool heldOnBoard)
+        {
+            return heldOnBoard || (cap > 0 && !double.IsNaN(earned) && earned >= cap - Math.Max(.05, cap * .01));
+        }
+        /// <summary>RS7b: experiments that ran at a site on the tour: check mark, gain 0, out of the totals. RS7e: in memory only, until the
+        /// next refresh derives it again from the game (held data / R&D).</summary>
+        internal static void MarkRan(List<TourSite> sites, string siteKey, IEnumerable<string> expIds)
         {
             foreach (var id in expIds)
             {
-                sel.Ran.Add(siteKey + "|" + id);
                 foreach (var s in sites) if (s.Key == siteKey) foreach (var e in s.Exps) if (e.Id == id) { e.Ran = true; e.Gain = 0; }
             }
             OneShots(sites);
         }
         /// <summary>A new tour starts with no check marks.</summary>
-        internal static void ClearRan(List<TourSite> sites, TourSelection sel)
+        internal static void ClearRan(List<TourSite> sites)
         {
-            sel.Ran.Clear();
-            foreach (var s in sites) foreach (var e in s.Exps) if (e.Ran) { e.Ran = false; e.Gain = e.LiveGain; }
+            foreach (var s in sites) foreach (var e in s.Exps) if (e.Ran && !e.Done) { e.Ran = false; e.Gain = e.LiveGain; }
             OneShots(sites);
         }
 

@@ -222,7 +222,7 @@ internal static class RoverTests
         TourChecklist.Apply(sites, sel);
         Check(TourChecklist.RunIds(s).SetEquals(new[] { "crew" }), "rs7c: run ids keep the ticked rows only");
         Check(TourChecklist.StopIds(s).SetEquals(new[] { "crew", "mysteryGoo", "evaReport" }), "rs7c: stop tries zero-predicted Goo / EVA report, not unticked rows or one-shots");
-        TourChecklist.MarkRan(sites, "Runway", new[] { "mysteryGoo" }, sel); TourChecklist.Apply(sites, sel);
+        TourChecklist.MarkRan(sites, "Runway", new[] { "mysteryGoo" });
         Check(!TourChecklist.StopIds(s).Contains("mysteryGoo"), "rs7c: a row that ran at this site is not rerun there");
 
         // Oct 21 log: Mission Control front -0.079329,-74.616739 -> hub (VAB front) -0.0994242,-74.6231261 ran into VAB_lev1 (VAB -0.096836,-74.619480)
@@ -339,19 +339,32 @@ internal static class RoverTests
     {
         var sites = TourSample(); var sel = new TourSelection(); TourChecklist.Apply(sites, sel);
         double before = TourChecklist.CheckedTotal(sites); var vab = sites.First(s => s.Name == "VAB");
-        TourChecklist.MarkRan(sites, "VAB", new[] { "temp" }, sel);
+        TourChecklist.MarkRan(sites, "VAB", new[] { "temp" });
         var temp = vab.Exps.First(e => e.Id == "temp");
         Check(temp.Ran && temp.Gain == 0 && temp.Dim && !temp.Runnable, "ran: row marked, gain 0, dimmed");
         Check(Math.Abs(TourChecklist.CheckedTotal(sites) - (before - 2)) < 1e-9 && Math.Abs(vab.Total - 6) < 1e-9, "ran: removed from site and top-bar totals");
-        TourChecklist.MarkRan(sites, "VAB", new[] { "goo" }, sel);
+        TourChecklist.MarkRan(sites, "VAB", new[] { "goo" });
         Check(!sites.First(s => s.Name == "Pad").Exps.First(e => e.Id == "goo").Blocked, "ran: a used one-shot frees the next best site");
         Check(!TourChecklist.RouteSites(sites).Exists(s => s.Name == "VAB"), "ran: a site with everything run is not visited again");
         var back = TourSelection.FromData(MiniJson.Deserialize(MiniJson.Serialize(new Dictionary<string, object> { { "x", sel.ToData() } }))["x"]);
         var again = TourSample(); TourChecklist.Apply(again, back);
         var t2 = again.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp");
-        Check(t2.Ran && t2.Gain == 0 && t2.LiveGain == 2 && again.First(s => s.Name == "VAB").Exps[again.First(s => s.Name == "VAB").Exps.Count - 1].Ran, "ran: persisted and sorted to the bottom");
-        TourChecklist.ClearRan(again, back);
-        Check(!t2.Ran && t2.Gain == 2 && back.Ran.Count == 0, "ran: a new tour clears the marks");
+        // RS7e (Luke Oct 21: revert removed the science but the marks stayed): ran marks are not saved; a reloaded rover starts unmarked
+        Check(!sel.ToData().ContainsKey("ran") && !t2.Ran && t2.Gain == 2 && TourChecklist.RouteSites(again).Exists(s => s.Name == "VAB"), "rs7e: ran marks are not persisted - after a revert nothing is ran");
+        var legacy = TourSelection.FromData(new Dictionary<string, object> { { "off", new Dictionary<string, object> { { "VAB|baro", true } } }, { "ran", new Dictionary<string, object> { { "VAB|temp", true } } } });
+        var old = TourSample(); TourChecklist.Apply(old, legacy);
+        Check(!old.Any(s => s.Exps.Any(e => e.Ran)) && legacy.Off.Contains("VAB|baro") && !legacy.ToData().ContainsKey("ran"), "rs7e: an old saved ran set is ignored, unticks kept");
+        // derived from the game: earned in R&D or held on board
+        Check(TourChecklist.DoneFrom(9.6, 9.6, false) && TourChecklist.DoneFrom(9.58, 9.6, false) && !TourChecklist.DoneFrom(4, 9.6, false) && !TourChecklist.DoneFrom(0, 0, false)
+            && TourChecklist.DoneFrom(0, 9.6, true) && TourChecklist.DoneFrom(double.NaN, 0, true) && !TourChecklist.DoneFrom(double.NaN, 9.6, false), "rs7e: done = earned to the cap or held on board");
+        var live = TourSample(); live.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp").Done = true; TourChecklist.Apply(live, back);
+        var t3 = live.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp");
+        Check(t3.Ran && t3.Gain == 0 && t3.LiveGain == 2, "rs7e: done subject shows the check mark, gain 0");
+        TourChecklist.ClearRan(live); Check(t3.Ran, "rs7e: a new tour keeps marks the game says are done");
+        var reverted = TourSample(); TourChecklist.Apply(reverted, back);
+        Check(!reverted.Any(s => s.Exps.Any(e => e.Ran)), "rs7e: same rover after a revert (nothing earned / held) shows no marks");
+        TourChecklist.MarkRan(again, "VAB", new[] { "temp" }); TourChecklist.ClearRan(again);
+        Check(!t2.Ran && t2.Gain == 2, "ran: a new tour clears in-memory marks");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

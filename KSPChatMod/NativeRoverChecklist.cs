@@ -92,7 +92,8 @@ namespace KSPChatBridge
                     }
                     bool onBoard = sci.SubjectId.Length > 0 && stored.Contains(sci.SubjectId);
                     double gain = sci.Available && usable > 0 && !onBoard && sci.Value > minSci ? Math.Round(sci.Value, 1) : 0;
-                    site.Exps.Add(new TourExp { Id = g.Key, Title = sci.Experiment.experimentTitle ?? g.Key, Gain = gain, OneShot = oneShot && !scientist && usable > 0, Modules = Math.Max(1, usable) });
+                    bool done = TourChecklist.DoneFrom(double.NaN, 0, onBoard) || SubjectEarned(sci.SubjectId);   // RS7e: live, never saved
+                    site.Exps.Add(new TourExp { Id = g.Key, Title = sci.Experiment.experimentTitle ?? g.Key, Gain = gain, OneShot = oneShot && !scientist && usable > 0, Modules = Math.Max(1, usable), Done = done });
                 }
                 sites.Add(site);
             }
@@ -103,10 +104,27 @@ namespace KSPChatBridge
         void ChecklistMarkRan(string site, List<string> ids)
         {
             if (ids == null || ids.Count == 0 || vessel == null) return;
-            TourChecklist.MarkRan(checklist, site, ids, ChecklistSelection()); ChecklistSave(); checklistDirty = true;
+            TourChecklist.MarkRan(checklist, site, ids); checklistDirty = true;   // RS7e: not saved - the next refresh derives it from the game
             ChatLog.Write("rover", "checklist: ran at " + site + ": " + string.Join(", ", ids.ToArray()));
         }
-        void ChecklistClearRan() { if (vessel == null) return; TourChecklist.ClearRan(checklist, ChecklistSelection()); ChecklistSave(); checklistDirty = true; }
+        void ChecklistClearRan() { if (vessel == null) return; TourChecklist.ClearRan(checklist); checklistDirty = true; }
+
+        /// <summary>RS7e: revert / quickload / scene load / vessel switch - drop every in-memory check mark and tour visit, reload the saved
+        /// selection; the next refresh derives the marks from the game state that is now loaded.</summary>
+        void ChecklistResetLive(bool tour)
+        {
+            checklist = new List<TourSite>(); checklistDirty = true; checklistAt = -100; checklistSel = null;
+            if (tour) { scienceTourVisited.Clear(); }
+        }
+        void OnChecklistGameLoad(ConfigNode n) { ChecklistResetLive(true); }
+        void OnChecklistFlightReady() { ChecklistResetLive(true); }
+        void OnChecklistVesselChange(Vessel v) { ChecklistResetLive(false); }
+        bool SubjectEarned(string subjectId)
+        {
+            if (string.IsNullOrEmpty(subjectId) || ResearchAndDevelopment.Instance == null) return false;
+            var sub = ResearchAndDevelopment.GetSubjectByID(subjectId); if (sub == null) return false;
+            return TourChecklist.DoneFrom(sub.science, sub.scienceCap, false);
+        }
 
         string StartChecklistTour(double speed)
         {

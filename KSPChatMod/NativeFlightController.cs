@@ -336,7 +336,7 @@ namespace KSPChatBridge
             instance = this;
             MfdNav.LearnRunning = () => NativeFlightController.LearnIsRunning;
             MfdNav.LearnRover = () => NativeFlightController.ActiveRover;
-            GameEvents.onPartDie.Add(OnPartDie);
+            GameEvents.onPartDie.Add(OnPartDie); GameEvents.onGameStateLoad.Add(OnChecklistGameLoad); GameEvents.onFlightReady.Add(OnChecklistFlightReady); GameEvents.onVesselChange.Add(OnChecklistVesselChange);   // RS7e: checklist marks re-derived after revert / load / switch
             NativeCommands.StatusPathProvider = () => Path.Combine(KSPUtil.ApplicationRootPath,
                 "GameData/KSPChatBridge/PluginData/native_control.json");
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
@@ -1972,6 +1972,6 @@ namespace KSPChatBridge
             vessel.ctrlState.pitchTrim = 0; SyncTrim();   // no leftover nose-up trim on the roll
             takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); tground = new TakeoffGround(vessel.latitude, vessel.longitude, FlightGlobals.ship_heading); tgHdgPrev = double.NaN; return StartRotorMode("takeoff");
         }
-        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
+        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); GameEvents.onGameStateLoad.Remove(OnChecklistGameLoad); GameEvents.onFlightReady.Remove(OnChecklistFlightReady); GameEvents.onVesselChange.Remove(OnChecklistVesselChange); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
     }
 }
