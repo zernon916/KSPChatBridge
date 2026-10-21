@@ -31,6 +31,7 @@ internal static class RoverTests
         Rs7lTests();
         Rs7nTests();
         Rs7oTests();
+        Rs7pTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -461,6 +462,26 @@ internal static class RoverTests
         var vabLine = new[] { Pp(-0.0967, -74.6320), Pp(-0.0967, -74.6070) };
         Check(!RoverShortcut.Take(vabLine[0], vabLine[1], 5000, keep, R), "rs7o: a line across the VAB keep-out is refused");
         Check(Math.Abs(RoverShortcut.SegDistM(Pp(0, 0), Pp(0, .01), Pp(.001, .005), R) - .001 * Math.PI / 180 * R) < .5, "rs7o: segment distance");
+    }
+
+    // RS7p: auto-EVA runs EVA Science with a kit carrier; holds boarding for its animation; data fixed to full transmit value
+    static void Rs7pTests()
+    {
+        Check(RoverEvaPolicy.ShouldEva(true, 2, 0, 0, true, 20, true) && !RoverEvaPolicy.ShouldEva(true, 2, 0, 0, true, 20, false) && !RoverEvaPolicy.ShouldEva(true, 2, 0, 0, true, 0, true), "rs7p: EVA for EVA Science alone only with a kit carrier and science left");
+        Check(RoverEvaPolicy.ShouldEva(true, 1, 24, 0, true), "rs7p: old callers unchanged");
+        var tr = new List<string> { "Pilot", "Scientist", "Engineer", "Scientist" };
+        Check(RoverEvaPolicy.PickCrew(tr, new List<bool> { false, false, true, true }, true) == 3, "rs7p: a scientist with the kit first");
+        Check(RoverEvaPolicy.PickCrew(tr, new List<bool> { false, false, true, false }, true) == 2, "rs7p: else any kit carrier");
+        Check(RoverEvaPolicy.PickCrew(tr, new List<bool> { false, false, true, false }, false) == 1 && RoverEvaPolicy.PickCrew(tr, new List<bool> { false, false, false, false }, true) == 1, "rs7p: no EVA Science wanted / no kit = scientist as before");
+        var r = new RoverEvaRun(); r.Spawned(0, true, ""); r.Tick(1.5, true, true, 1, false); r.ScienceDone(2, 25);
+        Check(r.Holding(10) && r.Tick(10, true, true, 1, false) == EvaAction.None, "rs7p: boarding waits for the EVA Science data");
+        r.DataReady(12);
+        Check(!r.Holding(12) && r.Tick(12, true, true, 1, false) == EvaAction.TryBoard, "rs7p: data in -> board at once");
+        var r2 = new RoverEvaRun(); r2.Spawned(0, true, ""); r2.Tick(1.5, true, true, 1, false); r2.ScienceDone(2, 25);
+        Check(r2.Tick(26, true, true, 1, false) == EvaAction.None && r2.Tick(28.6, true, true, 1, false) == EvaAction.TryBoard, "rs7p: no data -> boards after the hold anyway (never left outside)");
+        Check(r2.Tick(29, true, true, 15, false) == EvaAction.Alert, "rs7p: drifting during the hold still alerts");
+        float b = 1f, x = 0f; SciencePolicy.FixTransmit(ref b, ref x, 1f);
+        Check(b * x == 1f, "rs7p: EVA data moved into the rover transmits at full value");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

@@ -56,6 +56,8 @@ namespace KSPChatBridge
             var groups = new Dictionary<string, List<ModuleScienceExperiment>>();
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             { string id = e.experimentID ?? ""; List<ModuleScienceExperiment> g; if (!groups.TryGetValue(id, out g)) groups[id] = g = new List<ModuleScienceExperiment>(); g.Add(e); }
+            bool evaKit = RoverSetting(CraftOverrides.RoverAutoEva) >= .5 && EvaKitCarrierAboard();   // RS7p: auto-EVA can run EVA Science
+            if (evaKit && !groups.ContainsKey("evaScience")) groups["evaScience"] = new List<ModuleScienceExperiment>();
             var stored = StoredSubjectIds(); bool scientist = HasScientist();
             int crew = vessel.GetCrewCount(); bool controllable = vessel.IsControllable;
             bool inAtmo = body.atmosphere && vessel.altitude < body.atmosphereDepth;
@@ -91,11 +93,12 @@ namespace KSPChatBridge
                     foreach (var m in g.Value)
                     {
                         if (m.Inoperable && !scientist) continue;
-                        if (EvaOnly(m)) continue;   // RS7o: evaScience needs a kerbal on EVA with the science kit
+                        if (EvaOnly(m) && !evaKit) continue;   // RS7o: evaScience needs a kerbal on EVA with the science kit; RS7p: auto-EVA takes a kit carrier out
                         if (!SciencePolicy.CanRun(m.usageReqMaskInternal, crew, m.part.protoModuleCrew.Count, scientist, controllable, sci.Experiment.requireAtmosphere, inAtmo)) continue;
                         if (!m.rerunnable && SciCount(m) > 0 && !scientist) continue;
                         usable++; if (m.rerunnable) oneShot = false;
                     }
+                    if (g.Key == "evaScience" && evaKit && usable == 0) { usable = 1; oneShot = false; }   // RS7p: the kit carrier's own module, out on EVA
                     bool onBoard = sci.SubjectId.Length > 0 && stored.Contains(sci.SubjectId);
                     double gain = sci.Available && usable > 0 && !onBoard && sci.Value > minSci ? Math.Round(sci.Value, 1) : 0;
                     bool done = TourChecklist.DoneFrom(double.NaN, 0, onBoard) || SubjectEarned(sci.SubjectId);   // RS7e: live, never saved

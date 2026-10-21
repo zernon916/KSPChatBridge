@@ -13,10 +13,20 @@ namespace KSPChatBridge
     internal static class RoverEvaPolicy
     {
         /// <summary>EVA when enabled, someone can step out, and the sample (if the R&D building allows it) or the EVA report is worth anything here.</summary>
-        internal static bool ShouldEva(bool enabled, int cabinCrew, double sampleGain, double reportGain, bool sampleAllowed)
+        internal static bool ShouldEva(bool enabled, int cabinCrew, double sampleGain, double reportGain, bool sampleAllowed, double evaSciGain = 0, bool kitAboard = false)
         {
             if (!enabled || cabinCrew <= 0) return false;
-            return (sampleAllowed && sampleGain > 0) || reportGain > 0;
+            return (sampleAllowed && sampleGain > 0) || reportGain > 0 || (kitAboard && evaSciGain > 0);   // RS7p: EVA Science alone is worth a trip out
+        }
+        /// <summary>RS7p: when EVA Science is worth anything, send a kit carrier (a scientist among them first); else PickCrew.</summary>
+        internal static int PickCrew(IList<string> traits, IList<bool> hasKit, bool wantKit)
+        {
+            if (wantKit && hasKit != null && traits != null)
+            {
+                for (int i = 0; i < traits.Count && i < hasKit.Count; i++) if (hasKit[i] && traits[i] == "Scientist") return i;
+                for (int i = 0; i < traits.Count && i < hasKit.Count; i++) if (hasKit[i]) return i;
+            }
+            return PickCrew(traits);
         }
         /// <summary>Index of the crew member to send: the first scientist, else the first one; -1 = nobody.</summary>
         internal static int PickCrew(IList<string> traits)
@@ -43,7 +53,11 @@ namespace KSPChatBridge
             since = now; BoardAttempts = 0;
             if (ok) Phase = EvaPhase.Settling; else { Phase = EvaPhase.Done; Why = string.IsNullOrEmpty(why) ? "spawn failed" : why; }
         }
-        internal void ScienceDone(double now) { if (Phase == EvaPhase.Science) { Phase = EvaPhase.Boarding; since = lastBoard = now; } }
+        /// <summary>holdS: RS7p - EVA Science plays an animation before its data exists; hold the first boarding try up to holdS
+        /// (DataReady ends the hold early).</summary>
+        internal void ScienceDone(double now, double holdS = 0) { if (Phase == EvaPhase.Science) { Phase = EvaPhase.Boarding; since = now; lastBoard = now + Math.Max(0, holdS); } }
+        internal bool Holding(double now) { return Phase == EvaPhase.Boarding && BoardAttempts == 0 && now < lastBoard; }
+        internal void DataReady(double now) { if (Holding(now)) lastBoard = now - BoardInterval; }
         /// <summary>Player pressed Resume: only when the kerbal is no longer outside (aboard, or gone).</summary>
         internal bool Resume(bool kerbalOutside)
         {
