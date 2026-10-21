@@ -54,11 +54,11 @@ namespace KSPChatBridge
 
         void RoverStoreInContainer(ModuleScienceExperiment e)
         {
-            var data = e.GetData(); if (data == null || data.Length == 0) return;
+            var data = SciData(e); if (data == null || data.Length == 0) return;
             foreach (var ct in vessel.FindPartModulesImplementing<ModuleScienceContainer>())
             {
                 foreach (var d in data)
-                    try { if (!ct.HasData(d) && ct.AddData(d)) { e.DumpData(d); ChatLog.Write("science", "[science] " + e.experimentID + ": stored in " + ct.part.partInfo.title); } } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] container store: " + ex.Message); }
+                    try { if (!ct.HasData(d) && ct.AddData(d)) { SciDump(e, d); ChatLog.Write("science", "[science] " + e.experimentID + ": stored in " + ct.part.partInfo.title); } } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] container store: " + ex.Message); }
                 return;
             }
         }
@@ -69,8 +69,8 @@ namespace KSPChatBridge
             bool sci = HasScientist(); ModuleScienceLab lab = null; foreach (var l in vessel.FindPartModulesImplementing<ModuleScienceLab>()) { lab = l; break; }
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
-                if (e.GetScienceCount() > 0) RoverStoreInContainer(e);
-                string act = RoverPowerPolicy.ResetAction(e.rerunnable, e.Inoperable, e.GetScienceCount() == 0, sci, lab != null && sci);
+                if (SciCount(e) > 0) RoverStoreInContainer(e);
+                string act = RoverPowerPolicy.ResetAction(e.rerunnable, e.Inoperable, SciCount(e) == 0, sci, lab != null && sci);
                 if (act == null) continue;
                 try
                 {

@@ -130,6 +130,34 @@ namespace KSPChatBridge
         }
     }
 
+    /// <summary>RS7o (Luke Oct 21 03:46: Grass -> Admin, 270 m apart, went 1.6 km by road via the runway and the taxiway corner and circled
+    /// at the RWY EXIT turn): drive straight when it is short (MaxStraightM), the road is RoadFactor x longer, and the line stays out of
+    /// every building keep-out (ClearFrac of it; a keep-out the rover starts or ends in is ignored).</summary>
+    internal static class RoverShortcut
+    {
+        internal const double MaxStraightM = 800, RoadFactor = 2, ClearFrac = .9;
+        internal static double SegDistM(KscRoverPolicy.P a, KscRoverPolicy.P b, KscRoverPolicy.P c, double r)
+        {
+            double k = Math.PI / 180 * r, cl = Math.Cos(a.Lat * Math.PI / 180);
+            double bx = (b.Lon - a.Lon) * cl * k, by = (b.Lat - a.Lat) * k, cx = (c.Lon - a.Lon) * cl * k, cy = (c.Lat - a.Lat) * k;
+            double l2 = bx * bx + by * by, t = l2 > 0 ? Math.Max(0, Math.Min(1, (cx * bx + cy * by) / l2)) : 0;
+            double dx = cx - t * bx, dy = cy - t * by; return Math.Sqrt(dx * dx + dy * dy);
+        }
+        internal static bool Take(KscRoverPolicy.P from, KscRoverPolicy.P to, double roadM, IList<KeyValuePair<KscRoverPolicy.P, double>> keepOuts, double r)
+        {
+            double s = NavigationMath.Distance(from.Lat, from.Lon, to.Lat, to.Lon, r);
+            if (s > MaxStraightM || !(roadM >= RoadFactor * s)) return false;
+            if (keepOuts != null)
+                foreach (var kv in keepOuts)
+                {
+                    double lim = kv.Value * ClearFrac;
+                    if (NavigationMath.Distance(from.Lat, from.Lon, kv.Key.Lat, kv.Key.Lon, r) < lim || NavigationMath.Distance(to.Lat, to.Lon, kv.Key.Lat, kv.Key.Lon, r) < lim) continue;
+                    if (SegDistM(from, to, kv.Key, r) < lim) return false;
+                }
+            return true;
+        }
+    }
+
     /// <summary>RS7l (Luke Oct 21 02:56: rover circling on the runway around a stop 40-70 m behind it): goal inside the turning circle.
     /// Behind and within the 25 m pass radius = arrived; behind and within ReverseM = reverse toward it (tail first, 3-point turn) instead
     /// of orbiting; any big heading error = slow, tight turn; route points just behind the rover are dropped.</summary>

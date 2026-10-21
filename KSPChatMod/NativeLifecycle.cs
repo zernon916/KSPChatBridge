@@ -43,13 +43,24 @@ namespace KSPChatBridge
             catch (Exception) { return false; }
         }
 
+        /// <summary>RS7o (Luke Oct 21: mobileMaterialsLab ran at every stop, never transmitted, "kept 0"): DMagic's DMModuleScienceAnimate
+        /// HIDES GetData / DumpData / GetScienceCount with new methods (stock ones are not virtual), so calls through a
+        /// ModuleScienceExperiment reference read the empty stock slot. Go through IScienceDataContainer (DMagic implements it explicitly).</summary>
+        static ScienceData[] SciData(IScienceDataContainer c) { return c != null ? c.GetData() ?? new ScienceData[0] : new ScienceData[0]; }
+        static int SciCount(IScienceDataContainer c) { return c != null ? c.GetScienceCount() : 0; }
+        static void SciDump(IScienceDataContainer c, ScienceData d) { if (c != null && d != null) c.DumpData(d); }
+        /// <summary>RS7o: experiments that only run on an EVA kerbal (stock evaScience: requiresEVASituation + EVA science kit) never
+        /// produce data from a seated / boarded kerbal - silent gather just quits. Not offered or run from the rover.</summary>
+        static bool EvaOnly(ModuleScienceExperiment m) { return SciencePolicy.NeedsEva(m.requiresEVASituation, m.vessel != null && m.vessel.isEVA); }
+        float sciLateAt = -1;   // RS7o: DMagic experiments finish after their deploy animation -> one more transmit pass
+
         /// <summary>Subject IDs already held in experiment modules or science containers on this vessel.</summary>
         HashSet<string> StoredSubjectIds()
         {
             var o = new HashSet<string>(sentSubjects);   // RS7l: transmitted / received this flight counts as held (cleared on revert / load)
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
-                var data = e.GetData(); if (data == null) continue;
+                var data = SciData(e); if (data == null) continue;
                 foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) o.Add(d.subjectID);
             }
             foreach (var c in vessel.FindPartModulesImplementing<ModuleScienceContainer>())
@@ -102,12 +113,13 @@ namespace KSPChatBridge
                 {
                     try
                     {
+                        if (EvaOnly(e)) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, "needs a kerbal on EVA")); continue; }   // RS7o
                         if (!SciencePolicy.CanRun(e.usageReqMaskInternal, crew, e.part.protoModuleCrew.Count, scientist, controllable, exp != null && exp.requireAtmosphere, inAtmo))
                         {
                             Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, "requirements"));
                             continue;
                         }
-                        string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable, minValue);
+                        string skip = SciencePolicy.AutoSkipReason(e.Inoperable, SciCount(e) > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable, minValue);
                         if (skip != null) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, skip)); continue; }
                         DeploySilent(e);   // Luke Oct 12 22:41: no stock results dialog mid-flight; transmit/store handled by TransmitAll
                         ranThisType = true; ran.Add(e.part.partInfo.title); if (ranIds != null && !ranIds.Contains(expId)) ranIds.Add(expId);
@@ -148,9 +160,10 @@ namespace KSPChatBridge
                 bool storedOnboard = experiment.SubjectId.Length > 0 && stored.Contains(experiment.SubjectId);
                 foreach (ModuleScienceExperiment module in group.Value)
                 {
+                    if (EvaOnly(module)) continue;   // RS7o
                     if (!SciencePolicy.CanRun(module.usageReqMaskInternal, crew, module.part.protoModuleCrew.Count,
                         scientist, controllable, experiment.Experiment.requireAtmosphere, inAtmo)) continue;
-                    string skip = SciencePolicy.AutoSkipReason(module.Inoperable, module.GetScienceCount() > 0,
+                    string skip = SciencePolicy.AutoSkipReason(module.Inoperable, SciCount(module) > 0,
                         experiment.Available, storedOnboard, experiment.Value, false, false, module.rerunnable, minValue);
                     if (skip != null) continue;
                     totalValue += experiment.Value;
@@ -196,6 +209,13 @@ namespace KSPChatBridge
         {
             if (e.GetType() != typeof(ModuleScienceExperiment))
             {   // RS2: DMagic / StationScience / other mod subclasses run their own DeployExperiment (animations, custom data)
+                sciLateAt = Time.realtimeSinceStartup + 15;   // RS7o: their data lands after the deploy animation
+                try
+                {   // RS7o: DMagic gatherScienceData(silent: true) stores the report without its results dialog
+                    var g = e.GetType().GetMethod("gatherScienceData", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
+                    if (g != null) { g.Invoke(e, new object[] { true }); ChatLog.Write("science", "[science] " + e.experimentID + ": " + e.GetType().Name + " gatherScienceData(silent) (mod experiment)"); return; }
+                }
+                catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] mod silent science failed, using DeployExperiment: " + ex.Message); }
                 ChatLog.Write("science", "[science] " + e.experimentID + ": " + e.GetType().Name + " DeployExperiment (mod experiment)"); e.DeployExperiment(); StartCoroutine(CloseResultsDialog()); return;
             }
             try
@@ -225,7 +245,7 @@ namespace KSPChatBridge
         internal const double EcReserveFrac = .10, EcReserveMin = 5, AntennaMaxQ = 1.0, AntennaUnsafeGapS = 60;   // kPa: stock deployables (antennas AND solar panels, QWEN T2) break in the airstream; s: SYSTEM comms gap for the unsafe warning
         ModuleDeployableAntenna sciExtended;   // antenna AUTO science opened (retract after the transmission)
         float sciAntennaUnsafeAt = -999;   // Luke Oct 13 00:09: last SYSTEM post of the antenna-unsafe warning (max once per AntennaUnsafeGapS)
-        bool HasData(bool onlyRerunnable) { foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>()) if ((!onlyRerunnable || e.rerunnable) && e.GetScienceCount() > 0) return true; return false; }
+        bool HasData(bool onlyRerunnable) { foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>()) if ((!onlyRerunnable || e.rerunnable) && SciCount(e) > 0) return true; return false; }
         /// <summary>Luke Oct 13 00:09: the speed that keeps q at or below AntennaMaxQ (KSP: q kPa = 0.0005*rho*v^2), i.e.
         /// sqrt(2*1000/rho) m/s. No air (or bad reading) -> infinity: any speed is safe out of the atmosphere.</summary>
         static double AntennaSafeSpeed(double atmDensity) { return atmDensity > 1e-6 && !double.IsNaN(atmDensity) ? Math.Sqrt(2 * AntennaMaxQ * 1000 / atmDensity) : double.PositiveInfinity; }
@@ -330,7 +350,7 @@ namespace KSPChatBridge
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
                 if (onlyRerunnable && !e.rerunnable) continue;
-                var data = e.GetData(); if (data == null || data.Length == 0) continue;
+                var data = SciData(e); if (data == null || data.Length == 0) continue;
                 double mits = 0, sci = 0;
                 foreach (var d in data)
                 {
@@ -351,7 +371,7 @@ namespace KSPChatBridge
                 tx.TransmitData(new List<ScienceData>(data));
                 foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) sentSubjects.Add(d.subjectID);   // RS7l
                 checklistDirty = true;
-                foreach (var d in data) e.DumpData(d);
+                foreach (var d in data) SciDump(e, d);
                 amt -= need; sent++;
                 ChatLog.Write("science", "[science] " + id + ": TRANSMIT " + sci.ToString("0.0") + " sci via " + txName + " (EC need " + need.ToString("0") + "/have " + (amt + need).ToString("0") + ")");
             }
@@ -362,6 +382,7 @@ namespace KSPChatBridge
         {
             float now = Time.realtimeSinceStartup;
             try { RetractIfDone(); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] antenna retract: " + ex.Message); }
+            if (sciLateAt > 0 && now >= sciLateAt) { sciLateAt = -1; if (sciTransmitAt < 0) sciTransmitAt = now; checklistDirty = true; }   // RS7o
             if (sciTransmitAt > 0 && now >= sciTransmitAt)
             {
                 sciTransmitAt = -1;
@@ -381,7 +402,7 @@ namespace KSPChatBridge
             string blocker; var ran = RunExperiments(mode != "auto", out blocker);
             int left = 0;
             if (mode != "auto") foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
-                if (!e.rerunnable && SciencePolicy.Eligible(e.Inoperable, e.GetScienceCount() > 0, Available(e), SubjectDone(e), false, false)) left++;
+                if (!e.rerunnable && SciencePolicy.Eligible(e.Inoperable, SciCount(e) > 0, Available(e), SubjectDone(e), false, false)) left++;
             if (mode == "auto" ? ran.Count > 0 : SciencePolicy.ShouldTransmit(true, ran.Count, EcPct())) sciTransmitAt = now + 3;   // AUTO: TransmitAll checks the full EC cost itself (stores + retries when short)
             if (!SciencePolicy.ShouldPost(mode, ran.Count, blocker, left, now - sciLastPost)) return;
             sciLastPost = now;
@@ -449,7 +470,7 @@ namespace KSPChatBridge
                     foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
                     {
                         if (e.Inoperable) { if (!scientist) { skipped.Add(e.part.partInfo.title + " (needs a scientist)"); continue; } e.ResetExperiment(); done.Add(e.part.partInfo.title); }
-                        else if (discard && e.GetScienceCount() > 0) { foreach (var d in e.GetData()) e.DumpData(d); done.Add(e.part.partInfo.title); }
+                        else if (discard && SciCount(e) > 0) { foreach (var d in SciData(e)) SciDump(e, d); done.Add(e.part.partInfo.title); }
                     }
                     return "Reset " + done.Count + ": " + (done.Count == 0 ? "none" : string.Join(", ", done.ToArray())) + "." + (skipped.Count > 0 ? " Skipped: " + string.Join(", ", skipped.ToArray()) + "." : "");
                 }

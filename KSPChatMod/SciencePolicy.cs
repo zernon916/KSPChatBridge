@@ -30,6 +30,8 @@ namespace KSPChatBridge
         /// (ExperimentResultDialogPage) sets it to 1 + comm bonus. Our silent gather never opens that page, and the transmitter credits
         /// dataAmount x scienceValueRatio at xmit = baseTransmitValue x transmitBonus = 1.0 (Science-Full-Transmit) x 0 = nothing.
         /// Before transmitting: bonus 0 -> 1, base 0 -> the module's xmitDataScalar (Science-Full-Transmit makes that 1.0 = full value).</summary>
+        /// <summary>RS7o: an EVA-situation experiment (stock evaScience) cannot run unless the vessel is a kerbal on EVA.</summary>
+        internal static bool NeedsEva(bool requiresEvaSituation, bool isEva) { return requiresEvaSituation && !isEva; }
         internal static bool FixTransmit(ref float baseTransmit, ref float bonus, float moduleXmit)
         {
             bool changed = false;

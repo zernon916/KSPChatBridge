@@ -47,6 +47,7 @@ namespace KSPChatBridge
         internal static IList<KscRoverWaypoint> Points { get { return points.AsReadOnly(); } }
         /// <summary>RS3b: KSC hub (facility centroid) of the last Refresh; Version bumps on every Refresh.</summary>
         internal static double HubLat = double.NaN, HubLon = double.NaN; internal static int Version;
+        internal static List<KeyValuePair<KscRoverPolicy.P, double>> KeepOuts = new List<KeyValuePair<KscRoverPolicy.P, double>>();   // RS7i/RS7o: building centre, keep-out m
 
         internal static bool Refresh(CelestialBody body)
         {
@@ -90,6 +91,7 @@ namespace KSPChatBridge
                     keep.Add(new KeyValuePair<KscRoverPolicy.P, double>(new KscRoverPolicy.P(la / kv.Value.Count, lo / kv.Value.Count), KscRoverPolicy.KeepOut(kv.Key)));
                 }
                 var hp = KscRoverPolicy.ClearOf(new KscRoverPolicy.P(hubLat, hubLon), keep, body.Radius); hubLat = hp.Lat; hubLon = hp.Lon;
+                KeepOuts = keep;   // RS7o: straight-line shortcuts must stay out of these too
             }
             HubLat = hubLat; HubLon = hubLon; Version++;   // RS3b: road network anchor
 
@@ -107,8 +109,11 @@ namespace KSPChatBridge
                 else { lat = site.Lat; lon = site.Lon; source = "fallback coordinate"; }
                 if (site.Name == "Runway") { var rp = KscRoverPolicy.RunwayStop(body.Radius); lat = rp.Lat; lon = rp.Lon; source = "runway surface near the 09 end"; }   // RS7k
 
+                double approachBrg = ApproachBearing(site.Name, lat, lon, hubLat, hubLon); KscRoverWaypoint ac;
+                if (site.Name == "Admin" && facilityPoints.TryGetValue("AstronautComplex", out ac))
+                    approachBrg = KscRoverPolicy.AdminApproachBearing(lat, lon, ac.Lat, ac.Lon);   // RS7o: the hub-side approach parked in Astronaut Complex
                 KscRoverWaypoint waypoint = Add(site.Name, site.Biome, lat, lon,
-                    ApproachBearing(site.Name, lat, lon, hubLat, hubLon), ApproachDistance(site.Name), body.Radius, source, obstacles);
+                    approachBrg, ApproachDistance(site.Name), body.Radius, source, obstacles);
                 facilityPoints[site.Facility] = waypoint;
             }
 

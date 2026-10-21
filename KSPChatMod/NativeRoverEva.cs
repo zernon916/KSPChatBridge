@@ -115,7 +115,7 @@ namespace KSPChatBridge
                 bool want = (e.experimentID == "surfaceSample" && evaWantSample) || (e.experimentID == "evaReport" && evaWantReport);
                 if (!want) continue;
                 string tag = e.experimentID == "surfaceSample" ? "sample" : "report";
-                if (e.Inoperable || e.GetScienceCount() > 0) { ChatLog.Write("rover", "eva stop " + evaStopN + ": " + tag + " skipped (" + (e.Inoperable ? "inoperable" : "already holds data") + ")"); continue; }
+                if (e.Inoperable || SciCount(e) > 0) { ChatLog.Write("rover", "eva stop " + evaStopN + ": " + tag + " skipped (" + (e.Inoperable ? "inoperable" : "already holds data") + ")"); continue; }
                 try { DeploySilent(e); ChatLog.Write("rover", "eva stop " + evaStopN + ": " + tag + " ok"); }
                 catch (Exception ex) { ChatLog.Write("rover", "eva stop " + evaStopN + ": " + tag + " fail " + ex.Message); }
             }

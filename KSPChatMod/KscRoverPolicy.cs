@@ -123,6 +123,13 @@ namespace KSPChatBridge
         static readonly string[] Paved = { "Runway", "LaunchPad", "Crawlerway", "VAB", "SPH", "R&D", "TrackingStation", "AstronautComplex", "MissionControl", "Administration", "FlagPole", "Helipad" };
         /// <summary>RS7g: did the rover park in the stop's biome? Stock KSC sub-biomes share the facility prefix (VABMainBuilding, R&DWindTunnel ...);
         /// "KSC" (grass) is any landedAt / biome that is not pavement or a building. No wanted biome (places) = always fine.</summary>
+        /// <summary>RS7o (Luke Oct 21 03:50: the Admin stop, 50 m from Admin toward the hub, learned biome "Astronaut Complex" - that side
+        /// faces the Astronaut Complex 100 m away): approach a building from the side away from a too-close neighbour.</summary>
+        internal static double AwayFrom(double lat, double lon, double otherLat, double otherLon) { return NavigationMath.Bearing(otherLat, otherLon, lat, lon); }
+        /// <summary>Admin: away from the Astronaut Complex, swung AdminSwingDeg toward the north-west so the open ground north of the runway
+        /// (KSC Grass) reaches it in a straight line past the building, not across it.</summary>
+        internal const double AdminSwingDeg = 45;
+        internal static double AdminApproachBearing(double lat, double lon, double acLat, double acLon) { return (AwayFrom(lat, lon, acLat, acLon) + AdminSwingDeg + 360) % 360; }
         internal static bool StopBiomeOk(string wanted, string got)
         {
             if (string.IsNullOrEmpty(wanted)) return true;

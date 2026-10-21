@@ -107,6 +107,15 @@ namespace KSPChatBridge
             int trimmed = RoverTurn.TrimBehind(pts, vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.mainBody.Radius);   // RS7l
             if (trimmed > 0) ChatLog.Write("rover", "road: skipped " + trimmed + " route point(s) just behind the rover");
             if (pts.Count < 2) { roverRoad = null; return ""; }
+            {   // RS7o: short hop the roads make long -> straight, if clear of every building keep-out
+                var here = new KscRoverPolicy.P(vessel.latitude, vessel.longitude); double roadM = roadNet.Length(here, pts), r = vessel.mainBody.Radius;
+                if (RoverShortcut.Take(here, new KscRoverPolicy.P(lat, lon), roadM, KscRoverMap.KeepOuts, r))
+                {
+                    double s = NavigationMath.Distance(here.Lat, here.Lon, lat, lon, r);
+                    ChatLog.Write("rover", "road: straight " + s.ToString("0", CultureInfo.InvariantCulture) + " m instead of " + roadM.ToString("0", CultureInfo.InvariantCulture) + " m by road (clear of buildings)");
+                    roverRoad = null; return " Driving straight (" + s.ToString("0", CultureInfo.InvariantCulture) + " m).";
+                }
+            }
             var route = new TaxiRoute { Name = "road" };
             route.Points.Add(new TaxiRoute.Wp { Name = "start", Lat = vessel.latitude, Lon = vessel.longitude });
             for (int i = 0; i < pts.Count; i++) route.Points.Add(new TaxiRoute.Wp { Name = "road " + i, Lat = pts[i].Lat, Lon = pts[i].Lon });

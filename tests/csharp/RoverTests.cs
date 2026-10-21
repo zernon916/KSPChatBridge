@@ -30,6 +30,7 @@ internal static class RoverTests
         Rs7kTests();
         Rs7lTests();
         Rs7nTests();
+        Rs7oTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -441,6 +442,25 @@ internal static class RoverTests
         Check(b == .5f && x == 1f, "rs7n: base 0 -> the module's xmitDataScalar");
         b = 1f; x = 1.2f; ch = SciencePolicy.FixTransmit(ref b, ref x, 1f);
         Check(!ch && x == 1.2f, "rs7n: a dialog-set bonus is kept");
+    }
+
+    // RS7o: evaScience needs EVA, Admin approached away from the Astronaut Complex, short straight hops instead of long road detours
+    static void Rs7oTests()
+    {
+        Check(SciencePolicy.NeedsEva(true, false) && !SciencePolicy.NeedsEva(true, true) && !SciencePolicy.NeedsEva(false, false), "rs7o: EVA-situation experiments only on an EVA kerbal");
+        const double R = 600000; var admin = Pp(-0.090955, -74.661401); var ac = Pp(-0.087108, -74.652241); double la, lo;
+        NavigationMath.Offset(admin.Lat, admin.Lon, KscRoverPolicy.AdminApproachBearing(admin.Lat, admin.Lon, ac.Lat, ac.Lon), 50, R, out la, out lo);
+        double dAc = NavigationMath.Distance(la, lo, ac.Lat, ac.Lon, R), dAd = NavigationMath.Distance(la, lo, admin.Lat, admin.Lon, R);
+        Check(dAc > 140 && Math.Abs(dAd - 50) < 1 && dAc > NavigationMath.Distance(-0.092568, -74.656911, ac.Lat, ac.Lon, R) + 60, "rs7o: Admin stop on the side away from the Astronaut Complex (" + dAc.ToString("0") + " m from it)");
+        var keep = new List<KeyValuePair<KscRoverPolicy.P, double>> { new KeyValuePair<KscRoverPolicy.P, double>(ac, 45), new KeyValuePair<KscRoverPolicy.P, double>(admin, 45), new KeyValuePair<KscRoverPolicy.P, double>(Pp(-0.096836, -74.619480), 100) };
+        var grass = Pp(-0.066744, -74.655084);
+        Check(RoverShortcut.Take(grass, Pp(la, lo), 1609, keep, R), "rs7o: Grass -> new Admin stop goes straight (clear of AC / Admin)");
+        Check(!RoverShortcut.Take(grass, Pp(-0.092568, -74.656911), 1609, keep, R) || RoverShortcut.SegDistM(grass, Pp(-0.092568, -74.656911), ac, R) >= 40.5, "rs7o: a line through a keep-out is refused");
+        Check(!RoverShortcut.Take(grass, Pp(la, lo), 300, keep, R), "rs7o: no shortcut when the road is not much longer");
+        Check(!RoverShortcut.Take(grass, Pp(-0.0921339, -74.5695493), 5000, keep, R), "rs7o: no shortcut beyond 800 m");
+        var vabLine = new[] { Pp(-0.0967, -74.6320), Pp(-0.0967, -74.6070) };
+        Check(!RoverShortcut.Take(vabLine[0], vabLine[1], 5000, keep, R), "rs7o: a line across the VAB keep-out is refused");
+        Check(Math.Abs(RoverShortcut.SegDistM(Pp(0, 0), Pp(0, .01), Pp(.001, .005), R) - .001 * Math.PI / 180 * R) < .5, "rs7o: segment distance");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

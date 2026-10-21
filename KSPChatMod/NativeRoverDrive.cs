@@ -107,7 +107,7 @@ namespace KSPChatBridge
         /// next road waypoint, then re-plan from here); after RoverEscape.MaxRetries escapes the guard stops the tour.</summary>
         void RoverCirclingCheck(float now)
         {
-            if (!roverNavigating || roverStuck.Backing || roverCharging || roverGuardBrake || roverHoldShort) { if (!roverNavigating) roverCircling.Reset(); return; }
+            if (!roverNavigating || roverStuck.Backing || roverCharging || roverGuardBrake || roverHoldShort) { if (!roverNavigating || roverCharging) roverCircling.Reset(); return; }   // RS7o: a charging stop restarts the window (03:49 "361 deg in 101 s")
             double dist = RoverRoadActive && !double.IsNaN(roverRoadLeft) ? roverRoadLeft
                 : NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
             string why = roverCircling.Sample(now, FlightGlobals.ship_heading, dist, vessel.srfSpeed);

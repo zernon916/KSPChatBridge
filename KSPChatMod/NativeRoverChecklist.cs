@@ -91,8 +91,9 @@ namespace KSPChatBridge
                     foreach (var m in g.Value)
                     {
                         if (m.Inoperable && !scientist) continue;
+                        if (EvaOnly(m)) continue;   // RS7o: evaScience needs a kerbal on EVA with the science kit
                         if (!SciencePolicy.CanRun(m.usageReqMaskInternal, crew, m.part.protoModuleCrew.Count, scientist, controllable, sci.Experiment.requireAtmosphere, inAtmo)) continue;
-                        if (!m.rerunnable && m.GetScienceCount() > 0 && !scientist) continue;
+                        if (!m.rerunnable && SciCount(m) > 0 && !scientist) continue;
                         usable++; if (m.rerunnable) oneShot = false;
                     }
                     bool onBoard = sci.SubjectId.Length > 0 && stored.Contains(sci.SubjectId);
@@ -185,7 +186,10 @@ namespace KSPChatBridge
             foreach (int i in order)
             {
                 var s = route[i];
-                scienceTourStops.Add(new KscRoverWaypoint { Name = s.Key, Biome = "", Lat = s.Lat, Lon = s.Lon, ApproachLat = s.Lat, ApproachLon = s.Lon, Source = s.Source });   // RS7j: Key (Name may carry the biome)
+                {
+                    KscRoverWaypoint mw = null; foreach (var p in KscRoverMap.Points) if (p.Name == s.Key && p.Source != "place") { mw = p; break; }
+                    scienceTourStops.Add(new KscRoverWaypoint { Name = s.Key, Biome = mw != null ? mw.Biome : "", Lat = mw != null ? mw.Lat : s.Lat, Lon = mw != null ? mw.Lon : s.Lon, ApproachLat = s.Lat, ApproachLon = s.Lon, Source = s.Source });   // RS7j: Key (Name may carry the biome); RS7o: map biome + anchor -> arrival biome check / creep
+                }
                 scienceTourOnly[s.Key] = TourChecklist.StopIds(s);   // RS7c: also the zero-predicted rows (real biome may differ)
                 labels.Add(s.Name); km += prev < 0 ? st[i] : d[prev, i]; prev = i; sci += s.Checked;
             }
