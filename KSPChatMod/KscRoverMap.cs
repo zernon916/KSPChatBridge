@@ -105,6 +105,7 @@ namespace KSPChatBridge
                     lat /= list.Count; lon /= list.Count; source = "SpaceCenter transform";
                 }
                 else { lat = site.Lat; lon = site.Lon; source = "fallback coordinate"; }
+                if (site.Name == "Runway") { var rp = KscRoverPolicy.RunwayStop(body.Radius); lat = rp.Lat; lon = rp.Lon; source = "runway surface near the 09 end"; }   // RS7k
 
                 KscRoverWaypoint waypoint = Add(site.Name, site.Biome, lat, lon,
                     ApproachBearing(site.Name, lat, lon, hubLat, hubLon), ApproachDistance(site.Name), body.Radius, source, obstacles);
@@ -188,7 +189,7 @@ namespace KSPChatBridge
         static double ApproachDistance(string name)
         {
             if (name == "Launch Pad") return 120;
-            if (name == "Runway") return 80;
+            if (name == "Runway") return 0;   // RS7k: the stop is ON the runway (was 80 m off it, in Shores)
             if (name == "VAB") return KscRoverPolicy.VabStopM;   // RS7i: 50 m was inside the VAB scaffolding
             return 50;
         }

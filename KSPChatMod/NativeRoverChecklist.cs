@@ -78,7 +78,7 @@ namespace KSPChatBridge
                     Distance = RoverDriveDistance(vessel.latitude, vessel.longitude, c.ApproachLat, c.ApproachLon) };
                 string mini = c.Source == "place" ? null : ScienceInventory.KscMiniBiome(c.Biome), terrain = "";
                 try { terrain = ScienceUtil.GetExperimentBiome(body, c.ApproachLat, c.ApproachLon); } catch (Exception) { }
-                string learned; StopBiomes().TryGetValue(c.Name, out learned);
+                string entry; StopBiomes().TryGetValue(c.Name, out entry); string learned = TourChecklist.LearnedFor(entry, c.ApproachLat, c.ApproachLon, body.Radius);   // RS7k: only for this stop point
                 string siteBiome = TourChecklist.SiteBiome(learned, mini, terrain);   // RS7j: the biome the science really lands in
                 if (c.Source != "place") site.Name = TourChecklist.SiteLabel(c.Name, mini, siteBiome);
                 mini = siteBiome.Length > 0 ? siteBiome : null;
@@ -128,8 +128,9 @@ namespace KSPChatBridge
         void RecordStopBiome(string site, string biome)
         {
             if (string.IsNullOrEmpty(site) || string.IsNullOrEmpty(biome) || vessel == null || vessel.mainBody == null || vessel.mainBody.bodyName != "Kerbin") return;
-            string old; if (StopBiomes().TryGetValue(site, out old) && old == biome) return;
-            stopBiomes[site] = biome; var d = new Dictionary<string, object>(); foreach (var kv in stopBiomes) d[kv.Key] = kv.Value;
+            string entry = TourChecklist.LearnedEntry(biome, vessel.latitude, vessel.longitude), old;
+            if (StopBiomes().TryGetValue(site, out old) && TourChecklist.LearnedFor(old, vessel.latitude, vessel.longitude, vessel.mainBody.Radius) == biome) return;
+            stopBiomes[site] = entry; var d = new Dictionary<string, object>(); foreach (var kv in stopBiomes) d[kv.Key] = kv.Value;
             settingsData["rover_stop_biome"] = d; try { Save(); } catch (Exception) { }
             ChatLog.Write("rover", "stop " + site + " biome learned: " + biome + (old != null ? " (was " + old + ")" : "")); checklistDirty = true;
         }

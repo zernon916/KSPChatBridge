@@ -102,6 +102,15 @@ namespace KSPChatBridge
             }
             return p;
         }
+        /// <summary>RS7k (Luke Oct 21: the Runway stop parked 80 m off the runway and filed its science under Shores): the stop is on the
+        /// runway centreline RunwayStopFrom09M east of the 09 threshold - paved, Runway mini-biome, far from the buildings and the taxiway
+        /// exit at the runway middle; reached along the runway road edge (RWY EXIT - RWY 09), hold-short logic unchanged.</summary>
+        internal const double RunwayStopFrom09M = 300;
+        internal static P RunwayStop(double radius)
+        {
+            double la, lo; NavigationMath.Offset(KscRunway.Lat09, KscRunway.Lon09, NavigationMath.Bearing(KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27), RunwayStopFrom09M, radius, out la, out lo);
+            return new P(la, lo);
+        }
         internal const double GrassSouthM = 180, GrassWestM = 500, CreepStepM = 35;
         internal const int CreepTries = 2;
         internal static P GrassPoint(double radius)

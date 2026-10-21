@@ -27,6 +27,7 @@ internal static class RoverTests
         RoverEvaTests();
         Rs7iTests();
         Rs7jTests();
+        Rs7kTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -377,6 +378,23 @@ internal static class RoverTests
         Check(s.Exps.First(e => e.Id == "evaReport").Ran && !s.Exps.First(e => e.Id == "mysteryGoo").Ran, "rs7j: held Shores data checks the KSC Grass row");
         TourChecklist.MarkRan(sites, "KSC Grass", new[] { "mysteryGoo" });
         Check(s.Exps.First(e => e.Id == "mysteryGoo").Ran, "rs7j: stop marks by site key even when the label carries the biome");
+    }
+
+    // RS7k: the Runway stop is on the runway (Runway mini-biome), reached on pavement, old learned "Shores" ignored
+    static void Rs7kTests()
+    {
+        const double R = 600000; var rs = KscRoverPolicy.RunwayStop(R); var g = KscRoverPolicy.GrassPoint(R);
+        Check(SegDist(KscRunway.Lat09, KscRunway.Lon09, KscRunway.Lat27, KscRunway.Lon27, rs, R) < 3 && RoverDrivePolicy.OnKscRunway(rs.Lat, rs.Lon, R), "rs7k: Runway stop on the runway centreline");
+        Check(Math.Abs(NavigationMath.Distance(KscRunway.Lat09, KscRunway.Lon09, rs.Lat, rs.Lon, R) - 300) < 2 && NavigationMath.Distance(rs.Lat, rs.Lon, g.Lat, g.Lon, R) > 400, "rs7k: 300 m from the 09 threshold, far from the grass stop");
+        var blds = new[] { Pp(-0.096836, -74.619480), Pp(-0.071870, -74.633633), Pp(-0.087108, -74.652241), Pp(-0.090955, -74.661401), Pp(-0.074779, -74.615293) };
+        Check(blds.All(b => NavigationMath.Distance(rs.Lat, rs.Lon, b.Lat, b.Lon, R) > 200) && NavigationMath.Distance(rs.Lat, rs.Lon, KscRunway.LatAt(-74.6073), -74.6073, R) > 800, "rs7k: away from the buildings and the taxiway exit");
+        var net = TestRoads(); var route = net.Route(Pp(-0.0995998, -74.6233735), rs);
+        Check(route != null && route.Count >= 2 && SegDist(route[route.Count - 2].Lat, route[route.Count - 2].Lon, route[route.Count - 1].Lat, route[route.Count - 1].Lon, rs, R) < 3
+            && RoverDrivePolicy.OnKscRunway(route[route.Count - 2].Lat, route[route.Count - 2].Lon, R), "rs7k: the route ends along the runway pavement");
+        Check(KscRoverPolicy.StopBiomeOk("Runway", "Runway") && TourChecklist.SubjectId("crewReport", "Kerbin", "SrfLanded", TourChecklist.SiteBiome(null, ScienceInventory.KscMiniBiome("Runway"), "Shores")) == "crewReport@KerbinSrfLandedRunway", "rs7k: rows resolve to ...SrfLandedRunway");
+        Check(TourChecklist.LearnedFor("Shores", rs.Lat, rs.Lon, R) == null, "rs7k: old learned 'Shores' (no point) is ignored");
+        Check(TourChecklist.LearnedFor(TourChecklist.LearnedEntry("Shores", -0.057194, -74.607395), rs.Lat, rs.Lon, R) == null, "rs7k: learned at the old Runway stop point is ignored for the moved stop");
+        Check(TourChecklist.LearnedFor(TourChecklist.LearnedEntry("Runway", rs.Lat + .0001, rs.Lon), rs.Lat, rs.Lon, R) == "Runway", "rs7k: learned at this stop point is used");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)

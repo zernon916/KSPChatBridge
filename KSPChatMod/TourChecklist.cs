@@ -137,6 +137,20 @@ namespace KSPChatBridge
             if (string.IsNullOrEmpty(biome) || string.Equals(biome, mini, StringComparison.OrdinalIgnoreCase) || string.Equals(biome, name, StringComparison.OrdinalIgnoreCase)) return name;
             return name + " (" + biome + ")";
         }
+        /// <summary>RS7k: learned stop biomes are saved with the parked point ("Runway@-0.0487,-74.7215"); a value more than 60 m from the stop point (the stop
+        /// moved, or an old entry without a point) is ignored and learned again.</summary>
+        internal static string LearnedEntry(string biome, double lat, double lon)
+        {
+            return biome + "@" + lat.ToString("0.000000", System.Globalization.CultureInfo.InvariantCulture) + "," + lon.ToString("0.000000", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        internal static string LearnedFor(string entry, double lat, double lon, double radius)
+        {
+            if (string.IsNullOrEmpty(entry)) return null; int at = entry.LastIndexOf('@'); if (at <= 0) return null;
+            var p = entry.Substring(at + 1).Split(','); double la, lo;
+            if (p.Length != 2 || !double.TryParse(p[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out la)
+                || !double.TryParse(p[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out lo)) return null;
+            return NavigationMath.Distance(la, lo, lat, lon, radius) <= 60 ? entry.Substring(0, at) : null;   // parked within the arrival / creep slack
+        }
         internal static string SubjectId(string expId, string body, string situation, string biome)
         {
             return expId + "@" + body + situation + (biome ?? "").Replace(" ", "");
