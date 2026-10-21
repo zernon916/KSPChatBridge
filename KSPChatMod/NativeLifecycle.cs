@@ -60,7 +60,7 @@ namespace KSPChatBridge
             return o;
         }
 
-        List<string> RunExperiments(bool onlyRerunnable, out string blocker, double minValue = double.NaN, HashSet<string> onlyIds = null)   // RS7: onlyIds = checklist rows
+        List<string> RunExperiments(bool onlyRerunnable, out string blocker, double minValue = double.NaN, HashSet<string> onlyIds = null, List<string> ranIds = null)   // RS7: onlyIds = checklist rows; RS7b: ranIds = experiment ids run
         {
             var ran = new List<string>();
             blocker = SciencePolicy.RunBlocker(EcPct());
@@ -110,7 +110,7 @@ namespace KSPChatBridge
                         string skip = SciencePolicy.AutoSkipReason(e.Inoperable, e.GetScienceCount() > 0, available, storedOnboard, value, ranThisType, onlyRerunnable, e.rerunnable, minValue);
                         if (skip != null) { Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, false, value, skip)); continue; }
                         DeploySilent(e);   // Luke Oct 12 22:41: no stock results dialog mid-flight; transmit/store handled by TransmitAll
-                        ranThisType = true; ran.Add(e.part.partInfo.title);
+                        ranThisType = true; ran.Add(e.part.partInfo.title); if (ranIds != null && !ranIds.Contains(expId)) ranIds.Add(expId);
                         if (subjectId.Length > 0) stored.Add(subjectId);
                         Debug.Log(SciencePolicy.FormatDecision(expId, bodyName, biome, sitName, true, value, null));
                     }

@@ -750,7 +750,7 @@ namespace KSPChatBridge
                     {
                         double distance = NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
                         destinationDistance = distance;
-                        if (KscRoverPolicy.ReachedDestination(distance))
+                        if (KscRoverPolicy.ReachedDestination(distance) || roverArrival.Sample(distance))   // RS7b: also the closest pass within 25 m (goal inside the turning circle)
                         {
                             string destination = roverDestination;
                             ChatLog.Write("rover", "arrived at " + destination + " (" + distance.ToString("0.0", CultureInfo.InvariantCulture) + " m)");
@@ -1628,6 +1628,7 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     ChatLog.Write("rover", "drive to " + roverDestination + " at " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
                     string roadNote = RoverRoadAttach(roverDestinationLat, roverDestinationLon);   // RS3b: KSC roads
+                    roverArrival.Reset(); roverCircling.Reset(); roverStuck.Count = 0; roverEscapeWhy = "";   // RS7b
                     return "Rover driving to " + roverDestination + " at up to " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s." + roadNote;
                 case "abort":
                     if (plan != null) plan.Pause();

@@ -20,6 +20,8 @@ internal static class RoverTests
         StatusBarTests();
         RoadTests();
         TourTests();
+        CirclingTests();
+        RanTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -250,6 +252,57 @@ internal static class RoverTests
         int big = 14; var sb = new double[big]; var db = new double[big, big];
         for (int i = 0; i < big; i++) { sb[i] = (i + 1) * 100; for (int j = 0; j < big; j++) db[i, j] = Math.Abs(i - j) * 100; }
         Check(TourChecklist.Order(sb, db).SequenceEqual(Enumerable.Range(0, big)), "tour: large tours ordered by nearest neighbour + 2-opt");
+    }
+
+    // RS7b: orbit around a goal inside the turning circle (Luke Oct 20): detected, pass-by arrival, escape rules
+    static void CirclingTests()
+    {
+        var c = new RoverCircling(); string why = null; double t = 0;
+        // 12 m radius orbit at 5 m/s, 25 m from the goal: heading sweeps ~24 deg/s, distance oscillates 13..37 m
+        for (int i = 0; i < 400 && why == null; i++) { t = i * .25; double a = t * 5 / 12; why = c.Sample(t, (a * 180 / Math.PI) % 360, 25 + 12 * Math.Sin(a), 5); }
+        Check(why != null && why.StartsWith("turned") && t < 20, "circling: orbit detected after one turn (" + why + ")");
+        c.Reset(); why = null;
+        for (int i = 0; i < 400 && why == null; i++) { t = i * .25; why = c.Sample(t, 90 + 20 * Math.Sin(t), 800 - 8 * t, 8); }
+        Check(why == null, "circling: weaving along the road while closing in is fine");
+        c.Reset(); why = null;
+        for (int i = 0; i < 200 && why == null; i++) { t = i * .25; why = c.Sample(t, 90, 300, 3); }
+        Check(why != null && why.StartsWith("no progress") && t >= 20 && t < 21, "circling: no progress for 20 s while moving");
+        c.Reset(); why = null;
+        for (int i = 0; i < 400 && why == null; i++) { t = i * .25; why = c.Sample(t, (t * 40) % 360, 300, .2); }
+        Check(why == null, "circling: standing / creeping is left to the stuck detector");
+        c.Reset(); why = null;
+        for (int i = 0; i < 160 && why == null; i++) { t = i * .25; why = c.Sample(t, (t * 30) % 360, 300 - 3 * t, 4); }
+        Check(why == null, "circling: turning while making progress (switchbacks) is fine");
+        // arrival: inside 10 m, or the closest pass within 25 m
+        var ar = new RoverArrival();
+        Check(!ar.Sample(40) && !ar.Sample(20) && !ar.Sample(14) && !ar.Sample(15) && ar.Sample(17.5), "arrival: passed 14 m from the goal = arrived");
+        ar.Reset(); Check(!ar.Sample(60) && !ar.Sample(40) && !ar.Sample(45) && ar.Sample(9), "arrival: a 40 m pass is not arrival, 10 m is");
+        Check(RoverEscape.BackSteer(KscRoverPolicy.Steering(90, 0)) == -KscRoverPolicy.Steering(90, 0) && RoverEscape.BackSteer(.5) == -.5, "escape: reversing steers opposite to point the nose at the waypoint");
+        Check(!RoverEscape.GiveUp(1) && !RoverEscape.GiveUp(3) && RoverEscape.GiveUp(4), "escape: 3 retries, then stop the tour");
+        // the escape reuses RoverStuck: ForceBack backs up 5 m and counts the attempt
+        var st = new RoverStuck(); st.ForceBack(0);
+        bool back = st.Sample(.1, 5, 1, .1); for (int i = 0; i < 100 && st.Backing; i++) st.Sample(.2 + i * .1, 5, 1, .1);
+        Check(back && !st.Backing && st.Count == 1, "escape: ForceBack backs up then hands back");
+    }
+
+    // RS7b: experiments that ran on the tour - check mark, gain 0, out of totals, persisted
+    static void RanTests()
+    {
+        var sites = TourSample(); var sel = new TourSelection(); TourChecklist.Apply(sites, sel);
+        double before = TourChecklist.CheckedTotal(sites); var vab = sites.First(s => s.Name == "VAB");
+        TourChecklist.MarkRan(sites, "VAB", new[] { "temp" }, sel);
+        var temp = vab.Exps.First(e => e.Id == "temp");
+        Check(temp.Ran && temp.Gain == 0 && temp.Dim && !temp.Runnable, "ran: row marked, gain 0, dimmed");
+        Check(Math.Abs(TourChecklist.CheckedTotal(sites) - (before - 2)) < 1e-9 && Math.Abs(vab.Total - 6) < 1e-9, "ran: removed from site and top-bar totals");
+        TourChecklist.MarkRan(sites, "VAB", new[] { "goo" }, sel);
+        Check(!sites.First(s => s.Name == "Pad").Exps.First(e => e.Id == "goo").Blocked, "ran: a used one-shot frees the next best site");
+        Check(!TourChecklist.RouteSites(sites).Exists(s => s.Name == "VAB"), "ran: a site with everything run is not visited again");
+        var back = TourSelection.FromData(MiniJson.Deserialize(MiniJson.Serialize(new Dictionary<string, object> { { "x", sel.ToData() } }))["x"]);
+        var again = TourSample(); TourChecklist.Apply(again, back);
+        var t2 = again.First(s => s.Name == "VAB").Exps.First(e => e.Id == "temp");
+        Check(t2.Ran && t2.Gain == 0 && t2.LiveGain == 2 && again.First(s => s.Name == "VAB").Exps[again.First(s => s.Name == "VAB").Exps.Count - 1].Ran, "ran: persisted and sorted to the bottom");
+        TourChecklist.ClearRan(again, back);
+        Check(!t2.Ran && t2.Gain == 2 && back.Ran.Count == 0, "ran: a new tour clears the marks");
     }
 
     static VehicleKind K(int wings = 0, int rotors = 0, int props = 0, int wheels = 0, int skis = 0, int motors = 0, int engines = 0)

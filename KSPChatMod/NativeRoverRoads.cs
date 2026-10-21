@@ -1,6 +1,7 @@
 // RS3b: keep the rover on KSC roads. RoadNet (pure) gives the polyline; the rover loop steers to a pure-pursuit point on it
 // (TaxiRoute.Target: cross-track correction back to the centreline) and slows before corners. Only the last leg to an off-road site
-// leaves the road. PluginData/charts/ROADS_KSC.json overrides the generated network (ROADS_KSC_generated.json is written for editing).
+// leaves the road. PluginData/roads/ROADS_KSC.json overrides the generated network (ROADS_KSC_generated.json is written for editing;
+// RS7b: not in charts/ any more - the approach chart loader picked it up as a chart "ROADS KSC").
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -15,7 +16,17 @@ namespace KSPChatBridge
         TaxiRoute roverRoad; int roverRoadLeg, roverRoadOffLeg = -1; double roverRoadEndLat = double.NaN, roverRoadEndLon, roverRoadCap = double.MaxValue;
         const double RoadMaxFromHubM = 4000;
 
-        static string RoadsDir { get { return Path.Combine(AicsCore.PluginDataDirectory, "charts"); } }
+        static string RoadsDir { get { return Path.Combine(AicsCore.PluginDataDirectory, "roads"); } }
+        double roverRoadLeft = double.NaN;
+        bool RoverRoadActive { get { return roverRoad != null && roverNavigating && Math.Abs(roverDestinationLat - roverRoadEndLat) <= 1e-7 && Math.Abs(roverDestinationLon - roverRoadEndLon) <= 1e-7; } }
+
+        /// <summary>RS7b: after a stuck / circling escape - re-snap to the nearest road from here and plan again.</summary>
+        void RoverReplanRoad()
+        {
+            if (!RoverRoadActive) return;
+            double lat = roverRoadEndLat, lon = roverRoadEndLon; string note = RoverRoadAttach(lat, lon);
+            ChatLog.Write("rover", "re-planned the route from here" + (note.Length > 0 ? note : " (straight)"));
+        }
 
         /// <summary>KSC road network for this body (null away from Kerbin / before the KSC map is known).</summary>
         static RoadNet KscRoads(CelestialBody body)
@@ -99,13 +110,13 @@ namespace KSPChatBridge
         /// <summary>Rover loop: steer along the road polyline. remaining = metres left along it.</summary>
         bool RoverRoadSteer(out double remaining)
         {
-            remaining = double.NaN; roverRoadCap = double.MaxValue;
-            if (roverRoad == null || !roverNavigating || Math.Abs(roverDestinationLat - roverRoadEndLat) > 1e-7 || Math.Abs(roverDestinationLon - roverRoadEndLon) > 1e-7) return false;
+            remaining = double.NaN; roverRoadCap = double.MaxValue; roverRoadLeft = double.NaN;
+            if (!RoverRoadActive) return false;
             double r = vessel.mainBody.Radius, tLat, tLon, cross, toEnd;
             roverRoad.Target(ref roverRoadLeg, vessel.latitude, vessel.longitude, r, out tLat, out tLon, out cross, out toEnd);
             if (double.IsNaN(tLat) || double.IsNaN(tLon)) return false;
             roverHeading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, tLat, tLon);
-            remaining = toEnd;
+            remaining = toEnd; roverRoadLeft = toEnd;
             if (Math.Abs(cross) > 8 && roverRoadOffLeg != roverRoadLeg) { roverRoadOffLeg = roverRoadLeg; ChatLog.Write("rover", "road: " + Math.Abs(cross).ToString("0", CultureInfo.InvariantCulture) + " m off the centreline on leg " + roverRoadLeg + ", steering back"); }
             // corner ahead: the turn at the end of this leg
             var p = roverRoad.Points; int i = roverRoadLeg;

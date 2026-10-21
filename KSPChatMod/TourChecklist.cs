@@ -13,10 +13,12 @@ namespace KSPChatBridge
         internal string Id = "", Title = "";
         internal double Gain;
         internal bool On, OneShot, Blocked;   // Blocked: one-shot that runs at a better checked site instead
+        internal bool Ran;                    // RS7b: ran on this tour - check mark on the right, gain shown as 0
+        internal double LiveGain;             // R&D value before the ran zeroing
         internal int Modules = 1;             // unused one-shot modules on board
         internal string RunsAt = "";
-        internal bool Runnable { get { return On && !Blocked && Gain > 0; } }
-        internal bool Dim { get { return Gain <= 0 || Blocked || !On; } }
+        internal bool Runnable { get { return On && !Blocked && !Ran && Gain > 0; } }
+        internal bool Dim { get { return Gain <= 0 || Blocked || !On || Ran; } }
     }
 
     internal sealed class TourSite
@@ -35,19 +37,22 @@ namespace KSPChatBridge
     {
         internal readonly Dictionary<string, bool> Sites = new Dictionary<string, bool>();
         internal readonly HashSet<string> Off = new HashSet<string>();
+        internal readonly HashSet<string> Ran = new HashSet<string>();   // RS7b: "site|exp" run on this rover's tour
         internal static string K(TourSite s, TourExp e) { return s.Key + "|" + e.Id; }
 
         internal Dictionary<string, object> ToData()
         {
             var s = new Dictionary<string, object>(); foreach (var kv in Sites) s[kv.Key] = kv.Value;
             var o = new Dictionary<string, object>(); foreach (var k in Off) o[k] = true;
-            return new Dictionary<string, object> { { "sites", s }, { "off", o } };
+            var rn = new Dictionary<string, object>(); foreach (var k in Ran) rn[k] = true;
+            return new Dictionary<string, object> { { "sites", s }, { "off", o }, { "ran", rn } };
         }
         internal static TourSelection FromData(object data)
         {
             var r = new TourSelection(); var d = data as Dictionary<string, object>; if (d == null) return r; object o;
             if (d.TryGetValue("sites", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) if (kv.Value is bool) r.Sites[kv.Key] = (bool)kv.Value;
             if (d.TryGetValue("off", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) r.Off.Add(kv.Key);
+            if (d.TryGetValue("ran", out o) && o is Dictionary<string, object>) foreach (var kv in (Dictionary<string, object>)o) r.Ran.Add(kv.Key);
             return r;
         }
     }
@@ -59,8 +64,9 @@ namespace KSPChatBridge
         {
             foreach (var s in sites)
             {
+                foreach (var e in s.Exps) { e.LiveGain = e.Gain; e.Ran = sel.Ran.Contains(TourSelection.K(s, e)); }
                 bool on; s.On = sel.Sites.TryGetValue(s.Key, out on) ? on : s.Total > 0;
-                foreach (var e in s.Exps) e.On = s.On && e.Gain > 0 && !sel.Off.Contains(TourSelection.K(s, e));
+                foreach (var e in s.Exps) { e.On = s.On && e.Gain > 0 && !sel.Off.Contains(TourSelection.K(s, e)); if (e.Ran) e.Gain = 0; }   // RS7b: ran rows count 0 (totals, sorting)
             }
             OneShots(sites); Sort(sites);
         }
@@ -80,7 +86,7 @@ namespace KSPChatBridge
             foreach (var id in ids)
             {
                 var c = new List<KeyValuePair<TourSite, TourExp>>();
-                foreach (var s in sites) if (s.On) foreach (var e in s.Exps) if (e.Id == id && e.OneShot && e.On && e.Gain > 0) c.Add(new KeyValuePair<TourSite, TourExp>(s, e));
+                foreach (var s in sites) if (s.On) foreach (var e in s.Exps) if (e.Id == id && e.OneShot && e.On && !e.Ran && e.Gain > 0) c.Add(new KeyValuePair<TourSite, TourExp>(s, e));
                 c = c.OrderByDescending(p => p.Value.Gain).ToList();
                 int n = 0; foreach (var p in c) n = Math.Max(n, p.Value.Modules); n = Math.Max(1, n);
                 var best = new List<string>(); for (int i = 0; i < c.Count && i < n; i++) best.Add(c[i].Key.Name);
@@ -106,6 +112,24 @@ namespace KSPChatBridge
             OneShots(sites);
         }
         internal static void SetAll(List<TourSite> sites, bool on, TourSelection sel) { foreach (var s in sites) SetSite(sites, s, on, sel); }
+
+        /// <summary>RS7b: experiments that ran at a site on the tour: check mark, gain 0, out of the totals; saved in the selection.</summary>
+        internal static void MarkRan(List<TourSite> sites, string siteKey, IEnumerable<string> expIds, TourSelection sel)
+        {
+            foreach (var id in expIds)
+            {
+                sel.Ran.Add(siteKey + "|" + id);
+                foreach (var s in sites) if (s.Key == siteKey) foreach (var e in s.Exps) if (e.Id == id) { e.Ran = true; e.Gain = 0; }
+            }
+            OneShots(sites);
+        }
+        /// <summary>A new tour starts with no check marks.</summary>
+        internal static void ClearRan(List<TourSite> sites, TourSelection sel)
+        {
+            sel.Ran.Clear();
+            foreach (var s in sites) foreach (var e in s.Exps) if (e.Ran) { e.Ran = false; e.Gain = e.LiveGain; }
+            OneShots(sites);
+        }
 
         internal static double CheckedTotal(IEnumerable<TourSite> sites) { double t = 0; foreach (var s in sites) t += s.Checked; return t; }
         /// <summary>Sites the tour drives to: checked, with at least one runnable experiment.</summary>

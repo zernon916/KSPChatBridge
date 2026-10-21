@@ -78,6 +78,7 @@ namespace KSPChatBridge
 
             touring = false;
             scienceTourOnly = null;   // RS7: chat tool = full automatic tour
+            RoverAlert = ""; ChecklistClearRan();
             scienceTouring = true;
             scienceTourDriving = false;
             scienceTourStops.Clear();
@@ -265,7 +266,9 @@ namespace KSPChatBridge
             else
             {
                 HashSet<string> only = null; if (scienceTourOnly != null && !scienceTourOnly.TryGetValue(stop.Name, out only)) only = new HashSet<string>();
-                ran = RunExperiments(false, out blocker, RoverMinScience(), only);   // RS7: checklist tour runs only the ticked rows
+                var ranIds = new List<string>();
+                ran = RunExperiments(false, out blocker, RoverMinScience(), only, ranIds);   // RS7: checklist tour runs only the ticked rows
+                ChecklistMarkRan(stop.Name, ranIds);   // RS7b: check marks on the tablet
             }
             checklistDirty = true;
             if (RoverMode && HasScientist()) StartCoroutine(RoverResetLater());   // RS4: reset used one-shots once the data is safe

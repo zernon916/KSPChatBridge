@@ -123,6 +123,20 @@ namespace KSPChatBridge
             finally { GUILayout.EndArea(); }
         }
 
+        /// <summary>RS7b: green check mark drawn from two rotated bars (no font glyph needed).</summary>
+        static void CheckMark(Rect r)
+        {
+            var m = GUI.matrix; var col = new Color(.30f, .85f, .40f); float t = Mathf.Max(3, r.height * .14f);
+            Vector2 a = new Vector2(r.x + r.width * .18f, r.y + r.height * .55f), b = new Vector2(r.x + r.width * .42f, r.y + r.height * .80f), c2 = new Vector2(r.x + r.width * .85f, r.y + r.height * .22f);
+            foreach (var seg in new[] { new[] { a, b }, new[] { b, c2 } })
+            {
+                Vector2 p0 = seg[0], p1 = seg[1]; float len = Vector2.Distance(p0, p1), ang = Mathf.Atan2(p1.y - p0.y, p1.x - p0.x) * Mathf.Rad2Deg;
+                GUI.matrix = m; GUIUtility.RotateAroundPivot(ang, p0);
+                TabletUi.Fill(new Rect(p0.x, p0.y - t / 2, len + t / 2, t), col);
+            }
+            GUI.matrix = m;
+        }
+
         void TabletRoverTour(Rect area)
         {
             float row = Mathf.Max(44, tabletFont * 2.5f), gap = 8, bw = Mathf.Max(200, tabletFont * 10f); bool en = TabletLink;
@@ -147,6 +161,7 @@ namespace KSPChatBridge
                 {
                     float w = body.width - 26, y = 0;
                     if (!string.IsNullOrEmpty(tabletRoverNote)) y += TextCard(new Rect(0, y, w, 0), "LAST COMMAND", new List<string> { tabletRoverNote }) + gap;
+                    if (!string.IsNullOrEmpty(NativeFlightController.RoverAlert)) y += TextCard(new Rect(0, y, w, 0), "ROVER ALERT", new List<string> { NativeFlightController.RoverAlert }) + gap;   // RS7b
                     float rh = Mathf.Max(34, tabletFont * 2f), cb = rh - 6;
                     if (sites.Count == 0) y += TextCard(new Rect(0, y, w, 0), "SCIENCE SITES", new List<string> { "No sites here: land the rover near KSC or mark PLACES on this body." }) + gap;
                     foreach (var s in sites)
@@ -163,7 +178,8 @@ namespace KSPChatBridge
                         {
                             if (TabletUi.Button(new Rect(cb + 14, yy + 3, cb, cb), e.On ? "X" : "", e.On && !e.Blocked, en && e.Gain > 0)) NativeFlightController.RoverChecklistExp(s, e, !e.On);
                             string t = e.Title + "  +" + e.Gain.ToString("0.0", CultureInfo.InvariantCulture) + (e.Blocked ? "   (one-shot: runs at " + e.RunsAt + ")" : "");
-                            TabletUi.Label(new Rect(2 * cb + 24, yy, w - 2 * cb - 30, rh), t, e.Dim);
+                            TabletUi.Label(new Rect(2 * cb + 24, yy, w - 2 * cb - 30 - (e.Ran ? cb + 12 : 0), rh), t, e.Dim);
+                            if (e.Ran) CheckMark(new Rect(w - cb - 10, yy + 3, cb, cb));   // RS7b: ran on this tour (right side, separate from the selection box)
                             yy += rh;
                         }
                         y += h + gap;

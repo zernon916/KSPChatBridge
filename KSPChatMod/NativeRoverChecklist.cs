@@ -100,11 +100,19 @@ namespace KSPChatBridge
             checklist = sites;
         }
 
+        void ChecklistMarkRan(string site, List<string> ids)
+        {
+            if (ids == null || ids.Count == 0 || vessel == null) return;
+            TourChecklist.MarkRan(checklist, site, ids, ChecklistSelection()); ChecklistSave(); checklistDirty = true;
+            ChatLog.Write("rover", "checklist: ran at " + site + ": " + string.Join(", ", ids.ToArray()));
+        }
+        void ChecklistClearRan() { if (vessel == null) return; TourChecklist.ClearRan(checklist, ChecklistSelection()); ChecklistSave(); checklistDirty = true; }
+
         string StartChecklistTour(double speed)
         {
             if (vessel == null || !vessel.LandedOrSplashed) return "Science tours start with a landed rover.";
             if (!HasPoweredWheels()) return "Science tours require powered wheels.";
-            ChecklistRefresh(true);
+            ChecklistClearRan(); ChecklistRefresh(true);   // RS7b: a new tour starts without check marks
             var route = TourChecklist.RouteSites(checklist);
             if (route.Count == 0) return "Tick at least one site with science to gain.";
             int n = route.Count; var st = new double[n]; var d = new double[n, n];
@@ -114,6 +122,7 @@ namespace KSPChatBridge
                 for (int j = 0; j < n; j++) d[i, j] = i == j ? 0 : RoverDriveDistance(route[i].Lat, route[i].Lon, route[j].Lat, route[j].Lon);
             }
             var order = TourChecklist.Order(st, d);
+            RoverAlert = "";
             double hubD; bool ksc = NearKsc(out hubD);
             touring = false; scienceTourDriving = false;
             scienceTourStops.Clear(); scienceTourVisited.Clear(); scienceTourRoute.Clear();

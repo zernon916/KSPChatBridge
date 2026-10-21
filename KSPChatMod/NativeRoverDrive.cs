@@ -11,6 +11,8 @@ namespace KSPChatBridge
     public partial class NativeFlightController
     {
         RoverCaps roverCaps; string roverCapsFor; readonly RoverStuck roverStuck = new RoverStuck(); RoverSpeedLearner roverSpeedLearn = new RoverSpeedLearner();
+        readonly RoverCircling roverCircling = new RoverCircling(); readonly RoverArrival roverArrival = new RoverArrival(); string roverEscapeWhy = ""; bool roverWasBacking;   // RS7b
+        internal static string RoverAlert = "";   // RS7b: shown on the tablet SCIENCE TOUR page
         float roverGuardNext; double roverGuardCap = double.PositiveInfinity, roverDetour, roverPrevHeading = double.NaN, roverYawRate; float roverDetourUntil, roverCapsSaveAt;
         bool roverGuardBrake, roverHoldShort; RoverSurface roverSurface; string roverGuardWhy = "", roverGuardLogged = "";
 
@@ -46,6 +48,7 @@ namespace KSPChatBridge
             {
                 double gdt = roverGuardNext > 0 ? Math.Max(.05, now - roverGuardNext + .25) : .25; roverGuardNext = now + .25f;
                 try { RoverGuardSample(gdt); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover guard: " + ex.Message); }
+                try { RoverCirclingCheck(now); } catch (Exception ex) { Debug.LogWarning("[KSPChatBridge] rover circling: " + ex.Message); }
             }
             double want = targetSpeed;
             targetSpeed = Math.Min(targetSpeed, roverGuardCap);
@@ -62,9 +65,13 @@ namespace KSPChatBridge
             if (roverCapsSaveAt > 0 && now >= roverCapsSaveAt) { roverCapsSaveAt = 0; SaveRoverCaps(); }
             if (roverCharging) { roverIntegral = 0; c.wheelThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); roverStuck.Reset(); return true; }   // RS4: parked while charging
             if (roverGuardBrake && vessel.srfSpeed < .5 && !roverStuck.Backing) { roverStuck.ForceBack(now); roverGuardBrake = false; roverDetour = -roverDetour; roverDetourUntil = now + 8; roverGuardWhy = "blocked: backing up"; }
-            if (roverStuck.Count >= 3)
-            {
-                roverStuck.Count = 0; roverStuck.Reset(); ChatLog.Write("rover", "guard: stuck 3 times - autopilot stopped"); ChatWindow.Notice("Rover autopilot stopped: stuck 3 times (check the route).");
+            if (RoverEscape.GiveUp(roverStuck.Count))
+            {   // RS7b: 3 escapes (back up, nose to the next waypoint, re-plan) failed
+                string what = roverEscapeWhy.Length > 0 ? roverEscapeWhy : "stuck";
+                RoverAlert = "Rover stopped: " + what + " again after " + RoverEscape.MaxRetries + " escape attempts near "
+                    + vessel.latitude.ToString("0.0000", CultureInfo.InvariantCulture) + "," + vessel.longitude.ToString("0.0000", CultureInfo.InvariantCulture) + ". Drive it clear and start the tour again.";
+                roverStuck.Count = 0; roverStuck.Reset(); roverCircling.Reset();
+                ChatLog.Write("rover", "guard: " + what + " " + (RoverEscape.MaxRetries + 1) + " times - autopilot and tour stopped"); ChatWindow.Notice(RoverAlert);
                 scienceTouring = false; touring = false; Stop(); return true;
             }
             if (roverGuardBrake || roverHoldShort)
@@ -73,10 +80,32 @@ namespace KSPChatBridge
             }
             if (roverStuck.Sample(now, want, vessel.srfSpeed, dt))
             {
-                if (roverStuck.Count > 0 && roverGuardWhy != "stuck: backing up") { roverGuardWhy = "stuck: backing up"; roverDetour = roverStuck.Count % 2 == 0 ? -40 : 40; roverDetourUntil = now + 8; }
-                SetGroup(vessel, KSPActionGroup.Brakes, false); roverIntegral = 0; c.wheelThrottle = -.5f; c.wheelSteer = 0; return true;
+                if (roverStuck.Count > 0 && roverGuardWhy != "stuck: backing up" && roverGuardWhy != "circling: backing up") { roverGuardWhy = "stuck: backing up"; roverEscapeWhy = "stuck"; roverDetour = roverStuck.Count % 2 == 0 ? -40 : 40; roverDetourUntil = now + 8; }
+                // RS7b: reverse with the nose turning toward the next road waypoint (reversing flips the steering)
+                double err = FlightPolicy.Wrap(roverHeading - FlightGlobals.ship_heading);
+                SetGroup(vessel, KSPActionGroup.Brakes, false); roverIntegral = 0; c.wheelThrottle = -.5f;
+                c.wheelSteer = roverHeadingEnabled ? (float)RoverEscape.BackSteer(KscRoverPolicy.Steering(err, 0)) : 0;
+                roverWasBacking = true; return true;
+            }
+            if (roverWasBacking)
+            {   // RS7b: escape done - re-snap to the nearest road and plan again from here
+                roverWasBacking = false; roverCircling.Reset(); roverArrival.Reset(); RoverReplanRoad();
             }
             return false;
+        }
+
+        /// <summary>RS7b (4 Hz): orbiting / no progress toward the target -> the RS3 stuck escape (back up 5 m with the nose turning to the
+        /// next road waypoint, then re-plan from here); after RoverEscape.MaxRetries escapes the guard stops the tour.</summary>
+        void RoverCirclingCheck(float now)
+        {
+            if (!roverNavigating || roverStuck.Backing || roverCharging || roverGuardBrake || roverHoldShort) { if (!roverNavigating) roverCircling.Reset(); return; }
+            double dist = RoverRoadActive && !double.IsNaN(roverRoadLeft) ? roverRoadLeft
+                : NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
+            string why = roverCircling.Sample(now, FlightGlobals.ship_heading, dist, vessel.srfSpeed);
+            if (why == null) return;
+            ChatLog.Write("rover", "circling: " + why + " - backing up, nose to the next waypoint, re-planning (escape " + (roverStuck.Count + 1) + "/" + RoverEscape.MaxRetries + ")");
+            roverCircling.Reset(); roverEscapeWhy = "circling"; roverGuardWhy = "circling: backing up"; roverDetourUntil = 0;
+            roverStuck.ForceBack(now);
         }
 
         void RoverGuardSample(double gdt)
