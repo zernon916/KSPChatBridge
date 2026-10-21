@@ -46,7 +46,7 @@ namespace KSPChatBridge
         /// <summary>Subject IDs already held in experiment modules or science containers on this vessel.</summary>
         HashSet<string> StoredSubjectIds()
         {
-            var o = new HashSet<string>();
+            var o = new HashSet<string>(sentSubjects);   // RS7l: transmitted / received this flight counts as held (cleared on revert / load)
             foreach (var e in vessel.FindPartModulesImplementing<ModuleScienceExperiment>())
             {
                 var data = e.GetData(); if (data == null) continue;
@@ -297,6 +297,18 @@ namespace KSPChatBridge
             ChatLog.Write("science", "[science] RETRACT " + a.part.partInfo.title + (danger ? " (airstream q " + vessel.dynamicPressurekPa.ToString("0.00") + " kPa)" : ""));
         }
         bool sciStored;   // data held back for lack of EC/antenna -> retry later
+        /// <summary>RS7l (Luke Oct 21 02:53: Runway rows stayed unticked at full gain after crewReport/temp/baro/sample were TRANSMITTED and
+        /// R&D logged "+10 data on Crew Report from Runway", and the restarted tour ran and sent them again): subjects sent to / received by
+        /// R&D this flight. Counted as held (check mark, gain 0, not run again) whatever R&D's subject value says; in memory only, cleared
+        /// on game load / flight ready (revert, quickload) so reverted science is offered again.</summary>
+        readonly HashSet<string> sentSubjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void OnScienceReceived(float amount, ScienceSubject subject, ProtoVessel source, bool reverse)
+        {
+            if (subject == null || string.IsNullOrEmpty(subject.id)) return;
+            sentSubjects.Add(subject.id); checklistDirty = true;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            ChatLog.Write("science", "[science] R&D received " + subject.id + " +" + amount.ToString("0.0", inv) + " sci, subject now " + subject.science.ToString("0.0", inv) + "/" + subject.scienceCap.ToString("0.0", inv));
+        }
 
         /// <summary>Luke Oct 12 22:41: transmit only when the vessel's EC covers the WHOLE transmission (antenna EC/Mit x data Mits)
         /// plus a reserve (>= 10% battery); else keep the data onboard and retry when EC recovers. Returns experiments sent.</summary>
@@ -331,6 +343,8 @@ namespace KSPChatBridge
                 double need = mits * tx.DataResourceCost;
                 if (amt - need < reserve) { sciStored = true; ChatLog.Write("science", "[science] " + id + ": STORED (low EC: need " + need.ToString("0") + " + reserve " + reserve.ToString("0") + ", have " + amt.ToString("0") + ")"); continue; }
                 tx.TransmitData(new List<ScienceData>(data));
+                foreach (var d in data) if (d != null && !string.IsNullOrEmpty(d.subjectID)) sentSubjects.Add(d.subjectID);   // RS7l
+                checklistDirty = true;
                 foreach (var d in data) e.DumpData(d);
                 amt -= need; sent++;
                 ChatLog.Write("science", "[science] " + id + ": TRANSMIT " + sci.ToString("0.0") + " sci via " + txName + " (EC need " + need.ToString("0") + "/have " + (amt + need).ToString("0") + ")");

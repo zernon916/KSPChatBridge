@@ -24,7 +24,8 @@ namespace KSPChatBridge
             if (!double.IsNaN(prevH)) turned += Math.Abs(FlightPolicy.Wrap(headingDeg - prevH));
             prevH = headingDeg;
             if (distToTarget < best - ProgressM) { best = distToTarget; since = improvedAt = now; turned = 0; return null; }
-            if (turned >= TurnDeg) return "turned " + Math.Round(turned) + " deg in " + Math.Round(now - since) + " s with " + Math.Round(Math.Max(0, best - distToTarget)) + " m progress (" + Math.Round(distToTarget) + " m to go)";
+            // RS7l: close to the goal (< 60 m) 270 deg of turning without getting closer is already an orbit
+            if (turned >= (best < 60 ? 270 : TurnDeg)) return "turned " + Math.Round(turned) + " deg in " + Math.Round(now - since) + " s with " + Math.Round(Math.Max(0, best - distToTarget)) + " m progress (" + Math.Round(distToTarget) + " m to go)";
             if (now - improvedAt >= StallS) return "no progress toward the target for " + Math.Round(now - improvedAt) + " s (" + Math.Round(distToTarget) + " m to go)";
             return null;
         }

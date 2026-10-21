@@ -110,17 +110,45 @@ namespace KSPChatBridge
     internal sealed class RoverHang
     {
         internal const double HungS = 3, NoProgressS = 20, ProgressM = 2, HungSpeed = 1;
-        double hungSince = double.NaN, since = double.NaN, bestLeft = double.NaN;
-        internal void Reset() { hungSince = since = bestLeft = double.NaN; }
-        internal string Sample(double now, int wheels, int grounded, double speed, double goalLeft)
+        /// <summary>RS7l (Oct 21 02:54/02:55: "no progress for 20 s" 11 s into a new leg): the baseline carried over from the previous leg
+        /// (best ~0 m at the last stop), so a new target (goal left jumps up NewTargetM) restarts it; turning TurnDeg (a U-turn, a 3-point
+        /// turn) is manoeuvring, not hanging - orbits are RoverCircling's job. Progress = along-route metres left.</summary>
+        internal const double NewTargetM = 50, TurnDeg = 45;
+        double hungSince = double.NaN, since = double.NaN, bestLeft = double.NaN, prevH = double.NaN, turned;
+        internal void Reset() { hungSince = since = bestLeft = prevH = double.NaN; turned = 0; }
+        internal string Sample(double now, int wheels, int grounded, double speed, double goalLeft, double headingDeg = double.NaN)
         {
             bool hung = wheels > 0 && grounded * 2 <= wheels && speed < HungSpeed;
             if (!hung) hungSince = double.NaN; else if (double.IsNaN(hungSince)) hungSince = now;
             if (hung && now - hungSince >= HungS) return (wheels - grounded) + " of " + wheels + " wheels off the ground";
             if (double.IsNaN(goalLeft)) { since = bestLeft = double.NaN; return null; }
-            if (double.IsNaN(since) || goalLeft < bestLeft - ProgressM) { since = now; bestLeft = goalLeft; return null; }
+            if (!double.IsNaN(headingDeg)) { if (!double.IsNaN(prevH)) { double dh = Math.Abs(FlightPolicy.Wrap(headingDeg - prevH)); if (dh > .5) turned += dh; } prevH = headingDeg; }   // jitter of a stuck rover does not count
+            if (turned >= TurnDeg) { turned = 0; since = now; bestLeft = goalLeft; return null; }
+            if (double.IsNaN(since) || goalLeft < bestLeft - ProgressM || goalLeft > bestLeft + NewTargetM) { since = now; bestLeft = goalLeft; turned = 0; return null; }
             if (now - since >= NoProgressS) return "no progress for " + NoProgressS.ToString("0") + " s with the autopilot driving";
             return null;
+        }
+    }
+
+    /// <summary>RS7l (Luke Oct 21 02:56: rover circling on the runway around a stop 40-70 m behind it): goal inside the turning circle.
+    /// Behind and within the 25 m pass radius = arrived; behind and within ReverseM = reverse toward it (tail first, 3-point turn) instead
+    /// of orbiting; any big heading error = slow, tight turn; route points just behind the rover are dropped.</summary>
+    internal static class RoverTurn
+    {
+        internal const double ReverseDeg = 120, ReverseM = 60, TurnSlowDeg = 60, TurnSpeed = 4, ReverseSpeed = 3, TrimM = 30;
+        internal static bool ArrivedBehind(double dist, double errDeg) { return dist <= RoverArrival.PassM && Math.Abs(FlightPolicy.Wrap(errDeg)) >= 90; }
+        internal static bool Reverse(double dist, double errDeg) { return dist > RoverArrival.PassM && dist <= ReverseM && Math.Abs(FlightPolicy.Wrap(errDeg)) >= ReverseDeg; }
+        /// <summary>Heading error for the NOSE while reversing tail-first toward the goal (feed BackSteer(Steering(..))).</summary>
+        internal static double ReverseNoseErr(double errDeg) { return FlightPolicy.Wrap(errDeg - 180); }
+        internal static double TurnCap(double target, double errDeg) { return Math.Abs(FlightPolicy.Wrap(errDeg)) > TurnSlowDeg ? Math.Min(target, TurnSpeed) : target; }
+        /// <summary>Drop leading route points within TrimM that are behind the rover (keeps at least one). Returns how many.</summary>
+        internal static int TrimBehind(List<KscRoverPolicy.P> pts, double lat, double lon, double headingDeg, double radius)
+        {
+            int n = 0;
+            while (pts.Count - n > 1 && NavigationMath.Distance(lat, lon, pts[n].Lat, pts[n].Lon, radius) <= TrimM
+                && Math.Abs(FlightPolicy.Wrap(NavigationMath.Bearing(lat, lon, pts[n].Lat, pts[n].Lon) - headingDeg)) > 90) n++;
+            if (n > 0) pts.RemoveRange(0, n);
+            return n;
         }
     }
 

@@ -109,7 +109,7 @@ namespace KSPChatBridge
         void ChecklistMarkRan(string site, List<string> ids)
         {
             if (ids == null || ids.Count == 0 || vessel == null) return;
-            TourChecklist.MarkRan(checklist, site, ids); checklistDirty = true;   // RS7e: not saved - the next refresh derives it from the game
+            TourChecklist.MarkRan(checklist, site, ids); checklistDirty = true; checklistSitesRun.Add(site);   // RS7l: a restarted tour skips it   // RS7e: not saved - the next refresh derives it from the game
             ChatLog.Write("rover", "checklist: ran at " + site + ": " + string.Join(", ", ids.ToArray()));
         }
         /// <summary>RS7j: biome seen at each stop (site name -> biome), learned on arrival and saved in settings ("rover_stop_biome") - geography,
@@ -125,6 +125,7 @@ namespace KSPChatBridge
             return stopBiomes;
         }
         Dictionary<string, string> stopBiomes;
+        readonly HashSet<string> checklistSitesRun = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void RecordStopBiome(string site, string biome)
         {
             if (string.IsNullOrEmpty(site) || string.IsNullOrEmpty(biome) || vessel == null || vessel.mainBody == null || vessel.mainBody.bodyName != "Kerbin") return;
@@ -142,7 +143,7 @@ namespace KSPChatBridge
         void ChecklistResetLive(bool tour)
         {
             checklist = new List<TourSite>(); checklistDirty = true; checklistAt = -100; checklistSel = null;
-            if (tour) { scienceTourVisited.Clear(); }
+            if (tour) { scienceTourVisited.Clear(); sentSubjects.Clear(); checklistSitesRun.Clear(); }   // RS7l
         }
         void OnChecklistGameLoad(ConfigNode n) { ChecklistResetLive(true); }
         void OnChecklistFlightReady() { ChecklistResetLive(true); }
@@ -161,6 +162,10 @@ namespace KSPChatBridge
             ChecklistClearRan(); ChecklistRefresh(true);   // RS7b: a new tour starts without check marks
             var route = TourChecklist.RouteSites(checklist);
             if (route.Count == 0) return "Tick at least one site with science to gain.";
+            var fresh = TourChecklist.NotRun(route, checklistSitesRun);   // RS7l: restart after a guard stop = carry on, not back to stop 1
+            if (fresh.Count < route.Count) ChatLog.Write("rover", "checklist tour: skipping " + (route.Count - fresh.Count) + " site(s) already run this flight");
+            route = fresh;
+            if (route.Count == 0) return "Every ticked site already ran this flight. Revert or tick other sites.";
             int n = route.Count; var st = new double[n]; var d = new double[n, n];
             for (int i = 0; i < n; i++)
             {

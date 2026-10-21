@@ -79,6 +79,7 @@ namespace KSPChatBridge
             {
                 roverIntegral = 0; c.wheelThrottle = 0; SetGroup(vessel, KSPActionGroup.Brakes, true); roverStuck.Reset(); return true;
             }
+            if (roverNavigating && !roverStuck.Backing && RoverReverseTick(c)) return true;   // RS7l: goal close behind -> tail first
             if (roverStuck.Sample(now, want, vessel.srfSpeed, dt))
             {
                 if (roverStuck.Count > 0 && roverGuardWhy != "stuck: backing up" && roverGuardWhy != "circling: backing up") { roverGuardWhy = "stuck: backing up"; roverEscapeWhy = "stuck"; roverDetour = roverStuck.Count % 2 == 0 ? -40 : 40; roverDetourUntil = now + 8; }
@@ -116,6 +117,25 @@ namespace KSPChatBridge
             roverStuck.ForceBack(now);
         }
 
+        bool roverReversing;
+        /// <summary>RS7l: the goal is 25-60 m behind (inside the turning circle) -> reverse toward it tail first instead of orbiting it;
+        /// never into an obstacle (rear ray).</summary>
+        bool RoverReverseTick(FlightCtrlState c)
+        {
+            double r = vessel.mainBody.Radius, dist = NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, r);
+            double err = NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon) - FlightGlobals.ship_heading;
+            bool want = RoverTurn.Reverse(dist, err) || (roverReversing && dist > RoverArrival.PassM && dist <= RoverTurn.ReverseM + 10 && Math.Abs(FlightPolicy.Wrap(err)) >= 90);
+            if (!want) { if (roverReversing) { roverReversing = false; ChatLog.Write("rover", "reverse: done (" + dist.ToString("0", CultureInfo.InvariantCulture) + " m to go)"); } return false; }
+            Vector3d upv = (vessel.CoMD - vessel.mainBody.position).normalized, rear = -Vector3d.Exclude(upv, (Vector3d)vessel.ReferenceTransform.up).normalized; string behind;
+            if (RoverDrivePolicy.RearBlocked(Ray((Vector3)(vessel.CoMD + upv * .6), (Vector3)rear, RoverStuck.BackMetres + 8, upv, out behind)))
+            { if (roverReversing) ChatLog.Write("rover", "reverse: obstacle behind (" + behind + "), turning forward instead"); roverReversing = false; return false; }
+            if (!roverReversing) { roverReversing = true; ChatLog.Write("rover", "reverse: goal " + dist.ToString("0", CultureInfo.InvariantCulture) + " m behind (" + FlightPolicy.Wrap(err).ToString("0", CultureInfo.InvariantCulture) + " deg) - backing toward it instead of circling"); }
+            SetGroup(vessel, KSPActionGroup.Brakes, false); roverIntegral = 0;
+            c.wheelThrottle = vessel.srfSpeed < RoverTurn.ReverseSpeed ? -.4f : 0f;
+            c.wheelSteer = (float)RoverEscape.BackSteer(KscRoverPolicy.Steering(RoverTurn.ReverseNoseErr(err), 0));
+            return true;
+        }
+
         /// <summary>RS7i (4 Hz): hung on an obstacle (wheels off the ground) or no progress while the autopilot drives -> stop with an alert.</summary>
         bool RoverHangCheck(float now)
         {
@@ -124,7 +144,7 @@ namespace KSPChatBridge
             foreach (var w in vessel.FindPartModulesImplementing<ModuleWheelBase>()) { wheels++; if (w.isGrounded) grounded++; }
             double left = RoverRoadActive && !double.IsNaN(roverRoadLeft) ? roverRoadLeft
                 : NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
-            string why = roverHang.Sample(now, wheels, grounded, vessel.srfSpeed, left);
+            string why = roverHang.Sample(now, wheels, grounded, vessel.srfSpeed, left, FlightGlobals.ship_heading);
             if (why == null) return false;
             roverHang.Reset();
             RoverAlert = "Rover stopped: " + why + " near " + vessel.latitude.ToString("0.0000", CultureInfo.InvariantCulture) + "," + vessel.longitude.ToString("0.0000", CultureInfo.InvariantCulture)

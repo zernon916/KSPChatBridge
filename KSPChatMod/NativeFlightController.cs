@@ -336,7 +336,7 @@ namespace KSPChatBridge
             instance = this;
             MfdNav.LearnRunning = () => NativeFlightController.LearnIsRunning;
             MfdNav.LearnRover = () => NativeFlightController.ActiveRover;
-            GameEvents.onPartDie.Add(OnPartDie); GameEvents.onGameStateLoad.Add(OnChecklistGameLoad); GameEvents.onFlightReady.Add(OnChecklistFlightReady); GameEvents.onVesselChange.Add(OnChecklistVesselChange);   // RS7e: checklist marks re-derived after revert / load / switch
+            GameEvents.onPartDie.Add(OnPartDie); GameEvents.onGameStateLoad.Add(OnChecklistGameLoad); GameEvents.OnScienceRecieved.Add(OnScienceReceived); GameEvents.onFlightReady.Add(OnChecklistFlightReady); GameEvents.onVesselChange.Add(OnChecklistVesselChange);   // RS7e: checklist marks re-derived after revert / load / switch
             NativeCommands.StatusPathProvider = () => Path.Combine(KSPUtil.ApplicationRootPath,
                 "GameData/KSPChatBridge/PluginData/native_control.json");
             settingsPath = Path.Combine(KSPUtil.ApplicationRootPath, "GameData/KSPChatBridge/PluginData/native_settings.json");
@@ -751,7 +751,7 @@ namespace KSPChatBridge
                     {
                         double distance = NavigationMath.Distance(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon, vessel.mainBody.Radius);
                         destinationDistance = distance;
-                        if (KscRoverPolicy.ReachedDestination(distance) || roverArrival.Sample(distance))   // RS7b: also the closest pass within 25 m (goal inside the turning circle)
+                        if (KscRoverPolicy.ReachedDestination(distance) || roverArrival.Sample(distance) || RoverTurn.ArrivedBehind(distance, NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon) - FlightGlobals.ship_heading))   // RS7b; RS7l: behind within the pass radius: also the closest pass within 25 m (goal inside the turning circle)
                         {
                             string destination = roverDestination;
                             ChatLog.Write("rover", "arrived at " + destination + " (" + distance.ToString("0.0", CultureInfo.InvariantCulture) + " m)");
@@ -762,6 +762,7 @@ namespace KSPChatBridge
                         roverHeading = NavigationMath.Bearing(vessel.latitude, vessel.longitude, roverDestinationLat, roverDestinationLon);
                         double roadLeft;   // RS3b: on a KSC road route steer along the centreline instead of straight at the goal
                         if (RoverRoadSteer(out roadLeft)) { destinationDistance = roadLeft; targetSpeed = Math.Min(KscRoverPolicy.ApproachSpeed(roverTargetSpeed, roadLeft), roverRoadCap); }
+                        targetSpeed = RoverTurn.TurnCap(targetSpeed, roverHeading - FlightGlobals.ship_heading);   // RS7l: U-turns slow and tight
                         roverHeadingEnabled = true;
                     }
                     RoverProfile learnedRover = CurrentRoverProfile();
@@ -1629,7 +1630,7 @@ namespace KSPChatBridge
                     SetGroup(vessel, KSPActionGroup.Brakes, false);
                     ChatLog.Write("rover", "drive to " + roverDestination + " at " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s");
                     string roadNote = RoverRoadAttach(roverDestinationLat, roverDestinationLon);   // RS3b: KSC roads
-                    roverArrival.Reset(); roverCircling.Reset(); roverStuck.Count = 0; roverEscapeWhy = "";   // RS7b
+                    roverArrival.Reset(); roverCircling.Reset(); roverHang.Reset(); roverStuck.Count = 0; roverEscapeWhy = ""; roverReversing = false;   // RS7b; RS7l: every leg starts its own progress baseline
                     return "Rover driving to " + roverDestination + " at up to " + roverTargetSpeed.ToString("0.0", CultureInfo.InvariantCulture) + " m/s." + roadNote;
                 case "abort":
                     if (plan != null) plan.Pause();
@@ -1973,6 +1974,6 @@ namespace KSPChatBridge
             vessel.ctrlState.pitchTrim = 0; SyncTrim();   // no leftover nose-up trim on the roll
             takeoff = new TakeoffMission(Planetarium.GetUniversalTime()); tground = new TakeoffGround(vessel.latitude, vessel.longitude, FlightGlobals.ship_heading); tgHdgPrev = double.NaN; return StartRotorMode("takeoff");
         }
-        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); GameEvents.onGameStateLoad.Remove(OnChecklistGameLoad); GameEvents.onFlightReady.Remove(OnChecklistFlightReady); GameEvents.onVesselChange.Remove(OnChecklistVesselChange); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
+        void OnDestroy() { GameEvents.onPartDie.Remove(OnPartDie); GameEvents.onGameStateLoad.Remove(OnChecklistGameLoad); GameEvents.OnScienceRecieved.Remove(OnScienceReceived); GameEvents.onFlightReady.Remove(OnChecklistFlightReady); GameEvents.onVesselChange.Remove(OnChecklistVesselChange); Stop(); WingRelease(null); if (vessel != null) vessel.OnFlyByWire -= Fly; if (instance == this) instance = null; }
     }
 }

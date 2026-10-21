@@ -104,6 +104,9 @@ namespace KSPChatBridge
         {
             roverRoad = null; roverRoadCap = double.MaxValue; roverRoadOffLeg = -1;
             var pts = RoverRoadRoute(lat, lon); if (pts == null || pts.Count < 2) return "";
+            int trimmed = RoverTurn.TrimBehind(pts, vessel.latitude, vessel.longitude, FlightGlobals.ship_heading, vessel.mainBody.Radius);   // RS7l
+            if (trimmed > 0) ChatLog.Write("rover", "road: skipped " + trimmed + " route point(s) just behind the rover");
+            if (pts.Count < 2) { roverRoad = null; return ""; }
             var route = new TaxiRoute { Name = "road" };
             route.Points.Add(new TaxiRoute.Wp { Name = "start", Lat = vessel.latitude, Lon = vessel.longitude });
             for (int i = 0; i < pts.Count; i++) route.Points.Add(new TaxiRoute.Wp { Name = "road " + i, Lat = pts[i].Lat, Lon = pts[i].Lon });

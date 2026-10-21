@@ -175,6 +175,8 @@ namespace KSPChatBridge
         internal static double CheckedTotal(IEnumerable<TourSite> sites) { double t = 0; foreach (var s in sites) t += s.Checked; return t; }
         /// <summary>Sites the tour drives to: checked, with at least one runnable experiment.</summary>
         internal static List<TourSite> RouteSites(IEnumerable<TourSite> sites) { return sites.Where(s => s.Visit).ToList(); }
+        /// <summary>RS7l: sites whose stop has not run yet this flight (keyed by site Key).</summary>
+        internal static List<TourSite> NotRun(IEnumerable<TourSite> sites, ICollection<string> ran) { return sites.Where(s => !ran.Contains(s.Key ?? s.Name)).ToList(); }
         /// <summary>Experiment ids to run at a site.</summary>
         internal static HashSet<string> RunIds(TourSite s) { return new HashSet<string>(s.Exps.Where(e => s.On && e.Runnable).Select(e => e.Id)); }
         /// <summary>RS7c: experiments tried at the stop: the ticked rows plus rows that are only off because their PREDICTED gain was 0 (not

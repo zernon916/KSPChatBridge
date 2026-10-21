@@ -28,6 +28,7 @@ internal static class RoverTests
         Rs7iTests();
         Rs7jTests();
         Rs7kTests();
+        Rs7lTests();
         Console.WriteLine("RoverTests: " + passes + " checks passed");
     }
 
@@ -395,6 +396,38 @@ internal static class RoverTests
         Check(TourChecklist.LearnedFor("Shores", rs.Lat, rs.Lon, R) == null, "rs7k: old learned 'Shores' (no point) is ignored");
         Check(TourChecklist.LearnedFor(TourChecklist.LearnedEntry("Shores", -0.057194, -74.607395), rs.Lat, rs.Lon, R) == null, "rs7k: learned at the old Runway stop point is ignored for the moved stop");
         Check(TourChecklist.LearnedFor(TourChecklist.LearnedEntry("Runway", rs.Lat + .0001, rs.Lon), rs.Lat, rs.Lon, R) == "Runway", "rs7k: learned at this stop point is used");
+    }
+
+    // RS7l: progress baseline per leg, turning is not hanging, goal close behind -> arrive / reverse, route points behind dropped, restart skips run sites
+    static void Rs7lTests()
+    {
+        var h = new RoverHang(); string why = null;
+        for (int t = 0; t <= 10; t++) why = why ?? h.Sample(t, 4, 4, 5, 100 - t * 10, 270);
+        for (int t = 11; t <= 25; t++) why = why ?? h.Sample(t, 4, 4, 0.5, 600, 270);
+        Check(why == null, "rs7l: a new leg (goal left 0 -> 600 m) restarts the no-progress clock (was fired 11 s in)");
+        for (int t = 26; t <= 32; t++) why = why ?? h.Sample(t, 4, 4, 0.5, 600, 270);
+        Check(why != null && why.Contains("no progress"), "rs7l: still fires after 20 s with no progress on the new leg");
+        h.Reset(); why = null;
+        for (int t = 0; t <= 40; t++) why = why ?? h.Sample(t, 4, 4, 3, 600, (270 + t * 15) % 360);
+        Check(why == null, "rs7l: turning (U-turn / 3-point turn) is manoeuvring, not hanging");
+        Check(RoverTurn.ArrivedBehind(20, 170) && RoverTurn.ArrivedBehind(20, -95) && !RoverTurn.ArrivedBehind(20, 10) && !RoverTurn.ArrivedBehind(40, 180), "rs7l: behind within 25 m = arrived");
+        Check(RoverTurn.Reverse(42, 180) && RoverTurn.Reverse(55, -130) && !RoverTurn.Reverse(42, 30) && !RoverTurn.Reverse(100, 180) && !RoverTurn.Reverse(20, 180), "rs7l: 25-60 m behind = reverse toward it");
+        Check(Math.Abs(RoverTurn.ReverseNoseErr(170) + 10) < 1e-9 && Math.Abs(RoverTurn.ReverseNoseErr(-170) - 10) < 1e-9, "rs7l: reversing points the tail at the goal");
+        Check(RoverTurn.TurnCap(20, 150) == RoverTurn.TurnSpeed && RoverTurn.TurnCap(20, 10) == 20, "rs7l: big heading error = slow tight turn");
+        const double R = 600000; double la = -0.0489, lo = -74.6917, bl, bo, fl, fo, al, ao;
+        NavigationMath.Offset(la, lo, 270, 10, R, out bl, out bo); NavigationMath.Offset(la, lo, 270, 200, R, out fl, out fo); NavigationMath.Offset(la, lo, 90, 500, R, out al, out ao);
+        var pts = new List<KscRoverPolicy.P> { Pp(bl, bo), Pp(al, ao) };
+        Check(RoverTurn.TrimBehind(pts, la, lo, 90, R) == 1 && pts.Count == 1, "rs7l: route point 10 m behind dropped");
+        pts = new List<KscRoverPolicy.P> { Pp(fl, fo), Pp(al, ao) };
+        Check(RoverTurn.TrimBehind(pts, la, lo, 90, R) == 0, "rs7l: a far point behind stays (real U-turn)");
+        pts = new List<KscRoverPolicy.P> { Pp(bl, bo) };
+        Check(RoverTurn.TrimBehind(pts, la, lo, 90, R) == 0 && pts.Count == 1, "rs7l: the last point is never dropped");
+        var c = new RoverCircling(); string cw = null; int n = 0;
+        for (int i = 0; i <= 40 && cw == null; i++) { n = i; cw = c.Sample(i * .5, (i * 10) % 360, 40 + 5 * Math.Sin(i * .3), 3); }
+        Check(cw != null && n >= 27 && n <= 29, "rs7l: orbiting a goal 40 m away is caught after 270 deg (n=" + n + ")");
+        var sites = new List<TourSite> { new TourSite { Key = "Runway", Name = "Runway" }, new TourSite { Key = "KSC Grass", Name = "KSC Grass (Shores)" } };
+        var left = TourChecklist.NotRun(sites, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "runway" });
+        Check(left.Count == 1 && left[0].Key == "KSC Grass", "rs7l: a restarted tour skips sites already run");
     }
 
     static double SegDist(double aLat, double aLon, double bLat, double bLon, KscRoverPolicy.P c, double radius)
